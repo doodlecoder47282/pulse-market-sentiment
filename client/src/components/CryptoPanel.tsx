@@ -261,7 +261,7 @@ function AutopsyCard() {
             const rows = ok.gates.filter((g) => g.severity === grp.sev);
             return (
               <section key={grp.sev} data-testid={`crypto-autopsy-${grp.sev}`}>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{grp.title} · {grp.note}</div>
+                <div className="text-[11px] font-medium text-muted-foreground">{grp.title} · {grp.note}</div>
                 <ul className="mt-1 space-y-1">
                   {rows.map((g) => (
                     <li key={g.id} className="min-w-0 rounded border border-border/40 p-2 leading-snug" data-testid={`crypto-autopsy-gate-${g.id}`}>
@@ -279,7 +279,7 @@ function AutopsyCard() {
           })}
           {ok.stress && (
             <section data-testid="crypto-autopsy-stress">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
+              <div className="text-[11px] font-medium text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
               {ok.stress.dataState !== "ok" ? (
                 <div className="mt-1 text-amber-300">unavailable: {ok.stress.reason}</div>
               ) : (
@@ -323,7 +323,7 @@ function DerivsStrip({ derivs, loaded }: { derivs: DerivsSnapshot | null; loaded
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-derivs">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-        <span className="font-semibold uppercase tracking-[0.15em]">funding and open interest · perpetuals</span>
+        <span className="font-semibold">funding and open interest · perpetuals</span>
         <span className={derivs.state === "ok" ? "text-emerald-300" : derivs.state === "partial" ? "text-amber-300" : "text-rose-300"}>{derivs.state}</span>
       </div>
       <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
@@ -389,7 +389,7 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
     <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-majors">
       <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px]">
         <TrendingUp className="h-3.5 w-3.5 text-lime-400" />
-        <span className="font-semibold uppercase tracking-[0.15em]">majors · exchange-direct</span>
+        <span className="font-semibold">majors · exchange-direct</span>
         <span className={majors.state === "ok" ? "text-emerald-300" : majors.state === "partial" ? "text-amber-300" : "text-rose-300"}>{majors.state}</span>
         {majors.sources.map((x) => (
           <span key={x.id} className="text-muted-foreground" title={x.error ?? undefined}>
@@ -476,7 +476,7 @@ export default function CryptoPanel() {
       {/* narrative heat */}
       <div className="flex flex-wrap items-center gap-1.5" data-testid="crypto-narratives">
         <Newspaper className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="mr-1 text-[11px] uppercase tracking-[0.15em] text-muted-foreground">narrative heat</span>
+        <span className="mr-1 text-[11px] font-medium text-muted-foreground">narrative heat</span>
         {(feed?.narrativeHeat ?? []).slice(0, 10).map((n) => (
           <span
             key={n.term}
@@ -538,19 +538,19 @@ export default function CryptoPanel() {
             <>
               <Section
                 icon={<Zap className="h-4 w-4 text-lime-400" />}
-                title="ENTER — flow confirmed, sub-1M"
+                title="Enter · flow confirmed, under $1M"
                 empty="nothing clears the bar right now. that's the system working, not broken."
                 items={enters} expanded={expanded} setExpanded={setExpanded} accent="enter"
               />
               <Section
                 icon={<Eye className="h-4 w-4 text-amber-400" />}
-                title="WATCH — forming, waiting on flow"
+                title="Watch · forming, waiting on flow"
                 empty="no setups forming."
                 items={watches} expanded={expanded} setExpanded={setExpanded} accent="watch"
               />
               <Section
                 icon={<XCircle className="h-4 w-4 text-muted-foreground" />}
-                title="PASS — seen and rejected"
+                title="Pass · seen and rejected"
                 empty="scanner warming up…"
                 items={passes} expanded={expanded} setExpanded={setExpanded} accent="pass" collapsedByDefault
               />
@@ -599,10 +599,7 @@ function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
     <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
       <p className="text-[11px] leading-snug text-amber-200/90">
-        <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
-        (5M hit / doubled / rugged / dead) but nothing here is stakeable until the audited hit rate exists
-        — same n≥50 rule as the 0DTE desk, counted in distinct first-ENTER coins with a no-data share of 20% or less{graded != null ? ` (${graded} graded ENTER coins so far${sig?.stats.sampleReady ? ", sample-ready" : ""})` : ""}. sub-1M memes
-        are a &gt;90% loss-rate arena; the math only works small, cut fast, and letting 4-5x winners pay for everything.
+        <span className="font-semibold">Tracking mode.</span> Every ENTER and WATCH is logged and graded, but nothing here is stakeable until the audited hit rate exists (n≥50 distinct first-ENTER coins, no-data share 20% or less{graded != null ? `; ${graded} graded so far${sig?.stats.sampleReady ? ", sample-ready" : ""}` : ""}). Sub-$1M memes are a &gt;90% loss-rate arena.
       </p>
     </div>
   );
@@ -620,7 +617,7 @@ function Section({ icon, title, empty, items, expanded, setExpanded, accent, col
     <div>
       <button className="flex w-full items-center gap-2" onClick={() => setOpen((v) => !v)} data-testid={`crypto-section-${accent}`}>
         {icon}
-        <span className="text-xs font-semibold uppercase tracking-[0.12em]">{title}</span>
+        <span className="text-sm font-semibold">{title}</span>
         <span className="rounded-full bg-muted/60 px-1.5 text-[11px] text-muted-foreground">{items.length}</span>
         <span className="ml-auto text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
       </button>
@@ -728,7 +725,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       {isOpen && (
         <div className="mt-3 space-y-2 border-t border-border/40 pt-2.5">
           <div className="text-[11px] leading-snug text-foreground/90">
-            {c.verdictCode && <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
+            {c.verdictCode && <p className="font-mono text-[11px] font-medium text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
             {c.verdictReasons.map((r, i) => <p key={i}>· {r}</p>)}
           </div>
           {c.rugFlags.length > 0 && (
@@ -834,7 +831,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className="rounded bg-muted/25 px-1.5 py-1">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className={`font-semibold ${hot ? "text-lime-300" : ""}`}>{value}</div>
     </div>
   );
@@ -879,7 +876,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         ].map(([label, val, cls]) => (
           <div key={String(label)} className="rounded-lg border border-border/50 bg-card/50 p-2 text-center">
             <div className={`font-mono text-lg font-bold tabular-nums ${cls}`}>{String(val)}</div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{String(label)}</div>
+            <div className="text-[11px] text-muted-foreground">{String(label)}</div>
           </div>
         ))}
       </div>
@@ -960,7 +957,7 @@ function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-expectancy">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
+        <span className="text-[11px] text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
         <span className={`text-[11px] ${h.sampleReady ? "text-muted-foreground" : "text-amber-300/90"}`} data-testid="crypto-expectancy-gate">
           {h.sampleReady ? `${h.n} graded signals` : `${h.n} of ${h.minSample} needed: counts only`} · <span className={`font-mono ${VAL_CLS[h.validation] ?? ""}`} data-testid="crypto-expectancy-validation">{h.validation}</span>
         </span>
@@ -1044,7 +1041,7 @@ function ReplayCard() {
           <div className="font-mono text-muted-foreground">rules v{r.rulesVersion} · {r.rows.firstSignals} first signals ({r.rows.graded} graded) of {r.rows.total} rows · versions {Object.entries(r.rows.versions).map(([v, n]) => `${v}: ${n}`).join(", ") || "none"}</div>
 
           <section data-testid="crypto-replay-timing">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">1 · When did the peak come?</div>
+            <div className="text-[11px] font-medium text-muted-foreground">1 · When did the peak come?</div>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums sm:grid-cols-5">
               <span>at/before signal <span className="text-foreground">{r.timing.peakAtOrBeforeSignal}</span></span>
               <span>≤ 15 min <span className="text-foreground">{r.timing.within15min}</span></span>
@@ -1056,7 +1053,7 @@ function ReplayCard() {
           </section>
 
           <section data-testid="crypto-replay-bands">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">2 · Outcomes by cap at the signal</div>
+            <div className="text-[11px] font-medium text-muted-foreground">2 · Outcomes by cap at the signal</div>
             <div className="mt-1 overflow-x-auto">
               <table className="w-full min-w-[520px] font-mono tabular-nums">
                 <thead><tr className="text-muted-foreground"><th className="text-left">band</th><th className="text-right">n</th><th className="text-right">hit</th><th className="text-right">2x</th><th className="text-right">dead</th><th className="text-right">rug</th><th className="text-right">no data</th><th className="text-right">win %</th><th className="text-right">95% CI</th><th className="text-right">median net</th></tr></thead>
@@ -1074,7 +1071,7 @@ function ReplayCard() {
           </section>
 
           <section data-testid="crypto-replay-features">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">3 · Signal-time features: winners vs losers (medians) and win % in the top vs bottom third</div>
+            <div className="text-[11px] font-medium text-muted-foreground">3 · Signal-time features: winners vs losers (medians) and win % in the top vs bottom third</div>
             <div className="mt-1 overflow-x-auto">
               <table className="w-full min-w-[520px] font-mono tabular-nums">
                 <thead><tr className="text-muted-foreground"><th className="text-left">feature</th><th className="text-right">n win / loss</th><th className="text-right">median win</th><th className="text-right">median loss</th><th className="text-right">top ⅓ win %</th><th className="text-right">bottom ⅓ win %</th></tr></thead>
@@ -1092,7 +1089,7 @@ function ReplayCard() {
           </section>
 
           <section data-testid="crypto-replay-reeval">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">4 · Current rules over the record (first signal per coin)</div>
+            <div className="text-[11px] font-medium text-muted-foreground">4 · Current rules over the record (first signal per coin)</div>
             <div className="mt-1 font-mono tabular-nums text-muted-foreground">pass the current rules <span className="text-foreground">{r.reeval.wouldEnter}</span> of {r.reeval.consideredFirstSignals} · originally ENTER {r.reeval.originallyEnter} · agree {r.reeval.agreeEnter} · blockers: {Object.entries(r.reeval.blockerCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}</div>
             <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
               {[r.reeval.inSample, r.reeval.outOfSample, r.reeval.all].map((s) => (
