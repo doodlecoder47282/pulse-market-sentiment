@@ -49,7 +49,6 @@ import {
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import SchwabRequiredNotice from "@/components/SchwabRequiredNotice";
 import DemoStrip from "@/components/DemoStrip";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TodayCard from "@/components/TodayCard";
 import TickerScanCard from "@/components/TickerScanCard";
@@ -1078,7 +1077,7 @@ export default function Dashboard() {
         </Tabs>
       </main>
 
-      {/* Mobile bottom-nav — fixed, horizontally scrollable, 10 tabs in locked order */}
+      {/* Mobile bottom-nav — fixed, horizontally scrollable, every tab, swipe left and right */}
       <nav
         className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
         style={{
@@ -1161,72 +1160,50 @@ function TermBar({ label, value, max, highlight }: { label: string; value: numbe
   );
 }
 
-// Phone navigation: four primary tabs plus "More", which opens a sheet with
-// the other seven. Every tab is one or two taps away and nothing is hidden
-// off the edge of the screen.
-const MOBILE_PRIMARY: { key: TabKey; label: string }[] = [
+// Phone navigation: one strip with every tab, swiped left to right. Snap
+// points keep a tab under the thumb, the selected tab is centred when it
+// changes (effect near the top of Dashboard), and the edge fades say there is
+// more to either side.
+const MOBILE_TABS: { key: TabKey; label: string }[] = [
   { key: "signals", label: "Signals" },
   { key: "chart", label: "Chart" },
   { key: "models", label: "Models" },
-  { key: "tradedesk", label: "Desk" },
-];
-const MOBILE_MORE: { key: TabKey; label: string }[] = [
   { key: "heatseeker", label: "Heatseeker" },
+  { key: "tradedesk", label: "Desk" },
   { key: "regime", label: "Regime" },
+  { key: "cosmos", label: "Cosmos" },
   { key: "news", label: "News" },
+  { key: "takefive", label: "Take Five" },
   { key: "edgelab", label: "Edge Lab" },
   { key: "crypto", label: "Crypto" },
-  { key: "cosmos", label: "Cosmos" },
-  { key: "takefive", label: "Take Five" },
 ];
 
 function MobileTabBar({ activeTab, onSelect }: { activeTab: TabKey; onSelect: (k: TabKey) => void }) {
-  const [moreOpen, setMoreOpen] = useState(false);
-  const inMore = MOBILE_MORE.find((t) => t.key === activeTab);
-  const cell = (active: boolean) =>
-    "flex min-h-[56px] flex-1 flex-col items-center justify-center px-2 py-2 text-xs font-medium transition-colors border-t-2 " +
-    (active ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground hover:text-foreground");
   return (
-    <>
-      <div className="flex">
-        {MOBILE_PRIMARY.map((t) => (
-          <button key={t.key} type="button" onClick={() => onSelect(t.key)} data-testid={`bottomnav-${t.key}`} className={cell(activeTab === t.key)}>
-            <span className="whitespace-nowrap">{t.label}</span>
-          </button>
-        ))}
-        <button type="button" onClick={() => setMoreOpen(true)} data-testid="bottomnav-more" aria-haspopup="dialog" className={cell(!!inMore)}>
-          <span className="whitespace-nowrap">{inMore ? inMore.label : "More"}</span>
-        </button>
+    <div className="relative">
+      <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-5 bg-gradient-to-r from-background to-transparent" aria-hidden="true" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-5 bg-gradient-to-l from-background to-transparent" aria-hidden="true" />
+      <div className="scrollbar-none flex snap-x snap-proximity overflow-x-auto overscroll-x-contain scroll-smooth" role="tablist" aria-label="Tabs">
+        {MOBILE_TABS.map((t) => {
+          const active = activeTab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onSelect(t.key)}
+              data-testid={`bottomnav-${t.key}`}
+              className={
+                "flex min-h-[56px] min-w-[84px] shrink-0 snap-center flex-col items-center justify-center border-t-2 px-4 py-2 text-xs font-medium transition-colors " +
+                (active ? "border-primary bg-primary/10 text-primary" : "border-transparent text-muted-foreground hover:text-foreground")
+              }
+            >
+              <span className="whitespace-nowrap">{t.label}</span>
+            </button>
+          );
+        })}
       </div>
-      {/* Hidden buttons keep one stable test hook per tab for the UX audit. */}
-      <div className="hidden">
-        {MOBILE_MORE.map((t) => (
-          <button key={t.key} type="button" data-testid={`bottomnav-${t.key}`} onClick={() => onSelect(t.key)} />
-        ))}
-      </div>
-      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
-        <SheetContent side="bottom" className="pb-[calc(1rem+env(safe-area-inset-bottom))]" data-testid="bottomnav-more-sheet">
-          <SheetHeader>
-            <SheetTitle>All tabs</SheetTitle>
-          </SheetHeader>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {[...MOBILE_PRIMARY, ...MOBILE_MORE].map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => { onSelect(t.key); setMoreOpen(false); }}
-                data-testid={`moresheet-${t.key}`}
-                className={
-                  "min-h-[48px] rounded-md border px-3 text-left text-sm font-medium " +
-                  (activeTab === t.key ? "border-primary bg-primary/10 text-primary" : "border-border text-foreground")
-                }
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </SheetContent>
-      </Sheet>
-    </>
+    </div>
   );
 }

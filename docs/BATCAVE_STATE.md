@@ -1246,3 +1246,13 @@ raised 6 s to 20 s (the Solana public RPC budget is shared with the live
 scanner). Left: omitted desk-risk / no_price / security-read ENTER conditions
 are not shown as rows; fetches are sequential (no overall deadline); route
 relies on deployment-level auth like the rest of /api/crypto.
+
+2026-10-29: UI polish (feat/ui-polish). Phone: the bottom tab bar is one swipeable
+strip with all 11 tabs again (edge fades, snap, selected tab centred); the "More"
+sheet added 2026-10-09 (edfd745) is removed and the UX tests that keyed on it now
+use the nav itself. Crypto tab: new Desk brief at the top (one headline: how many
+coins clear every ENTER rule, up to three leading candidates with their first
+reason, agent health, and the graded record so far in plain counts); the autopsy
+and tracking banner follow it; tracked-caps labels are sentence case. Descriptive
+only: no new rule, score or claim; scores stay heuristics. Verified by CI's
+screenshots and 7-width audit only (no local build: registry unreachable).

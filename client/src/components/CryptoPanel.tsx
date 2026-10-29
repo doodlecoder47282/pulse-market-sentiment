@@ -18,7 +18,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
-  Flame, Radar, Newspaper, Activity, ShieldAlert, Rocket, Skull,
+  Flame, Radar, Newspaper, Activity, ShieldAlert, Skull,
   Eye, XCircle, Zap, HeartPulse, TrendingUp, Clock,
 } from "lucide-react";
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
@@ -261,7 +261,7 @@ function AutopsyCard() {
             const rows = ok.gates.filter((g) => g.severity === grp.sev);
             return (
               <section key={grp.sev} data-testid={`crypto-autopsy-${grp.sev}`}>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{grp.title} · {grp.note}</div>
+                <div className="text-[11px] font-medium text-muted-foreground">{grp.title} · {grp.note}</div>
                 <ul className="mt-1 space-y-1">
                   {rows.map((g) => (
                     <li key={g.id} className="min-w-0 rounded border border-border/40 p-2 leading-snug" data-testid={`crypto-autopsy-gate-${g.id}`}>
@@ -279,7 +279,7 @@ function AutopsyCard() {
           })}
           {ok.stress && (
             <section data-testid="crypto-autopsy-stress">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
+              <div className="text-[11px] font-medium text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
               {ok.stress.dataState !== "ok" ? (
                 <div className="mt-1 text-amber-300">unavailable: {ok.stress.reason}</div>
               ) : (
@@ -323,7 +323,7 @@ function DerivsStrip({ derivs, loaded }: { derivs: DerivsSnapshot | null; loaded
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-derivs">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-        <span className="font-semibold uppercase tracking-[0.15em]">funding and open interest · perpetuals</span>
+        <span className="font-semibold">funding and open interest · perpetuals</span>
         <span className={derivs.state === "ok" ? "text-emerald-300" : derivs.state === "partial" ? "text-amber-300" : "text-rose-300"}>{derivs.state}</span>
       </div>
       <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
@@ -389,7 +389,7 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
     <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-majors">
       <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px]">
         <TrendingUp className="h-3.5 w-3.5 text-lime-400" />
-        <span className="font-semibold uppercase tracking-[0.15em]">majors · exchange-direct</span>
+        <span className="font-semibold">majors · exchange-direct</span>
         <span className={majors.state === "ok" ? "text-emerald-300" : majors.state === "partial" ? "text-amber-300" : "text-rose-300"}>{majors.state}</span>
         {majors.sources.map((x) => (
           <span key={x.id} className="text-muted-foreground" title={x.error ?? undefined}>
@@ -422,6 +422,60 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
   );
 }
 
+// ─── desk brief: the one-glance read for someone with no time ────────────
+
+function DeskBrief({ feed, health, sig, enters, watches, onPick }: {
+  feed?: FeedResp; health?: HealthResp; sig?: SignalsResp;
+  enters: Candidate[]; watches: Candidate[]; onPick: (c: Candidate) => void;
+}) {
+  const engines = (health?.engines ?? []).filter((e) => e.name !== "watchdog");
+  const notOk = engines.filter((e) => e.status !== "ok");
+  const picks = [...enters, ...[...watches].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))].slice(0, 3);
+  const rec = sig?.stats.enterCoins;
+  const headline = !feed ? "Reading the desk…"
+    : enters.length > 0 ? `${enters.length} coin${enters.length === 1 ? "" : "s"} clear${enters.length === 1 ? "s" : ""} every ENTER rule right now`
+    : watches.length > 0 ? `Nothing clears every ENTER rule. ${watches.length} forming`
+    : "Nothing clears the bar right now";
+  return (
+    <div className="min-h-[15rem] rounded-xl border border-border/60 bg-card/60 p-4 sm:min-h-[11rem]" data-testid="crypto-brief">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
+          <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight" data-testid="crypto-brief-headline">{headline}</h2>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {feed ? `${feed.trackedCount} pools tracked · updated ${new Date(feed.asOf ?? Date.now()).toLocaleTimeString()}` : "warming up"}
+            {notOk.length > 0 ? ` · ${notOk.map((e) => `${e.name} ${e.status}`).join(", ")}` : engines.length > 0 ? " · all agents running" : ""}
+          </p>
+        </div>
+        <AgentStrip health={health} />
+      </div>
+      {picks.length > 0 && (
+        <ul className="mt-3 grid gap-2 sm:grid-cols-3" data-testid="crypto-brief-picks">
+          {picks.map((c) => (
+            <li key={`${c.chain}:${c.pairAddress}`} className="min-w-0">
+              <button type="button" onClick={() => onPick(c)} className="min-h-[44px] w-full rounded-lg border border-border/60 p-2 text-left transition hover:border-foreground/30">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate font-mono text-sm font-bold">{c.symbol}</span>
+                  <span className={`text-[11px] font-semibold ${c.verdict === "ENTER" ? "text-lime-300" : "text-amber-300"}`}>{c.verdict === "ENTER" ? "Enter" : "Watch"}{c.score != null ? ` · ${c.score}` : ""}</span>
+                </div>
+                <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  cap {c.marketCap != null ? fmtUsd(c.marketCap) : "n/a"} · liq {c.liquidityUsd != null ? fmtUsd(c.liquidityUsd) : "n/a"}
+                </div>
+                {c.verdictReasons[0] && <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground">{c.verdictReasons[0]}</div>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 border-t border-border/40 pt-2 text-[11px] text-muted-foreground" data-testid="crypto-brief-record">
+        {rec
+          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} hit the 5-minute target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
+          : "Record so far: loading. Heuristic scores, not calibrated odds. The desk never places orders."}
+      </div>
+    </div>
+  );
+}
+
 // ─── main panel ─────────────────────────────────────────────────────────
 
 export default function CryptoPanel() {
@@ -430,7 +484,7 @@ export default function CryptoPanel() {
 
   const feedQ = useQuery<FeedResp>({ queryKey: ["/api/crypto/feed"], refetchInterval: 45_000 });
   const healthQ = useQuery<HealthResp>({ queryKey: ["/api/crypto/health"], refetchInterval: 30_000 });
-  const sigQ = useQuery<SignalsResp>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000, enabled: view === "signals" });
+  const sigQ = useQuery<SignalsResp>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000 });
 
   const feed = feedQ.data;
   const enters = feed?.candidates.filter((c) => c.verdict === "ENTER") ?? [];
@@ -439,33 +493,8 @@ export default function CryptoPanel() {
 
   return (
     <div className="space-y-4" data-testid="crypto-panel">
-      {/* hero strip */}
-      <div className="relative overflow-hidden rounded-xl border border-fuchsia-500/25 bg-gradient-to-br from-fuchsia-600/15 via-violet-600/10 to-lime-500/10 p-4">
-        <div className="pointer-events-none absolute -right-8 -top-10 h-36 w-36 rounded-full bg-fuchsia-500/20 blur-3xl" />
-        <div className="pointer-events-none absolute -left-6 bottom-0 h-24 w-24 rounded-full bg-lime-400/15 blur-2xl" />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <Rocket className="h-5 w-5 text-fuchsia-400" />
-              <h2 className="text-base font-bold tracking-tight">Digital assets</h2>
-              <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[11px] text-lime-300">
-                small-cap launch scanner
-              </Badge>
-            </div>
-            <p className="mt-1 max-w-xl text-xs leading-snug text-muted-foreground">
-              Exchange-direct prices for majors, plus a tracker for new Solana launches scored on flow
-              acceleration, narrative confirmation and rug filters (hand-set heuristics, not fitted to outcomes). PASS is the default verdict.
-            </p>
-          </div>
-          <AgentStrip health={healthQ.data} />
-        </div>
-      </div>
-
-      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
-      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
-
-      {/* perpetual funding + open interest: recorded context, not a rule input */}
-      <DerivsStrip derivs={feed?.derivs ?? null} loaded={!!feed} />
+      <DeskBrief feed={feed} health={healthQ.data} sig={sigQ.data} enters={enters} watches={watches}
+        onPick={(c) => { setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`); }} />
 
       {/* paste any Solana token address: every desk rule, gate by gate, plus a holder-dump stress test */}
       <AutopsyCard />
@@ -473,10 +502,16 @@ export default function CryptoPanel() {
       {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />
 
+      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
+      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
+
+      {/* perpetual funding + open interest: recorded context, not a rule input */}
+      <DerivsStrip derivs={feed?.derivs ?? null} loaded={!!feed} />
+
       {/* narrative heat */}
       <div className="flex flex-wrap items-center gap-1.5" data-testid="crypto-narratives">
         <Newspaper className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="mr-1 text-[11px] uppercase tracking-[0.15em] text-muted-foreground">narrative heat</span>
+        <span className="mr-1 text-[11px] font-medium text-muted-foreground">narrative heat</span>
         {(feed?.narrativeHeat ?? []).slice(0, 10).map((n) => (
           <span
             key={n.term}
@@ -538,19 +573,19 @@ export default function CryptoPanel() {
             <>
               <Section
                 icon={<Zap className="h-4 w-4 text-lime-400" />}
-                title="ENTER — flow confirmed, sub-1M"
+                title="Enter · flow confirmed, under $1M"
                 empty="nothing clears the bar right now. that's the system working, not broken."
                 items={enters} expanded={expanded} setExpanded={setExpanded} accent="enter"
               />
               <Section
                 icon={<Eye className="h-4 w-4 text-amber-400" />}
-                title="WATCH — forming, waiting on flow"
+                title="Watch · forming, waiting on flow"
                 empty="no setups forming."
                 items={watches} expanded={expanded} setExpanded={setExpanded} accent="watch"
               />
               <Section
                 icon={<XCircle className="h-4 w-4 text-muted-foreground" />}
-                title="PASS — seen and rejected"
+                title="Pass · seen and rejected"
                 empty="scanner warming up…"
                 items={passes} expanded={expanded} setExpanded={setExpanded} accent="pass" collapsedByDefault
               />
@@ -574,7 +609,7 @@ function AgentStrip({ health }: { health?: HealthResp }) {
     : s === "starting" ? "bg-sky-400 animate-pulse"
     : "bg-rose-500";
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
       <HeartPulse className="h-3.5 w-3.5 text-muted-foreground" />
       {(health?.engines ?? []).filter((e) => e.name !== "watchdog").map((e) => (
         <div key={e.name} className="flex items-center gap-1.5" title={`${e.name}: ${e.status} · ${e.runs} runs · ${e.errors} errors${e.lastError ? ` · ${e.lastError}` : ""}`}>
@@ -599,10 +634,7 @@ function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
     <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
       <p className="text-[11px] leading-snug text-amber-200/90">
-        <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
-        (5M hit / doubled / rugged / dead) but nothing here is stakeable until the audited hit rate exists
-        — same n≥50 rule as the 0DTE desk, counted in distinct first-ENTER coins with a no-data share of 20% or less{graded != null ? ` (${graded} graded ENTER coins so far${sig?.stats.sampleReady ? ", sample-ready" : ""})` : ""}. sub-1M memes
-        are a &gt;90% loss-rate arena; the math only works small, cut fast, and letting 4-5x winners pay for everything.
+        <span className="font-semibold">Tracking mode.</span> Every ENTER and WATCH is logged and graded, but nothing here is stakeable until the audited hit rate exists (n≥50 distinct first-ENTER coins, no-data share 20% or less{graded != null ? `; ${graded} graded so far${sig?.stats.sampleReady ? ", sample-ready" : ""}` : ""}). Sub-$1M memes are a &gt;90% loss-rate arena.
       </p>
     </div>
   );
@@ -620,7 +652,7 @@ function Section({ icon, title, empty, items, expanded, setExpanded, accent, col
     <div>
       <button className="flex w-full items-center gap-2" onClick={() => setOpen((v) => !v)} data-testid={`crypto-section-${accent}`}>
         {icon}
-        <span className="text-xs font-semibold uppercase tracking-[0.12em]">{title}</span>
+        <span className="text-sm font-semibold">{title}</span>
         <span className="rounded-full bg-muted/60 px-1.5 text-[11px] text-muted-foreground">{items.length}</span>
         <span className="ml-auto text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
       </button>
@@ -728,7 +760,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       {isOpen && (
         <div className="mt-3 space-y-2 border-t border-border/40 pt-2.5">
           <div className="text-[11px] leading-snug text-foreground/90">
-            {c.verdictCode && <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
+            {c.verdictCode && <p className="font-mono text-[11px] font-medium text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
             {c.verdictReasons.map((r, i) => <p key={i}>· {r}</p>)}
           </div>
           {c.rugFlags.length > 0 && (
@@ -834,7 +866,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className="rounded bg-muted/25 px-1.5 py-1">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className={`font-semibold ${hot ? "text-lime-300" : ""}`}>{value}</div>
     </div>
   );
@@ -879,7 +911,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         ].map(([label, val, cls]) => (
           <div key={String(label)} className="rounded-lg border border-border/50 bg-card/50 p-2 text-center">
             <div className={`font-mono text-lg font-bold tabular-nums ${cls}`}>{String(val)}</div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{String(label)}</div>
+            <div className="text-[11px] text-muted-foreground">{String(label)}</div>
           </div>
         ))}
       </div>
@@ -960,7 +992,7 @@ function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-expectancy">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
+        <span className="text-[11px] text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
         <span className={`text-[11px] ${h.sampleReady ? "text-muted-foreground" : "text-amber-300/90"}`} data-testid="crypto-expectancy-gate">
           {h.sampleReady ? `${h.n} graded signals` : `${h.n} of ${h.minSample} needed: counts only`} · <span className={`font-mono ${VAL_CLS[h.validation] ?? ""}`} data-testid="crypto-expectancy-validation">{h.validation}</span>
         </span>
@@ -1044,7 +1076,7 @@ function ReplayCard() {
           <div className="font-mono text-muted-foreground">rules v{r.rulesVersion} · {r.rows.firstSignals} first signals ({r.rows.graded} graded) of {r.rows.total} rows · versions {Object.entries(r.rows.versions).map(([v, n]) => `${v}: ${n}`).join(", ") || "none"}</div>
 
           <section data-testid="crypto-replay-timing">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">1 · When did the peak come?</div>
+            <div className="text-[11px] font-medium text-muted-foreground">1 · When did the peak come?</div>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums sm:grid-cols-5">
               <span>at/before signal <span className="text-foreground">{r.timing.peakAtOrBeforeSignal}</span></span>
               <span>≤ 15 min <span className="text-foreground">{r.timing.within15min}</span></span>
@@ -1056,7 +1088,7 @@ function ReplayCard() {
           </section>
 
           <section data-testid="crypto-replay-bands">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">2 · Outcomes by cap at the signal</div>
+            <div className="text-[11px] font-medium text-muted-foreground">2 · Outcomes by cap at the signal</div>
             <div className="mt-1 overflow-x-auto">
               <table className="w-full min-w-[520px] font-mono tabular-nums">
                 <thead><tr className="text-muted-foreground"><th className="text-left">band</th><th className="text-right">n</th><th className="text-right">hit</th><th className="text-right">2x</th><th className="text-right">dead</th><th className="text-right">rug</th><th className="text-right">no data</th><th className="text-right">win %</th><th className="text-right">95% CI</th><th className="text-right">median net</th></tr></thead>
@@ -1074,7 +1106,7 @@ function ReplayCard() {
           </section>
 
           <section data-testid="crypto-replay-features">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">3 · Signal-time features: winners vs losers (medians) and win % in the top vs bottom third</div>
+            <div className="text-[11px] font-medium text-muted-foreground">3 · Signal-time features: winners vs losers (medians) and win % in the top vs bottom third</div>
             <div className="mt-1 overflow-x-auto">
               <table className="w-full min-w-[520px] font-mono tabular-nums">
                 <thead><tr className="text-muted-foreground"><th className="text-left">feature</th><th className="text-right">n win / loss</th><th className="text-right">median win</th><th className="text-right">median loss</th><th className="text-right">top ⅓ win %</th><th className="text-right">bottom ⅓ win %</th></tr></thead>
@@ -1092,7 +1124,7 @@ function ReplayCard() {
           </section>
 
           <section data-testid="crypto-replay-reeval">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">4 · Current rules over the record (first signal per coin)</div>
+            <div className="text-[11px] font-medium text-muted-foreground">4 · Current rules over the record (first signal per coin)</div>
             <div className="mt-1 font-mono tabular-nums text-muted-foreground">pass the current rules <span className="text-foreground">{r.reeval.wouldEnter}</span> of {r.reeval.consideredFirstSignals} · originally ENTER {r.reeval.originallyEnter} · agree {r.reeval.agreeEnter} · blockers: {Object.entries(r.reeval.blockerCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}</div>
             <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
               {[r.reeval.inSample, r.reeval.outOfSample, r.reeval.all].map((s) => (
