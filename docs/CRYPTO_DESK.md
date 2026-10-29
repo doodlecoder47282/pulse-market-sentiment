@@ -159,6 +159,16 @@ docs/BATCAVE_STATE.md with the PR number.
 0. DONE 2026-10-27 (PR #32): funding and open interest recorded on every
    signal (descriptive; next step is bucketing it in the replay once rows
    carry it).
+0b. DONE 2026-10-29 (feat/crypto-autopsy): contract autopsy + holder-dump
+   stress test (`GET /api/crypto/autopsy?mint=`, `shared/cryptoAutopsy.ts`).
+   Paste one mint; the desk reads it once, scores it with the same
+   `scoreCandidate` and pinned rule book, and lists every kill, flag and
+   entry gate as pass / fail / unread with the rule's own number. It stores,
+   tracks and grades nothing. Sustained flow is always "unread" (one snapshot
+   cannot decide a 2-of-3 rule). Stress test: closed-form constant-product
+   arithmetic (quote side = liquidity / 2) for the top-10 holders selling
+   25 / 50 / 100% of their stake; a stated model, not a forecast. Next in
+   this lane: personal trade journal, then creator-wallet / block-0 checks.
 1. Replay / backtest: run the current rule version over the logged history,
    split by date, report hit rate, average win, average loss, max drawdown,
    net of cost; fills the sample from history. (Fastest path to an answer.)

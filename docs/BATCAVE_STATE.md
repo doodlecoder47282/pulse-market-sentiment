@@ -1222,3 +1222,27 @@ is partial whenever a venue is dark, record asOf = oldest read, unit-band claim
 reworded (it catches gross errors only; a percent-for-fraction slip is covered
 by the parser tests and the live check). Left: OKX open-interest call failure
 reads "not reported"; derivs tick throws only when both venues are down.
+
+2026-10-29: crypto contract autopsy + holder-dump stress (feat/crypto-autopsy).
+New "Contract autopsy" card on the Crypto tab: paste one Solana mint, the
+server reads DexScreener/RugCheck/Jupiter/RPC once (rate-limited 6 s, cached
+60 s), scores it with the desk's own scoreCandidate (momentumTick's pair
+mapping extracted verbatim into applyDexPair; no behaviour change) and lists
+every gate with the rule-book number and pass / fail / unread. Unread is never
+pass; liquidity not reported is a kill, as in the engine. Nothing is stored,
+tracked or graded; rule book version unchanged (2026.10.27-2). Stress test:
+top-10 holders sell 25/50/100% against a constant-product pool (quote side =
+liquidity/2); FDV basis with market-cap fallback and a pool-included caveat
+labelled. Descriptive arithmetic, not a forecast. Tests: 10 new
+(tests/quant/crypto-autopsy.test.ts). Local run: 807 pass; 6 fail only from
+packages missing in this sandbox (typescript, node-cron, @anthropic-ai/sdk),
+CI has them. Not verified live from the sandbox (outbound hosts blocked).
+Review of feat/crypto-autopsy (independent, REVIEWER_BRIEF): 2 MUST-FIX fixed (mint
+parser truncated 45+ char base58 runs to a wrong "mint", now boundary-guarded and
+rejected; unreported buy count printed as "0 buys"). SHOULD-FIX taken: verdict
+line says "N kill check(s) unread; not final", misleading "RPC cooling down"
+text, token-controlled strings wrap at 375 px, link-paste hint, autopsy gap
+raised 6 s to 20 s (the Solana public RPC budget is shared with the live
+scanner). Left: omitted desk-risk / no_price / security-read ENTER conditions
+are not shown as rows; fetches are sequential (no overall deadline); route
+relies on deployment-level auth like the rest of /api/crypto.

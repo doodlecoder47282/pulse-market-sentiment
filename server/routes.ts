@@ -93,7 +93,7 @@ import { classifyRouteError, isUpstreamUnavailable, UpstreamUnavailableError } f
 import { waitFor } from "@shared/waitFor";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
-import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals, getCryptoReplay } from "./cryptoEngine";
+import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals, getCryptoReplay, runCryptoAutopsy } from "./cryptoEngine";
 import { startCommunityEngine, getCommunityWatch, addCommunityToken, removeCommunityToken } from "./cryptoCommunity";
 import { startSetupEngine, getSetupLog } from "./setupEngine";
 import { scanTicker, validScanSymbol } from "./tickerScan";
@@ -4764,6 +4764,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   app.get("/api/crypto/replay", (_req, res) => {
     try { res.setHeader("Cache-Control", "no-store"); res.json(getCryptoReplay()); }
     catch (e: any) { res.status(500).json({ error: "crypto_replay_failed", message: e?.message ?? String(e) }); }
+  });
+
+  // CONTRACT AUTOPSY (server/cryptoEngine.ts runCryptoAutopsy): one fresh read of a pasted Solana token address, every desk rule laid out gate by gate, plus a holder-dump stress test. Never stored, never graded.
+  app.get("/api/crypto/autopsy", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      const out = await runCryptoAutopsy(req.query.mint);
+      res.json(out); // the payload carries its own dataState: invalid_input, not_found, rate_limited, source_failed, ok
+    } catch (e: any) { res.status(500).json({ error: "crypto_autopsy_failed", message: e?.message ?? String(e) }); }
   });
 
   // COMMUNITY WATCH — settled tokens: range position, survival counts and
