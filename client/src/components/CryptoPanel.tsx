@@ -235,7 +235,7 @@ function AutopsyCard() {
         <div className="space-y-3 text-[11px]" data-testid="crypto-autopsy-body">
           <div className="rounded border border-border/40 p-2">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-              <span className="text-sm font-semibold text-foreground">{ok.snapshot.symbol || "?"} <span className="font-normal text-muted-foreground">{ok.snapshot.name}</span></span>
+              <span className="min-w-0 break-words text-sm font-semibold text-foreground">{ok.snapshot.symbol || "?"} <span className="font-normal text-muted-foreground">{ok.snapshot.name}</span></span>
               <span className="font-mono text-muted-foreground">{ok.cached ? "recent read" : "read"} {new Date(ok.asOf).toLocaleTimeString()}</span>
             </div>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums text-muted-foreground sm:grid-cols-4">
@@ -247,6 +247,9 @@ function AutopsyCard() {
             <div className="mt-1 text-muted-foreground">
               On this one read the desk's rules say <span className="font-semibold text-foreground" data-testid="crypto-autopsy-verdict">{ok.desk.verdict ?? "none"}</span>
               {ok.desk.verdictText ? `: ${ok.desk.verdictText}` : ""}{ok.desk.score != null ? ` · heuristic score ${ok.desk.score}` : ""}.
+              {(ok.gates ?? []).some((g) => g.severity === "kill" && g.state === "unread") ? (
+                <span className="text-amber-600 dark:text-amber-400" data-testid="crypto-autopsy-notfinal"> {(ok.gates ?? []).filter((g) => g.severity === "kill" && g.state === "unread").length} kill check(s) unread; this verdict is not final.</span>
+              ) : null}
               {ok.tracked ? ` The desk has also been tracking it since ${new Date(ok.tracked.firstSeenAt).toLocaleString()} (currently ${ok.tracked.verdict ?? "unscored"}).` : ""}
             </div>
             <div className="mt-1 font-mono text-muted-foreground" data-testid="crypto-autopsy-counts">
@@ -261,13 +264,13 @@ function AutopsyCard() {
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{grp.title} · {grp.note}</div>
                 <ul className="mt-1 space-y-1">
                   {rows.map((g) => (
-                    <li key={g.id} className="rounded border border-border/40 p-2 leading-snug" data-testid={`crypto-autopsy-gate-${g.id}`}>
+                    <li key={g.id} className="min-w-0 rounded border border-border/40 p-2 leading-snug" data-testid={`crypto-autopsy-gate-${g.id}`}>
                       <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                         <span className="font-medium text-foreground">{g.label} <span className="font-normal text-muted-foreground">· rule: {g.rule}</span></span>
                         <span className={`font-semibold uppercase ${GATE_CLS[g.state]}`}>{GATE_WORD[g.severity][g.state]}</span>
                       </div>
-                      <div className="font-mono text-muted-foreground">read: {g.value}</div>
-                      {g.detail && <div className="text-muted-foreground">{g.detail}</div>}
+                      <div className="break-words font-mono text-muted-foreground">read: {g.value}</div>
+                      {g.detail && <div className="break-words text-muted-foreground">{g.detail}</div>}
                     </li>
                   ))}
                 </ul>

@@ -18,7 +18,7 @@ import { CRYPTO_RULES, type CryptoRules } from "./cryptoRules";
 
 // ─── Address parsing ─────────────────────────────────────────────────────
 
-const BASE58 = /[1-9A-HJ-NP-Za-km-z]{32,44}/g;
+const BASE58 = /(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])/g;
 
 export type MintParse = { ok: true; mint: string } | { ok: false; reason: string };
 
@@ -34,7 +34,10 @@ export function parseMintInput(raw: unknown): MintParse {
   if (!text) return { ok: false, reason: "no address given" };
   if (text.length > 300) return { ok: false, reason: "input too long" };
   const found = Array.from(new Set(text.match(BASE58) ?? []));
-  if (found.length === 0) return { ok: false, reason: "no Solana address found (expected 32-44 base58 characters)" };
+  if (found.length === 0) {
+    if (/https?:\/\//i.test(text)) return { ok: false, reason: "that looks like a link; paste the token's contract address itself" };
+    return { ok: false, reason: "no Solana address found (a whole 32-44 character base58 address; longer or shorter strings are rejected, not trimmed)" };
+  }
   if (found.length > 1) return { ok: false, reason: "more than one address found; paste only the token's contract address" };
   return { ok: true, mint: found[0] };
 }
@@ -109,7 +112,7 @@ export function autopsyGates(f: AutopsyFacts, rules: CryptoRules = CRYPTO_RULES)
     id: "honeypot", severity: "kill", label: "Sells observed", rule: `not ${hpMin}+ buys with zero sells in the last hour`,
     ...(f.sells1h == null ? { value: "sell count not reported", state: "unread" as const, detail: "the honeypot check cannot run; the desk holds ENTER at WATCH" }
       : (f.buys1h ?? 0) >= hpMin && f.sells1h === 0 ? { value: `${f.buys1h} buys, 0 sells`, state: "fail" as const, detail: "the honeypot pattern" }
-      : { value: `${f.buys1h ?? 0} buys, ${f.sells1h} sells`, state: "pass" as const, detail: null }),
+      : { value: `${f.buys1h == null ? "buys not reported" : `${f.buys1h} buys`}, ${f.sells1h} sells`, state: "pass" as const, detail: null }),
   });
   const rug = rules.hardKills.midRugChg1hPct;
   add({

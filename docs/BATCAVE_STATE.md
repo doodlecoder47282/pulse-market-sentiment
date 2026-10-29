@@ -1237,3 +1237,12 @@ labelled. Descriptive arithmetic, not a forecast. Tests: 10 new
 (tests/quant/crypto-autopsy.test.ts). Local run: 807 pass; 6 fail only from
 packages missing in this sandbox (typescript, node-cron, @anthropic-ai/sdk),
 CI has them. Not verified live from the sandbox (outbound hosts blocked).
+Review of feat/crypto-autopsy (independent, REVIEWER_BRIEF): 2 MUST-FIX fixed (mint
+parser truncated 45+ char base58 runs to a wrong "mint", now boundary-guarded and
+rejected; unreported buy count printed as "0 buys"). SHOULD-FIX taken: verdict
+line says "N kill check(s) unread; not final", misleading "RPC cooling down"
+text, token-controlled strings wrap at 375 px, link-paste hint, autopsy gap
+raised 6 s to 20 s (the Solana public RPC budget is shared with the live
+scanner). Left: omitted desk-risk / no_price / security-read ENTER conditions
+are not shown as rows; fetches are sequential (no overall deadline); route
+relies on deployment-level auth like the rest of /api/crypto.

@@ -33,6 +33,17 @@ test("address parsing: exactly one base58 string of 32-44 chars; ambiguity and j
   assert.match((parseMintInput(`${MINT} ${PUMP}`) as any).reason, /more than one/);
 });
 
+test("a longer base58 run is rejected, never silently truncated; a link gets a hint; unreported buys never print as 0", () => {
+  assert.equal(parseMintInput(MINT + "abcdefg").ok, false);
+  assert.equal(parseMintInput("A".repeat(50)).ok, false);
+  const link = parseMintInput(`https://dexscreener.com/solana/${"1".repeat(50)}`);
+  assert.equal(link.ok, false);
+  assert.match((link as any).reason, /link/);
+  const hp = by(autopsyGates(clean({ buys1h: null, sells1h: 0 }))).honeypot;
+  assert.doesNotMatch(hp.value, /\b0 buys/);
+  assert.match(hp.value, /buys not reported/);
+});
+
 test("a fully clean read passes every gate except sustained flow, which one snapshot can never decide", () => {
   const g = autopsyGates(clean());
   const s = summarizeGates(g);

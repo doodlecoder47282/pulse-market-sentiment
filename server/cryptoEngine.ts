@@ -1522,7 +1522,7 @@ export interface CryptoAutopsy {
   notes: string[];
 }
 
-const AUTOPSY_MIN_GAP_MS = 6_000;
+const AUTOPSY_MIN_GAP_MS = 20_000; // the Solana public RPC budget is shared with the live scanner
 const AUTOPSY_CACHE_MS = 60_000;
 const autopsyCache = new Map<string, { at: number; value: CryptoAutopsy }>();
 let autopsyLastStart = 0;
@@ -1541,7 +1541,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
   if (hit && now - hit.at < AUTOPSY_CACHE_MS) return { ...hit.value, cached: true };
   // Public RPCs and DexScreener throttle bursts: one autopsy at a time, spaced.
   if (autopsyBusy || now - autopsyLastStart < AUTOPSY_MIN_GAP_MS) {
-    const wait = autopsyBusy ? 6 : Math.ceil((AUTOPSY_MIN_GAP_MS - (now - autopsyLastStart)) / 1000);
+    const wait = autopsyBusy ? 20 : Math.ceil((AUTOPSY_MIN_GAP_MS - (now - autopsyLastStart)) / 1000);
     return emptyAutopsy(now, "rate_limited", "another autopsy is running or just ran; public data sources throttle bursts", mint, Math.max(1, wait));
   }
   autopsyBusy = true;
@@ -1603,6 +1603,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       else {
         c.top10Method = facts.concentration === "unavailable"
           ? `unavailable: ${facts.concentrationError ?? "indexed RPC did not answer"}`
+          : indexedRpcAvailable() ? "skipped: supply was not readable, so no holder share was computed"
           : "skipped: the public indexed RPC is cooling down; try again in a few minutes";
         sourceNotes.push("holder concentration was not read on this pass");
       }
