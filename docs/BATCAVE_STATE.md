@@ -1256,3 +1256,33 @@ reason, agent health, and the graded record so far in plain counts); the autopsy
 and tracking banner follow it; tracked-caps labels are sentence case. Descriptive
 only: no new rule, score or claim; scores stay heuristics. Verified by CI's
 screenshots and 7-width audit only (no local build: registry unreachable).
+
+2026-10-29: record integrity, decision-time gate evidence (feat/gate-evidence). Prophecy's
+review (E1, partial) was right that the replay cannot re-check four ENTER gates because
+rows never stored them (sustained flow, Jupiter state, 1 h sells, desk risk). Every new
+signal now stores `features_json.gates` {flowPolls/flowHits/flowNeed/flowWindow, jupState,
+jupGapPct, buys1h, sells1h, deskRisk}; wouldEnterNow re-checks them when present and lists
+them as unchecked when absent, so the pass count stays an upper bound until a row carries
+the evidence. The replay readout says how many first signals carry it. Rule book version
+unchanged (2026.10.27-2); no gate or score changed; old rows are not rewritten or guessed.
+Tests: 3 new in crypto-replay.test.ts. Not done (named by the same review, each its own
+PR): ownership quality (creator/bundle/common-funding), size-specific executable quotes,
+a frozen-rule prospective ledger separate from retrospective matches. Prophecy's claim
+that the chronological split does not show rules were frozen is correct and already
+stated in the readout ("older half first").
+Review of feat/gate-evidence (independent): 1 MUST-FIX fixed (on the momentum pass the evidence was
+read after the poll was appended to hist, shifting the flow window by one and letting a WATCH row
+that the engine blocked on "flow not sustained" read as passing; now captured as the first step of
+scoreCandidate, `gatesAtScore`). SHOULD-FIX taken: an empty record no longer prints "every gate
+re-checked"; stored gates are type-validated on load (malformed counts as not recorded). The
+evidence builder lives in shared/cryptoReplay.ts (buildGateEvidence) so it is unit-tested.
+Second review of feat/gate-evidence (Prophecy, E1, diff only): 2 MUST-FIX taken. (1) Stored evidence is now
+validated on its invariants, not just types (integer non-negative counts, readings array capped at 10 with
+histLen consistent, known Jupiter and desk-risk states); anything inconsistent counts as "not recorded".
+(2) The replay no longer re-checks against a stored pass count: signals store the RAW decision-time
+acceleration readings (last 10) and the replay re-runs the CURRENT rules over them (sustainedFlow, shared
+with the engine's own ENTER gate); a window longer than the stored readings is listed unchecked, not
+guessed; a changed rule changes the answer (tested). Copy now says only that the four recorded gates were
+re-checked. Limit stated: the scoring-order guarantee is a source guard plus a behavioural test of the
+pre-push window on the shared function; the engine itself is not executed by the quant suite (it needs the
+database), so full engine parity is not demonstrated.

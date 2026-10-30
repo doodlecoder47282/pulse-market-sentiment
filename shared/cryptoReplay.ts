@@ -55,7 +55,66 @@ export interface ReplayRow extends GradedSignalLike {
     boosted?: boolean | null;
     pumpfunGraduate?: boolean | null;
     bskyMentions1h?: number | null;
+    /** Decision-time evidence for the four gates older rows never stored (rule book 2026.10.27-2 onward). */
+    gates?: GateEvidence | null;
   };
+}
+
+/** Raw acceleration readings kept per signal: enough for any sustained-flow window up to this length. */
+export const EVIDENCE_READINGS = 10;
+
+/** The sustained-flow gate on raw readings. The engine's ENTER gate and the stored evidence both call this. */
+export function sustainedFlow(readings: Array<number | null>, rules: CryptoRules = CRYPTO_RULES): { sustained: boolean; polls: number; hits: number } {
+  const { window: win, need } = rules.enter.sustainedPolls;
+  const recent = readings.slice(-win);
+  const hits = recent.filter((v) => (v ?? 0) >= rules.enter.minVolAccel).length;
+  return { sustained: recent.length >= need && hits >= need, polls: recent.length, hits };
+}
+
+/**
+ * The four ENTER gates' inputs as the verdict saw them (hist BEFORE the current
+ * poll is appended). Raw readings are stored, not a pass count, so the replay
+ * can re-run the CURRENT rules over them.
+ */
+export function buildGateEvidence(
+  i: { hist: Array<{ volAccel: number | null }>; jupState: string | null | undefined; jupGapPct: number | null | undefined; buys1h: number | null; sells1h: number | null; deskRisk: string | null },
+): GateEvidence {
+  return {
+    flowReadings: i.hist.slice(-EVIDENCE_READINGS).map((h) => (h.volAccel == null || !Number.isFinite(h.volAccel) ? null : h.volAccel)),
+    histLen: i.hist.length,
+    jupState: i.jupState ?? null, jupGapPct: i.jupGapPct ?? null,
+    buys1h: i.buys1h, sells1h: i.sells1h, deskRisk: i.deskRisk,
+  };
+}
+
+export interface GateEvidence {
+  /** Last acceleration readings the verdict saw (oldest first, at most EVIDENCE_READINGS). */
+  flowReadings: Array<number | null>;
+  /** How many readings the candidate had in total at that moment. */
+  histLen: number;
+  jupState: string | null; jupGapPct: number | null;
+  buys1h: number | null; sells1h: number | null;
+  deskRisk: string | null;
+}
+
+const JUP_STATES = new Set(["agree", "watch", "diverge", "no-reliable-price", "failed", "unchecked"]);
+const RISK_STATES = new Set(["on", "off", "unknown"]);
+
+/** A stored object counts as recorded evidence only when it is internally consistent; anything else is "not recorded". */
+export function parseGateEvidence(g: unknown): GateEvidence | null {
+  if (!g || typeof g !== "object") return null;
+  const o = g as Record<string, unknown>;
+  const int = (x: unknown): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0;
+  const nInt = (x: unknown): x is number | null => x === null || int(x);
+  if (!Array.isArray(o.flowReadings) || o.flowReadings.length > EVIDENCE_READINGS) return null;
+  if (!o.flowReadings.every((v) => v === null || (typeof v === "number" && Number.isFinite(v) && v >= 0))) return null;
+  if (!int(o.histLen) || o.histLen < o.flowReadings.length) return null;
+  if (o.histLen > o.flowReadings.length && o.flowReadings.length < EVIDENCE_READINGS) return null; // truncated without cause
+  if (!(o.jupState === null || (typeof o.jupState === "string" && JUP_STATES.has(o.jupState)))) return null;
+  if (!(o.jupGapPct === null || (typeof o.jupGapPct === "number" && Number.isFinite(o.jupGapPct)))) return null;
+  if (!nInt(o.buys1h) || !nInt(o.sells1h)) return null;
+  if (!(o.deskRisk === null || (typeof o.deskRisk === "string" && RISK_STATES.has(o.deskRisk)))) return null;
+  return o as unknown as GateEvidence;
 }
 
 const WIN = new Set(["HIT_5M", "DOUBLED"]);
@@ -227,7 +286,23 @@ export function wouldEnterNow(r: ReplayRow, rules: CryptoRules = CRYPTO_RULES): 
   if (!fin(f.volAccel) || f.volAccel < rules.enter.minVolAccel) b.push("vol accel");
   if (!fin(f.netBuyRatio5m) || f.netBuyRatio5m < rules.enter.minNetBuyRatio5m) b.push("net buy ratio");
   if (rules.enter.requireTop10Read && !fin(f.top10Pct)) b.push("top-10 unread");
-  return { enter: b.length === 0, blockers: b, unchecked: ["flow sustained (2 of 3 polls)", "Jupiter agree/watch", "1 h sells observed", "desk risk on"] };
+  // The four gates older rows never stored: checked from the evidence written
+  // at decision time when the row has it, listed as unchecked when it does not.
+  const g = f.gates;
+  const unchecked: string[] = [];
+  if (!g) unchecked.push("flow sustained (2 of 3 polls)", "Jupiter agree/watch", "1 h sells observed", "desk risk on");
+  else {
+    // Current rules over the raw decision-time readings. A window longer than
+    // the readings kept cannot be rebuilt, so that gate is unchecked, not guessed.
+    const win = rules.enter.sustainedPolls.window;
+    if (win > g.flowReadings.length && g.histLen > g.flowReadings.length) unchecked.push("flow sustained (window longer than the readings stored)");
+    else if (!sustainedFlow(g.flowReadings, rules).sustained) b.push("flow not sustained");
+    if (g.jupState !== "agree" && g.jupState !== "watch") b.push(`Jupiter ${g.jupState ?? "unread"}`);
+    if (g.sells1h == null) b.push("1 h sells unread");
+    else if ((g.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h && g.sells1h === 0) b.push("honeypot pattern");
+    if (g.deskRisk !== "on") b.push(`desk risk ${g.deskRisk ?? "unread"}`);
+  }
+  return { enter: b.length === 0, blockers: b, unchecked };
 }
 
 export interface SplitReadout {
@@ -271,6 +346,8 @@ export interface ReevalReadout {
   agreeEnter: number;
   blockerCounts: Record<string, number>;
   unchecked: string[];
+  /** First signals whose decision-time gate evidence was recorded, of all considered. */
+  gateEvidence: { recorded: number; of: number };
   inSample: SplitReadout;
   outOfSample: SplitReadout;
   all: SplitReadout;
@@ -296,11 +373,12 @@ export function reevalReadout(rows: ReplayRow[], rules: CryptoRules = CRYPTO_RUL
     originallyEnter: firsts.filter((r) => r.verdict === "ENTER").length,
     agreeEnter: enter.filter((r) => r.verdict === "ENTER").length,
     blockerCounts,
-    unchecked: wouldEnterNow(firsts[0] ?? ({ features: {} } as ReplayRow), rules).unchecked,
+    unchecked: Array.from(new Set(firsts.flatMap((r) => wouldEnterNow(r, rules).unchecked))),
+    gateEvidence: { recorded: firsts.filter((r) => r.features.gates != null).length, of: firsts.length },
     inSample: split("in-sample (older half)", sorted.slice(0, cut), target),
     outOfSample: split("out-of-sample (newer half)", sorted.slice(cut), target),
     all: split("all", sorted, target),
-    lookAhead: "re-evaluation reads only fields written at detection; outcomes, peaks and horizon marks are used only to score. Split by detection date, older half first. Gates not stored at the time are unchecked, so the pass count is an upper bound.",
+    lookAhead: "re-evaluation reads only fields written at detection; outcomes, peaks and horizon marks are used only to score. Split by detection date, older half first. Rows written before gate evidence was recorded leave four gates unchecked, so the pass count is an upper bound until every row carries it.",
   };
 }
 

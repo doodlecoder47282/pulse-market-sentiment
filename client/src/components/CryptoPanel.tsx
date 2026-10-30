@@ -1136,7 +1136,7 @@ function ReplayCard() {
                 </div>
               ))}
             </div>
-            <div className="mt-0.5 text-muted-foreground">unchecked at re-evaluation (not stored at the time): {r.reeval.unchecked.join("; ")}. {r.reeval.lookAhead}</div>
+            <div className="mt-0.5 text-muted-foreground">{r.reeval.gateEvidence ? `Decision-time gate evidence recorded on ${r.reeval.gateEvidence.recorded} of ${r.reeval.gateEvidence.of} first signals. ` : ""}{r.reeval.unchecked.length ? `Still unchecked on older rows: ${r.reeval.unchecked.join("; ")}. ` : r.reeval.gateEvidence.of > 0 ? "The four recorded gates (sustained flow, Jupiter, 1 h sells, desk risk) were re-checked on every first signal; other rule differences are not covered. " : "No first signals yet. "}{r.reeval.lookAhead}</div>
           </section>
 
           <p className="text-muted-foreground">{r.samplingLimit}</p>

@@ -42,7 +42,7 @@
 import { sqlite } from "./storage";
 import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, describeCryptoRules } from "../shared/cryptoRules";
-import { buildReplay, type ReplayRow, type CryptoReplay } from "../shared/cryptoReplay";
+import { buildReplay, type ReplayRow, type GateEvidence, buildGateEvidence, sustainedFlow, parseGateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -135,6 +135,8 @@ export interface Candidate {
 
   // rolling history for sustained-flow gating (whale-blink filter)
   hist: Array<{ t: number; volAccel: number | null; netBuyRatio5m: number | null; mcap: number | null }>;
+  /** The four ENTER gates' inputs exactly as scoreCandidate saw them (before this poll is pushed to hist). */
+  gatesAtScore?: GateEvidence | null;
 
   // derived
   ageMinutes: number | null;
@@ -308,6 +310,11 @@ sqlite.exec(`
     ON crypto_signals(pair_address, verdict, detected_at / 86400000);
 `);
 
+/** The four ENTER gates' inputs as they stood when this signal was written (read by shared/cryptoReplay.ts). */
+function gateEvidence(c: Pick<Candidate, "hist" | "jupState" | "jupGapPct" | "buys1h" | "sells1h">): GateEvidence {
+  return buildGateEvidence({ hist: c.hist, jupState: c.jupState, jupGapPct: c.jupGapPct, buys1h: c.buys1h, sells1h: c.sells1h, deskRisk: currentDeskRisk().state });
+}
+
 function persistSignal(c: Candidate): void {
   if (!c.verdict || c.verdict === "PASS") return;
   try {
@@ -340,6 +347,8 @@ function persistSignal(c: Candidate): void {
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
         // Funding / open-interest regime at signal time: recorded for the replay to test, never a gate.
         derivs: derivsRecord(lastDerivs()),
+        // Decision-time evidence for the four ENTER gates the replay could not re-check.
+        gates: c.gatesAtScore ?? null,
       }),
       JSON.stringify(c.risk),
     );
@@ -882,6 +891,9 @@ function scoreMeme(nameIn: string, symbolIn: string): { score: number; tags: str
 
 function scoreCandidate(c: Candidate): void {
   const now = Date.now();
+  // Captured before anything below and before the caller pushes this poll onto
+  // hist, so the stored flow/Jupiter/sells/desk-risk inputs are the verdict's own.
+  c.gatesAtScore = gateEvidence(c);
   c.ageMinutes = c.pairCreatedAt ? Math.max(0, (now - c.pairCreatedAt) / 60_000) : null;
 
   // meme score
@@ -992,8 +1004,7 @@ function scoreCandidate(c: Candidate): void {
     // ENTER requires sustained flow — at least 2 of the last 3 refreshes with
     // accel >= 1.5 — plus a completed on-chain security check.
     const { window: sWin, need: sNeed } = CRYPTO_RULES.enter.sustainedPolls;
-    const recent = c.hist.slice(-sWin);
-    const sustained = recent.length >= sNeed && recent.filter((h) => (h.volAccel ?? 0) >= CRYPTO_RULES.enter.minVolAccel).length >= sNeed;
+    const sustained = sustainedFlow(c.hist.map((h) => h.volAccel), CRYPTO_RULES).sustained;
     if (!sustained) {
       verdict = "WATCH"; code = "flow_not_sustained";
       reasons.push(`score ${c.score}, accel ${c.volAccel?.toFixed(1)}x but not sustained yet (need ${sNeed} of last ${sWin} polls) — whale-blink filter`);
@@ -1483,6 +1494,7 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
         securityCheckedAt: f.securityCheckedAt ?? null, rcLpLockedPct: f.rcLpLockedPct ?? null, socialScore: f.socialScore ?? null,
         fomo: f.fomo ?? null, meme: f.meme ?? null, narrativeHits: Array.isArray(f.narrativeHits) ? f.narrativeHits : null,
         boosted: f.boosted ?? null, pumpfunGraduate: f.pumpfunGraduate ?? null, bskyMentions1h: f.bskyMentions1h ?? null,
+        gates: parseGateEvidence(f.gates),
       },
     };
   });
