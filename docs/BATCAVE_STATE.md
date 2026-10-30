@@ -1276,3 +1276,13 @@ that the engine blocked on "flow not sustained" read as passing; now captured as
 scoreCandidate, `gatesAtScore`). SHOULD-FIX taken: an empty record no longer prints "every gate
 re-checked"; stored gates are type-validated on load (malformed counts as not recorded). The
 evidence builder lives in shared/cryptoReplay.ts (buildGateEvidence) so it is unit-tested.
+Second review of feat/gate-evidence (Prophecy, E1, diff only): 2 MUST-FIX taken. (1) Stored evidence is now
+validated on its invariants, not just types (integer non-negative counts, readings array capped at 10 with
+histLen consistent, known Jupiter and desk-risk states); anything inconsistent counts as "not recorded".
+(2) The replay no longer re-checks against a stored pass count: signals store the RAW decision-time
+acceleration readings (last 10) and the replay re-runs the CURRENT rules over them (sustainedFlow, shared
+with the engine's own ENTER gate); a window longer than the stored readings is listed unchecked, not
+guessed; a changed rule changes the answer (tested). Copy now says only that the four recorded gates were
+re-checked. Limit stated: the scoring-order guarantee is a source guard plus a behavioural test of the
+pre-push window on the shared function; the engine itself is not executed by the quant suite (it needs the
+database), so full engine parity is not demonstrated.

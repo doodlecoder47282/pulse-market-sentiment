@@ -42,7 +42,7 @@
 import { sqlite } from "./storage";
 import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, describeCryptoRules } from "../shared/cryptoRules";
-import { buildReplay, type ReplayRow, type GateEvidence, buildGateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
+import { buildReplay, type ReplayRow, type GateEvidence, buildGateEvidence, sustainedFlow, parseGateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -1004,8 +1004,7 @@ function scoreCandidate(c: Candidate): void {
     // ENTER requires sustained flow — at least 2 of the last 3 refreshes with
     // accel >= 1.5 — plus a completed on-chain security check.
     const { window: sWin, need: sNeed } = CRYPTO_RULES.enter.sustainedPolls;
-    const recent = c.hist.slice(-sWin);
-    const sustained = recent.length >= sNeed && recent.filter((h) => (h.volAccel ?? 0) >= CRYPTO_RULES.enter.minVolAccel).length >= sNeed;
+    const sustained = sustainedFlow(c.hist.map((h) => h.volAccel), CRYPTO_RULES).sustained;
     if (!sustained) {
       verdict = "WATCH"; code = "flow_not_sustained";
       reasons.push(`score ${c.score}, accel ${c.volAccel?.toFixed(1)}x but not sustained yet (need ${sNeed} of last ${sWin} polls) — whale-blink filter`);
@@ -1495,7 +1494,7 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
         securityCheckedAt: f.securityCheckedAt ?? null, rcLpLockedPct: f.rcLpLockedPct ?? null, socialScore: f.socialScore ?? null,
         fomo: f.fomo ?? null, meme: f.meme ?? null, narrativeHits: Array.isArray(f.narrativeHits) ? f.narrativeHits : null,
         boosted: f.boosted ?? null, pumpfunGraduate: f.pumpfunGraduate ?? null, bskyMentions1h: f.bskyMentions1h ?? null,
-        gates: validGates(f.gates),
+        gates: parseGateEvidence(f.gates),
       },
     };
   });
@@ -1670,15 +1669,6 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
   } finally {
     autopsyBusy = false;
   }
-}
-
-/** A stored gates object counts only when every field has its expected type; anything else is treated as not recorded. */
-function validGates(g: any): GateEvidence | null {
-  if (!g || typeof g !== "object") return null;
-  const n = (x: any) => typeof x === "number" && Number.isFinite(x);
-  const nn = (x: any) => x === null || n(x);
-  const sn = (x: any) => x === null || typeof x === "string";
-  return n(g.flowPolls) && n(g.flowHits) && n(g.flowNeed) && n(g.flowWindow) && sn(g.jupState) && nn(g.jupGapPct) && nn(g.buys1h) && nn(g.sells1h) && sn(g.deskRisk) ? g : null;
 }
 
 function safeParse(s: any): any {
