@@ -1,7 +1,7 @@
 // Replay / diagnostics over the logged record (shared/cryptoReplay.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildReplay, firstPerCoin, timingReadout, bandReadout, featureReadout, wouldEnterNow, reevalReadout, type ReplayRow } from "../../shared/cryptoReplay";
+import { buildGateEvidence, buildReplay, firstPerCoin, timingReadout, bandReadout, featureReadout, wouldEnterNow, reevalReadout, type ReplayRow } from "../../shared/cryptoReplay";
 import { CRYPTO_RULES } from "../../shared/cryptoRules";
 
 const T0 = Date.UTC(2026, 9, 1);
@@ -127,7 +127,24 @@ test("reevalReadout reports how many first signals carry decision-time gate evid
 test("the engine writes the gate evidence it later re-checks, and the replay loader reads it back", async () => {
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
-  assert.match(src, /gates: gateEvidence\(c\)/);
-  assert.match(src, /gates: f\.gates && typeof f\.gates === "object" \? f\.gates : null/);
-  for (const k of ["flowPolls", "flowHits", "jupState", "sells1h", "deskRisk"]) assert.match(src, new RegExp(`${k}[,:]`));
+  assert.match(src, /gates: c\.gatesAtScore \?\? null/);
+  assert.ok(src.indexOf("c.gatesAtScore = gateEvidence(c)") > src.indexOf("function scoreCandidate"), "captured inside scoreCandidate");
+  const fnStart = src.indexOf("function scoreCandidate(c: Candidate): void {");
+  assert.ok(src.slice(fnStart, fnStart + 500).includes("c.gatesAtScore = gateEvidence(c)"), "first thing scoreCandidate does; the caller pushes the poll onto hist afterwards");
+  assert.match(src, /gates: validGates\(f\.gates\)/);
+  assert.match(src, /buildGateEvidence\(\{ hist: c\.hist, jupState: c\.jupState/);
+  assert.match(src, /deskRisk: currentDeskRisk\(\)\.state/);
+});
+
+test("gateEvidence counts only the readings it is given (the engine's pre-push view), and an empty record never reads as fully checked", async () => {
+  const gateEvidence = (i: any) => buildGateEvidence({ ...i, deskRisk: "on" });
+  const h = (v: number | null) => ({ t: 0, volAccel: v, netBuyRatio5m: null, mcap: null });
+  const e = gateEvidence({ hist: [h(2), h(0.5), h(0.5)], jupState: "agree", jupGapPct: 1, buys1h: 10, sells1h: 5 });
+  assert.equal(e.flowPolls, 3); assert.equal(e.flowHits, 1); assert.equal(e.flowNeed, 2);
+  assert.equal(wouldEnterNow({ ...row(), features: { ...row().features, gates: { ...e, deskRisk: "on" } } }).blockers.join(), "flow not sustained");
+  const one = gateEvidence({ hist: [h(2)], jupState: "agree", jupGapPct: 0, buys1h: 1, sells1h: 1 });
+  assert.equal(one.flowPolls, 1);
+  const empty = reevalReadout([]);
+  assert.equal(empty.gateEvidence.of, 0);
+  assert.equal(empty.unchecked.length, 0);
 });

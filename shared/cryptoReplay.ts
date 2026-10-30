@@ -60,6 +60,21 @@ export interface ReplayRow extends GradedSignalLike {
   };
 }
 
+/** The four ENTER gates' inputs from the readings the verdict itself saw (hist BEFORE the current poll is appended). */
+export function buildGateEvidence(
+  i: { hist: Array<{ volAccel: number | null }>; jupState: string | null | undefined; jupGapPct: number | null | undefined; buys1h: number | null; sells1h: number | null; deskRisk: string | null },
+  rules: CryptoRules = CRYPTO_RULES,
+): GateEvidence {
+  const { window: win, need } = rules.enter.sustainedPolls;
+  const recent = i.hist.slice(-win);
+  return {
+    flowPolls: recent.length, flowWindow: win, flowNeed: need,
+    flowHits: recent.filter((h) => (h.volAccel ?? 0) >= rules.enter.minVolAccel).length,
+    jupState: i.jupState ?? null, jupGapPct: i.jupGapPct ?? null,
+    buys1h: i.buys1h, sells1h: i.sells1h, deskRisk: i.deskRisk,
+  };
+}
+
 export interface GateEvidence {
   flowPolls: number; flowHits: number; flowNeed: number; flowWindow: number;
   jupState: string | null; jupGapPct: number | null;

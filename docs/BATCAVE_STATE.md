@@ -1270,3 +1270,9 @@ PR): ownership quality (creator/bundle/common-funding), size-specific executable
 a frozen-rule prospective ledger separate from retrospective matches. Prophecy's claim
 that the chronological split does not show rules were frozen is correct and already
 stated in the readout ("older half first").
+Review of feat/gate-evidence (independent): 1 MUST-FIX fixed (on the momentum pass the evidence was
+read after the poll was appended to hist, shifting the flow window by one and letting a WATCH row
+that the engine blocked on "flow not sustained" read as passing; now captured as the first step of
+scoreCandidate, `gatesAtScore`). SHOULD-FIX taken: an empty record no longer prints "every gate
+re-checked"; stored gates are type-validated on load (malformed counts as not recorded). The
+evidence builder lives in shared/cryptoReplay.ts (buildGateEvidence) so it is unit-tested.

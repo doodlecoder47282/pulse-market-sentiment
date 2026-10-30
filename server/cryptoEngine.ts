@@ -42,7 +42,7 @@
 import { sqlite } from "./storage";
 import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, describeCryptoRules } from "../shared/cryptoRules";
-import { buildReplay, type ReplayRow, type GateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
+import { buildReplay, type ReplayRow, type GateEvidence, buildGateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -135,6 +135,8 @@ export interface Candidate {
 
   // rolling history for sustained-flow gating (whale-blink filter)
   hist: Array<{ t: number; volAccel: number | null; netBuyRatio5m: number | null; mcap: number | null }>;
+  /** The four ENTER gates' inputs exactly as scoreCandidate saw them (before this poll is pushed to hist). */
+  gatesAtScore?: GateEvidence | null;
 
   // derived
   ageMinutes: number | null;
@@ -309,16 +311,8 @@ sqlite.exec(`
 `);
 
 /** The four ENTER gates' inputs as they stood when this signal was written (read by shared/cryptoReplay.ts). */
-function gateEvidence(c: Candidate): GateEvidence {
-  const { window: win, need } = CRYPTO_RULES.enter.sustainedPolls;
-  const recent = c.hist.slice(-win);
-  return {
-    flowPolls: recent.length, flowWindow: win, flowNeed: need,
-    flowHits: recent.filter((h) => (h.volAccel ?? 0) >= CRYPTO_RULES.enter.minVolAccel).length,
-    jupState: c.jupState ?? null, jupGapPct: c.jupGapPct ?? null,
-    buys1h: c.buys1h, sells1h: c.sells1h,
-    deskRisk: currentDeskRisk().state,
-  };
+function gateEvidence(c: Pick<Candidate, "hist" | "jupState" | "jupGapPct" | "buys1h" | "sells1h">): GateEvidence {
+  return buildGateEvidence({ hist: c.hist, jupState: c.jupState, jupGapPct: c.jupGapPct, buys1h: c.buys1h, sells1h: c.sells1h, deskRisk: currentDeskRisk().state });
 }
 
 function persistSignal(c: Candidate): void {
@@ -354,7 +348,7 @@ function persistSignal(c: Candidate): void {
         // Funding / open-interest regime at signal time: recorded for the replay to test, never a gate.
         derivs: derivsRecord(lastDerivs()),
         // Decision-time evidence for the four ENTER gates the replay could not re-check.
-        gates: gateEvidence(c),
+        gates: c.gatesAtScore ?? null,
       }),
       JSON.stringify(c.risk),
     );
@@ -897,6 +891,9 @@ function scoreMeme(nameIn: string, symbolIn: string): { score: number; tags: str
 
 function scoreCandidate(c: Candidate): void {
   const now = Date.now();
+  // Captured before anything below and before the caller pushes this poll onto
+  // hist, so the stored flow/Jupiter/sells/desk-risk inputs are the verdict's own.
+  c.gatesAtScore = gateEvidence(c);
   c.ageMinutes = c.pairCreatedAt ? Math.max(0, (now - c.pairCreatedAt) / 60_000) : null;
 
   // meme score
@@ -1498,7 +1495,7 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
         securityCheckedAt: f.securityCheckedAt ?? null, rcLpLockedPct: f.rcLpLockedPct ?? null, socialScore: f.socialScore ?? null,
         fomo: f.fomo ?? null, meme: f.meme ?? null, narrativeHits: Array.isArray(f.narrativeHits) ? f.narrativeHits : null,
         boosted: f.boosted ?? null, pumpfunGraduate: f.pumpfunGraduate ?? null, bskyMentions1h: f.bskyMentions1h ?? null,
-        gates: f.gates && typeof f.gates === "object" ? f.gates : null,
+        gates: validGates(f.gates),
       },
     };
   });
@@ -1673,6 +1670,15 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
   } finally {
     autopsyBusy = false;
   }
+}
+
+/** A stored gates object counts only when every field has its expected type; anything else is treated as not recorded. */
+function validGates(g: any): GateEvidence | null {
+  if (!g || typeof g !== "object") return null;
+  const n = (x: any) => typeof x === "number" && Number.isFinite(x);
+  const nn = (x: any) => x === null || n(x);
+  const sn = (x: any) => x === null || typeof x === "string";
+  return n(g.flowPolls) && n(g.flowHits) && n(g.flowNeed) && n(g.flowWindow) && sn(g.jupState) && nn(g.jupGapPct) && nn(g.buys1h) && nn(g.sells1h) && sn(g.deskRisk) ? g : null;
 }
 
 function safeParse(s: any): any {
