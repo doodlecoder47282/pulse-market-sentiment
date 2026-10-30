@@ -18,7 +18,7 @@
 export type EvidenceState = "ok" | "partial" | "unread";
 
 /** One row of getSignaturesForAddress. */
-export interface SigRow { slot: number; err: unknown; blockTime?: number | null }
+export interface SigRow { slot: number; err: unknown; blockTime?: number | null; signature?: string }
 
 export interface SlotEvidence {
   state: EvidenceState;
@@ -27,6 +27,8 @@ export interface SlotEvidence {
   /** Slot of the earliest transaction found (null unless the oldest was reached). */
   firstSlot: number | null;
   firstBlockTime: number | null;
+  /** Signature of the earliest SUCCESSFUL transaction found (the anchor for the creator lookup). */
+  anchorSignature: string | null;
   /** Successful transactions that touched the mint in the first slot / first three slots. */
   sameSlotTx: number | null;
   firstThreeSlotsTx: number | null;
@@ -45,18 +47,26 @@ const SLOT_CAVEATS = [
  * history); otherwise the earliest transaction was not reached.
  */
 export function slotEvidence(rows: SigRow[], reachedOldest: boolean, pageLimit: number): SlotEvidence {
-  const base = { signaturesRead: rows.length, firstSlot: null, firstBlockTime: null, sameSlotTx: null, firstThreeSlotsTx: null, failedTxInFirstThreeSlots: null, caveats: SLOT_CAVEATS };
+  const base = { signaturesRead: rows.length, firstSlot: null, firstBlockTime: null, anchorSignature: null, sameSlotTx: null, firstThreeSlotsTx: null, failedTxInFirstThreeSlots: null, caveats: SLOT_CAVEATS };
   const valid = rows.filter((r) => r && Number.isInteger(r.slot) && r.slot > 0);
   if (valid.length === 0) return { state: "unread", reason: rows.length ? "the RPC rows carried no usable slot" : "the RPC returned no transactions for this mint", ...base };
   if (!reachedOldest) {
     return { state: "partial", reason: `this mint has more than ${pageLimit} transactions; the earliest was not reached, so nothing about the launch block is stated`, ...base };
   }
-  const first = valid.reduce((m, r) => (r.slot < m ? r.slot : m), valid[0].slot);
+  // Anchor on the earliest SUCCESSFUL transaction: a failed attempt that names the mint is not the launch.
+  // Rows are newest-first, so among equal slots the later row is the earlier transaction.
+  const okRows = valid.filter((r) => r.err == null);
+  if (okRows.length === 0) return { state: "unread", reason: "every transaction found for this mint failed; no launch block can be stated", ...base };
+  let anchor = okRows[0];
+  for (const r of okRows) if (r.slot <= anchor.slot) anchor = r;
+  const sig = typeof anchor.signature === "string" && anchor.signature.length > 0 ? anchor.signature : null;
+  if (!sig) return { state: "unread", reason: "the earliest transaction carried no signature", ...base };
+  const first = anchor.slot;
   const early = valid.filter((r) => r.slot >= first && r.slot <= first + 2);
   const ok = (r: SigRow) => r.err == null;
   const t0 = valid.filter((r) => r.slot === first).map((r) => r.blockTime).find((t) => typeof t === "number") ?? null;
   return {
-    state: "ok", reason: null, signaturesRead: rows.length, firstSlot: first, firstBlockTime: t0,
+    state: "ok", reason: null, signaturesRead: rows.length, firstSlot: first, firstBlockTime: t0, anchorSignature: sig,
     sameSlotTx: valid.filter((r) => r.slot === first && ok(r)).length,
     firstThreeSlotsTx: early.filter(ok).length,
     failedTxInFirstThreeSlots: early.filter((r) => !ok(r)).length,
@@ -71,6 +81,8 @@ export interface CreatorEvidence {
   feePayer: string | null;
   /** Token the fee payer holds now, as a percent of supply (null when unread). */
   holdsPctOfSupply: number | null;
+  /** True when the wallet holds something but less than 0.01% (holdsPctOfSupply is then 0.01, shown as "under"). */
+  holdsLessThanStep?: boolean;
   caveats: string[];
 }
 
@@ -79,16 +91,21 @@ const CREATOR_CAVEATS = [
   "a wallet's holding now says nothing about what it held earlier or what it holds through other wallets",
 ];
 
-export function creatorEvidence(i: { feePayer: unknown; feePayerTokenUi: number | null; supplyUi: number | null; slot: SlotEvidence }): CreatorEvidence {
+export function creatorEvidence(i: { feePayer: unknown; feePayerTokenUi: number | null; supplyUi: number | null; slot: SlotEvidence; txFetched?: boolean }): CreatorEvidence {
   const wallet = typeof i.feePayer === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(i.feePayer) ? i.feePayer : null;
   if (i.slot.state !== "ok") return { state: i.slot.state === "partial" ? "partial" : "unread", reason: i.slot.reason, feePayer: null, holdsPctOfSupply: null, caveats: CREATOR_CAVEATS };
-  if (!wallet) return { state: "unread", reason: "the earliest transaction did not expose a fee payer", feePayer: null, holdsPctOfSupply: null, caveats: CREATOR_CAVEATS };
+  if (!wallet) return { state: "unread", reason: i.txFetched === false ? "the earliest transaction could not be fetched from the RPC" : "the earliest transaction did not expose a fee payer", feePayer: null, holdsPctOfSupply: null, caveats: CREATOR_CAVEATS };
   const sup = i.supplyUi, amt = i.feePayerTokenUi;
   if (sup == null || !Number.isFinite(sup) || sup <= 0 || amt == null || !Number.isFinite(amt) || amt < 0) {
     return { state: "partial", reason: "the wallet was found but its holding or the supply could not be read", feePayer: wallet, holdsPctOfSupply: null, caveats: CREATOR_CAVEATS };
   }
-  const pct = Math.round((amt / sup) * 10_000) / 100;
-  return { state: "ok", reason: null, feePayer: wallet, holdsPctOfSupply: Math.min(100, pct), caveats: CREATOR_CAVEATS };
+  if (amt > sup * 1.001) {
+    return { state: "partial", reason: "the wallet's holding exceeds the supply read (the two reads were taken at different moments); no percentage is stated", feePayer: wallet, holdsPctOfSupply: null, caveats: CREATOR_CAVEATS };
+  }
+  const raw = (amt / sup) * 100;
+  // A real but tiny holding is never shown as 0: report it as the smallest step.
+  const pct = amt > 0 && raw < 0.01 ? 0.01 : Math.round(raw * 100) / 100;
+  return { state: "ok", reason: null, feePayer: wallet, holdsPctOfSupply: Math.min(100, pct), holdsLessThanStep: amt > 0 && raw < 0.01, caveats: CREATOR_CAVEATS };
 }
 
 export interface LaunchEvidence { slot: SlotEvidence; creator: CreatorEvidence }
