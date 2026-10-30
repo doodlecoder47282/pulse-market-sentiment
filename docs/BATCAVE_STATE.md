@@ -1256,3 +1256,23 @@ reason, agent health, and the graded record so far in plain counts); the autopsy
 and tracking banner follow it; tracked-caps labels are sentence case. Descriptive
 only: no new rule, score or claim; scores stay heuristics. Verified by CI's
 screenshots and 7-width audit only (no local build: registry unreachable).
+
+2026-10-30: launch and ownership evidence in the autopsy (feat/ownership-evidence). The Contract autopsy
+card now also reads, from public RPC only (no keyed provider): the earliest transaction found for the
+mint (pages up to 3 x 1000 signatures; if the history is longer the launch block is NOT stated, shown as
+"not established"), how many successful transactions touched the mint in that slot and the first three
+slots (failed counted apart), the fee payer of that earliest transaction, and what that wallet holds now
+as a percent of supply. Descriptive and on-demand only: not a gate, not a score input, not recorded for
+scanner signals (public RPC budget, shared with the scanner, cannot carry it per candidate); every missing
+piece is "unread" with its reason; a later wallet is never shown as the earliest fee payer. Same-slot
+counts are clues (they include mint creation, pool setup and any buyer), never labelled bundling or
+coordination. shared/cryptoLaunch.ts + tests/quant/crypto-launch.test.ts (8 tests). NOT verified live:
+the sandbox cannot reach Solana RPC; payload shapes are from Solana's documented JSON-RPC and parsed
+fail-closed. Recording it per signal and ownership clusters (common funding) remain future PRs.
+Review of feat/ownership-evidence (independent): 1 MUST-FIX fixed (a failed attempt naming the mint could be
+shown as the launch and its signer as the creator; the anchor is now the earliest SUCCESSFUL transaction, its
+signature carried through, all-failed = unread). SHOULD-FIX taken: a 429 from the launch reads feeds the
+shared indexed-RPC cooldown; 20 s time box between calls; all caveats rendered; a tiny holding shows "less
+than 0.01%" instead of 0%; a holding above supply is "partial", not clamped to 100%; full address shown for
+inspection; an unfetchable transaction is not described as a missing fee payer. Not verified: live RPC
+payloads and whether the public node serves full history (a pruned node would look like "reached oldest").
