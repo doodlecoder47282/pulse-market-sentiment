@@ -59,7 +59,7 @@ import {
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
-import { readTokenFacts, indexedRpcAvailable, solRpc, RPC_INDEXED } from "./solanaToken";
+import { readTokenFacts, indexedRpcAvailable, noteIndexedRateLimit, solRpc, RPC_INDEXED } from "./solanaToken";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
@@ -1537,6 +1537,7 @@ function emptyAutopsy(now: number, dataState: CryptoAutopsy["dataState"], reason
 
 const LAUNCH_PAGE = 1000;
 const LAUNCH_MAX_PAGES = 3;
+const LAUNCH_BUDGET_MS = 20_000; // checked between calls; each call also has its own 12 s timeout
 
 /**
  * Pages the mint's transaction signatures back toward the earliest one (public
@@ -1549,36 +1550,43 @@ async function readLaunchEvidence(mint: string, supplyUi: number | null, notes: 
     return { slot: { ...slot, state: "unread", reason }, creator: creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi, slot: { ...slot, state: "unread", reason } }) };
   };
   if (!indexedRpcAvailable()) { notes.push("launch evidence skipped: the public indexed RPC is cooling down"); return unread("the public indexed RPC is cooling down; try again in a few minutes"); }
+  const deadline = Date.now() + LAUNCH_BUDGET_MS;
   try {
     const rows: SigRow[] = [];
     let before: string | undefined;
     let reachedOldest = false;
-    let oldestSig: string | null = null;
     for (let page = 0; page < LAUNCH_MAX_PAGES; page++) {
+      if (page > 0 && Date.now() > deadline) throw new Error("time budget spent before the earliest transaction was reached");
       const res = await solRpc("getSignaturesForAddress", [mint, { limit: LAUNCH_PAGE, ...(before ? { before } : {}) }], RPC_INDEXED);
       if (!Array.isArray(res)) throw new Error("unexpected signatures response");
-      for (const r of res) rows.push({ slot: Number(r?.slot), err: r?.err ?? null, blockTime: typeof r?.blockTime === "number" ? r.blockTime : null });
-      if (res.length > 0) { oldestSig = String(res[res.length - 1]?.signature ?? "") || oldestSig; before = oldestSig ?? undefined; }
+      for (const r of res) rows.push({ slot: Number(r?.slot), err: r?.err ?? null, blockTime: typeof r?.blockTime === "number" ? r.blockTime : null, signature: typeof r?.signature === "string" ? r.signature : undefined });
+      const last = res.length ? res[res.length - 1]?.signature : null;
       if (res.length < LAUNCH_PAGE) { reachedOldest = true; break; }
+      if (typeof last !== "string" || !last) throw new Error("a page ended without a signature to continue from");
+      before = last;
     }
     const slot = slotEvidence(rows, reachedOldest, LAUNCH_PAGE * LAUNCH_MAX_PAGES);
-    if (slot.state !== "ok" || !oldestSig) {
+    if (slot.state !== "ok" || !slot.anchorSignature) {
       return { slot, creator: creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi, slot }) };
     }
     let feePayer: string | null = null;
     let held: number | null = null;
-    try {
-      const tx = await solRpc("getTransaction", [oldestSig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], RPC_INDEXED);
-      feePayer = feePayerOf(tx);
-    } catch (e: any) { notes.push(`creator lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
-    if (feePayer) {
+    let txFetched = true;
+    if (Date.now() < deadline) {
+      try {
+        const tx = await solRpc("getTransaction", [slot.anchorSignature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], RPC_INDEXED);
+        if (tx == null) txFetched = false; else feePayer = feePayerOf(tx);
+      } catch (e: any) { txFetched = false; noteIndexedRateLimit(e); notes.push(`creator lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
+    } else { txFetched = false; }
+    if (feePayer && Date.now() < deadline) {
       try {
         const accts = await solRpc("getTokenAccountsByOwner", [feePayer, { mint }, { encoding: "jsonParsed" }], RPC_INDEXED);
         held = sumOwnerTokenUi(accts);
-      } catch (e: any) { notes.push(`creator holding lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
+      } catch (e: any) { noteIndexedRateLimit(e); notes.push(`creator holding lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
     }
-    return { slot, creator: creatorEvidence({ feePayer, feePayerTokenUi: held, supplyUi, slot }) };
+    return { slot, creator: creatorEvidence({ feePayer, feePayerTokenUi: held, supplyUi, slot, txFetched }) };
   } catch (e: any) {
+    noteIndexedRateLimit(e);
     const why = String(e?.message ?? e).slice(0, 100);
     notes.push(`launch evidence unavailable: ${why}`);
     return unread(`the public RPC did not answer (${why})`);

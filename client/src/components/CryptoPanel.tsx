@@ -292,10 +292,12 @@ function AutopsyCard() {
                 <div className="break-words" data-testid="crypto-autopsy-launch-creator">
                   <span className="font-medium text-foreground">Earliest fee payer: </span>
                   {ok.launch.creator.feePayer
-                    ? <span className="font-mono tabular-nums">{ok.launch.creator.feePayer.slice(0, 4)}…{ok.launch.creator.feePayer.slice(-4)} · {ok.launch.creator.holdsPctOfSupply != null ? `holds ${ok.launch.creator.holdsPctOfSupply}% of supply now` : <span className="text-amber-600 dark:text-amber-400">holding unread: {ok.launch.creator.reason}</span>}</span>
+                    ? <span className="font-mono tabular-nums"><span className="break-all">{ok.launch.creator.feePayer}</span> · {ok.launch.creator.holdsPctOfSupply != null ? (ok.launch.creator.holdsLessThanStep ? "holds less than 0.01% of supply now" : `holds ${ok.launch.creator.holdsPctOfSupply}% of supply now`) : <span className="text-amber-600 dark:text-amber-400">holding unread: {ok.launch.creator.reason}</span>}</span>
                     : <span className="text-amber-600 dark:text-amber-400">{ok.launch.creator.state === "partial" ? "not established: " : "unread: "}{ok.launch.creator.reason}</span>}
                 </div>
-                <div className="break-words text-muted-foreground">{[...ok.launch.slot.caveats.slice(0, 1), ...ok.launch.creator.caveats.slice(0, 1)].join(". ")}.</div>
+                <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                  {[...(ok.launch.slot.state === "ok" ? ok.launch.slot.caveats : []), ...(ok.launch.creator.feePayer ? ok.launch.creator.caveats : [])].map((cv) => <li key={cv} className="break-words">{cv}</li>)}
+                </ul>
               </div>
             </section>
           )}

@@ -6,7 +6,8 @@ import { readFileSync } from "node:fs";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type SigRow } from "../../shared/cryptoLaunch";
 
 const WALLET = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr";
-const r = (slot: number, err: unknown = null, blockTime: number | null = 1_700_000_000 + slot): SigRow => ({ slot, err, blockTime });
+let n = 0;
+const r = (slot: number, err: unknown = null, blockTime: number | null = 1_700_000_000 + slot): SigRow => ({ slot, err, blockTime, signature: `sig${n++}` });
 
 test("slot evidence: counts transactions in the earliest slot and the first three slots; failed ones are counted separately, never as buys", () => {
   const rows = [r(105), r(103), r(101), r(101), r(101, { InstructionError: 1 }), r(100), r(100), r(102, { err: 1 })];
@@ -18,6 +19,7 @@ test("slot evidence: counts transactions in the earliest slot and the first thre
   assert.equal(e.failedTxInFirstThreeSlots, 2);
   assert.equal(e.signaturesRead, 8);
   assert.equal(e.firstBlockTime, 1_700_000_100);
+  assert.ok(e.anchorSignature);
 });
 
 test("slot evidence: when the earliest transaction was not reached nothing about the launch is stated", () => {
@@ -51,9 +53,12 @@ test("creator evidence: percent of supply is arithmetic on what was read; every 
   const c = creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 50_000_000, supplyUi: 1_000_000_000, slot: ok });
   assert.equal(c.state, "ok");
   assert.equal(c.holdsPctOfSupply, 5);
+  assert.equal(creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 40, supplyUi: 1e6, slot: ok }).holdsLessThanStep, true, "0.004% is never shown as 0%");
+  assert.equal(creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 40, supplyUi: 1e6, slot: ok }).holdsPctOfSupply, 0.01);
   assert.equal(creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 0, supplyUi: 1e9, slot: ok }).holdsPctOfSupply, 0, "observed zero is a zero holding");
   assert.equal(creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 3, supplyUi: 3, slot: ok }).holdsPctOfSupply, 100);
-  assert.equal(creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 1e12, supplyUi: 1e9, slot: ok }).holdsPctOfSupply, 100, "never above 100");
+  assert.equal(creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 1e12, supplyUi: 1e9, slot: ok }).state, "partial", "a holding above the supply is a data defect, not 100%");
+  assert.equal(creatorEvidence({ feePayer: WALLET, feePayerTokenUi: 1.0005e9, supplyUi: 1e9, slot: ok }).holdsPctOfSupply, 100, "rounding-level excess is tolerated");
   for (const [amt, sup] of [[null, 1e9], [5, null], [5, 0], [-1, 1e9], [NaN, 1e9], [5, NaN]] as const) {
     const x = creatorEvidence({ feePayer: WALLET, feePayerTokenUi: amt as any, supplyUi: sup as any, slot: ok });
     assert.equal(x.state, "partial");
@@ -98,4 +103,39 @@ test("the autopsy reads the launch evidence without storing anything and exposes
   assert.match(body, /indexedRpcAvailable\(\)/, "respects the shared indexed-RPC cooldown");
   assert.match(body, /LAUNCH_MAX_PAGES/, "bounded paging");
   assert.match(src, /launch,\n      sourceNotes,/);
+});
+
+test("a failed attempt is never the launch: the anchor is the earliest SUCCESSFUL transaction", () => {
+  const failedFirst = [r(101), r(100, { InstructionError: 1 })];
+  const e = slotEvidence(failedFirst, true, 3000);
+  assert.equal(e.state, "ok");
+  assert.equal(e.firstSlot, 101, "not the failed attempt at slot 100");
+  assert.equal(e.sameSlotTx, 1);
+  assert.equal(e.failedTxInFirstThreeSlots, 0, "the failed attempt sits before the anchor window");
+  assert.equal(e.anchorSignature, failedFirst[0].signature, "the creator lookup uses the successful transaction's signature");
+  const allFailed = slotEvidence([r(5, { e: 1 }), r(4, { e: 1 })], true, 3000);
+  assert.equal(allFailed.state, "unread");
+  assert.equal(allFailed.sameSlotTx, null);
+  assert.match(String(allFailed.reason), /every transaction .* failed/);
+  const noSig = slotEvidence([{ slot: 9, err: null }], true, 3000);
+  assert.equal(noSig.state, "unread");
+  assert.match(String(noSig.reason), /no signature/);
+  // Among rows in the same slot, the later row (older in newest-first order) is the anchor.
+  const same = [r(7), r(7), r(7)];
+  assert.equal(slotEvidence(same, true, 3000).anchorSignature, same[2].signature);
+});
+
+test("an unfetchable earliest transaction is not described as a missing fee payer", () => {
+  const ok = slotEvidence([r(10)], true, 3000);
+  assert.match(String(creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi: 5, slot: ok, txFetched: false }).reason), /could not be fetched/);
+  assert.match(String(creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi: 5, slot: ok, txFetched: true }).reason), /did not expose/);
+});
+
+test("the launch read feeds the shared 429 cooldown and is time-boxed", () => {
+  const eng = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
+  const body = eng.slice(eng.indexOf("async function readLaunchEvidence"), eng.indexOf("export async function runCryptoAutopsy"));
+  assert.ok((body.match(/noteIndexedRateLimit\(e\)/g) ?? []).length >= 3, "every catch reports a 429");
+  assert.match(body, /LAUNCH_BUDGET_MS/);
+  const tok = readFileSync(new URL("../../server/solanaToken.ts", import.meta.url), "utf8");
+  assert.match(tok, /export function noteIndexedRateLimit/);
 });

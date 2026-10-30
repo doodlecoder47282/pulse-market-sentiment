@@ -14,6 +14,8 @@
 //     after any 429, and it is non-fatal: authorities alone complete a read.
 //     The scanner (45 s tick) and the community watch (60 s tick) each make
 //     at most one indexed call per tick, so about two a minute in all.
+//     The owner-triggered autopsy adds up to six indexed calls per run (gap 20 s,
+//     time-boxed to 20 s) and reports any 429 to the same cooldown.
 // A fact that could not be read is null with a state, never a value.
 
 import { holderConcentration, observedNumber, type DexPool, type HolderAccount } from "./cryptoStats";
@@ -23,6 +25,11 @@ export const RPC_INDEXED = ["https://api.mainnet-beta.solana.com"];
 let rpcId = 1;
 let indexedCooldownUntil = 0; // set after a 429: back off 5 min, shared by every caller
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Any caller that sees a 429 from the indexed RPC starts the shared 5-minute back-off. */
+export function noteIndexedRateLimit(e: unknown, now = Date.now()): void {
+  if (/429/.test(String((e as any)?.message ?? e))) indexedCooldownUntil = now + 5 * 60_000;
+}
 
 export function indexedRpcAvailable(now = Date.now()): boolean {
   return now > indexedCooldownUntil;
