@@ -11,6 +11,7 @@
 
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
+import type { LaunchEvidence } from "@shared/cryptoLaunch";
 import { apiJson } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -189,6 +190,7 @@ interface AutopsyResp {
   parity: { agrees: boolean; detail: string | null } | null;
   tracked: { verdict: Verdict; verdictCode: string | null; firstSeenAt: number } | null;
   stress: HolderStress | null;
+  launch?: LaunchEvidence | null;
   sourceNotes: string[]; notes: string[];
 }
 
@@ -277,6 +279,26 @@ function AutopsyCard() {
               </section>
             );
           })}
+          {ok.launch && (
+            <section data-testid="crypto-autopsy-launch">
+              <div className="text-[11px] font-medium text-muted-foreground">Launch and ownership evidence · public RPC, descriptive, not a rule</div>
+              <div className="mt-1 space-y-1 rounded border border-border/40 p-2 leading-snug">
+                <div className="break-words" data-testid="crypto-autopsy-launch-slot">
+                  <span className="font-medium text-foreground">Launch block: </span>
+                  {ok.launch.slot.state === "ok"
+                    ? <span className="font-mono tabular-nums">slot {ok.launch.slot.firstSlot} · {ok.launch.slot.sameSlotTx} transaction{ok.launch.slot.sameSlotTx === 1 ? "" : "s"} touching the mint in that slot · {ok.launch.slot.firstThreeSlotsTx} in the first three slots{ok.launch.slot.failedTxInFirstThreeSlots ? ` (+${ok.launch.slot.failedTxInFirstThreeSlots} failed)` : ""} · read {ok.launch.slot.signaturesRead}</span>
+                    : <span className="text-amber-600 dark:text-amber-400">{ok.launch.slot.state === "partial" ? "not established: " : "unread: "}{ok.launch.slot.reason}</span>}
+                </div>
+                <div className="break-words" data-testid="crypto-autopsy-launch-creator">
+                  <span className="font-medium text-foreground">Earliest fee payer: </span>
+                  {ok.launch.creator.feePayer
+                    ? <span className="font-mono tabular-nums">{ok.launch.creator.feePayer.slice(0, 4)}…{ok.launch.creator.feePayer.slice(-4)} · {ok.launch.creator.holdsPctOfSupply != null ? `holds ${ok.launch.creator.holdsPctOfSupply}% of supply now` : <span className="text-amber-600 dark:text-amber-400">holding unread: {ok.launch.creator.reason}</span>}</span>
+                    : <span className="text-amber-600 dark:text-amber-400">{ok.launch.creator.state === "partial" ? "not established: " : "unread: "}{ok.launch.creator.reason}</span>}
+                </div>
+                <div className="break-words text-muted-foreground">{[...ok.launch.slot.caveats.slice(0, 1), ...ok.launch.creator.caveats.slice(0, 1)].join(". ")}.</div>
+              </div>
+            </section>
+          )}
           {ok.stress && (
             <section data-testid="crypto-autopsy-stress">
               <div className="text-[11px] font-medium text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>

@@ -59,7 +59,8 @@ import {
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
-import { readTokenFacts, indexedRpcAvailable } from "./solanaToken";
+import { readTokenFacts, indexedRpcAvailable, solRpc, RPC_INDEXED } from "./solanaToken";
+import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
 
@@ -1517,6 +1518,8 @@ export interface CryptoAutopsy {
   parity: { agrees: boolean; detail: string | null } | null;
   tracked: { verdict: Candidate["verdict"]; verdictCode: VerdictCode | null; firstSeenAt: number } | null;
   stress: HolderStress | null;
+  /** Launch-block and creator evidence from public RPC; descriptive, never a gate. Null when not attempted. */
+  launch: LaunchEvidence | null;
   /** Sources that did not answer on this read; their gates read "unread", never pass. */
   sourceNotes: string[];
   notes: string[];
@@ -1529,7 +1532,57 @@ let autopsyLastStart = 0;
 let autopsyBusy = false;
 
 function emptyAutopsy(now: number, dataState: CryptoAutopsy["dataState"], reason: string, mint: string | null = null, retryAfterSec: number | null = null): CryptoAutopsy {
-  return { dataState, reason, retryAfterSec, asOf: now, cached: false, mint, pair: null, snapshot: null, gates: [], summary: null, desk: null, parity: null, tracked: null, stress: null, sourceNotes: [], notes: [] };
+  return { dataState, reason, retryAfterSec, asOf: now, cached: false, mint, pair: null, snapshot: null, gates: [], summary: null, desk: null, parity: null, tracked: null, stress: null, launch: null, sourceNotes: [], notes: [] };
+}
+
+const LAUNCH_PAGE = 1000;
+const LAUNCH_MAX_PAGES = 3;
+
+/**
+ * Pages the mint's transaction signatures back toward the earliest one (public
+ * RPC, at most 3 x 1000 rows) and reads that transaction's fee payer and the
+ * wallet's holding. Every failure is an "unread" state with its reason.
+ */
+async function readLaunchEvidence(mint: string, supplyUi: number | null, notes: string[]): Promise<LaunchEvidence> {
+  const unread = (reason: string): LaunchEvidence => {
+    const slot = slotEvidence([], false, LAUNCH_PAGE * LAUNCH_MAX_PAGES);
+    return { slot: { ...slot, state: "unread", reason }, creator: creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi, slot: { ...slot, state: "unread", reason } }) };
+  };
+  if (!indexedRpcAvailable()) { notes.push("launch evidence skipped: the public indexed RPC is cooling down"); return unread("the public indexed RPC is cooling down; try again in a few minutes"); }
+  try {
+    const rows: SigRow[] = [];
+    let before: string | undefined;
+    let reachedOldest = false;
+    let oldestSig: string | null = null;
+    for (let page = 0; page < LAUNCH_MAX_PAGES; page++) {
+      const res = await solRpc("getSignaturesForAddress", [mint, { limit: LAUNCH_PAGE, ...(before ? { before } : {}) }], RPC_INDEXED);
+      if (!Array.isArray(res)) throw new Error("unexpected signatures response");
+      for (const r of res) rows.push({ slot: Number(r?.slot), err: r?.err ?? null, blockTime: typeof r?.blockTime === "number" ? r.blockTime : null });
+      if (res.length > 0) { oldestSig = String(res[res.length - 1]?.signature ?? "") || oldestSig; before = oldestSig ?? undefined; }
+      if (res.length < LAUNCH_PAGE) { reachedOldest = true; break; }
+    }
+    const slot = slotEvidence(rows, reachedOldest, LAUNCH_PAGE * LAUNCH_MAX_PAGES);
+    if (slot.state !== "ok" || !oldestSig) {
+      return { slot, creator: creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi, slot }) };
+    }
+    let feePayer: string | null = null;
+    let held: number | null = null;
+    try {
+      const tx = await solRpc("getTransaction", [oldestSig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], RPC_INDEXED);
+      feePayer = feePayerOf(tx);
+    } catch (e: any) { notes.push(`creator lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
+    if (feePayer) {
+      try {
+        const accts = await solRpc("getTokenAccountsByOwner", [feePayer, { mint }, { encoding: "jsonParsed" }], RPC_INDEXED);
+        held = sumOwnerTokenUi(accts);
+      } catch (e: any) { notes.push(`creator holding lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
+    }
+    return { slot, creator: creatorEvidence({ feePayer, feePayerTokenUi: held, supplyUi, slot }) };
+  } catch (e: any) {
+    const why = String(e?.message ?? e).slice(0, 100);
+    notes.push(`launch evidence unavailable: ${why}`);
+    return unread(`the public RPC did not answer (${why})`);
+  }
 }
 
 export async function runCryptoAutopsy(input: unknown, now: number = Date.now()): Promise<CryptoAutopsy> {
@@ -1593,10 +1646,12 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       sourceNotes.push(`Jupiter did not answer (${String(e?.message ?? e).slice(0, 60)})`);
     }
 
+    let supplyUi: number | null = null;
     // 4) on-chain facts via the public Solana RPC (authorities, holder concentration)
     try {
       const pools = pairs.map((p: any) => ({ pairAddress: String(p.pairAddress), baseAmount: observedNumber(p?.liquidity?.base) }));
       const facts = await readTokenFacts(mint, pools, { withConcentration: indexedRpcAvailable() });
+      supplyUi = facts.supplyUi;
       c.mintAuthorityActive = facts.mintAuthorityActive;
       c.freezeAuthorityActive = facts.freezeAuthorityActive;
       if (facts.concentration === "ok") { c.top10Pct = facts.top10Pct; c.top10Method = facts.top10Method; }
@@ -1621,6 +1676,9 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       c.rcCheckedAt = Date.now();
     } catch { sourceNotes.push("rugcheck had no report for this token"); }
 
+    // 5b) launch block and creator evidence (public RPC, descriptive, never a gate)
+    const launch = await readLaunchEvidence(mint, supplyUi, sourceNotes);
+
     // 6) the desk's own scoring on the transient candidate; nothing is stored
     scoreCandidate(c);
 
@@ -1644,6 +1702,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       parity: { agrees, detail: agrees ? null : `gate table says killed=${summary.killed}, desk says hardKill=${c.hardKill}` },
       tracked: trackedHit ? { verdict: trackedHit.verdict, verdictCode: trackedHit.verdictCode, firstSeenAt: trackedHit.firstSeenAt } : null,
       stress: holderDumpStress({ top10Pct: c.top10Pct, top10Method: c.top10Method, fdv: c.fdv, marketCap: c.marketCap, liquidityUsd: c.liquidityUsd }),
+      launch,
       sourceNotes,
       notes: [
         "a single read: not a signal, not logged, not graded",
