@@ -55,7 +55,16 @@ export interface ReplayRow extends GradedSignalLike {
     boosted?: boolean | null;
     pumpfunGraduate?: boolean | null;
     bskyMentions1h?: number | null;
+    /** Decision-time evidence for the four gates older rows never stored (rule book 2026.10.27-2 onward). */
+    gates?: GateEvidence | null;
   };
+}
+
+export interface GateEvidence {
+  flowPolls: number; flowHits: number; flowNeed: number; flowWindow: number;
+  jupState: string | null; jupGapPct: number | null;
+  buys1h: number | null; sells1h: number | null;
+  deskRisk: string | null;
 }
 
 const WIN = new Set(["HIT_5M", "DOUBLED"]);
@@ -227,7 +236,19 @@ export function wouldEnterNow(r: ReplayRow, rules: CryptoRules = CRYPTO_RULES): 
   if (!fin(f.volAccel) || f.volAccel < rules.enter.minVolAccel) b.push("vol accel");
   if (!fin(f.netBuyRatio5m) || f.netBuyRatio5m < rules.enter.minNetBuyRatio5m) b.push("net buy ratio");
   if (rules.enter.requireTop10Read && !fin(f.top10Pct)) b.push("top-10 unread");
-  return { enter: b.length === 0, blockers: b, unchecked: ["flow sustained (2 of 3 polls)", "Jupiter agree/watch", "1 h sells observed", "desk risk on"] };
+  // The four gates older rows never stored: checked from the evidence written
+  // at decision time when the row has it, listed as unchecked when it does not.
+  const g = f.gates;
+  const unchecked: string[] = [];
+  if (!g) unchecked.push("flow sustained (2 of 3 polls)", "Jupiter agree/watch", "1 h sells observed", "desk risk on");
+  else {
+    if (!(g.flowPolls >= g.flowNeed && g.flowHits >= g.flowNeed)) b.push("flow not sustained");
+    if (g.jupState !== "agree" && g.jupState !== "watch") b.push(`Jupiter ${g.jupState ?? "unread"}`);
+    if (g.sells1h == null) b.push("1 h sells unread");
+    else if ((g.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h && g.sells1h === 0) b.push("honeypot pattern");
+    if (g.deskRisk !== "on") b.push(`desk risk ${g.deskRisk ?? "unread"}`);
+  }
+  return { enter: b.length === 0, blockers: b, unchecked };
 }
 
 export interface SplitReadout {
@@ -271,6 +292,8 @@ export interface ReevalReadout {
   agreeEnter: number;
   blockerCounts: Record<string, number>;
   unchecked: string[];
+  /** First signals whose decision-time gate evidence was recorded, of all considered. */
+  gateEvidence: { recorded: number; of: number };
   inSample: SplitReadout;
   outOfSample: SplitReadout;
   all: SplitReadout;
@@ -296,11 +319,12 @@ export function reevalReadout(rows: ReplayRow[], rules: CryptoRules = CRYPTO_RUL
     originallyEnter: firsts.filter((r) => r.verdict === "ENTER").length,
     agreeEnter: enter.filter((r) => r.verdict === "ENTER").length,
     blockerCounts,
-    unchecked: wouldEnterNow(firsts[0] ?? ({ features: {} } as ReplayRow), rules).unchecked,
+    unchecked: Array.from(new Set(firsts.flatMap((r) => wouldEnterNow(r, rules).unchecked))),
+    gateEvidence: { recorded: firsts.filter((r) => r.features.gates != null).length, of: firsts.length },
     inSample: split("in-sample (older half)", sorted.slice(0, cut), target),
     outOfSample: split("out-of-sample (newer half)", sorted.slice(cut), target),
     all: split("all", sorted, target),
-    lookAhead: "re-evaluation reads only fields written at detection; outcomes, peaks and horizon marks are used only to score. Split by detection date, older half first. Gates not stored at the time are unchecked, so the pass count is an upper bound.",
+    lookAhead: "re-evaluation reads only fields written at detection; outcomes, peaks and horizon marks are used only to score. Split by detection date, older half first. Rows written before gate evidence was recorded leave four gates unchecked, so the pass count is an upper bound until every row carries it.",
   };
 }
 

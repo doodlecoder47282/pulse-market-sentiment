@@ -93,3 +93,41 @@ test("re-evaluation splits by detection date, older half in-sample, and scores n
   assert.equal(r.reeval.rulesVersion, r.rulesVersion);
   assert.equal(CRYPTO_RULES.universe.targetMcapUsd, 5_000_000);
 });
+
+test("recorded decision-time gate evidence is re-checked; absent evidence stays unchecked (upper bound)", () => {
+  const base = row();
+  const good = { flowPolls: 3, flowHits: 2, flowNeed: 2, flowWindow: 3, jupState: "agree", jupGapPct: 1, buys1h: 80, sells1h: 60, deskRisk: "on" };
+  const withG = (g: any) => ({ ...base, features: { ...base.features, gates: g } });
+  const ok = wouldEnterNow(withG(good));
+  assert.equal(ok.enter, true);
+  assert.deepEqual(ok.unchecked, []);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, flowHits: 1 })).blockers, ["flow not sustained"]);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, flowPolls: 1, flowHits: 1 })).blockers, ["flow not sustained"], "one poll cannot be sustained");
+  assert.deepEqual(wouldEnterNow(withG({ ...good, jupState: "failed" })).blockers, ["Jupiter failed"]);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, jupState: "watch" })).blockers, []);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, jupState: null })).blockers, ["Jupiter unread"]);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, sells1h: null })).blockers, ["1 h sells unread"]);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, sells1h: 0, buys1h: 25 })).blockers, ["honeypot pattern"]);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, sells1h: 0, buys1h: 24 })).blockers, []);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, deskRisk: "off" })).blockers, ["desk risk off"]);
+  assert.deepEqual(wouldEnterNow(withG({ ...good, deskRisk: null })).blockers, ["desk risk unread"]);
+  // Outcome fields still cannot change the answer.
+  assert.equal(wouldEnterNow({ ...withG(good), outcome: "RUGGED", peakMcap: 9e9 } as ReplayRow).enter, true);
+});
+
+test("reevalReadout reports how many first signals carry decision-time gate evidence", () => {
+  const mk = (id: string, t: number, g: any) => ({ ...row({ id, coinKey: id, detectedAt: t }), features: { ...row().features, gates: g } });
+  const good = { flowPolls: 3, flowHits: 3, flowNeed: 2, flowWindow: 3, jupState: "agree", jupGapPct: 0, buys1h: 9, sells1h: 9, deskRisk: "on" };
+  const re = reevalReadout([mk("a", 1, good), mk("b", 2, null), mk("c", 3, good)] as ReplayRow[]);
+  assert.equal(re.gateEvidence.recorded, 2);
+  assert.equal(re.gateEvidence.of, 3);
+  assert.ok(re.unchecked.includes("desk risk on"), "the row without evidence keeps the gates unchecked");
+});
+
+test("the engine writes the gate evidence it later re-checks, and the replay loader reads it back", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
+  assert.match(src, /gates: gateEvidence\(c\)/);
+  assert.match(src, /gates: f\.gates && typeof f\.gates === "object" \? f\.gates : null/);
+  for (const k of ["flowPolls", "flowHits", "jupState", "sells1h", "deskRisk"]) assert.match(src, new RegExp(`${k}[,:]`));
+});

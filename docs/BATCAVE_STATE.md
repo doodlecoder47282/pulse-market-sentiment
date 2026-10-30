@@ -1256,3 +1256,17 @@ reason, agent health, and the graded record so far in plain counts); the autopsy
 and tracking banner follow it; tracked-caps labels are sentence case. Descriptive
 only: no new rule, score or claim; scores stay heuristics. Verified by CI's
 screenshots and 7-width audit only (no local build: registry unreachable).
+
+2026-10-29: record integrity, decision-time gate evidence (feat/gate-evidence). Prophecy's
+review (E1, partial) was right that the replay cannot re-check four ENTER gates because
+rows never stored them (sustained flow, Jupiter state, 1 h sells, desk risk). Every new
+signal now stores `features_json.gates` {flowPolls/flowHits/flowNeed/flowWindow, jupState,
+jupGapPct, buys1h, sells1h, deskRisk}; wouldEnterNow re-checks them when present and lists
+them as unchecked when absent, so the pass count stays an upper bound until a row carries
+the evidence. The replay readout says how many first signals carry it. Rule book version
+unchanged (2026.10.27-2); no gate or score changed; old rows are not rewritten or guessed.
+Tests: 3 new in crypto-replay.test.ts. Not done (named by the same review, each its own
+PR): ownership quality (creator/bundle/common-funding), size-specific executable quotes,
+a frozen-rule prospective ledger separate from retrospective matches. Prophecy's claim
+that the chronological split does not show rules were frozen is correct and already
+stated in the readout ("older half first").

@@ -42,7 +42,7 @@
 import { sqlite } from "./storage";
 import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, describeCryptoRules } from "../shared/cryptoRules";
-import { buildReplay, type ReplayRow, type CryptoReplay } from "../shared/cryptoReplay";
+import { buildReplay, type ReplayRow, type GateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -308,6 +308,19 @@ sqlite.exec(`
     ON crypto_signals(pair_address, verdict, detected_at / 86400000);
 `);
 
+/** The four ENTER gates' inputs as they stood when this signal was written (read by shared/cryptoReplay.ts). */
+function gateEvidence(c: Candidate): GateEvidence {
+  const { window: win, need } = CRYPTO_RULES.enter.sustainedPolls;
+  const recent = c.hist.slice(-win);
+  return {
+    flowPolls: recent.length, flowWindow: win, flowNeed: need,
+    flowHits: recent.filter((h) => (h.volAccel ?? 0) >= CRYPTO_RULES.enter.minVolAccel).length,
+    jupState: c.jupState ?? null, jupGapPct: c.jupGapPct ?? null,
+    buys1h: c.buys1h, sells1h: c.sells1h,
+    deskRisk: currentDeskRisk().state,
+  };
+}
+
 function persistSignal(c: Candidate): void {
   if (!c.verdict || c.verdict === "PASS") return;
   try {
@@ -340,6 +353,8 @@ function persistSignal(c: Candidate): void {
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
         // Funding / open-interest regime at signal time: recorded for the replay to test, never a gate.
         derivs: derivsRecord(lastDerivs()),
+        // Decision-time evidence for the four ENTER gates the replay could not re-check.
+        gates: gateEvidence(c),
       }),
       JSON.stringify(c.risk),
     );
@@ -1483,6 +1498,7 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
         securityCheckedAt: f.securityCheckedAt ?? null, rcLpLockedPct: f.rcLpLockedPct ?? null, socialScore: f.socialScore ?? null,
         fomo: f.fomo ?? null, meme: f.meme ?? null, narrativeHits: Array.isArray(f.narrativeHits) ? f.narrativeHits : null,
         boosted: f.boosted ?? null, pumpfunGraduate: f.pumpfunGraduate ?? null, bskyMentions1h: f.bskyMentions1h ?? null,
+        gates: f.gates && typeof f.gates === "object" ? f.gates : null,
       },
     };
   });
