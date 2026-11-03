@@ -1,0 +1,169 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { CRYPTO_RULES } from "../../shared/cryptoRules";
+import { advancePlan, newPlanState, planLevels, planReturnPct, planSummary, sizeFromBankroll, buildTradePrompt } from "../../shared/exitPlan";
+import { schwabRedirectUri, schwabConfigProblem } from "../../server/schwabOAuth";
+import { tokenKeyPolicy, wantsLocalKeyFile } from "../../server/tokenCrypto";
+import { loadLocalKey, localKeyPath, resolveTokenKeyPolicy } from "../../server/tokenKeyFile";
+import { DatabaseSync } from "node:sqlite";
+import { EXIT_PLAN_TABLE_SQL, EXIT_PLAN_UPSERT_SQL } from "../../server/exitPlanSql";
+
+const H = 3600_000;
+
+test("plan levels come from the rule book; trims at or above the target fold into it", () => {
+  const lv = planLevels(500_000);
+  assert.deepEqual(lv.filter((l) => l.kind === "trim").map((l) => l.multiple), [2, 4]);
+  const tgt = lv.find((l) => l.kind === "target")!;
+  assert.equal(tgt.mcap, CRYPTO_RULES.universe.targetMcapUsd);
+  assert.equal(tgt.sellShare, 0.25);
+  const near = planLevels(1_500_000); // 4x = 6M is past the 5M target
+  assert.deepEqual(near.filter((l) => l.kind === "trim").map((l) => l.multiple), [2]);
+  assert.equal(near.find((l) => l.kind === "target")!.sellShare, 0.5);
+  assert.equal(lv.find((l) => l.kind === "stop")!.multiple, 1 + CRYPTO_RULES.sizing.suggestedStopPct / 100);
+});
+
+test("path: trims fill at the level, stop moves to entry after the first trim, stop fills at the sample", () => {
+  let s = newPlanState(100_000, 20_000, 0, "t")!;
+  s = advancePlan(s, { at: 1, mcap: 150_000, liquidity: 25_000 });
+  assert.equal(s.fills.length, 0);
+  s = advancePlan(s, { at: 2, mcap: 230_000, liquidity: 30_000 });
+  assert.equal(s.fills.length, 1);
+  assert.equal(s.fills[0].multiple, 2);        // at the level, not the sample
+  assert.equal(s.remaining, 0.5);
+  assert.equal(s.stopMultiple, 1);
+  s = advancePlan(s, { at: 3, mcap: 90_000, liquidity: 22_000 });
+  assert.equal(s.closedAt, 3);
+  assert.equal(s.fills[1].kind, "stop");
+  assert.equal(s.fills[1].multiple, 0.9);      // gapped through: the sample
+  assert.equal(s.fills[1].share, 0.5);
+  const r = planReturnPct(s)!;
+  assert.ok(r > 0 && r < 60, `net ${r}`);
+});
+
+test("path: several levels in one sample, liquidity stop, time stop, out-of-order samples ignored", () => {
+  let s = newPlanState(100_000, 20_000, 0, "t")!;
+  s = advancePlan(s, { at: 5, mcap: 6_000_000, liquidity: 200_000 });
+  assert.deepEqual(s.fills.map((f) => [f.kind, f.multiple, f.share]), [["trim", 2, 0.5], ["trim", 4, 0.25], ["target", 50, 0.25]]);
+  assert.equal(s.closedAt, 5);
+
+  let l = newPlanState(100_000, 20_000, 0, "t")!;
+  l = advancePlan(l, { at: 1, mcap: 120_000, liquidity: 13_000 });
+  assert.equal(l.fills[0].kind, "liquidityStop");
+
+  let t = newPlanState(100_000, 20_000, 0, "t")!;
+  t = advancePlan(t, { at: 10, mcap: 110_000, liquidity: 20_000 });
+  const before = t;
+  t = advancePlan(t, { at: 5, mcap: 10, liquidity: 20_000 });
+  assert.equal(t, before);
+  t = advancePlan(t, { at: CRYPTO_RULES.sizing.holdHorizonHours * H, mcap: 120_000, liquidity: 20_000 });
+  assert.equal(t.fills[0].kind, "timeStop");
+
+  let m = newPlanState(100_000, 20_000, 0, "t")!;
+  m = advancePlan(m, { at: 1, mcap: null, liquidity: null }); // missing is not a sample
+  assert.equal(m.closedAt, null);
+});
+
+test("pulled pool returns -100; summary gate says INSUFFICIENT DATA under the sample", () => {
+  let s = newPlanState(100_000, 20_000, 0, "t")!;
+  s = advancePlan(s, { at: 1, mcap: 0, liquidity: 0 });
+  assert.equal(planReturnPct(s), -100);
+  const sum = planSummary([s]);
+  assert.equal(sum.ready, false);
+  assert.match(sum.label, /INSUFFICIENT DATA: 1 of 50/);
+});
+
+test("size: bankroll x risk / |stop|, capped by the pool maximum; no bankroll, no size", () => {
+  assert.equal(sizeFromBankroll(null, 400).sizeUsd, null);
+  const r = sizeFromBankroll(5_000, 400);
+  assert.equal(r.sizeUsd, Math.floor(5_000 * 0.01 / 0.35));
+  assert.equal(r.bound, "risk");
+  const p = sizeFromBankroll(100_000, 400);
+  assert.equal(p.sizeUsd, 400);
+  assert.equal(p.bound, "pool");
+  assert.equal(sizeFromBankroll(5_000, null).sizeUsd, null);
+});
+
+test("prompt carries the data, the plan and unread states, never a fake zero", () => {
+  const txt = buildTradePrompt({
+    symbol: "TST", name: "Test", chain: "solana", tokenAddress: "Mint111", pairAddress: "Pair111", dexId: "pumpswap",
+    priceUsd: 0.0001, marketCap: 100_000, liquidityUsd: 20_000, vol5m: null, vol1h: 5000, vol24h: null,
+    buys5m: 10, sells5m: null, chg5m: 1, chg1h: null, chg24h: null, ageMinutes: 30,
+    mintAuthorityActive: false, freezeAuthorityActive: null, top10Pct: null, rcLpLockedPct: null, rcRisks: [], rugFlags: [],
+    boosted: false, pumpfunGraduate: true, pumpLive: false, narrativeHits: [], verdict: "ENTER", score: 72, verdictReasons: ["ok"],
+  }, "$142", CRYPTO_RULES, 0);
+  assert.match(txt, /Mint111/);
+  assert.match(txt, /sell 50% at 2x/);
+  assert.match(txt, /freeze authority unread/);
+  assert.match(txt, /top-10 holders unread/);
+  assert.match(txt, /Size: \$142/);
+  assert.doesNotMatch(txt, /top-10 holders 0/);
+});
+
+test("Railway: callback defaults from the public domain; an explicit value wins", () => {
+  assert.equal(schwabRedirectUri({ RAILWAY_PUBLIC_DOMAIN: "x.up.railway.app" }), "https://x.up.railway.app/api/schwab/oauth/callback");
+  assert.equal(schwabRedirectUri({ RAILWAY_PUBLIC_DOMAIN: "x.up.railway.app", SCHWAB_REDIRECT_URI: "https://127.0.0.1" }), "https://127.0.0.1");
+  assert.equal(schwabRedirectUri({}), "");
+  assert.equal(schwabConfigProblem({ SCHWAB_CLIENT_ID: "a", SCHWAB_CLIENT_SECRET: "b", RAILWAY_PUBLIC_DOMAIN: "x.up.railway.app" }), null);
+  assert.match(String(schwabConfigProblem({ SCHWAB_CLIENT_ID: "a", SCHWAB_CLIENT_SECRET: "b" })), /SCHWAB_REDIRECT_URI/);
+});
+
+test("Railway: with a volume and no BATCAVE_TOKEN_KEY the key is generated on the volume; without one, storage stays locked", () => {
+  const vol = mkdtempSync(path.join(os.tmpdir(), "vol-"));
+  try {
+    const env = { BATCAVE_BIND_HOST: "0.0.0.0", HOST: "0.0.0.0", RAILWAY_VOLUME_MOUNT_PATH: vol };
+    assert.equal(wantsLocalKeyFile(env), true);
+    const p = localKeyPath(env);
+    assert.equal(p, path.join(vol, ".batcave", "token.key"));
+    // The deploy guide mounts the volume at /app/data, inside the app's own data/: allowed only as the volume.
+    assert.equal(loadLocalKey(p, { create: true, cwd: path.dirname(vol) + "/" + "x", volume: null })?.ok, true);
+    rmSync(path.join(vol, ".batcave"), { recursive: true, force: true });
+    const inside = loadLocalKey(path.join(vol, ".batcave", "token.key"), { create: true, cwd: vol, volume: null });
+    assert.equal(inside?.ok, false);
+    const k = loadLocalKey(p, { create: true, cwd: vol, volume: vol });
+    assert.ok(k?.ok);
+    assert.equal(tokenKeyPolicy(env, k).mode, "encrypted");
+    const bare = { BATCAVE_BIND_HOST: "0.0.0.0", HOST: "0.0.0.0" };
+    assert.equal(wantsLocalKeyFile(bare), false);
+    assert.equal(tokenKeyPolicy(bare, null).mode, "locked");
+  } finally { rmSync(vol, { recursive: true, force: true }); }
+});
+
+test("plan rows round-trip with the TEXT signal ids crypto_signals uses", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(EXIT_PLAN_TABLE_SQL);
+  const up = db.prepare(EXIT_PLAN_UPSERT_SQL);
+  up.run({ id: "solana:Pair111:1793744274352", tok: "Mint", json: "{}", closed: 0, now: 1 });
+  up.run({ id: "solana:Pair111:1793744274352", tok: "Mint", json: "{\"a\":1}", closed: 1, now: 2 });
+  const row = db.prepare("SELECT state_json, closed FROM crypto_exit_plans").all() as any[];
+  assert.equal(row.length, 1);
+  assert.equal(row[0].closed, 1);
+});
+
+test("liquidity stop never credits more than the next unfilled level; stale open plans are no data", () => {
+  let s = newPlanState(100_000, 20_000, 0, "t")!;
+  s = advancePlan(s, { at: 1, mcap: 1_000_000, liquidity: 12_000 });
+  assert.equal(s.fills[0].kind, "liquidityStop");
+  assert.equal(s.fills[0].multiple, 2);
+  let n = newPlanState(100_000, 20_000, 0, "t")!;
+  n = advancePlan(n, { at: 1, mcap: 50_000, liquidity: null }); // cap without liquidity: not priced
+  assert.equal(n.closedAt, null);
+  const open = newPlanState(100_000, 20_000, 0, "t")!;
+  const sum = planSummary([open], (CRYPTO_RULES.sizing.holdHorizonHours + 25) * H);
+  assert.equal(sum.noData, 1);
+  assert.equal(sum.open, 0);
+});
+
+test("resolved policy on a Railway volume inside the app dir is encrypted from the volume file", () => {
+  const vol = mkdtempSync(path.join(os.tmpdir(), "appdata-"));
+  const prev = process.cwd();
+  try {
+    process.chdir(path.dirname(vol));
+    const env = { HOST: "0.0.0.0", RAILWAY_VOLUME_MOUNT_PATH: vol };
+    const r = resolveTokenKeyPolicy(env);
+    assert.equal(r.policy.mode, "encrypted");
+    assert.equal(r.policy.keySource, "file");
+  } finally { process.chdir(prev); rmSync(vol, { recursive: true, force: true }); }
+});

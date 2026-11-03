@@ -12,6 +12,7 @@
 import CoinLinks from "./CoinLinks";
 import CryptoHowTo from "./CryptoHowTo";
 import BundleRow from "./BundleRow";
+import CoinDesk from "./CoinDesk";
 import type { CardBundle } from "@shared/cryptoBundle";
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
@@ -900,6 +901,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
         </div>
       )}
     </button>
+    {isOpen && <CoinDesk c={c} />}
     {isOpen && <CoinLinks chain={c.chain} mint={c.tokenAddress} symbol={c.symbol} />}
     </div>
   );

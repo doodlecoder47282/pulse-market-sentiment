@@ -19,6 +19,9 @@ const PINNED: Record<string, string> = {
   // honeypot kills, top-10 / LP-lock / liq-over-mcap flags, security retry, desk-risk age and the cost constants;
   // watch.minScoreWithKill renamed mcapCeiling.watchMinScore (it was never a hard-kill floor). No number changed.
   "2026.10.27-2": "66e21bc4fa45805d9223eba61ef55b29a1ca58b6854ce03820f75226dc09e0f3",
+  // 2026.11.03-1: owner-approved exit plan (exitPlan: trims 50% at 2x, 25% at 4x, rest at the target; stop to entry
+  // after the first trim; 1% bankroll risk sizing). No ENTER/WATCH/PASS threshold changed.
+  "2026.11.03-1": "06c63f87224619a93a1b8d3769b62f9e82e234d69c8c1e0fa45a32e409e669f7",
 };
 
 test("crypto rule book content is pinned to its version", () => {
@@ -42,7 +45,7 @@ test("the engine, stats and verdict read the book instead of carrying their own 
   // (a threshold nobody reads is a hollow pin). Descriptive leaves (booleans,
   // the chain list) document the gate; their enforcement is asserted above.
   const leaves = (o: any, prefix: string): Array<[string, unknown]> => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" && !Array.isArray(v) ? leaves(v, `${prefix}${k}.`) : [[`${prefix}${k}`, v] as [string, unknown]]));
-  const corpus = ["server/cryptoEngine.ts", "server/cryptoStats.ts", "server/sources/dexCross.ts", "shared/cryptoVerdict.ts", "shared/cryptoVerify.ts", "shared/memeStructure.ts", "shared/cryptoExpectancy.ts"].map(src).join("\n");
+  const corpus = ["server/cryptoEngine.ts", "server/cryptoStats.ts", "server/sources/dexCross.ts", "shared/cryptoVerdict.ts", "shared/cryptoVerify.ts", "shared/memeStructure.ts", "shared/cryptoExpectancy.ts", "shared/exitPlan.ts"].map(src).join("\n");
   const referenced = (leaf: string) => {
     const parent = leaf.replace(/\.[^.]+$/, "");
     return [`CRYPTO_RULES.${leaf}`, `rules.${leaf}`, `CRYPTO_RULES.${parent};`, `CRYPTO_RULES.${parent}.`, `= CRYPTO_RULES.${parent}`].some((needle) => corpus.includes(needle));
