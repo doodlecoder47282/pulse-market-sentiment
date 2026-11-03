@@ -41,7 +41,7 @@ interface Props {
 }
 
 export default function TabHeadline({ tab, showExplainer = true }: Props) {
-  const { data, isLoading } = useQuery<HeadlinePayload>({
+  const { data, isLoading, isError } = useQuery<HeadlinePayload>({
     queryKey: ["/api/headline", tab],
     queryFn: async () => {
       const r = await apiRequest("GET", `/api/headline?tab=${tab}`);
@@ -55,6 +55,15 @@ export default function TabHeadline({ tab, showExplainer = true }: Props) {
   // the bullets and explainer open on tap.
   const [open, setOpen] = useState(false);
 
+  if (isError) {
+    // An honest answer: the summary did not load. Not a spinner that never ends.
+    return (
+      <div className="flex min-h-[44px] items-center gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-2 text-sm text-amber-300" data-testid={`headline-${tab}`} data-answer-tab={tab} data-ready="1">
+        <AlertTriangle className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 leading-snug">Summary unavailable: the server did not answer. The panels below still load on their own.</span>
+      </div>
+    );
+  }
   if (isLoading || !data) {
     return <div className="h-11 rounded-md border border-border/30 bg-muted/10 animate-pulse" />;
   }

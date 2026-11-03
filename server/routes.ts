@@ -3028,6 +3028,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
   // ─── Plain-English headlines (per-tab synthesis) ────────────────────────
 
+  const headlineCache = new Map<string, { at: number; value: unknown }>();
   app.get("/api/headline", async (req, res) => {
     try {
       const tab = String(req.query.tab || "global").toLowerCase();
@@ -3035,9 +3036,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (!allowed.includes(tab)) {
         return res.status(400).json({ error: `tab must be one of: ${allowed.join(", ")}` });
       }
+      // One build per tab per 20 s: every open phone polls this, and Chart and
+      // Heatseeker compose the option-chain map for it.
+      const hit = headlineCache.get(tab);
+      if (hit && Date.now() - hit.at < 20_000) return res.json(hit.value);
       const { buildHeadline } = await import("./headline");
       const port = Number(process.env.PORT || 5000);
       const headline = await buildHeadline({ tab: tab as any, port });
+      headlineCache.set(tab, { at: Date.now(), value: headline });
       res.json(headline);
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e) });

@@ -4,10 +4,12 @@
 // through CDP so the CSS touch rules apply exactly as on a real iPhone/iPad.
 // Run in CI against a production build on BASE_URL. Writes rep/ux/.
 import { chromium } from "playwright";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync as readFileSyncTop } from "node:fs";
 
 const BASE = process.env.BASE_URL || "http://127.0.0.1:5070";
 const OUT = process.env.UX_OUT || "rep/ux";
+// Read once up front: the tab loop needs answerExempt, the scorecard needs the rest.
+const budgetForRun = JSON.parse(readFileSyncTop(new URL("./budget.json", import.meta.url), "utf8"));
 const tabs = ["signals", "chart", "models", "heatseeker", "tradedesk", "regime", "cosmos", "news", "takefive", "edgelab", "crypto"];
 const viewports = [
   { name: "phone-se", width: 375, height: 667, mobile: true },
@@ -243,12 +245,16 @@ for (const vp of viewports) {
       await btn.first().click({ timeout: 5000 }).catch((e) => { entry.clickError = e.message.split("\n")[0]; });
     }
     // Time to the tab's answer: its one-line answer (TabHeadline, or the Crypto
-    // Desk brief) is visible with data. null = this tab has no answer line, or
-    // it did not arrive within 10 s (both counted in tabsWithoutAnswer).
-    entry.answerMs = await p.locator(`[data-answer-tab="${t}"][data-ready="1"]`).first()
+    // Desk brief) visible with data, timed in parallel with the network
+    // settling so a slow or missing answer never inflates switchMs. Tabs named
+    // in budget.answerExempt have no answer line yet and are not waited on.
+    const exempt = (budgetForRun.answerExempt ?? []).includes(t);
+    const answerP = exempt ? Promise.resolve(null) : p.locator(`[data-answer-tab="${t}"][data-ready="1"]`).first()
       .waitFor({ state: "visible", timeout: 10000 }).then(() => Date.now() - c0).catch(() => null);
     await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     entry.switchMs = Date.now() - c0;
+    entry.answerMs = await answerP;
+    entry.answerExempt = exempt;
     // Layout shift in two windows: while the tab loads (skeleton -> content,
     // expected in a data app, kept under a loose ceiling) and after its data
     // has arrived (shifts while the user is reading: the strict budget).
@@ -260,6 +266,19 @@ for (const vp of viewports) {
     if (entry.cls > 0.05) entry.shifts = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
     entry.longTaskMs = await p.evaluate(() => Math.round(window.__longTasks));
     Object.assign(entry, await p.evaluate(measure, vp.mobile));
+    // Collapsed "More detail" sections are not mounted while closed, so open
+    // them and measure again: the open state is a superset of the closed one,
+    // so each count keeps the larger of the two passes.
+    const toggles = p.locator(`[data-testid^="quick-details-toggle-"][aria-expanded="false"]:visible`);
+    const nClosed = await toggles.count().catch(() => 0);
+    if (nClosed > 0) {
+      for (let k = 0; k < nClosed; k++) await toggles.first().click({ timeout: 5000 }).catch(() => {});
+      await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await p.waitForTimeout(1500);
+      const openM = await p.evaluate(measure, vp.mobile);
+      for (const [k, v] of Object.entries(openM)) if (typeof v === "number" && typeof entry[k] === "number") entry[k] = Math.max(entry[k], v);
+      entry.openedDetails = nClosed;
+    }
     await p.screenshot({ path: `${OUT}/${vp.name}/${String(i + 1).padStart(2, "0")}-${t}.png` });
     report.push(entry);
   }
@@ -301,7 +320,7 @@ console.log("ux audit done", report.length);
         tabSwitchMs: Math.max(0, ...tabsHere.map((e) => e.switchMs ?? 0)),
         answerMs: Math.max(0, ...tabsHere.map((e) => e.answerMs ?? 0)),
       },
-      tabsWithoutAnswer: tabsHere.filter((e) => e.answerMs == null).map((e) => e.tab),
+      tabsWithoutAnswer: tabsHere.filter((e) => e.answerMs == null && !e.answerExempt).map((e) => e.tab),
       tabsMeasured: tabsHere.length,
     };
     scorecard[vp] = s;
@@ -309,8 +328,7 @@ console.log("ux audit done", report.length);
     for (const k of ["docOverflowX", "clippedText", "pageErrorsExcluding503"]) if (s[k] > pv[k]) failures.push(`${vp}: ${k} ${s[k]} > ${pv[k]}`);
     for (const k of ["offscreen", "tapTargetsUnder24", "overlappingText"]) if (pv[k] != null && s[k] > pick(pv[k], vp)) failures.push(`${vp}: ${k} ${s[k]} > ${pick(pv[k], vp)}`);
     for (const [k, lim] of Object.entries(budget.perTab)) if (s.worstTab[k] > lim) failures.push(`${vp}: worst tab ${k} ${s.worstTab[k]} > ${lim}`);
-    const lim = budget.tabsWithoutAnswer ?? null;
-    if (lim != null && s.tabsWithoutAnswer.length > lim) failures.push(`${vp}: ${s.tabsWithoutAnswer.length} tabs without an answer line in 10 s (${s.tabsWithoutAnswer.join(", ")}) > ${lim}`);
+    if (s.tabsWithoutAnswer.length > 0) failures.push(`${vp}: no answer line within 10 s on ${s.tabsWithoutAnswer.join(", ")} (exempt: ${(budget.answerExempt ?? []).join(", ") || "none"})`);
     if (s.tabsMeasured < tabs.length) failures.push(`${vp}: only ${s.tabsMeasured} of ${tabs.length} tabs measured`);
   }
   writeFileSync(`${OUT}/scorecard.json`, JSON.stringify({ scorecard, failures }, null, 1));

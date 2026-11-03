@@ -1277,3 +1277,16 @@ Signals = whale count this hour and direction plus the regime; Models, Regime an
 (Trade Desk: the 20-minute outlook line when it exists). The old descriptions moved to the second line.
 Cosmos, News and Take Five keep their description (no market answer to give). /api/odte/map is registered
 for in-process calls. shared/headlineLines.ts + tests.
+Review of feat/quick-view (independent): 2 MUST-FIX fixed. (1) The audit waited up to 10 s for an answer
+on Edge Lab before taking switchMs, which would fail tabSwitchMs everywhere; the answer is now timed in
+parallel with the network settling, and tabs without an answer are a NAMED exemption (answerExempt:
+["edgelab"]), so any other missing answer fails the run. (2) The Signals answer counted SPY whales only and
+said "no whale flow" when the scanner was down or the read failed; it now counts every scanned symbol and
+says "whale scan not running / stale" from the scanner's own snapshot. SHOULD-FIX taken: /api/headline is
+built once per tab per 20 s; the levels line mirrors the Today card (pin fallback, each missing level
+named, "session closed" instead of "chain stale", the map's own no_gex reason); missing levels carry the
+map's reason; "predictor did not answer" is told apart from "no gamma data"; Trade Desk no longer leads
+with the predictor's forecast sentence; a failed headline or crypto feed shows an honest unavailable line
+instead of an endless skeleton; an empty scanner says "no pools scanned yet"; collapsed sections are opened
+and measured by the audit on phones. Left: the 0DTE map ledger's note text; whale history DB-read failures
+still return an empty list (scanner state now covers the common case).

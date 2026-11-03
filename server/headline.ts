@@ -4,9 +4,9 @@
 // Goal: one human sentence + 2-3 bullets the user can read in 3 seconds.
 
 import { predictTransition } from "./regimePredictor";
-import { internalJson } from "./internalApi";
+import { internalJson, callInternal } from "./internalApi";
 import { getWhaleAlertHistory } from "./whalePersistence";
-import { levelsLine, whaleLine } from "../shared/headlineLines";
+import { levelsLine, whaleLine, scanState } from "../shared/headlineLines";
 
 type Tab =
   | "signals"
@@ -70,17 +70,21 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   void port; // kept in BuildArgs for callers; routes are called in-process now
   const base = "";
 
-  // Always-on shared context: current regime + transition prediction
-  // Today's dealer levels lead the market tabs' answer lines (same map as the Today card).
+  // Shared context: the regime predictor, whale alerts across every scanned
+  // symbol, and (Chart, Heatseeker) today's dealer levels from the same map
+  // the Today card reads.
   const needsMap = tab === "chart" || tab === "heatseeker";
-  const [regime, models, whaleHist, odteMap] = await Promise.all([
-    safeFetch<any>(`${base}/api/regime`),
+  const [models, whaleHist, mapRes, flowSnap] = await Promise.all([
     safeFetch<any>(`${base}/api/regime/predict?symbol=^GSPC&horizonMinutes=20`, 2500),
-    Promise.resolve(getWhaleAlertHistory({ days: 1, symbol: "SPY", limit: 50 })).catch(() => []),
-    needsMap ? safeFetch<any>(`${base}/api/odte/map?symbol=${encodeURIComponent("$SPX")}`, 3000) : Promise.resolve(null),
+    Promise.resolve(getWhaleAlertHistory({ days: 1, limit: 200 })).catch(() => []),
+    needsMap ? callInternal<any>(`${base}/api/odte/map?symbol=${encodeURIComponent("$SPX")}`, { timeoutMs: 3000 }).catch((e: any) => ({ ok: false, status: 0, body: null, error: String(e?.message ?? e) })) : Promise.resolve(null),
+    import("./flowAlertEngine").then((m) => m.getFlowSnapshot()).catch(() => null),
   ]);
-  void regime;
+  const odteMap = mapRes && mapRes.ok ? mapRes.body : null;
+  const mapWhy = !mapRes || mapRes.ok ? null
+    : String((mapRes.body as any)?.reason ?? (mapRes.body as any)?.message ?? (mapRes.body as any)?.error ?? (mapRes as any).error ?? `status ${mapRes.status}`);
   const levels = levelsLine(odteMap);
+  const levelsMissing = `Dealer levels unavailable${mapWhy ? `: ${mapWhy}` : ": the option-chain map did not answer"}.`;
   const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
 
   // Missing predictor output is "UNAVAILABLE", never read as NEUTRAL.
@@ -91,9 +95,13 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   // builds a sentence around "unavailable regime" or implies a neutral read.
   const known = currentRegime !== "UNAVAILABLE" && currentRegime !== "GAMMA_UNKNOWN";
   const withRegime = (base: string) => (known ? `${base} — ${regimeWord(currentRegime)} regime.` : `${base}.`);
+  // Two different "unknown" causes, named apart: the predictor did not answer, or it answered without gamma data.
+  const regimeMissing = models == null
+    ? "Regime reading unavailable: the predictor did not answer."
+    : "Regime unknown until Schwab gamma and VIX term data arrive.";
 
   // Whale flow last hour: quick directional count (shared/headlineLines.ts)
-  const whaleSummary = whaleLine(whaleHist as any[], Date.now());
+  const whaleSummary = whaleLine(whaleHist as any[], Date.now(), scanState(flowSnap as any, Date.now()));
 
   // Per-tab synthesis
   switch (tab) {
@@ -119,7 +127,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: levels ?? "Dealer levels unavailable: the Schwab option chain did not answer.",
+        topLine: levels ?? levelsMissing,
         subLine: withRegime("SPX cash chart with dealer levels. Levels are estimates from the Schwab option chain"),
         bullets: [
           "Dealer levels: call wall (resistance), put wall (support), gamma flip (pivot).",
@@ -134,8 +142,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: known ? `${cap(regimeWord(currentRegime))} regime. Composite score and forward path below.` : "Regime unknown until Schwab gamma and VIX term data arrive.",
-        subLine: "ML Lab below shows forward path scenarios (bull q90, base q50, bear q10).",
+        topLine: known ? `${cap(regimeWord(currentRegime))} regime. Composite score and forward path follow.` : regimeMissing,
+        subLine: "ML Lab (under More detail on phones) shows forward path scenarios (bull q90, base q50, bear q10).",
         bullets: [
           "Composite score blends DFI, gamma zone, IV term, vanna bias, charm pin, flow.",
           "ML Lab projects the next 60-240 minutes with confidence bands.",
@@ -149,7 +157,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: levels ? `0DTE · ${levels}` : "0DTE levels unavailable: the Schwab option chain did not answer.",
+        topLine: levels ? `0DTE · ${levels}` : `0DTE · ${levelsMissing}`,
         subLine: tone === "warning"
           ? "Heavy chop: price has been pinning around strikes (descriptive, not a trade call)."
           : tone === "bull"
@@ -170,7 +178,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: headlineRegime || (known ? `${cap(regimeWord(currentRegime))} regime; the 20-minute outlook is warming up.` : "Regime unknown: the 20-minute outlook waits for Schwab gamma and VIX term data."),
+        topLine: known ? `${cap(regimeWord(currentRegime))} regime now; the 20-minute outlook (heuristic, uncalibrated) is on the desk.` : regimeMissing,
         subLine: "Trade Desk: 20-minute regime outlook, edge tracking and position tools. Heuristic weights, not calibrated probabilities.",
         bullets: [
           "Predictor uses DFI slope, gamma flip, vanna, charm, IV term, VIX term, whale pressure.",
@@ -185,7 +193,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: known ? `${cap(regimeWord(currentRegime))} regime · ${whaleSummary.charAt(0).toLowerCase() + whaleSummary.slice(1)}.` : "Regime unknown until Schwab gamma and VIX term data arrive.",
+        topLine: known ? `${cap(regimeWord(currentRegime))} regime · ${whaleSummary.charAt(0).toLowerCase() + whaleSummary.slice(1)}.` : regimeMissing,
         subLine: "Macro, sector rotation and cross-asset read: sector rotation map, cross-asset canaries and dealer gamma map.",
         bullets: [
           "Sector web shows leadership rotation — risk-on (tech/discretionary) vs risk-off (staples/utilities).",

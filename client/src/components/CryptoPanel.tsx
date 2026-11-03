@@ -425,26 +425,27 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
 
 // ─── desk brief: the one-glance read for someone with no time ────────────
 
-function DeskBrief({ feed, health, sig, enters, watches, onPick }: {
-  feed?: FeedResp; health?: HealthResp; sig?: SignalsResp;
+function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
+  feed?: FeedResp; feedError?: boolean; health?: HealthResp; sig?: SignalsResp;
   enters: Candidate[]; watches: Candidate[]; onPick: (c: Candidate) => void;
 }) {
   const engines = (health?.engines ?? []).filter((e) => e.name !== "watchdog");
   const notOk = engines.filter((e) => e.status !== "ok");
   const picks = [...enters, ...[...watches].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))].slice(0, 3);
   const rec = sig?.stats.enterCoins;
-  const headline = !feed ? "Reading the desk…"
+  const headline = !feed ? (feedError ? "Desk feed unavailable: the server did not answer" : "Reading the desk…")
+    : feed.trackedCount === 0 ? "No pools scanned yet: the scanner is warming up"
     : enters.length > 0 ? `${enters.length} coin${enters.length === 1 ? "" : "s"} clear${enters.length === 1 ? "s" : ""} every ENTER rule right now`
     : watches.length > 0 ? `Nothing clears every ENTER rule. ${watches.length} forming`
     : "Nothing clears the bar right now";
   return (
-    <div className="min-h-[15rem] rounded-xl border border-border/60 bg-card/60 p-4 sm:min-h-[11rem]" data-testid="crypto-brief" data-answer-tab="crypto" data-ready={feed ? "1" : "0"}>
+    <div className="min-h-[15rem] rounded-xl border border-border/60 bg-card/60 p-4 sm:min-h-[11rem]" data-testid="crypto-brief" data-answer-tab="crypto" data-ready={feed || feedError ? "1" : "0"}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
           <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight" data-testid="crypto-brief-headline">{headline}</h2>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {feed ? `${feed.trackedCount} pools tracked · updated ${new Date(feed.asOf ?? Date.now()).toLocaleTimeString()}` : "warming up"}
+            {feed ? `${feed.trackedCount} pools tracked · read ${new Date(feed.asOf ?? Date.now()).toLocaleTimeString()}` : feedError ? "no read" : "warming up"}
             {notOk.length > 0 ? ` · ${notOk.map((e) => `${e.name} ${e.status}`).join(", ")}` : engines.length > 0 ? " · all agents running" : ""}
           </p>
         </div>
@@ -494,7 +495,7 @@ export default function CryptoPanel() {
 
   return (
     <div className="space-y-4" data-testid="crypto-panel">
-      <DeskBrief feed={feed} health={healthQ.data} sig={sigQ.data} enters={enters} watches={watches}
+      <DeskBrief feed={feed} feedError={feedQ.isError} health={healthQ.data} sig={sigQ.data} enters={enters} watches={watches}
         onPick={(c) => { setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`); }} />
 
       {/* paste any Solana token address: every desk rule, gate by gate, plus a holder-dump stress test */}
