@@ -6,6 +6,8 @@
  */
 
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import { AsyncLocalStorage } from "node:async_hooks";
+import { applyOiHold, type ChainOiState } from "./oiHold";
 import type { ChainSegmentLike } from "./schwabDataPolicy";
 import { readSchwabTokens, writeSchwabTokens, deleteSchwabTokens, tokenStoreStatus, type TokenStoreStatus } from "./schwabTokenStore";
 import { observeQuote } from "./quoteShield";
@@ -13,16 +15,16 @@ import { etDate, addDays, isRegularSessionOpen, lastSessionDate } from "./exchan
 import { quoteFreshness } from "./quoteFreshness";
 import { gexByStrikeFromChain } from "./gammaProfile";
 import {
-  FRESH_TTL_MS, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
+  FRESH_TTL_MS, freshTtlMs, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   chainAsOf, chainLadderSegments, mergeChainSegments,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
-  type ChainCoverage, type ChainAsOfBasis,
+  type ChainCoverage, type ChainAsOfBasis, schwabHistoryWindow,
 } from "./schwabDataPolicy";
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
 import { oauthErrorCode } from "./oauthError";
-import { newOAuthState, type OAuthReturnTo } from "./schwabOAuth";
+import { newOAuthState, schwabRedirectUri, type OAuthReturnTo } from "./schwabOAuth";
 import { editionFromEnv } from "../shared/edition";
 import { demoSchwabPayload } from "./demoMarket";
 import { createSchwabInputValidator } from "./schwabInputValidation";
@@ -35,11 +37,14 @@ export function isDemoEdition(): boolean {
   return editionFromEnv() === "demo";
 }
 const DEMO_SIGN_IN_OFF = "This demo runs on simulated sample data; Schwab sign-in is turned off.";
+import { makeEvidenceAcquisition, type EvidenceAcquisition } from "../shared/evidenceAcquisition";
+import { createHash } from "node:crypto";
+import { serialize, deserialize } from "node:v8";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
 const getClientSecret = () => process.env.SCHWAB_CLIENT_SECRET ?? "";
-const getRedirectUri = () => process.env.SCHWAB_REDIRECT_URI ?? "https://127.0.0.1";
+const getRedirectUri = () => schwabRedirectUri() || "https://127.0.0.1";
 
 const SCHWAB_BASE = "https://api.schwabapi.com";
 // Every Schwab request is bounded: a request that never answers used to hold
@@ -296,17 +301,43 @@ export function clearTokens(): void {
 // maxServeAgeMs(kind) and is marked stale with its age; past that the caller
 // gets null (unavailable). Policy and limits: server/schwabDataPolicy.ts.
 
-type CacheEntry = { data: any; fetchedAt: number; expiresAt: number };
+type CacheEntry = { data: any; fetchedAt: number; expiresAt: number; fingerprint?: string };
+// Evidence receipts (Trade Brief): the successful body receipt is tied to the
+// parsed payload. Opt-in readers verify the fingerprint and take an isolated copy;
+// a missing fingerprint or a changed payload stays unverified.
+const payloadFingerprint = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+function fingerprintPayload(data: any): string | undefined {
+  try { return payloadFingerprint(serialize(data)); } catch { return undefined; }
+}
+type SchwabFetchOpts = { skipCache?: boolean; onAcquisition?: (metadata: EvidenceAcquisition) => void;
+  priority?: "interactive"; onBudgetBlocked?: () => void };
 const _cache = new Map<string, CacheEntry>();
 
 // Self-throttle: track requests in last 60s. Schwab limit ~120/min on marketdata.
 // We cap at 100/min to leave headroom.
 const _reqLog: number[] = [];
+// Who spends the budget: recent requests by caller (path + symbol + stack frame), diag only.
+const _reqWho: Array<{ t: number; k: string }> = [];
 const MAX_REQ_PER_MIN = 100;
+// Keep manual, bounded stock research usable during collector startup bursts.
+// This is a reservation inside the existing limit, never extra provider capacity.
+const BACKGROUND_REQ_PER_MIN = 85;
+/** Background cap for the first BOOT_RAMP_MS after start: the engines all warm
+ *  their caches at once and would otherwise take the whole budget before the
+ *  first screen asks for anything. */
+const BOOT_BACKGROUND_REQ_PER_MIN = 60;
+const BOOT_RAMP_MS = 180_000;
+const _bootAt = Date.now();
+/** Set for the life of an /api request: Schwab reads made while serving a
+ *  screen are interactive; timers and engines run outside it (background). */
+export const schwabRequestContext = new AsyncLocalStorage<{ interactive: boolean; route?: string }>();
+/** Longest a request waits for a free slot before it reads unavailable. */
+const SLOT_WAIT_MS = 15_000;
 
 function _trimReqLog() {
   const cutoff = Date.now() - 60_000;
   while (_reqLog.length && _reqLog[0] < cutoff) _reqLog.shift();
+  while (_reqWho.length && _reqWho[0].t < cutoff) _reqWho.shift();
 }
 
 // Per-endpoint cooldown after 429. Map<endpoint-prefix, expiresAt>.
@@ -354,15 +385,40 @@ export interface SchwabFetchResult {
 export async function schwabFetch(
   path: string,
   params?: Record<string, string | number>,
-  opts?: { skipCache?: boolean },
+  opts?: SchwabFetchOpts,
 ): Promise<any | null> {
   return (await schwabFetchMeta(path, params, opts)).data;
+}
+
+// Identical requests already on the wire share one Schwab call: a cold cache
+// (startup, a tab opening) otherwise sends the same chain several times and
+// spends the per-minute budget on duplicates.
+const _inflight = new Map<string, Promise<SchwabFetchResult>>();
+export function schwabInflightKey(path: string, params?: Record<string, string | number>): string {
+  const p = params ? { ...params } : {};
+  if (path.startsWith("marketdata/v1/pricehistory") && String(p.frequencyType ?? "").toLowerCase() === "minute") delete p.endDate;
+  return `${path}|${Object.entries(p).sort().map(([k, v]) => `${k}=${v}`).join("&")}`;
 }
 
 export async function schwabFetchMeta(
   path: string,
   params?: Record<string, string | number>,
-  opts?: { skipCache?: boolean },
+  opts?: SchwabFetchOpts,
+): Promise<SchwabFetchResult> {
+  // Receipt observers and forced refreshes keep their own call.
+  if (opts?.onAcquisition || opts?.skipCache || isDemoEdition()) return schwabFetchMetaOnce(path, params, opts);
+  const key = schwabInflightKey(path, params);
+  const running = _inflight.get(key);
+  if (running) return running;
+  const p = schwabFetchMetaOnce(path, params, opts).finally(() => { _inflight.delete(key); });
+  _inflight.set(key, p);
+  return p;
+}
+
+async function schwabFetchMetaOnce(
+  path: string,
+  params?: Record<string, string | number>,
+  opts?: SchwabFetchOpts,
 ): Promise<SchwabFetchResult> {
   if (isDemoEdition()) {
     const now = Date.now();
@@ -384,13 +440,28 @@ export async function schwabFetchMeta(
   const paramStr = cacheParams ? Object.entries(cacheParams).sort().map(([k, v]) => `${k}=${v}`).join("&") : "";
   const cacheKey = `${path}|${paramStr}`;
   const kind = schwabDataKind(path, params);
-  const ttl = FRESH_TTL_MS[kind];
+  const ttl = freshTtlMs(kind);
+  // Opt-in receipt metadata only; never changes data, TTL, retry or fallback behavior.
+  const deliver = (r: SchwabFetchResult, provenance: "transport_response" | "cache_hit" | "stale_cache_fallback",
+    receipt?: number, fingerprint?: string): SchwabFetchResult => {
+    if (r.data == null || !opts?.onAcquisition) return r;
+    let receivedAt: number | null = null;
+    try {
+      const bytes = serialize(r.data);
+      if (fingerprint !== undefined && payloadFingerprint(bytes) === fingerprint) receivedAt = receipt ?? null;
+      r = { ...r, data: deserialize(bytes) };
+    } catch { /* no provable original payload means no receipt */ }
+    const kindOut = provenance === "transport_response" && receivedAt === null ? "unverified_adapter_return" : provenance;
+    const metadata = makeEvidenceAcquisition(kindOut, receivedAt, Date.now());
+    if (metadata) { try { opts.onAcquisition(Object.freeze(metadata)); } catch { /* observers cannot change behavior */ } }
+    return r;
+  };
 
   // Fresh cache hit (younger than the TTL): real fetch time, not stale.
   if (!opts?.skipCache && ttl > 0) {
     const hit = _cache.get(cacheKey);
     if (hit && hit.expiresAt > Date.now()) {
-      return { data: hit.data, freshness: freshFreshness(hit.fetchedAt, kind, true), reason: null };
+      return deliver({ data: hit.data, freshness: freshFreshness(hit.fetchedAt, kind, true), reason: null }, "cache_hit", hit.fetchedAt, hit.fingerprint);
     }
   }
 
@@ -399,7 +470,7 @@ export async function schwabFetchMeta(
     const entry = _cache.get(cacheKey);
     const d = staleServeDecision(entry?.fetchedAt, kind, reason);
     _recordDegraded(kind, d.serve, d.serve ? reason : d.reason);
-    if (d.serve && entry) return { data: entry.data, freshness: d.freshness, reason };
+    if (d.serve && entry) return deliver({ data: entry.data, freshness: d.freshness, reason }, "stale_cache_fallback", entry.fetchedAt, entry.fingerprint);
     return { data: null, freshness: null, reason: d.serve ? reason : d.reason };
   };
 
@@ -411,19 +482,33 @@ export async function schwabFetchMeta(
   }
 
   // Self-throttle
+  const interactive = opts?.priority === "interactive" || schwabRequestContext.getStore()?.interactive === true;
+  const requestLimit = interactive ? MAX_REQ_PER_MIN
+    : Date.now() - _bootAt < BOOT_RAMP_MS ? BOOT_BACKGROUND_REQ_PER_MIN : BACKGROUND_REQ_PER_MIN;
+  const budgetBlocked = () => {
+    try { opts?.onBudgetBlocked?.(); } catch { /* diagnostic observers do not control transport */ }
+  };
+  // Budget full: a still-servable cached copy is returned (labelled stale);
+  // otherwise wait for a slot up to SLOT_WAIT_MS, then give up as unavailable.
+  const slotDeadline = Date.now() + SLOT_WAIT_MS;
+  const waitForSlot = async (): Promise<boolean> => {
+    for (;;) {
+      _trimReqLog();
+      if (_reqLog.length < requestLimit) return true;
+      const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50 + Math.floor(Math.random() * 250);
+      if (Date.now() + waitMs > slotDeadline) return false;
+      await sleep(waitMs);
+    }
+  };
   _trimReqLog();
-  if (_reqLog.length >= MAX_REQ_PER_MIN) {
+  if (_reqLog.length >= requestLimit) {
     const entry = _cache.get(cacheKey);
     if (entry && staleServeDecision(entry.fetchedAt, kind, "self-throttle").serve) {
       return serveStale("self-throttle (100 requests/min)");
     }
-    // Wait until oldest request ages out
-    const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50;
-    if (waitMs < 5000) {
-      await sleep(waitMs);
-      _trimReqLog();
-    } else {
-      console.warn("[schwab] self-throttle hit, skipping:", path);
+    if (!(await waitForSlot())) {
+      console.warn("[schwab] self-throttle hit, skipping:", path, interactive ? `(interactive ${schwabRequestContext.getStore()?.route ?? ""})` : "(background)");
+      budgetBlocked();
       return serveStale("self-throttle (100 requests/min)");
     }
   }
@@ -437,7 +522,21 @@ export async function schwabFetchMeta(
   const maxAttempts = 3;
   let lastStatus = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    _reqLog.push(Date.now());
+    // Recheck after waits and before EVERY retry; concurrent callers cannot
+    // spend the reserved slots or exceed the cap through the retry path.
+    if (!(await waitForSlot())) {
+      budgetBlocked();
+      return serveStale(requestLimit < MAX_REQ_PER_MIN ? "request budget reserved for interactive reads" : "self-throttle (100 requests/min)");
+    }
+    _reqLog.push(Date.now()); // synchronous after the check: no other caller can take this slot
+    {
+      const frame = (new Error().stack ?? "").split("\n").slice(2).map((l) => l.trim())
+        .find((l) => !/schwab\.(ts|js)|schwabFetch|node:internal|processTicksAndRejections/.test(l)) ?? "?";
+      const sym = params ? String((params as any).symbol ?? (params as any).symbols ?? "").slice(0, 24) : "";
+      const ctx = schwabRequestContext.getStore();
+      const who = ctx?.route ? `api ${ctx.route}` : frame.replace(/^at /, "").slice(0, 90);
+      _reqWho.push({ t: Date.now(), k: `${interactive ? "I" : "B"} ${path.replace("marketdata/v1/", "")}${sym ? " " + sym : ""} <- ${who}` });
+    }
     try {
       const res = await fetch(url.toString(), {
         signal: AbortSignal.timeout(SCHWAB_FETCH_TIMEOUT_MS),
@@ -455,8 +554,9 @@ export async function schwabFetchMeta(
         _lastResponseBytes = bytes;
         const data = JSON.parse(text);
         const fetchedAt = Date.now();
-        if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl });
-        return { data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes };
+        const fingerprint = opts?.onAcquisition || ttl > 0 ? fingerprintPayload(data) : undefined;
+        if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl, fingerprint });
+        return deliver({ data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes }, "transport_response", fetchedAt, fingerprint);
       }
       // 401 → token issue, no retry
       if (res.status === 401) {
@@ -495,7 +595,9 @@ export async function schwabFetchMeta(
         await sleep(500 * attempt);
         continue;
       }
-      console.warn("[schwab] fetch failed:", res.status, path);
+      // Name the request (no secrets in these params) so a failing caller is findable.
+      const q = params ? ["symbol", "strikeCount", "fromDate", "toDate", "contractType"].map((k) => (params as any)[k] != null ? `${k}=${(params as any)[k]}` : "").filter(Boolean).join(" ") : "";
+      console.warn("[schwab] fetch failed:", res.status, path, q);
       return serveStale(`Schwab HTTP ${res.status}`);
     } catch (e: any) {
       const why = fetchErrorText(e, SCHWAB_FETCH_TIMEOUT_MS);
@@ -521,6 +623,8 @@ export function getSchwabDiagnostics() {
   return {
     cacheEntries: _cache.size,
     requestsLastMinute: _reqLog.length,
+    requestsByCaller: Object.entries(_reqWho.reduce((m, r) => { m[r.k] = (m[r.k] ?? 0) + 1; return m; }, {} as Record<string, number>))
+      .sort((a, b) => b[1] - a[1]).slice(0, 60).map(([k, n]) => ({ n, k })),
     maxPerMinute: MAX_REQ_PER_MIN,
     cooldowns: Array.from(_cooldown.entries())
       .filter(([_, exp]) => exp > now)
@@ -798,6 +902,8 @@ export type PriceHistoryResponse = {
 /** Get price history via Schwab. Returns empty candles if not authenticated or on error.
  *  @param needExtendedHours - pass true for pre/post market data (default false)
  */
+export { schwabHistoryWindow };
+
 export async function getPriceHistory(
   symbol: string,
   periodType: "day" | "month" | "year" = "year",
@@ -808,6 +914,7 @@ export async function getPriceHistory(
 ): Promise<PriceHistoryResponse> {
   // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
   const wireSymbol = _normalizeIndexSymbol(symbol);
+  ({ periodType, period } = schwabHistoryWindow(periodType, period, frequencyType));
   const unavailable = (reason: string): PriceHistoryResponse => ({
     symbol, candles: [], source: "schwab", dataState: "unavailable",
     asOfMs: null, ageMs: null, servedFromCache: false, stale: false, maxAgeMs: null, reason,
@@ -905,6 +1012,8 @@ export type OptionChainOk = {
   strikeCount: number;
   strikePlan: string;
   strikeCoverage: StrikeCoverage | null;
+  /** live = Schwab OI; held = last trading day's saved OI (weekend/holiday); none = no OI anywhere. */
+  oiState?: ChainOiState;
 };
 
 /** Error: "schwab_required" = not connected (auth); "schwab_unavailable" = Schwab could not answer (or cache past max age). */
@@ -986,6 +1095,7 @@ export async function getOptionChain(
         reason: "Schwab returned a DELAYED chain (isDelayed=true): not current, excluded from greeks, gamma and sizing",
       };
     }
+    const oiState = applyOiHold(wireSymbol, data.callExpDateMap ?? {}, data.putExpDateMap ?? {});
     const u = data.underlying ?? {};
     const num = (x: any) => (typeof x === "number" && Number.isFinite(x) ? x : null);
     const last = num(u.last);
@@ -1034,6 +1144,7 @@ export async function getOptionChain(
       strikeCount: plan.strikeCount,
       strikePlan: plan.basis,
       strikeCoverage: coverage,
+      oiState,
     };
   } catch (e: any) {
     console.warn("[schwab] getOptionChain error:", e?.message);
@@ -1059,6 +1170,15 @@ export async function getOptionChainLadder(symbol: string, dteMax: number): Prom
   // OptionChainOk has no index signature; the merge keeps every field it is given.
   const merged = mergeChainSegments(ok as unknown as ChainSegmentLike[]) as unknown as OptionChainOk | null;
   if (!merged) return { error: "schwab_unavailable", source: null, dataState: "unavailable", reason: "no chain segments" };
+  {
+    const st = ok.map((p) => p.oiState).filter((x): x is ChainOiState => !!x);
+    const held = st.find((x) => x.source === "held");
+    const live = st.some((x) => x.source === "live");
+    merged.oiState = held
+      ? { ...held, contractsWithOi: st.reduce((a, x) => a + x.contractsWithOi, 0) }
+      : live ? { source: "live", sessionDate: null, contractsWithOi: st.reduce((a, x) => a + x.contractsWithOi, 0), note: null }
+      : st[0];
+  }
   const keep = (m: Record<string, Record<string, any[]>>) => {
     const out: Record<string, Record<string, any[]>> = {};
     for (const k of Object.keys(m)) {

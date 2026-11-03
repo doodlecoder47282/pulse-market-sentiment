@@ -179,3 +179,19 @@ test("HTTP failures and provider error bodies are not exposed as successful data
     assert.doesNotMatch(JSON.stringify(result), /not-for-ui/);
   }
 });
+test("cash-index quotes ($SPX, $VIX) pass on the calculation time alone; no bid/ask quote time exists", async () => {
+  const idx: any = { "$SPX": { symbol: "$SPX", realtime: true, quote: { lastPrice: 7574, tradeTime: now - 2_000 } } };
+  assert.equal(validateQuote(idx, "$SPX", now).verdict, "pass");
+  idx["$SPX"].quote.tradeTime = now - 121_000;
+  assert.equal(validateQuote(idx, "$SPX", now).ok, false, "a stale index value still fails");
+  delete idx["$SPX"].quote.tradeTime;
+  assert.equal(validateQuote(idx, "$SPX", now).ok, false, "no observation time still fails");
+  const eq: any = quotes(); delete eq.SPY.quote.quoteTime;
+  assert.equal(validateQuote(eq, "SPY", now).ok, false, "equities still need the quote time");
+});
+test("pricehistory window: periodType=day with daily bars is widened to one month (Schwab HTTP 400 otherwise)", async () => {
+  const { schwabHistoryWindow } = await import("../../server/schwabDataPolicy");
+  assert.deepEqual(schwabHistoryWindow("day", 10, "daily"), { periodType: "month", period: 1 });
+  assert.deepEqual(schwabHistoryWindow("day", 5, "minute"), { periodType: "day", period: 5 });
+  assert.deepEqual(schwabHistoryWindow("year", 5, "daily"), { periodType: "year", period: 5 });
+});

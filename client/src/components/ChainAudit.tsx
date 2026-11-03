@@ -366,6 +366,9 @@ export default function ChainAudit() {
   });
 
   const audit = data?.audit;
+  // Not connected is a different state from connected-but-refused (throttle, 502).
+  const isSchwabNotConnected = (data as any)?.error === "schwab_required"
+    || /schwab_required|not connected/i.test(String((error as any)?.message ?? ""));
   const isSchwabError = (error as any)?.status === 503
     || (data as any)?.error === "schwab_required"
     || (data as any)?.error === "schwab_unavailable"
@@ -395,9 +398,19 @@ export default function ChainAudit() {
         </div>
 
         {data && (
-          <Badge variant="outline" className="border-cyan-500/40 font-mono text-[11px] text-cyan-400">
+          <Badge variant="outline" className="max-w-full flex-wrap gap-1 whitespace-normal break-words border-cyan-500/40 font-mono text-[11px] text-cyan-400">
             {data.symbol} · {data.audit.contractsProcessed.toLocaleString()} contracts · {data.audit.expiriesFound} expiries
             {" "}<DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} maxAgeMs={(data as any).chainMaxAgeMs ?? null} label="chain" />
+          </Badge>
+        )}
+        {(data as any)?.audit?.oiState && (data as any).audit.oiState.source !== "live" && (
+          <Badge variant="outline" className="border-amber-500/40 font-mono text-[11px] text-amber-300" data-testid="chain-audit-oi-state" title={(data as any).audit.oiState.note ?? undefined}>
+            {(data as any).audit.oiState.source === "held" ? `OI held from ${(data as any).audit.oiState.sessionDate}` : "No OI from Schwab (weekend): OI-weighted rows read 0"}
+          </Badge>
+        )}
+        {(data as any)?.stale && (
+          <Badge variant="outline" className="border-amber-500/40 font-mono text-[11px] text-amber-300" data-testid="chain-audit-stale">
+            Last good audit · {Math.round(((data as any).staleAgeSec ?? 0) / 60)} min old
           </Badge>
         )}
         {data?.audit?.dataQuality === "partial" && (
@@ -431,11 +444,13 @@ export default function ChainAudit() {
 
       {isError && !isLoading && (
         <AuditError
-          isSchwabRequired={isSchwabError}
+          isSchwabRequired={isSchwabNotConnected}
           message={
-            isSchwabError
+            isSchwabNotConnected
               ? "Schwab connection required for chain audit. Connect Schwab in Settings to enable live option chain data."
-              : `Chain audit unavailable: ${(error as any)?.message ?? "unknown error"}`
+              : isSchwabError
+                ? `Schwab chain unavailable (connected; the read was refused or timed out): ${String((error as any)?.message ?? "no reason given").slice(0, 160)}. Retrying every 30 s.`
+                : `Chain audit unavailable: ${(error as any)?.message ?? "unknown error"}`
           }
         />
       )}

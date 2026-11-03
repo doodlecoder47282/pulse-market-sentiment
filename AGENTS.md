@@ -27,11 +27,15 @@ User default: conserve Computer credits without skipping necessary correctness o
 - Equities and options: Schwab only (user decision 2026-10-08); no CBOE, no Yahoo; unavailable when Schwab cannot answer.
 - Crypto: public keyless data unless the user separately approves a keyed service.
 - Crypto desk (standing directive 2026-10-27): the goal is a professional-grade, profitable meme-coin system where "profitable" is a measured label on the graded record, never a claim. Read `docs/CRYPTO_DESK.md` before any change under the Crypto tab; thresholds live only in `shared/cryptoRules.ts` (versioned, pinned); every crypto change gets an independent review briefed with `docs/REVIEWER_BRIEF.md`; the desk never executes.
+- Crypto exit plan and AI prompt (user decision 2026-11-03): every ENTER shows the rule-book exit plan (trims, stop, liquidity and time stops from `shared/cryptoRules.ts` `exitPlan`/`sizing`), sized from one owner-entered bankroll, and graded on the sampled path (`shared/exitPlan.ts`, `server/exitPlanBook.ts`) under the same 50-sample gate. A "Copy AI prompt" button packs the card into a prompt the owner pastes into their own AI; the desk itself calls no LLM and votes no trades. The prompt may use direct trader language; the desk's own copy stays descriptive.
+- Railway (user decision 2026-11-03): required variables are SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET and BATCAVE_ACCESS_KEY. The callback defaults to `https://$RAILWAY_PUBLIC_DOMAIN/api/schwab/oauth/callback` and the token key is generated on the attached volume (`$RAILWAY_VOLUME_MOUNT_PATH/.batcave/token.key`, beside the database) when BATCAVE_TOKEN_KEY is unset. Setting either variable still wins.
 - Missing, stale, blocked, partial, and observed-zero data are different states. Never label failed collection as zero activity or healthy coverage.
 - Scores are heuristics, not calibrated probabilities. Fifty graded observations alone do not prove tradable edge.
 - Never embed brokerage secrets in browser or iOS code. Never request that the user paste keys into chat; use a secure credential workflow.
 - Do not stage runtime database files, WAL/SHM files, token files, logs, or unrelated work. Stage explicit paths and inspect the staged diff.
 - Verify repository visibility; do not assume it is private. A clean working tree does not mean history contains no secrets.
+- Before mobile distribution or additional brokerage users, read `SECURITY.md`.
+  Shared-account architecture is not multi-user-safe; never claim full security or NIST conformance from a successful build.
 
 ## Stop and save
 

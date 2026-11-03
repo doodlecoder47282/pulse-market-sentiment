@@ -59,7 +59,11 @@ import {
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
-import { readTokenFacts, indexedRpcAvailable } from "./solanaToken";
+import { readTokenFacts, indexedRpcAvailable, noteIndexedRateLimit, solRpc, RPC_INDEXED, RPC_ACCOUNT, keyedRpcConfigured, solanaRpcStatus } from "./solanaToken";
+import { bundleEvidence, BUNDLE_MAX_TX, BUNDLE_WINDOW_SLOTS, type BundleEvidence, type CardBundle } from "../shared/cryptoBundle";
+import { startPumpListener, pumpListenerCheck, pumpListenerStatus, launchBundle } from "./pumpListener";
+import { samplePlans, exitPlanRecord } from "./exitPlanBook";
+import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
 
@@ -108,6 +112,8 @@ export interface Candidate {
   top10Pct: number | null;               // top-10 holder share excluding IDENTIFIED pool vaults / burn only
   top10Method: string | null;            // how the pool vault was identified (or that it was not)
   securityCheckedAt: number | null;
+  /** Launch-block buying (pump.fun listener, else RPC lookup); descriptive, never a gate. Null = not checked yet. */
+  bundle: CardBundle | null;
 
   // rugcheck.xyz cached report (keyless)
   rcRisks: string[];
@@ -340,6 +346,8 @@ function persistSignal(c: Candidate): void {
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
         // Funding / open-interest regime at signal time: recorded for the replay to test, never a gate.
         derivs: derivsRecord(lastDerivs()),
+        // Launch-block buying, recorded for the replay to test; never a gate.
+        bundle: c.bundle,
       }),
       JSON.stringify(c.risk),
     );
@@ -386,6 +394,11 @@ function curlJson(url: string, timeoutMs = 12_000): Promise<any> {
 
 // ─── 1. SCANNER — GeckoTerminal discovery ───────────────────────────────
 
+/** On DexScreener a pump.fun coin trades as "pump-fun" on the bonding curve and "pumpswap" after graduating. */
+function leftBondingCurve(dexId: string | null | undefined): boolean {
+  return String(dexId ?? "").toLowerCase() !== "pump-fun";
+}
+
 function isPumpDex(dexId: string | null | undefined): boolean {
   const d = String(dexId ?? "").toLowerCase();
   return d.includes("pump"); // pumpswap / pump-fun / pumpfun variants
@@ -427,7 +440,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     chg5m: null, chg1h: null, chg24h: null,
     boosted: false, lastRefreshAt: null,
     jupPriceUsd: null, jupState: "unchecked", jupGapPct: null, jupCheckedAt: null,
-    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null,
+    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null, bundle: null,
     rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
     bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
     pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null,
@@ -620,6 +633,7 @@ function recordPeakSample(c: Candidate): void {
   try {
     _peakStmt = _peakStmt ?? sqlite.prepare(CRYPTO_PEAK_SAMPLE_SQL);
     _peakStmt.run(peakSampleParams(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress));
+    samplePlans(c.chain, c.pairAddress, c.marketCap, c.liquidityUsd, c.lastRefreshAt ?? Date.now());
   } catch (e: any) {
     console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
@@ -659,7 +673,7 @@ async function securityTick(): Promise<void> {
       // for good and could never ENTER.
       (c.top10Pct == null && now - c.securityCheckedAt > SECURITY_RETRY_MS))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)) // best candidates first — they gate ENTER
-    .slice(0, 2); // gentle pace — public RPCs throttle bursts hard
+    .slice(0, keyedRpcConfigured() ? 4 : 2); // gentle pace on the public RPC; the keyed plan allows more
   if (due.length === 0) return;
 
   let okCount = 0;
@@ -674,7 +688,7 @@ async function securityTick(): Promise<void> {
       const pools = known.some((p) => p.pairAddress === c.pairAddress)
         ? known
         : [...known, { pairAddress: c.pairAddress, baseAmount: null }];
-      const facts = await readTokenFacts(c.tokenAddress, pools, { withConcentration: !concentrationDone && indexedRpcAvailable() });
+      const facts = await readTokenFacts(c.tokenAddress, pools, { withConcentration: (!concentrationDone || keyedRpcConfigured()) && indexedRpcAvailable() });
       c.mintAuthorityActive = facts.mintAuthorityActive;
       c.freezeAuthorityActive = facts.freezeAuthorityActive;
       if (facts.concentration !== "skipped") concentrationDone = true;
@@ -1173,6 +1187,7 @@ async function graderTick(): Promise<void> {
     if (g.outcome === "NO_DATA") { markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP)); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
     mark.run(graderMarkParams(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id));
+    if (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000) samplePlans(row.chain, row.pair_address, mcap, liq, now);
   }
 }
 
@@ -1313,7 +1328,7 @@ export function startCryptoEngines(): void {
   started = true;
   hb("scanner", SCANNER_MS); hb("momentum", MOMENTUM_MS);
   hb("narratives", NARRATIVE_MS); hb("grader", GRADER_MS);
-  hb("security", SECURITY_MS); hb("social", SOCIAL_MS); hb("majors", MAJORS_MS); hb("watchdog", WATCHDOG_MS);
+  hb("security", SECURITY_MS); hb("bundle", BUNDLE_MS); hb("social", SOCIAL_MS); hb("majors", MAJORS_MS); hb("watchdog", WATCHDOG_MS);
 
   const arm = (name: string, ms: number, fn: () => Promise<void>, initialDelay: number) => {
     setTimeout(() => {
@@ -1327,6 +1342,8 @@ export function startCryptoEngines(): void {
   arm("grader", GRADER_MS, graderTick, 45_000);
   arm("horizon", GRADER_MS, horizonTick, 75_000);
   arm("security", SECURITY_MS, securityTick, 20_000);
+  startPumpListener();
+  arm("bundle", BUNDLE_MS, bundleTick, 40_000);
   arm("social", SOCIAL_MS, socialTick, 30_000);
   arm("majors", MAJORS_MS, majorsTick, 2_500);
   arm("derivs", DERIVS_MS, derivsTick, 6_000);
@@ -1373,8 +1390,8 @@ export function getCryptoFeed(): {
   };
 }
 
-export function getCryptoHealth(): { engines: EngineHealth[]; trackedCount: number; asOf: number } {
-  return { engines: [...health.values()], trackedCount: tracked.size, asOf: Date.now() };
+export function getCryptoHealth(): { engines: EngineHealth[]; trackedCount: number; solanaRpc: ReturnType<typeof solanaRpcStatus>; pumpListener: ReturnType<typeof pumpListenerStatus>; asOf: number } {
+  return { engines: [...health.values()], trackedCount: tracked.size, solanaRpc: solanaRpcStatus(), pumpListener: pumpListenerStatus(), asOf: Date.now() };
 }
 
 /** crypto_signals row -> the shape shared/cryptoExpectancy reads. */
@@ -1428,6 +1445,7 @@ export function getCryptoSignals(): {
   stats: CryptoDeskStats & { listLimit: number };
   expectancy: { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string; versions: Record<string, number>; currentVersion: string };
   desk: DeskRisk;
+  exitPlan: ReturnType<typeof exitPlanRecord> | null;
   rules: { version: string; items: ReturnType<typeof describeCryptoRules> };
 } {
   // The list is the latest 100 for display; the stats come from aggregate
@@ -1457,6 +1475,7 @@ export function getCryptoSignals(): {
     })),
     stats: { ...stats, listLimit: LIST_LIMIT },
     expectancy: getCryptoExpectancy(),
+    exitPlan: (() => { try { return exitPlanRecord(); } catch { return null; } })(),
     desk: currentDeskRisk(),
     rules: { version: CRYPTO_RULES_VERSION, items: describeCryptoRules() },
   };
@@ -1517,6 +1536,10 @@ export interface CryptoAutopsy {
   parity: { agrees: boolean; detail: string | null } | null;
   tracked: { verdict: Candidate["verdict"]; verdictCode: VerdictCode | null; firstSeenAt: number } | null;
   stress: HolderStress | null;
+  /** Launch-block and creator evidence from public RPC; descriptive, never a gate. Null when not attempted. */
+  launch: LaunchEvidence | null;
+  /** Launch-block buying by wallets other than the creator; descriptive, never a gate. */
+  bundle: CardBundle | null;
   /** Sources that did not answer on this read; their gates read "unread", never pass. */
   sourceNotes: string[];
   notes: string[];
@@ -1529,7 +1552,167 @@ let autopsyLastStart = 0;
 let autopsyBusy = false;
 
 function emptyAutopsy(now: number, dataState: CryptoAutopsy["dataState"], reason: string, mint: string | null = null, retryAfterSec: number | null = null): CryptoAutopsy {
-  return { dataState, reason, retryAfterSec, asOf: now, cached: false, mint, pair: null, snapshot: null, gates: [], summary: null, desk: null, parity: null, tracked: null, stress: null, sourceNotes: [], notes: [] };
+  return { dataState, reason, retryAfterSec, asOf: now, cached: false, mint, pair: null, snapshot: null, gates: [], summary: null, desk: null, parity: null, tracked: null, stress: null, launch: null, bundle: null, sourceNotes: [], notes: [] };
+}
+
+const BUNDLE_BUDGET_MS = 30_000;
+
+/**
+ * Launch-block buying for one mint: the launch evidence above, then every
+ * successful transaction in the launch block and the next two (capped at
+ * BUNDLE_MAX_TX), then what the non-creator buyers' token accounts hold now.
+ * Descriptive; each gap is stated in the result.
+ */
+async function readBundleEvidence(mint: string, supplyIn: number | null, notes: string[]): Promise<{ launch: LaunchEvidence; bundle: BundleEvidence }> {
+  let supplyUi = supplyIn;
+  if (supplyUi == null) {
+    try {
+      const s = await solRpc("getTokenSupply", [mint], RPC_ACCOUNT);
+      const n = Number(s?.value?.uiAmountString ?? s?.value?.uiAmount);
+      supplyUi = Number.isFinite(n) && n > 0 ? n : null;
+    } catch (e: any) { notes.push(`supply read failed: ${String(e?.message ?? e).slice(0, 80)}`); }
+  }
+  const got: { rows?: SigRow[]; anchorTx?: unknown } = {};
+  const launch = await readLaunchEvidence(mint, supplyUi, notes, got);
+  const strip = (b: ReturnType<typeof bundleEvidence>): BundleEvidence => { const { buyers: _b, ...rest } = b; return rest; };
+  const first = launch.slot.state === "ok" ? launch.slot.firstSlot : null;
+  if (first == null || !got.rows) {
+    return { launch, bundle: strip(bundleEvidence({ mint, launchSlot: null, launchReason: launch.slot.reason, creator: null, txInWindow: null, txs: [], supplyUi, heldNowUi: null })) };
+  }
+  const deadline = Date.now() + BUNDLE_BUDGET_MS;
+  // Oldest first (rows are newest-first); successful only; launch window only.
+  const window = got.rows
+    .filter((r) => r.err == null && r.slot >= first && r.slot < first + BUNDLE_WINDOW_SLOTS && typeof r.signature === "string")
+    .reverse();
+  const picked = window.slice(0, BUNDLE_MAX_TX);
+  const txs: Array<{ slot: number; tx: unknown | null }> = [];
+  for (const r of picked) {
+    if (r.signature === launch.slot.anchorSignature && got.anchorTx) { txs.push({ slot: r.slot, tx: got.anchorTx }); continue; }
+    if (Date.now() > deadline) { txs.push({ slot: r.slot, tx: null }); continue; }
+    try {
+      const tx = await solRpc("getTransaction", [r.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" }], RPC_INDEXED);
+      txs.push({ slot: r.slot, tx: tx ?? null });
+    } catch (e: any) { noteIndexedRateLimit(e); txs.push({ slot: r.slot, tx: null }); }
+  }
+  const creator = launch.creator.feePayer;
+  // First pass to learn the buyers' token accounts, then read their balances now.
+  const pre = bundleEvidence({ mint, launchSlot: first, creator, txInWindow: window.length, txs, supplyUi, heldNowUi: null });
+  let heldNowUi: number | null = null;
+  const accts = pre.buyers.filter((b) => b.wallet !== creator).flatMap((b) => b.tokenAccounts);
+  if (accts.length === 0) heldNowUi = 0;
+  else if (Date.now() < deadline + 10_000) {
+    try {
+      let sum = 0;
+      for (let i = 0; i < accts.length; i += 100) {
+        const res = await solRpc("getMultipleAccounts", [accts.slice(i, i + 100), { encoding: "jsonParsed" }], RPC_ACCOUNT);
+        const vals: any[] = res?.value ?? [];
+        for (const v of vals) {
+          if (v == null) continue; // closed account: holds nothing
+          const ta = v?.data?.parsed?.info?.tokenAmount;
+          const n = Number(ta?.uiAmountString ?? ta?.uiAmount);
+          if (!Number.isFinite(n)) throw new Error("unexpected token account shape");
+          sum += n;
+        }
+      }
+      heldNowUi = sum;
+    } catch (e: any) { notes.push(`launch buyers' holdings unread: ${String(e?.message ?? e).slice(0, 80)}`); }
+  }
+  return { launch, bundle: strip(bundleEvidence({ mint, launchSlot: first, creator, txInWindow: window.length, txs, supplyUi, heldNowUi })) };
+}
+
+const BUNDLE_MS = 30_000;
+
+/**
+ * Every tracked Solana coin gets its launch-buying facts from the free pump.fun
+ * listener (local, no network). Coins the listener did not see fall back to
+ * the RPC lookup only when a keyed RPC is configured (one coin per tick).
+ */
+async function bundleTick(): Promise<void> {
+  pumpListenerCheck();
+  const now = Date.now();
+  const sol = [...tracked.values()].filter((c) => c.chain === "solana" && c.tokenAddress);
+  const changed: Candidate[] = [];
+  for (const c of sol) {
+    if (c.bundle && c.bundle.source === "rpc lookup" && c.bundle.state === "ok") continue;
+    const b = launchBundle(c.tokenAddress, c.pairCreatedAt, leftBondingCurve(c.dexId), now);
+    const before = c.bundle ? `${c.bundle.state}|${c.bundle.windowPct}|${c.bundle.stillHeldPct}` : "";
+    c.bundle = b;
+    if (before !== `${b.state}|${b.windowPct}|${b.stillHeldPct}` && (c.verdict === "ENTER" || c.verdict === "WATCH")) changed.push(c);
+  }
+  const rec = sqlite.prepare("UPDATE crypto_signals SET features_json = json_set(features_json, '$.bundle', json(?)) WHERE token_address = ? AND outcome = 'OPEN'");
+  for (const c of changed) { try { rec.run(JSON.stringify(c.bundle), c.tokenAddress); } catch (e: any) { console.warn(`[crypto:bundle] record: ${e?.message ?? e}`); } }
+
+  if (!keyedRpcConfigured()) return;
+  const due = sol
+    .filter((c) => (c.verdict === "ENTER" || c.verdict === "WATCH") && c.bundle?.state === "unread" && c.bundle.source !== "rpc lookup")
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 1);
+  for (const c of due) {
+    const { bundle } = await readBundleEvidence(c.tokenAddress, null, []);
+    c.bundle = { ...bundle, source: "rpc lookup" };
+    try { rec.run(JSON.stringify(c.bundle), c.tokenAddress); } catch { /* best effort */ }
+  }
+}
+
+const LAUNCH_PAGE = 1000;
+const LAUNCH_MAX_PAGES = 3;
+const LAUNCH_MAX_PAGES_KEYED = 10; // keyed plan: 1 credit a page, 10 req/s
+const LAUNCH_BUDGET_MS = 20_000; // checked between calls; each call also has its own 12 s timeout
+
+/**
+ * Pages the mint's transaction signatures back toward the earliest one (public
+ * RPC, at most 3 x 1000 rows) and reads that transaction's fee payer and the
+ * wallet's holding. Every failure is an "unread" state with its reason.
+ */
+async function readLaunchEvidence(mint: string, supplyUi: number | null, notes: string[], out?: { rows?: SigRow[]; anchorTx?: unknown }): Promise<LaunchEvidence> {
+  const unread = (reason: string): LaunchEvidence => {
+    const slot = slotEvidence([], false, LAUNCH_PAGE * LAUNCH_MAX_PAGES);
+    return { slot: { ...slot, state: "unread", reason }, creator: creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi, slot: { ...slot, state: "unread", reason } }) };
+  };
+  if (!indexedRpcAvailable()) { notes.push("launch evidence skipped: the indexed RPC is cooling down"); return unread("the indexed RPC is cooling down; try again in a few minutes"); }
+  const deadline = Date.now() + LAUNCH_BUDGET_MS;
+  try {
+    const rows: SigRow[] = [];
+    let before: string | undefined;
+    let reachedOldest = false;
+    const maxPages = keyedRpcConfigured() ? LAUNCH_MAX_PAGES_KEYED : LAUNCH_MAX_PAGES;
+    for (let page = 0; page < maxPages; page++) {
+      if (page > 0 && Date.now() > deadline) throw new Error("time budget spent before the earliest transaction was reached");
+      const res = await solRpc("getSignaturesForAddress", [mint, { limit: LAUNCH_PAGE, ...(before ? { before } : {}) }], RPC_INDEXED);
+      if (!Array.isArray(res)) throw new Error("unexpected signatures response");
+      for (const r of res) rows.push({ slot: Number(r?.slot), err: r?.err ?? null, blockTime: typeof r?.blockTime === "number" ? r.blockTime : null, signature: typeof r?.signature === "string" ? r.signature : undefined });
+      const last = res.length ? res[res.length - 1]?.signature : null;
+      if (res.length < LAUNCH_PAGE) { reachedOldest = true; break; }
+      if (typeof last !== "string" || !last) throw new Error("a page ended without a signature to continue from");
+      before = last;
+    }
+    const slot = slotEvidence(rows, reachedOldest, LAUNCH_PAGE * maxPages);
+    if (out) out.rows = rows;
+    if (slot.state !== "ok" || !slot.anchorSignature) {
+      return { slot, creator: creatorEvidence({ feePayer: null, feePayerTokenUi: null, supplyUi, slot }) };
+    }
+    let feePayer: string | null = null;
+    let held: number | null = null;
+    let txFetched = true;
+    if (Date.now() < deadline) {
+      try {
+        const tx = await solRpc("getTransaction", [slot.anchorSignature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], RPC_INDEXED);
+        if (tx == null) txFetched = false; else { feePayer = feePayerOf(tx); if (out) out.anchorTx = tx; }
+      } catch (e: any) { txFetched = false; noteIndexedRateLimit(e); notes.push(`creator lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
+    } else { txFetched = false; }
+    if (feePayer && Date.now() < deadline) {
+      try {
+        const accts = await solRpc("getTokenAccountsByOwner", [feePayer, { mint }, { encoding: "jsonParsed" }], RPC_INDEXED);
+        held = sumOwnerTokenUi(accts);
+      } catch (e: any) { noteIndexedRateLimit(e); notes.push(`creator holding lookup failed: ${String(e?.message ?? e).slice(0, 80)}`); }
+    }
+    return { slot, creator: creatorEvidence({ feePayer, feePayerTokenUi: held, supplyUi, slot, txFetched }) };
+  } catch (e: any) {
+    noteIndexedRateLimit(e);
+    const why = String(e?.message ?? e).slice(0, 100);
+    notes.push(`launch evidence unavailable: ${why}`);
+    return unread(`the public RPC did not answer (${why})`);
+  }
 }
 
 export async function runCryptoAutopsy(input: unknown, now: number = Date.now()): Promise<CryptoAutopsy> {
@@ -1570,7 +1753,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       buys5m: null, sells5m: null, buys1h: null, sells1h: null, chg5m: null, chg1h: null, chg24h: null,
       boosted: false, lastRefreshAt: now,
       jupPriceUsd: null, jupState: "unchecked", jupGapPct: null, jupCheckedAt: null,
-      mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null,
+      mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null, bundle: null,
       rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
       bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
       pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null,
@@ -1593,10 +1776,12 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       sourceNotes.push(`Jupiter did not answer (${String(e?.message ?? e).slice(0, 60)})`);
     }
 
+    let supplyUi: number | null = null;
     // 4) on-chain facts via the public Solana RPC (authorities, holder concentration)
     try {
       const pools = pairs.map((p: any) => ({ pairAddress: String(p.pairAddress), baseAmount: observedNumber(p?.liquidity?.base) }));
       const facts = await readTokenFacts(mint, pools, { withConcentration: indexedRpcAvailable() });
+      supplyUi = facts.supplyUi;
       c.mintAuthorityActive = facts.mintAuthorityActive;
       c.freezeAuthorityActive = facts.freezeAuthorityActive;
       if (facts.concentration === "ok") { c.top10Pct = facts.top10Pct; c.top10Method = facts.top10Method; }
@@ -1621,6 +1806,20 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       c.rcCheckedAt = Date.now();
     } catch { sourceNotes.push("rugcheck had no report for this token"); }
 
+    // 5b) launch block and creator evidence (public RPC, descriptive, never a gate)
+    // Launch buying: the listener's record when it has one (free, local); else the RPC lookup.
+    const streamBundle = launchBundle(mint, c.pairCreatedAt, leftBondingCurve(c.dexId));
+    let launch: LaunchEvidence;
+    let bundle: CardBundle;
+    if (streamBundle.state !== "unread") {
+      launch = await readLaunchEvidence(mint, supplyUi, sourceNotes);
+      bundle = streamBundle;
+    } else {
+      const r = await readBundleEvidence(mint, supplyUi, sourceNotes);
+      launch = r.launch;
+      bundle = { ...r.bundle, source: "rpc lookup", reason: r.bundle.state === "unread" ? `${r.bundle.reason ?? "not read"} (listener: ${streamBundle.reason})` : r.bundle.reason };
+    }
+
     // 6) the desk's own scoring on the transient candidate; nothing is stored
     scoreCandidate(c);
 
@@ -1644,6 +1843,8 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       parity: { agrees, detail: agrees ? null : `gate table says killed=${summary.killed}, desk says hardKill=${c.hardKill}` },
       tracked: trackedHit ? { verdict: trackedHit.verdict, verdictCode: trackedHit.verdictCode, firstSeenAt: trackedHit.firstSeenAt } : null,
       stress: holderDumpStress({ top10Pct: c.top10Pct, top10Method: c.top10Method, fdv: c.fdv, marketCap: c.marketCap, liquidityUsd: c.liquidityUsd }),
+      bundle,
+      launch,
       sourceNotes,
       notes: [
         "a single read: not a signal, not logged, not graded",

@@ -29,6 +29,8 @@ import {
 import { tokenKeyWarnings } from "./tokenCrypto";
 import { resolveTokenKeyPolicy } from "./tokenKeyFile";
 import { editionFromEnv } from "../shared/edition";
+import { createMobileGateway } from "./mobileGateway";
+import { getSchwabStatus, schwabRequestContext } from "./schwab";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -42,6 +44,11 @@ process.on("uncaughtException", (err: any) => {
 
 const app = express();
 const httpServer = createServer(app);
+// Must run before JSON parsing, request logging, and existing routes.
+app.use(createMobileGateway(undefined, getSchwabStatus));
+// Schwab reads made while serving an /api request take the interactive share
+// of the per-minute budget; engines and timers stay on the background share.
+app.use("/api", (req, _res, next) => schwabRequestContext.run({ interactive: true, route: req.path.slice(0, 60) }, next));
 
 // Client IP behind a platform proxy (Railway/Render/Fly): trust exactly the
 // configured hop count so req.ip, and with it the wrong-key slowdown bucket in
@@ -173,10 +180,16 @@ for (const w of tokenKeyWarnings(process.env, resolveTokenKeyPolicy(process.env)
 (async () => {
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    if (req.path.startsWith("/api/trade-brief")) {
+      // Malformed JSON errors can contain the raw request, including a receipt.
+      console.error("Research request failed; payload and details withheld.");
+      if (res.headersSent) return next(err);
+      return res.status(status >= 400 && status < 500 ? status : 503).json({ message: "Research request unavailable or malformed." });
+    }
     console.error("Internal Server Error:", err);
 
     if (res.headersSent) {

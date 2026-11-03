@@ -105,10 +105,19 @@ export function plaintextOptIn(env: EnvLike): boolean {
 }
 
 /** True when the policy needs the local key file: no env key, loopback bind, no plaintext opt-in. */
+/** Railway's attached persistent volume, when there is one. A key file there
+ *  survives redeploys; it sits on the same volume as the database, so a copy
+ *  of the whole volume carries its own key (stated in the boot log). */
+export function railwayVolume(env: EnvLike): string | null {
+  const v = String(env.RAILWAY_VOLUME_MOUNT_PATH ?? "").trim();
+  return v && v.startsWith("/") ? v : null;
+}
+
 export function wantsLocalKeyFile(env: EnvLike): boolean {
   const k = parseTokenKey(env[TOKEN_KEY_ENV]);
   if (k.ok || k.reason !== "missing") return false;
-  return isLoopbackHost(resolveBindHost(env)) && !plaintextOptIn(env);
+  if (plaintextOptIn(env)) return false;
+  return isLoopbackHost(resolveBindHost(env)) || railwayVolume(env) != null;
 }
 
 /**
@@ -127,12 +136,15 @@ export function tokenKeyPolicy(env: EnvLike, localKey: LocalKey | null = null): 
   }
   if (cur.reason !== "missing") return { mode: "locked", keySource: null, previousKeys, reason: keyProblem(cur) };
   const host = resolveBindHost(env);
+  if (!isLoopbackHost(host) && railwayVolume(env) && localKey?.ok) {
+    return { mode: "encrypted", key: localKey.key, keySource: "file", previousKeys, reason: null };
+  }
   if (!isLoopbackHost(host)) {
     return {
       mode: "locked",
       keySource: null,
       previousKeys,
-      reason: `${TOKEN_KEY_ENV} not set and bind host ${host} is reachable: Schwab token storage is locked until the key is set (32 bytes, base64: openssl rand -base64 32)`,
+      reason: `${TOKEN_KEY_ENV} not set and bind host ${host} is reachable: Schwab token storage is locked until the key is set (32 bytes, base64: openssl rand -base64 32)${railwayVolume(env) ? ` or the key file on the Railway volume is readable (${localKey ? (localKey.ok ? "ok" : localKey.error) : "not loaded"})` : "; on Railway, attach a volume and the key is generated on it"}`,
     };
   }
   if (plaintextOptIn(env)) {

@@ -239,10 +239,16 @@ const CATEGORY_ORDER: MacroCategory[] = [
 async function fetchOne(def: TickerDef): Promise<MacroQuote | null> {
   try {
     // Intraday for latest price + daily closes for sparkline.
-    const [intra, daily] = await Promise.all([
-      fetchIntraday(def.symbol, "1d", "5m").catch(() => null),
-      fetchDailyCloses(def.symbol, 30).catch(() => []),
-    ]);
+    // Schwab cannot quote crypto or Yahoo-style FX symbols (=X, -USD, .NYB):
+    // asking anyway failed every refresh, was never cached, and spent the shared
+    // request budget. Those go straight to their public fallbacks below.
+    const schwabCovers = def.category !== "crypto" && def.category !== "fx";
+    const [intra, daily] = schwabCovers
+      ? await Promise.all([
+          fetchIntraday(def.symbol, "1d", "5m").catch(() => null),
+          fetchDailyCloses(def.symbol, 30).catch(() => []),
+        ])
+      : [null, [] as Awaited<ReturnType<typeof fetchDailyCloses>>];
     let spark: number[] = (daily || []).map((d) => d.c).filter((c) => c != null && isFinite(c));
     // Day change vs the prior session close (server/dayChange.ts). Without an
     // intraday series, use the latest daily bar and the daily bar dated before it.

@@ -1,4 +1,10 @@
 import { vixToAtmPct } from "@shared/vol";
+import { getCryptoContext } from "./cryptoContext";
+import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
+import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
+import { openEvidenceLedger, type EvidenceLedger } from "./evidenceLedger";
+import { registerEvidenceLedgerRoutes } from "./evidenceLedgerRoutes";
+import { spyProjectionRoute } from "./spyProjection";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
 import type { Express, Request as ExRequest, Response as ExResponse } from "express";
@@ -16,6 +22,7 @@ import {
   gatherSocial, fetchHeadlines,
 } from "./sources";
 import { computeComposite } from "./composite";
+import { formatDecisionBlock } from "./decisionSupport";
 import { fetchAllVoices, factCheckItem, listVoices, computeVoicesBias } from "./voices";
 import { xEnabled } from "./x";
 import { fetchIntraday, fetchPrevDayOHLC } from "./quotes";
@@ -34,7 +41,6 @@ import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { postCalibrationCard } from "./calibrationCard";
 import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution } from "./stats";
-import { formatDecisionBlock } from "./decisionSupport";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
@@ -427,6 +433,13 @@ function rescaleLevelsForSpy(input: any, factor = 10): any {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // Bounded read-only stock/ETF research; stays inside the existing API boundary.
+  let evidenceLedger: EvidenceLedger | undefined;
+  const getEvidenceLedger = () => evidenceLedger ??= openEvidenceLedger();
+  const tradeBriefService = createTradeBriefService(undefined, brief => getEvidenceLedger().capture(brief));
+  registerTradeBriefRoutes(app, tradeBriefService);
+  registerTradeBriefAiRoutes(app, id => tradeBriefService.getSnapshot(id));
+  registerEvidenceLedgerRoutes(app, getEvidenceLedger);
   // ── Widget layout persistence (customizable dashboard stacks) ──
   app.get("/api/layout/:tab", (req, res) => {
     try {
@@ -647,10 +660,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Macro carousel — cross-asset quotes grouped by category for ticker tape + carousel.
   // Short cache keeps the Schwab request budget low (~25 symbols per refresh).
   let macroCache: { at: number; data: MacroResponse } | null = null;
-  const MACRO_CACHE_MS = 10_000; // 10s cache — near-realtime ticker tape
+  // 15 s in the regular session; 5 min otherwise (prices barely move and each
+  // rebuild costs ~2 Schwab reads per symbol).
+  const macroCacheMs = () => (isRegularSessionOpen() ? 15_000 : 5 * 60_000);
   app.get("/api/macro", async (_req, res) => {
     try {
-      if (macroCache && Date.now() - macroCache.at < MACRO_CACHE_MS) {
+      if (macroCache && Date.now() - macroCache.at < macroCacheMs()) {
         return res.json(macroCache.data);
       }
       const data = await buildMacroSnapshot();
@@ -740,6 +755,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // options chain (Schwab is rate-limited).
   const MODELS_CACHE_MS = 30 * 60_000;
 
+  const MODELS_EMPTY_RETRY_MS = 20_000;
+  const modelsBuildEmpty = (d: ModelsResponse | null | undefined): boolean =>
+    !d?.horizons || Object.values(d.horizons as Record<string, unknown>).every((h) => !h);
   async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     // Cache hit
@@ -747,7 +765,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // The 30-min rebuild cadence never serves chain-derived numbers past the
     // chain max age (3 min in the session): an older build is a miss.
     const cachedChainAsOf = cached ? oldestChainAsOf(cached.data.horizons as any) : null;
-    if (cached && Date.now() - cached.at < MODELS_CACHE_MS
+    // A build with no horizon (Schwab refused the chain) is held only
+    // MODELS_EMPTY_RETRY_MS, so the next read retries instead of serving
+    // "not built" for the full 30-minute cadence.
+    const cachedEmpty = cached ? modelsBuildEmpty(cached.data) : false;
+    if (cached && Date.now() - cached.at < (cachedEmpty ? MODELS_EMPTY_RETRY_MS : MODELS_CACHE_MS)
         && (cachedChainAsOf == null || Date.now() - cachedChainAsOf <= maxServeAgeMs("chains"))) {
       return cached.data;
     }
@@ -764,7 +786,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         symbols: [symbol],
         experimental,
       });
-      await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
+      // Never overwrite the last good session snapshot with an empty build.
+      if (!modelsBuildEmpty(data)) await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
       modelsCache.set(cacheKey, { at: Date.now(), data });
       return data;
     })().finally(() => {
@@ -797,6 +820,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const q = enriched.horizons?.quarterly as any;
         if (q && q.spot) {
           const snap = await getOrBuild(false);
+          // A missing crossing is unknown, not a zero-price anchor. Omit this
+          // optional trajectory rather than inventing a flip for its drift math.
+          const zeroGamma = snap.gamma.zeroGamma;
+          if (zeroGamma == null || !Number.isFinite(zeroGamma) || zeroGamma <= 0) {
+            throw new Error("Quarterly trajectory unavailable: no valid gamma flip");
+          }
           // Market-data blocks only (rule 2: no social/F&G in a price path). When
           // unavailable the drift tilt is skipped (50 = zero tilt) and labelled below.
           const marketScore = snap.composite?.marketScore;
@@ -866,7 +895,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             vix3m: vixData.vix3m,
             callWall: snap.gamma.callWall * gammaScale,
             putWall: snap.gamma.putWall * gammaScale,
-            gammaFlip: (snap.gamma.zeroGamma as number) * gammaScale,
+            gammaFlip: zeroGamma * gammaScale,
             maxPain: snap.gamma.maxPain == null ? null : snap.gamma.maxPain * gammaScale,
             totalGex: snap.gamma.totalGex,
             composite: composite as number,
@@ -1448,7 +1477,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const rawSymbol = String(req.query.symbol ?? "SPY").toUpperCase();
       // Schwab uses $SPX for the S&P 500 cash index, not ^GSPC (Yahoo's symbol).
       // Map up-front so Models tab's ^GSPC default doesn't 503.
-      const symbol = rawSymbol === "^GSPC" ? "$SPX" : rawSymbol;
+      // Cash indices need Schwab's "$" prefix; bare "SPX" returned zero bars.
+      const INDEX_SYMS: Record<string, string> = { "^GSPC": "$SPX", SPX: "$SPX", "^SPX": "$SPX", NDX: "$NDX", "^NDX": "$NDX", RUT: "$RUT", "^RUT": "$RUT", VIX: "$VIX", "^VIX": "$VIX" };
+      const symbol = INDEX_SYMS[rawSymbol] ?? rawSymbol;
       const { getPriceHistory } = await import("./schwab");
       const { buildPivotProjection } = await import("./pivotProjection");
 
@@ -3126,7 +3157,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       return res.status(403).json({ dataState: "unavailable", reason: "This demo runs on simulated sample data; Schwab sign-in is turned off." });
     }
     try {
-      const { schwabConfigProblem, isAutomaticCallback, parseReturnTo } = await import("./schwabOAuth");
+      const { schwabConfigProblem, isAutomaticCallback, parseReturnTo, schwabRedirectUri } = await import("./schwabOAuth");
       const problem = schwabConfigProblem();
       if (problem) return res.status(503).json({ dataState: "unavailable", reason: problem });
       const { tokenStoreStatus } = await import("./schwabTokenStore");
@@ -3136,7 +3167,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const returnTo = parseReturnTo(req.query.return);
       const url = getAuthUrl(returnTo);
       res.setHeader("Cache-Control", "no-store");
-      res.json({ url, automatic: isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? ""), returnTo });
+      res.json({ url, automatic: isAutomaticCallback(schwabRedirectUri()), returnTo });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build auth URL" });
     }
@@ -3147,8 +3178,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try {
       const { redirectedUrl, state } = req.body ?? {};
       const { parseSchwabCallback } = await import("../shared/schwabCallback");
-      const { consumeOAuthState, isAutomaticCallback } = await import("./schwabOAuth");
-      if (isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? "")) {
+      const { consumeOAuthState, isAutomaticCallback, schwabRedirectUri } = await import("./schwabOAuth");
+      if (isAutomaticCallback(schwabRedirectUri())) {
         return res.status(400).json({ message: "This server uses automatic sign-in. Return from Schwab and check connection; do not paste a saved code." });
       }
       if (typeof redirectedUrl !== "string" || typeof state !== "string") {
@@ -3156,7 +3187,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
       let parsed: { code: string; state: string };
       try {
-        parsed = parseSchwabCallback(redirectedUrl, state, process.env.SCHWAB_REDIRECT_URI ?? "");
+        parsed = parseSchwabCallback(redirectedUrl, state, schwabRedirectUri());
       } catch {
         return res.status(400).json({ message: "Callback does not match this sign-in. Use the fresh callback from the latest login link." });
       }
@@ -3221,6 +3252,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  const _optionChainLastGood = new Map<string, { at: number; data: any }>();
   app.get("/api/market/option-chain/:symbol", async (req, res) => {
     try {
       const rawParam = String(req.params.symbol).toUpperCase();
@@ -3230,13 +3262,26 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           ? "$SPX"
           : rawParam;
       const dte = req.query.dte !== undefined ? parseInt(String(req.query.dte)) : undefined;
-      const chain = await schwabGetOptionChain(symbol, dte);
+      // A multi-day $SPX chain in one request is too large and Schwab answers 502
+      // (shown as "not connected" downstream). The ladder splits it by expiry.
+      const { getOptionChainLadder } = await import("./schwab");
+      let chain = dte !== undefined && dte > 2 && symbol.startsWith("$")
+        ? await getOptionChainLadder(symbol, dte)
+        : await schwabGetOptionChain(symbol, dte);
+      if ("error" in chain && dte !== undefined && dte > 2) chain = await schwabGetOptionChain(symbol, 2);
+      const key = `${symbol}:${dte ?? "all"}`;
       if ("error" in chain) {
+        const last = _optionChainLastGood.get(key);
+        if (last) {
+          return res.json({ ...last.data, stale: true, staleReason: `${chain.reason ?? chain.error}; last good chain ${Math.round((Date.now() - last.at) / 60000)} min old` });
+        }
         return res.status(503).json({ ...chain, dataState: chain.dataState ?? "unavailable", reason: chain.reason ?? chain.error });
       }
       // Augment with computed GEX levels
       const gex = computeGEXFromChain(chain);
-      res.json({ ...chain, gex });
+      const body = { ...chain, gex };
+      _optionChainLastGood.set(key, { at: Date.now(), data: body });
+      res.json(body);
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Option chain fetch failed" });
@@ -3263,10 +3308,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // Fetch chain — Schwab only. No SPY substitute for SPX (a different
       // instrument, scale and multiplier): unavailable instead.
-      const chain = await schwabGetOptionChain(symbol, dte);
+      // A 60-DTE $SPX chain in one request is ~600 KB+ and Schwab answers 502;
+      // the ladder splits it into expiry segments and merges them.
+      const { getOptionChainLadder } = await import("./schwab");
+      let chain = dte > 14 ? await getOptionChainLadder(symbol, dte) : await schwabGetOptionChain(symbol, dte);
+      if ("error" in chain && dte > 14) chain = await schwabGetOptionChain(symbol, Math.min(dte, 14));
       const usedSymbol = symbol;
 
       if ("error" in chain) {
+        // Last good audit beats a blank panel; it is labeled with its real age.
+        if (cached) {
+          return res.json({ ...cached.data, stale: true, staleAgeSec: Math.round((Date.now() - cached.at) / 1000), staleReason: chain.reason ?? chain.error });
+        }
         return res.status(503).json({
           error: chain.error,
           dataState: chain.dataState ?? "unavailable",
@@ -3295,6 +3348,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       audit.chainSource = "schwab";
       audit.chainAsOfMs = chain.asOfMs;
       audit.chainStale = chain.stale;
+      (audit as any).oiState = chain.oiState ?? null;
       audit.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;
@@ -3304,7 +3358,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       // Never let a DB failure (or empty chain) break the audit response.
       try {
         // History rows only from a chain fetched for this call (never a re-served one).
-        if (audit.dataQuality !== "minimal" && !chain.stale) {
+        // No OI-weighted history from an all-zero-OI chain (Schwab weekends).
+        if (audit.dataQuality !== "minimal" && !chain.stale && chain.oiState?.source !== "none") {
           const ts = Date.now();
           const rows: GreekSnapshotRow[] = [];
           for (const p of audit.vanna.profile) {
@@ -3629,8 +3684,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const greekRaw = String(req.query.greek || "gex").toLowerCase();
       const greek = (THERMAL_GREEKS as readonly string[]).includes(greekRaw) ? (greekRaw as ThermalGreek) : "gex";
 
-      const { getOptionChain } = await import("./schwab");
-      const chain = await getOptionChain(symbol, dte);
+      const { getOptionChain, getOptionChainLadder } = await import("./schwab");
+      // One 60-DTE $SPX request is too large (Schwab 502); the ladder splits it.
+      const chain = dte > 14 ? await getOptionChainLadder(symbol, dte) : await getOptionChain(symbol, dte);
       if ("error" in chain) {
         return res.status(503).json({ error: chain.error, dataState: chain.dataState ?? "unavailable", message: `Option chain unavailable: ${chain.reason ?? chain.error}` });
       }
@@ -3644,6 +3700,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         ...out,
         asOf: chain.asOfMs ?? out.asOf,
         chain: { asOfMs: chain.asOfMs, ageMs: chain.ageMs, servedFromCache: chain.servedFromCache, stale: chain.stale, staleReason: chain.staleReason ?? null },
+        oiState: chain.oiState ?? null,
       });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;
@@ -4048,6 +4105,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       result.chainAsOfMs = chain.asOfMs;
       result.chainStale = chain.stale;
       result.chainMaxAgeMs = chain.maxAgeMs;
+      result.oiState = chain.oiState ?? null;
       result.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;
@@ -4090,8 +4148,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     const stale = s.computedAt != null && Date.now() - s.computedAt * 1000 > staleMs;
     if (empty || stale) {
       console.log(`[backtest] boot rebuild (${empty ? "empty" : "stale"})…`);
-      runBackfill(5).then(r => console.log("[backtest] boot backfill:", r))
-                    .catch(e => console.error("[backtest] boot backfill failed:", e?.message || e));
+      // Retry every 10 min (up to 2 h) when Schwab is disconnected or throttled
+      // at boot; one failed attempt used to leave the backtest stale for days.
+      const attempt = (n: number) => runBackfill(5).then(r => console.log("[backtest] boot backfill:", r))
+        .catch(e => {
+          console.error(`[backtest] boot backfill failed (attempt ${n}):`, e?.message || e);
+          if (n < 12) setTimeout(() => attempt(n + 1), 10 * 60_000).unref?.();
+        });
+      attempt(1);
     }
   }, 8_000);
 
@@ -4748,6 +4812,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // CRYPTO DEGEN DESK — feed / health / signals
+  app.get("/api/crypto/context", async (_req, res) => {
+    try {
+      const context = await getCryptoContext();
+      res.json(context);
+    }
+    catch { res.status(503).json({ error: "crypto_context_unavailable", message: "Context is unavailable; no missing value is treated as zero." }); }
+  });
   app.get("/api/crypto/feed", (_req, res) => {
     try { res.json(getCryptoFeed()); }
     catch (e: any) { res.status(500).json({ error: "crypto_feed_failed", message: e?.message ?? String(e) }); }
@@ -5248,6 +5319,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   } catch (e: any) {
     console.warn(`[canary] failed to start: ${e?.message ?? e}`);
   }
+
+  // Last-session option-chain capture: keeps the weekend/holiday OI hold full (server/oiCapture.ts).
+  try {
+    const { startOiCapture } = await import("./oiCapture");
+    startOiCapture();
+  } catch (e: any) {
+    console.warn(`[oiCapture] failed to start: ${e?.message ?? e}`);
+  }
+  app.get("/api/oi-hold/status", async (_req, res) => {
+    const { oiCaptureStatus } = await import("./oiCapture");
+    res.json(oiCaptureStatus());
+  });
 
   // FRED macro refresher (6h cadence)
   try {
@@ -6241,6 +6324,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  // Local real-observation SPY pipeline (research-only, forecasts disabled), kept under its own path.
+  app.get("/api/ml/spy-real-observation", spyProjectionRoute);
+
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
   // 503 with an explicit reason when the sidecar is not installed on this
   // host (no Python or missing packages) versus installed but not answering.
@@ -6266,7 +6352,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // bands at q10/q25/q50/q75/q90, drift dampened 0.5x, VIX/realized blowup.
   app.get("/api/projection/multiday", async (req, res) => {
     try {
-      const symbol = String(req.query.symbol ?? "^GSPC").toUpperCase();
+      const rawSym = String(req.query.symbol ?? "^GSPC").toUpperCase();
+      const symbol = rawSym === "SPX" ? "$SPX" : rawSym; // bare SPX has no Schwab history
       const { buildMultiDayCone } = await import("./multiDayProjection");
       const cone = await buildMultiDayCone(symbol);
       res.json(cone);
