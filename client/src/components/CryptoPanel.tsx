@@ -11,6 +11,7 @@
 
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
+import QuickDetails from "@/components/QuickDetails";
 import { apiJson } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -437,7 +438,7 @@ function DeskBrief({ feed, health, sig, enters, watches, onPick }: {
     : watches.length > 0 ? `Nothing clears every ENTER rule. ${watches.length} forming`
     : "Nothing clears the bar right now";
   return (
-    <div className="min-h-[15rem] rounded-xl border border-border/60 bg-card/60 p-4 sm:min-h-[11rem]" data-testid="crypto-brief">
+    <div className="min-h-[15rem] rounded-xl border border-border/60 bg-card/60 p-4 sm:min-h-[11rem]" data-testid="crypto-brief" data-answer-tab="crypto" data-ready={feed ? "1" : "0"}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
@@ -502,6 +503,8 @@ export default function CryptoPanel() {
       {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />
 
+      <QuickDetails id="crypto-context" label="BTC, ETH and SOL prices, funding and open interest, narrative heat">
+      <>
       {/* BTC / ETH / SOL exchange-direct, cross-checked */}
       <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
 
@@ -539,6 +542,9 @@ export default function CryptoPanel() {
           </span>
         ))}
       </div>
+
+      </>
+      </QuickDetails>
 
       {/* view toggle */}
       <div className="flex items-center gap-2">

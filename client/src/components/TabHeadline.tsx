@@ -63,7 +63,7 @@ export default function TabHeadline({ tab, showExplainer = true }: Props) {
   const hasMore = (data.bullets?.length ?? 0) > 0 || (showExplainer && !!data.whatThisIs) || !!data.subLine;
 
   return (
-    <div className={`rounded-lg border ${border} ${bg}`} data-testid={`headline-${tab}`}>
+    <div className={`rounded-lg border ${border} ${bg}`} data-testid={`headline-${tab}`} data-answer-tab={tab} data-ready="1">
       <button
         type="button"
         onClick={() => hasMore && setOpen((v) => !v)}

@@ -1256,3 +1256,16 @@ reason, agent health, and the graded record so far in plain counts); the autopsy
 and tracking banner follow it; tracked-caps labels are sentence case. Descriptive
 only: no new rule, score or claim; scores stay heuristics. Verified by CI's
 screenshots and 7-width audit only (no local build: registry unreachable).
+
+2026-11-03: quick view, pass 1 (feat/quick-view). Owner goal: an app built for quick responses. Each tab
+answers first; supporting panels sit behind one "More detail" tap (QuickDetails): closed by default under
+1024 px, open on wider screens, the reader's choice remembered per section on the device. Closed sections
+do not mount, so their requests and rendering do not run on a phone until asked. Applied to Signals
+(breadth, composite and sub-gauges, gamma and term structure, social and Fear & Greed go behind the tap;
+headline, Today card, ticker scan and the flow widgets stay up), Models (ML lab and the playbook) and
+Crypto (majors, funding/OI and narrative heat). Single-panel tabs are unchanged. CI's UX audit now times
+"answerMs" (tap to the tab's one-line answer showing data; budget 4 s, to be lowered once real numbers
+are in) and counts tabs with no answer line in 10 s (budget 1: Edge Lab has none yet). Not verified by
+eye: no local build in this sandbox; CI screenshots and budgets are the check. Note: the audit's
+overflow and contrast checks now see less content on phones, because the collapsed panels are not
+mounted there.
