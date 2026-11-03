@@ -18,6 +18,7 @@
 import { type Check, close } from "./liveVerify";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, type CryptoRules } from "./cryptoRules";
 import { tradeCost } from "./memeStructure";
+import { DERIVS_STALE_MS, fundingDirection, type DerivsSnapshot } from "./cryptoFunding";
 
 const fin = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 const fmt = (n: number | null | undefined, dp = 2): string => (n == null || !Number.isFinite(n) ? "n/a" : n.toFixed(dp));
@@ -141,4 +142,42 @@ export function expectancyChecks(x: { graded: ExpectancyLike; hold: ExpectancyLi
       !shareOk ? "no-data share disagrees" : !gateOk ? "sample gate or thresholds differ from the rule book" : !labelOk ? "label claims a result the sample cannot support" : null));
   }
   return out;
+}
+
+/**
+ * Funding and open-interest readout: every displayed number re-derived from the
+ * row's own fields, and a plausibility bound that catches a gross unit slip
+ * (a value hundreds of times too large). It cannot catch a percent read as a
+ * fraction (0.01 meaning 0.01% would show 1%, inside any band wide enough for
+ * real spikes); that risk is carried by the parser tests and the live check.
+ * The bound is a verification bound, not a trading rule.
+ */
+export const FUNDING_PLAUSIBLE_ABS_PCT = 5;
+
+export function derivsChecks(d: DerivsSnapshot | null, now: number): Check[] {
+  const id = "crypto.derivs";
+  if (!d) return [mk(id, "funding and open interest", "unavailable", "no snapshot", null, "the perpetual-futures feed has not answered yet")];
+  if (d.state === "unavailable") return [mk(id, "funding and open interest", "unavailable", "unavailable", null, d.rows.map((r) => `${r.venue} ${r.asset}: ${r.reason ?? r.state}`).slice(0, 6).join("; "))];
+  const bad: string[] = [];
+  let okRows = 0;
+  for (const r of d.rows) {
+    if (r.state !== "ok") continue;
+    okRows++;
+    const tag = `${r.venue} ${r.asset}`;
+    if (!fin(r.fundingPct)) { bad.push(`${tag}: funding missing on an ok row`); continue; }
+    if (Math.abs(r.fundingPct) > FUNDING_PLAUSIBLE_ABS_PCT) bad.push(`${tag}: funding ${fmt(r.fundingPct, 4)}% per interval is outside the plausible band`);
+    // A rate under 5e-9 rounds fundingPct to 0 while the direction comes from the raw sign: either is right then.
+    if (r.fundingPct !== 0 && r.direction !== fundingDirection(r.fundingPct)) bad.push(`${tag}: direction "${r.direction}" disagrees with the funding sign`);
+    if (fin(r.fundingIntervalHours) && r.fundingIntervalHours > 0) {
+      const exp = r.fundingPct * (8 / r.fundingIntervalHours);
+      // fundingPct is rounded to 6 dp before scaling by 8/h; the shown figure is computed from the raw rate and rounded once.
+      const tol = (8 / r.fundingIntervalHours) * 5e-7 + 5e-7 + 1e-9;
+      if (!fin(r.funding8hPct) || Math.abs(r.funding8hPct - exp) > tol) bad.push(`${tag}: per-8h ${fmt(r.funding8hPct, 6)} expected ${fmt(exp, 6)}`);
+    } else if (r.funding8hPct != null) bad.push(`${tag}: per-8h figure shown without a stated interval`);
+    if (r.asOf == null || now - r.asOf > DERIVS_STALE_MS) bad.push(`${tag}: ok row older than the stale limit`);
+    if (r.oiState === "ok" && !fin(r.oi1hChangePct)) bad.push(`${tag}: open-interest change marked ok but missing`);
+    if (r.oiState !== "ok" && r.oi1hChangePct != null) bad.push(`${tag}: open-interest change shown while ${r.oiState}`);
+  }
+  if (okRows === 0) return [mk(id, "funding and open interest", "stale", `${d.rows.length} rows, none fresh`, null, "every row is stale or unavailable")];
+  return [mk(id, "funding and open interest", bad.length ? "fail" : "pass", `${okRows} fresh row${okRows === 1 ? "" : "s"}, state ${d.state}`, "signs, per-8h arithmetic and units consistent", bad.length ? bad.slice(0, 4).join("; ") : d.state === "partial" ? "partial: at least one asset has no fresh venue" : null)];
 }

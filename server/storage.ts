@@ -1,10 +1,11 @@
+import { mainDbPath } from "./dbPath";
 import { snapshots, xUsers, xTweets, schwabTokens } from "@shared/schema";
 import type { Snapshot, InsertSnapshot, XUser, XTweet, SchwabToken } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { desc, eq } from "drizzle-orm";
 
-const sqlite = new Database("data.db");
+const sqlite = new Database(mainDbPath());
 export { sqlite };
 sqlite.pragma("journal_mode = WAL");
 

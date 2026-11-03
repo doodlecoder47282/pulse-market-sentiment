@@ -1126,7 +1126,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
         {/* Mag 7 row */}
         <div>
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Mag 7</div>
-          <div className="grid grid-cols-3 gap-2 md:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2 xs:grid-cols-3 sm:grid-cols-4 lg:grid-cols-7">
             {data.mag7Group.map((t) => <FlowTile key={t.symbol} tick={t} />)}
           </div>
         </div>

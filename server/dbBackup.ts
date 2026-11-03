@@ -1,12 +1,13 @@
 // DB backup cron. Snapshots data.db nightly, keeps last 7.
 // Pure file-system; never throws to caller.
 
+import { mainDbPath, backupDirPath } from "./dbPath";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { sqlite } from "./storage";
 
-const DB_PATH = "./data.db";
-const BACKUP_DIR = "./backups";
+const DB_PATH = mainDbPath();
+const BACKUP_DIR = backupDirPath();
 const KEEP = 7;
 
 let started = false;

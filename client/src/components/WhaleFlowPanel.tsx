@@ -448,7 +448,7 @@ function TrackedTickerGroup({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex min-h-[44px] w-full items-center gap-3 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors"
+        className="flex min-h-[44px] w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors"
         data-testid={`tracked-toggle-${ticker}`}
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
@@ -469,7 +469,7 @@ function TrackedTickerGroup({
             {soldCount} sold
           </Badge>
         )}
-        <span className={`ml-auto font-mono text-sm ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg mid</span>
+        <span className={`ml-auto whitespace-nowrap font-mono text-sm tabular-nums ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg mid</span>
       </button>
       {open && (
         <div className="space-y-1.5 px-2 pb-2 pt-1">

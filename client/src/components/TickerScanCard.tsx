@@ -39,7 +39,7 @@ function Stat({ label, value, title, cls, sub }: { label: string; value: string;
   return (
     <div className="rounded border border-border/40 bg-muted/10 px-2 py-1.5" title={title}>
       <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div>
-      <div className={`font-mono text-sm font-semibold tabular-nums ${cls ?? ""}`}>{value}</div>
+      <div className={`break-words font-mono text-sm font-semibold tabular-nums ${cls ?? ""}`}>{value}</div>
       {sub && <div className="font-mono text-[10px] text-muted-foreground">{sub}</div>}
     </div>
   );
@@ -79,14 +79,14 @@ export default function TickerScanCard() {
             <CardTitle className="text-sm font-semibold tracking-tight">Scan any ticker</CardTitle>
             {d && <span className="font-mono text-[11px] text-muted-foreground">{d.symbol}{d.instrument.description ? ` · ${d.instrument.description}` : ""} · session {d.session}</span>}
           </div>
-          <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <form className="flex w-full items-center gap-2 sm:w-auto" onSubmit={(e) => { e.preventDefault(); submit(); }}>
             <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={symbol || "NVDA"} aria-label="symbol to scan" autoCapitalize="characters"
-              className="min-h-[40px] w-28 rounded-md border border-border/60 bg-background px-2 font-mono text-sm uppercase" data-testid="ticker-scan-input" />
-            <button type="submit" className="min-h-[40px] rounded-md border border-amber-500/40 bg-amber-500/10 px-3 text-xs font-semibold text-amber-300" data-testid="ticker-scan-go">scan</button>
+              className="min-h-[44px] w-full min-w-0 flex-1 rounded-md border border-border/60 bg-background px-3 font-mono text-sm uppercase sm:min-h-[36px] sm:w-28 sm:flex-none" data-testid="ticker-scan-input" />
+            <button type="submit" className="min-h-[44px] rounded-md border border-amber-500/40 bg-amber-500/10 px-4 text-xs font-semibold text-amber-300 sm:min-h-[36px] sm:px-3" data-testid="ticker-scan-go">scan</button>
           </form>
         </div>
       </CardHeader>
-      <CardContent className="min-h-[120px] space-y-3">
+      <CardContent className="min-h-[120px] space-y-4">
         {!symbol && <p className="text-[11px] text-muted-foreground" data-testid="ticker-scan-empty">Type a symbol Schwab serves. Five reads come back, each with its own state: instrument, quote, volume against its 20-session pace, per-name dealer gamma, and the chain's most active contracts.</p>}
         {symbol && q.isLoading && <p className="text-[11px] text-muted-foreground">scanning {symbol}…</p>}
         {symbol && q.isError && <p className="text-[11px] text-rose-300" data-testid="ticker-scan-error">scan unavailable: {String((q.error as any)?.message ?? "error").slice(0, 120)}</p>}
@@ -96,7 +96,7 @@ export default function TickerScanCard() {
 
             <div className="space-y-1.5" data-testid="ticker-scan-quote">
               <SectionHead label="quote" s={d.quote} testId="ticker-scan-quote-state" />
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 <Stat label="last" value={px(d.quote.last)} cls={d.quote.changePct == null ? "" : d.quote.changePct >= 0 ? "text-emerald-300" : "text-rose-300"} />
                 <Stat label="change" value={pct(d.quote.changePct)} />
                 <Stat label="bid / ask" value={`${px(d.quote.bid)} / ${px(d.quote.ask)}`} />
@@ -108,7 +108,7 @@ export default function TickerScanCard() {
 
             <div className="space-y-1.5" data-testid="ticker-scan-volume">
               <SectionHead label="volume read" s={d.volume} testId="ticker-scan-volume-state" />
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 <Stat label="20d avg" value={big(d.volume.relative.avg20)} title={`${d.volume.relative.sessions} sessions`} />
                 <Stat label="rel. volume" value={x(d.volume.relative.rel)} title="today / 20-session average, raw" />
                 <Stat label="paced" value={x(d.volume.relative.relPaced)} title="today / (average x share of the session elapsed)" cls={d.volume.relative.relPaced != null && d.volume.relative.relPaced >= 1.8 ? "text-amber-300" : ""} />
@@ -121,7 +121,7 @@ export default function TickerScanCard() {
 
             <div className="space-y-1.5" data-testid="ticker-scan-structure">
               <SectionHead label="dealer gamma (45 DTE chain)" s={d.structure} testId="ticker-scan-structure-state" />
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 <Stat label="call wall" value={px(d.structure.callWall)} sub={d.structure.distToCallWallPct != null ? `${d.structure.distToCallWallPct.toFixed(2)}% from spot` : undefined} cls="text-rose-300" />
                 <Stat label="gamma flip" value={px(d.structure.gammaFlip)} cls="text-amber-200" />
                 <Stat label="put wall" value={px(d.structure.putWall)} sub={d.structure.distToPutWallPct != null ? `${d.structure.distToPutWallPct.toFixed(2)}% from spot` : undefined} cls="text-emerald-300" />
@@ -136,8 +136,8 @@ export default function TickerScanCard() {
             <div className="space-y-1.5" data-testid="ticker-scan-chain">
               <SectionHead label="most active contracts (volume / OI, 45 DTE)" s={d.chain} testId="ticker-scan-chain-state" />
               {d.chain.contracts.length > 0 && (
-                <div className="overflow-x-auto">
-                  <div className="pb-1 text-[11px] text-muted-foreground sm:hidden" data-testid="ticker-scan-swipe-hint">swipe sideways for more columns</div>
+                <div className="hscroll-contain">
+                  <div className="sticky left-0 pb-1 text-[11px] text-muted-foreground sm:hidden" data-testid="ticker-scan-swipe-hint">swipe sideways for more columns</div>
                   <table className="w-full min-w-[560px] text-[11px]">
                     <thead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                       <tr><th className="text-left">contract</th><th className="text-right">vol</th><th className="text-right">OI</th><th className="text-right">vol/OI</th><th className="text-right">mid</th><th className="text-right">premium</th><th className="text-right">Δ</th><th className="text-right">tag</th></tr>

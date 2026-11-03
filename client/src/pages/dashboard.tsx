@@ -50,7 +50,6 @@ import {
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import SchwabRequiredNotice from "@/components/SchwabRequiredNotice";
 import DemoStrip from "@/components/DemoStrip";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TodayCard from "@/components/TodayCard";
 import TickerScanCard from "@/components/TickerScanCard";
@@ -393,7 +392,7 @@ export default function Dashboard() {
           </div>
 
           {/* Right: Clock + market status + last-update + refresh */}
-          <div className="flex items-center gap-1.5 md:gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
             {/* Clock + market status: stacked, visible on md+ */}
             <div className="hidden items-end gap-2 lg:flex">
               <div className="flex flex-col items-end gap-0.5">
@@ -515,49 +514,52 @@ export default function Dashboard() {
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
           {/* Desktop tab bar — single inline row. Hidden on mobile (replaced by bottom-nav). */}
-          <div className="mb-4 hidden lg:block">
+          {/* Eleven tabs in one row from 1024 px; the strip scrolls sideways
+              (active tab kept in view, see the effect above) rather than wrap
+              or overflow the page when the labels do not all fit. */}
+          <div className="tabs-scroll-container mb-4 hidden overflow-x-auto lg:block">
             <TabsList
-              className="flex h-10 w-full flex-nowrap items-center justify-center gap-0 p-1 xl:h-12 xl:gap-1 xl:p-1.5 [&>[data-state=active]]:bg-primary/15 [&>[data-state=active]]:text-primary [&>[data-state=active]]:shadow-none"
+              className="flex h-10 w-max min-w-full flex-nowrap items-center justify-center gap-0.5 p-1 xl:h-12 xl:gap-1 xl:p-1.5 [&>[data-state=active]]:bg-primary/15 [&>[data-state=active]]:text-primary [&>[data-state=active]]:shadow-none"
               data-testid="tabs-dashboard"
             >
-              <TabsTrigger value="signals" data-testid="tab-signals" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
-              <TabsTrigger value="chart" data-testid="tab-chart" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Chart</TabsTrigger>
-              <TabsTrigger value="models" data-testid="tab-models" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Models</TabsTrigger>
+              <TabsTrigger value="signals" data-testid="tab-signals" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Signals</TabsTrigger>
+              <TabsTrigger value="chart" data-testid="tab-chart" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Chart</TabsTrigger>
+              <TabsTrigger value="models" data-testid="tab-models" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Models</TabsTrigger>
               <TabsTrigger
                 value="heatseeker"
                 data-testid="tab-heatseeker"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
+                className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold"
               >
                 Heatseeker
               </TabsTrigger>
-              <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Trade Desk</TabsTrigger>
-              <TabsTrigger value="regime" data-testid="tab-regime" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Regime</TabsTrigger>
+              <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Trade Desk</TabsTrigger>
+              <TabsTrigger value="regime" data-testid="tab-regime" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Regime</TabsTrigger>
               <TabsTrigger
                 value="cosmos"
                 data-testid="tab-cosmos"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
+                className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold"
               >
                 Cosmos
               </TabsTrigger>
-              <TabsTrigger value="news" data-testid="tab-news" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
+              <TabsTrigger value="news" data-testid="tab-news" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">News</TabsTrigger>
               <TabsTrigger
                 value="takefive"
                 data-testid="tab-takefive"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
+                className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold"
               >
                 Take Five
               </TabsTrigger>
               <TabsTrigger
                 value="edgelab"
                 data-testid="tab-edgelab"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
+                className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold"
               >
                 Edge Lab
               </TabsTrigger>
               <TabsTrigger
                 value="crypto"
                 data-testid="tab-crypto"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
+                className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold"
               >
                 Crypto
               </TabsTrigger>
@@ -607,18 +609,18 @@ export default function Dashboard() {
 
             {/* ── ML Lab ── */}
             <Separator className="my-2" />
-            <h2 className="text-xl font-semibold">ML Lab</h2>
+            <h2 className="text-lg font-semibold sm:text-xl">ML Lab</h2>
             <ErrorBoundary label="ML Lab">
-              <Suspense fallback={<div className="text-sm text-muted-foreground">loading ml lab...</div>}>
+              <Suspense fallback={<div className="space-y-2"><p className="text-sm text-muted-foreground">loading ml lab...</p><PanelSkeleton variant="card" /></div>}>
                 <MLProjectionPanel />
               </Suspense>
             </ErrorBoundary>
 
             {/* ── Daily Playbook (additive) ── */}
             <Separator className="my-2" />
-            <h2 className="text-xl font-semibold">Daily Playbook</h2>
+            <h2 className="text-lg font-semibold sm:text-xl">Daily Playbook</h2>
             <ErrorBoundary label="Daily Playbook">
-              <Suspense fallback={<div className="text-sm text-muted-foreground">loading playbook...</div>}>
+              <Suspense fallback={<div className="space-y-2"><p className="text-sm text-muted-foreground">loading playbook...</p><PanelSkeleton variant="chart" /></div>}>
                 <DailyPlaybookChart symbol="SPY" />
               </Suspense>
             </ErrorBoundary>
@@ -696,7 +698,7 @@ export default function Dashboard() {
           <TabsContent value="edgelab" className="space-y-6">
             <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="price and option-chain data" />
             <ErrorBoundary label="Edge Lab">
-              <Suspense fallback={<div className="text-xs text-muted-foreground">loading edge lab…</div>}>
+              <Suspense fallback={<div className="space-y-2"><p className="text-xs text-muted-foreground">loading edge lab…</p><PanelSkeleton variant="card" /></div>}>
                 <EdgeLabPanel />
               </Suspense>
             </ErrorBoundary>
@@ -705,7 +707,7 @@ export default function Dashboard() {
           {/* ── Crypto tab (lazy) ── */}
           <TabsContent value="crypto" className="space-y-6">
             <ErrorBoundary label="Crypto">
-              <Suspense fallback={<div className="text-xs text-muted-foreground">loading digital assets…</div>}>
+              <Suspense fallback={<div className="space-y-2"><p className="text-xs text-muted-foreground">loading digital assets…</p><PanelSkeleton variant="list" /></div>}>
                 <CryptoPanel />
               </Suspense>
             </ErrorBoundary>
@@ -747,8 +749,8 @@ export default function Dashboard() {
                 implied-vol and options-positioning blocks: unavailable without them. */}
             {composite ? (<>
             <Card data-testid="card-composite">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
+              <CardContent className="p-4 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <div className="text-xs uppercase tracking-widest text-muted-foreground">Composite Sentiment</div>
                     <h2 className="mt-1 text-lg font-semibold">{composite.label}</h2>
@@ -760,7 +762,7 @@ export default function Dashboard() {
                     </Badge>
                   </div>
                 </div>
-                <div className="mt-2 flex justify-center">
+                <div className="mt-2 flex justify-center [&>*]:max-w-full">
                   <Gauge value={composite.score} label={composite.label} size={280} />
                 </div>
                 <p className="mt-4 text-sm text-muted-foreground" data-testid="text-takeaway">{composite.takeaway}</p>
@@ -807,7 +809,7 @@ export default function Dashboard() {
             </section>
             </>) : (
               <Card data-testid="card-composite">
-                <CardContent className="p-6">
+                <CardContent className="p-4 sm:p-6">
                   <div className="text-xs uppercase tracking-widest text-muted-foreground">Composite Sentiment</div>
                   <UnavailablePanel className="mt-3" title="Composite and signal breakdown" state="unavailable"
                     reason={sectionReason("composite")} testId="unavailable-composite" />
@@ -826,7 +828,7 @@ export default function Dashboard() {
                   <UnavailablePanel title="Dealer gamma" state="unavailable" reason={sectionReason("gamma")} testId="unavailable-gamma" />
                 ) : (
                 <>
-                  <div className="mb-3 flex flex-wrap gap-3 text-xs">
+                  <div className="mb-3 flex flex-wrap gap-2 text-xs sm:gap-3">
                     {/* TODO(threshold-context): no baseline for Net GEX in the API. To satisfy
                         North Star rule 5 ("$1.2B (vs 30D avg $0.8B, p25 ...)"), GammaStructure
                         (shared/schema.ts) needs e.g. totalGexAvg30d / totalGexPctile — computed
@@ -986,7 +988,7 @@ export default function Dashboard() {
                   <>
                     <MessageSquare className="h-4 w-4" />
                     StockTwits Chatter (social, context only)
-                    <Badge variant="secondary" className="ml-2 font-mono text-[11px]" data-testid="badge-social-score">
+                    <Badge variant="secondary" className="ml-0 font-mono text-[11px] sm:ml-2" data-testid="badge-social-score">
                       {!social ? "unavailable" : social.score == null
                         ? (social.status === "insufficient" ? "too few tagged posts" : "unavailable")
                         : `score ${social.score >= 0 ? "+" : ""}${social.score}${social.status === "partial" ? " (partial)" : ""}`}
@@ -1004,7 +1006,7 @@ export default function Dashboard() {
                       {" "}· keyword/tag tone, a heuristic; context only
                     </div>
                   )}
-                  <div className="mb-3 flex items-center gap-4 text-xs">
+                  <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                     <span className="text-emerald-500">
                       <ArrowUpRight className="mr-1 inline h-3 w-3" />
                       {social.bullish} bullish
@@ -1053,17 +1055,17 @@ export default function Dashboard() {
                   <>
                     {fearGreed ? (
                       <div className="flex items-center gap-4">
-                        <div className={`font-mono text-4xl font-bold ${scoreColor(fearGreed.value)}`} data-testid="text-fg-value">
+                        <div className={`font-mono text-4xl font-bold tabular-nums ${scoreColor(fearGreed.value)}`} data-testid="text-fg-value">
                           {fearGreed.value}
                         </div>
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium">{fearGreed.label}</div>
                           <div className="text-xs text-muted-foreground">0 (fear) · 50 (neutral) · 100 (greed)</div>
                           <div className={`text-[11px] ${fearGreed.stale ? "text-amber-500" : "text-muted-foreground"}`} data-testid="text-fg-asof">
                             source {fearGreed.source}{fearGreed.asOf ? ` · as of ${new Date(fearGreed.asOf).toLocaleString()}` : " · age unknown"}
                             {fearGreed.stale ? " · STALE, left out of the composite" : ""}
                           </div>
-                          <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+                          <div className="mt-2 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-full bg-muted">
                             <div className={`h-full ${scoreBg(fearGreed.value)}`} style={{ width: `${fearGreed.value}%` }} />
                           </div>
                         </div>
@@ -1080,7 +1082,7 @@ export default function Dashboard() {
         </Tabs>
       </main>
 
-      {/* Mobile bottom-nav — fixed, horizontally scrollable, 10 tabs in locked order */}
+      {/* Mobile bottom-nav — fixed, horizontally scrollable, every tab, swipe left and right */}
       <nav
         className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
         style={{
@@ -1117,11 +1119,23 @@ function KeyStat({
     : tone === "warn" ? "text-amber-500"
     : "text-foreground";
   const tooltip = KEY_STAT_TOOLTIPS[label];
+  // Touch screens have no hover: a tap on the stat shows the same definition
+  // inline (and hides it again); the hover tooltip stays for the desktop.
+  const [open, setOpen] = useState(false);
   const inner = (
-    <div className="min-w-[90px] rounded-md border border-border bg-card/50 px-2.5 py-1.5 cursor-default" data-testid={testId}>
+    <div
+      className={`min-w-[90px] flex-1 rounded-md border border-border bg-card/50 px-2.5 py-1.5 sm:flex-none ${tooltip ? "cursor-pointer" : "cursor-default"}`}
+      data-testid={testId}
+      role={tooltip ? "button" : undefined}
+      tabIndex={tooltip ? 0 : undefined}
+      aria-expanded={tooltip ? open : undefined}
+      onClick={tooltip ? () => setOpen((v) => !v) : undefined}
+      onKeyDown={tooltip ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((v) => !v); } } : undefined}
+    >
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}{tooltip && <span className="ml-0.5 text-muted-foreground">?</span>}</div>
-      <div className={`font-mono text-sm font-semibold ${toneClass}`}>{value}</div>
+      <div className={`font-mono text-sm font-semibold tabular-nums ${toneClass}`}>{value}</div>
       {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+      {tooltip && open && <div className="mt-1 max-w-[18rem] text-[11px] leading-snug text-muted-foreground">{tooltip}</div>}
     </div>
   );
   if (!tooltip) return inner;
@@ -1151,72 +1165,50 @@ function TermBar({ label, value, max, highlight }: { label: string; value: numbe
   );
 }
 
-// Phone navigation: four primary tabs plus "More", which opens a sheet with
-// the other seven. Every tab is one or two taps away and nothing is hidden
-// off the edge of the screen.
-const MOBILE_PRIMARY: { key: TabKey; label: string }[] = [
+// Phone navigation: one strip with every tab, swiped left to right. Snap
+// points keep a tab under the thumb, the selected tab is centred when it
+// changes (effect near the top of Dashboard), and the edge fades say there is
+// more to either side.
+const MOBILE_TABS: { key: TabKey; label: string }[] = [
   { key: "signals", label: "Signals" },
   { key: "chart", label: "Chart" },
   { key: "models", label: "Models" },
-  { key: "tradedesk", label: "Desk" },
-];
-const MOBILE_MORE: { key: TabKey; label: string }[] = [
   { key: "heatseeker", label: "Heatseeker" },
+  { key: "tradedesk", label: "Desk" },
   { key: "regime", label: "Regime" },
+  { key: "cosmos", label: "Cosmos" },
   { key: "news", label: "News" },
+  { key: "takefive", label: "Take Five" },
   { key: "edgelab", label: "Edge Lab" },
   { key: "crypto", label: "Crypto" },
-  { key: "cosmos", label: "Cosmos" },
-  { key: "takefive", label: "Take Five" },
 ];
 
 function MobileTabBar({ activeTab, onSelect }: { activeTab: TabKey; onSelect: (k: TabKey) => void }) {
-  const [moreOpen, setMoreOpen] = useState(false);
-  const inMore = MOBILE_MORE.find((t) => t.key === activeTab);
-  const cell = (active: boolean) =>
-    "flex min-h-[56px] flex-1 flex-col items-center justify-center px-2 py-2 text-xs font-medium transition-colors border-t-2 " +
-    (active ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground hover:text-foreground");
   return (
-    <>
-      <div className="flex">
-        {MOBILE_PRIMARY.map((t) => (
-          <button key={t.key} type="button" onClick={() => onSelect(t.key)} data-testid={`bottomnav-${t.key}`} className={cell(activeTab === t.key)}>
-            <span className="whitespace-nowrap">{t.label}</span>
-          </button>
-        ))}
-        <button type="button" onClick={() => setMoreOpen(true)} data-testid="bottomnav-more" aria-haspopup="dialog" className={cell(!!inMore)}>
-          <span className="whitespace-nowrap">{inMore ? inMore.label : "More"}</span>
-        </button>
+    <div className="relative">
+      <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-5 bg-gradient-to-r from-background to-transparent" aria-hidden="true" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-5 bg-gradient-to-l from-background to-transparent" aria-hidden="true" />
+      <div className="scrollbar-none flex snap-x snap-proximity overflow-x-auto overscroll-x-contain scroll-smooth" role="tablist" aria-label="Tabs">
+        {MOBILE_TABS.map((t) => {
+          const active = activeTab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onSelect(t.key)}
+              data-testid={`bottomnav-${t.key}`}
+              className={
+                "flex min-h-[56px] min-w-[84px] shrink-0 snap-center flex-col items-center justify-center border-t-2 px-4 py-2 text-xs font-medium transition-colors " +
+                (active ? "border-primary bg-primary/10 text-primary" : "border-transparent text-muted-foreground hover:text-foreground")
+              }
+            >
+              <span className="whitespace-nowrap">{t.label}</span>
+            </button>
+          );
+        })}
       </div>
-      {/* Hidden buttons keep one stable test hook per tab for the UX audit. */}
-      <div className="hidden">
-        {MOBILE_MORE.map((t) => (
-          <button key={t.key} type="button" data-testid={`bottomnav-${t.key}`} onClick={() => onSelect(t.key)} />
-        ))}
-      </div>
-      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
-        <SheetContent side="bottom" className="pb-[calc(1rem+env(safe-area-inset-bottom))]" data-testid="bottomnav-more-sheet">
-          <SheetHeader>
-            <SheetTitle>All tabs</SheetTitle>
-          </SheetHeader>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {[...MOBILE_PRIMARY, ...MOBILE_MORE].map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => { onSelect(t.key); setMoreOpen(false); }}
-                data-testid={`moresheet-${t.key}`}
-                className={
-                  "min-h-[48px] rounded-md border px-3 text-left text-sm font-medium " +
-                  (activeTab === t.key ? "border-primary bg-primary/10 text-primary" : "border-border text-foreground")
-                }
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </SheetContent>
-      </Sheet>
-    </>
+    </div>
   );
 }

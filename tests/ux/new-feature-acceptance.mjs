@@ -200,8 +200,7 @@ export async function runThermalQA(browser, base, out) {
       await page.reload({waitUntil:"domcontentloaded"});
       if(await page.getByTestId("tab-regime").isVisible()) await page.getByTestId("tab-regime").click({timeout:30000});
       else {
-        await page.getByTestId("bottomnav-more").click();
-        await page.getByTestId("moresheet-regime").click();
+        await page.getByTestId("bottomnav-regime").click();
       }
       await page.getByTestId(mode==="error"?"thermal-heatmap-error":"thermal-heatmap-state").waitFor({timeout:30000});
       assert.equal(await page.getByTestId("thermal-heatmap-canvas").count(),0);

@@ -496,7 +496,7 @@ function LiveTrackerView({
         )}
 
         {/* Contract table */}
-        <div className="hscroll-contain">
+        <div className="hscroll-contain hscroll-hint">
           <table className="w-full min-w-[780px] text-[11px]">
             <thead>
               <tr className="border-b text-[11px] font-mono uppercase tracking-wider text-muted-foreground">

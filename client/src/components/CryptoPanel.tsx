@@ -9,15 +9,21 @@
 // a Jupiter price check; Bluesky and pump.fun (unofficial API) are labeled
 // low-grade attention proxies and are not in the score or verdict.
 
+import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
+import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
+import { apiJson } from "@/lib/queryClient";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
-  Flame, Radar, Newspaper, Activity, ShieldAlert, Rocket, Skull,
+  Flame, Radar, Newspaper, Activity, ShieldAlert, Skull,
   Eye, XCircle, Zap, HeartPulse, TrendingUp, Clock,
 } from "lucide-react";
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
 import { VERDICT_CODE_TEXT } from "@shared/cryptoVerdict";
+import type { CryptoReplay } from "@shared/cryptoReplay";
 import type { LinePosition, MemeClass, TradeCost } from "@shared/memeStructure";
 
 // ─── types (mirror server) ──────────────────────────────────────────────
@@ -85,6 +91,7 @@ interface FeedResp {
   narrativeUpdatedAt: number | null;
   narrativeSources?: Array<{ name: string; state: "ok" | "empty" | "failed"; titles: number; undated: number }>;
   majors?: MajorsSnapshot | null;
+  derivs?: DerivsSnapshot | null;
   sourceLabels?: SourceLabel[];
 }
 
@@ -170,6 +177,182 @@ const fmtAge = (min: number | null): string => {
 const pctCls = (v: number | null) =>
   v == null ? "text-muted-foreground" : v >= 0 ? "text-lime-400" : "text-rose-400";
 
+// ─── contract autopsy ───────────────────────────────────────────────────
+
+interface AutopsyResp {
+  dataState: "ok" | "invalid_input" | "not_found" | "rate_limited" | "source_failed";
+  reason: string | null; retryAfterSec: number | null; asOf: number; cached: boolean; mint: string | null;
+  pair: { pairAddress: string; dexId: string; poolsFound: number; selectedBy: string; ageMinutes: number | null } | null;
+  snapshot: { symbol: string; name: string; priceUsd: number | null; marketCap: number | null; fdv: number | null; liquidityUsd: number | null; vol24h: number | null; chg1h: number | null } | null;
+  gates: Gate[]; summary: GateSummary | null;
+  desk: { verdict: Verdict; verdictCode: string | null; verdictText: string | null; score: number | null; hardKill: boolean; reasons: string[]; flags: string[] } | null;
+  parity: { agrees: boolean; detail: string | null } | null;
+  tracked: { verdict: Verdict; verdictCode: string | null; firstSeenAt: number } | null;
+  stress: HolderStress | null;
+  sourceNotes: string[]; notes: string[];
+}
+
+const GATE_WORD: Record<Gate["severity"], Record<Gate["state"], string>> = {
+  kill: { pass: "pass", fail: "KILL", unread: "unread" },
+  flag: { pass: "pass", fail: "flagged", unread: "unread" },
+  entry: { pass: "met", fail: "not met", unread: "unread" },
+};
+const GATE_CLS: Record<Gate["state"], string> = { pass: "text-emerald-300", fail: "text-red-300", unread: "text-amber-300" };
+const GATE_GROUPS: Array<{ sev: Gate["severity"]; title: string; note: string }> = [
+  { sev: "kill", title: "Hard kills", note: "any one of these and the desk rejects the coin whatever its score" },
+  { sev: "flag", title: "Flags", note: "they lower the structure score; none is a kill on its own" },
+  { sev: "entry", title: "Entry conditions", note: "what an ENTER needs on top of a clean read" },
+];
+
+function AutopsyCard() {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<AutopsyResp | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    if (busy || !text.trim()) return;
+    setBusy(true); setErr(null); setRes(null);
+    try { setRes(await apiJson<AutopsyResp>("GET", `/api/crypto/autopsy?mint=${encodeURIComponent(text.trim())}`)); }
+    catch { setErr("No result. The server may be unavailable or running an older build."); }
+    finally { setBusy(false); }
+  };
+  const ok = res?.dataState === "ok" ? res : null;
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-autopsy">
+      <div className="text-sm font-semibold text-foreground">Contract autopsy</div>
+      <p className="text-[11px] text-muted-foreground">Paste a Solana token's contract address. The desk reads it once, from the same sources it uses for its own list, and shows each rule with the value read and whether it was read at all. A single read: not a signal, not logged, not graded.</p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void run(); }} placeholder="token contract address" className="min-h-[44px] flex-1 font-mono text-xs" spellCheck={false} autoCapitalize="off" autoCorrect="off" data-testid="crypto-autopsy-input" />
+        <Button size="sm" variant="outline" className="min-h-[44px] sm:min-w-[120px]" onClick={run} disabled={busy || !text.trim()} data-testid="crypto-autopsy-run">{busy ? "Reading…" : "Run autopsy"}</Button>
+      </div>
+      {err && <div role="status" className="text-[11px] text-amber-300" data-testid="crypto-autopsy-error">{err}</div>}
+      {res && !ok && (
+        <div role="status" className="text-[11px] text-amber-300" data-testid="crypto-autopsy-state">
+          {res.dataState === "rate_limited" ? `Wait about ${res.retryAfterSec ?? 6} s and run it again. ` : ""}{res.reason}
+        </div>
+      )}
+      {ok && ok.snapshot && ok.summary && ok.desk && (
+        <div className="space-y-3 text-[11px]" data-testid="crypto-autopsy-body">
+          <div className="rounded border border-border/40 p-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+              <span className="min-w-0 break-words text-sm font-semibold text-foreground">{ok.snapshot.symbol || "?"} <span className="font-normal text-muted-foreground">{ok.snapshot.name}</span></span>
+              <span className="font-mono text-muted-foreground">{ok.cached ? "recent read" : "read"} {new Date(ok.asOf).toLocaleTimeString()}</span>
+            </div>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums text-muted-foreground sm:grid-cols-4">
+              <span>cap <span className="text-foreground">{ok.snapshot.marketCap != null ? fmtUsd(ok.snapshot.marketCap) : "n/a"}</span></span>
+              <span>liquidity <span className="text-foreground">{ok.snapshot.liquidityUsd != null ? fmtUsd(ok.snapshot.liquidityUsd) : "n/a"}</span></span>
+              <span>24h vol <span className="text-foreground">{ok.snapshot.vol24h != null ? fmtUsd(ok.snapshot.vol24h) : "n/a"}</span></span>
+              <span>1h <span className="text-foreground">{ok.snapshot.chg1h != null ? `${ok.snapshot.chg1h >= 0 ? "+" : ""}${ok.snapshot.chg1h.toFixed(0)}%` : "n/a"}</span></span>
+            </div>
+            <div className="mt-1 text-muted-foreground">
+              On this one read the desk's rules say <span className="font-semibold text-foreground" data-testid="crypto-autopsy-verdict">{ok.desk.verdict ?? "none"}</span>
+              {ok.desk.verdictText ? `: ${ok.desk.verdictText}` : ""}{ok.desk.score != null ? ` · heuristic score ${ok.desk.score}` : ""}.
+              {(ok.gates ?? []).some((g) => g.severity === "kill" && g.state === "unread") ? (
+                <span className="text-amber-600 dark:text-amber-400" data-testid="crypto-autopsy-notfinal"> {(ok.gates ?? []).filter((g) => g.severity === "kill" && g.state === "unread").length} kill check(s) unread; this verdict is not final.</span>
+              ) : null}
+              {ok.tracked ? ` The desk has also been tracking it since ${new Date(ok.tracked.firstSeenAt).toLocaleString()} (currently ${ok.tracked.verdict ?? "unscored"}).` : ""}
+            </div>
+            <div className="mt-1 font-mono text-muted-foreground" data-testid="crypto-autopsy-counts">
+              {ok.summary.pass} pass · {ok.summary.fail} not met ({ok.summary.killFails} kill, {ok.summary.flagFails} flag) · {ok.summary.unread} unread
+            </div>
+          </div>
+          {ok.parity && !ok.parity.agrees && <div role="status" className="text-red-300" data-testid="crypto-autopsy-parity">The gate table and the desk's own hard-kill result disagree: {ok.parity.detail}. This is a defect; report it.</div>}
+          {GATE_GROUPS.map((grp) => {
+            const rows = ok.gates.filter((g) => g.severity === grp.sev);
+            return (
+              <section key={grp.sev} data-testid={`crypto-autopsy-${grp.sev}`}>
+                <div className="text-[11px] font-medium text-muted-foreground">{grp.title} · {grp.note}</div>
+                <ul className="mt-1 space-y-1">
+                  {rows.map((g) => (
+                    <li key={g.id} className="min-w-0 rounded border border-border/40 p-2 leading-snug" data-testid={`crypto-autopsy-gate-${g.id}`}>
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                        <span className="font-medium text-foreground">{g.label} <span className="font-normal text-muted-foreground">· rule: {g.rule}</span></span>
+                        <span className={`font-semibold uppercase ${GATE_CLS[g.state]}`}>{GATE_WORD[g.severity][g.state]}</span>
+                      </div>
+                      <div className="break-words font-mono text-muted-foreground">read: {g.value}</div>
+                      {g.detail && <div className="break-words text-muted-foreground">{g.detail}</div>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
+          {ok.stress && (
+            <section data-testid="crypto-autopsy-stress">
+              <div className="text-[11px] font-medium text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
+              {ok.stress.dataState !== "ok" ? (
+                <div className="mt-1 text-amber-300">unavailable: {ok.stress.reason}</div>
+              ) : (
+                <>
+                  <div className="mt-1 font-mono tabular-nums text-muted-foreground">top-10 hold {ok.stress.top10Pct}% of supply, about {fmtUsd(ok.stress.top10ValueUsd ?? 0)} at the current price ({ok.stress.basis === "fdv" ? "FDV basis" : "market-cap basis"}); pool quote side about {fmtUsd(ok.stress.quoteReserveUsd ?? 0)}</div>
+                  <div className="mt-1 overflow-x-auto">
+                    <table className="w-full min-w-[420px] font-mono tabular-nums">
+                      <thead><tr className="text-muted-foreground"><th className="text-left">sold</th><th className="text-right">value</th><th className="text-right">x pool quote</th><th className="text-right">price falls</th><th className="text-right">sellers receive</th></tr></thead>
+                      <tbody>
+                        {ok.stress.scenarios.map((sc) => (
+                          <tr key={sc.soldFraction} className="border-t border-border/30">
+                            <td>{Math.round(sc.soldFraction * 100)}% of their holding</td><td className="text-right">{fmtUsd(sc.soldValueUsd)}</td><td className="text-right">{sc.soldVsQuoteReserve.toFixed(2)}x</td>
+                            <td className="text-right text-foreground">-{sc.priceImpactPct.toFixed(1)}%</td><td className="text-right">{fmtUsd(sc.proceedsUsd)} ({sc.proceedsPctOfValue.toFixed(0)}%)</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">{ok.stress.caveats.map((c) => <li key={c}>{c}</li>)}</ul>
+                </>
+              )}
+            </section>
+          )}
+          {ok.sourceNotes.length > 0 && <div className="text-amber-300" data-testid="crypto-autopsy-sources">Not read on this pass: {ok.sourceNotes.join("; ")}.</div>}
+          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">{ok.notes.map((n) => <li key={n}>{n}</li>)}</ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── perpetual funding and open interest strip ──────────────────────────
+const fmtSigned = (v: number | null, dp: number, suffix = ""): string => (v == null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(dp)}${suffix}`);
+
+function DerivsStrip({ derivs, loaded }: { derivs: DerivsSnapshot | null; loaded: boolean }) {
+  if (!derivs) {
+    return <div className="rounded-lg border border-border/50 p-2 text-[11px] text-muted-foreground" data-testid="crypto-derivs">{loaded ? "funding and open interest: no exchange read yet" : "funding and open interest: loading"}</div>;
+  }
+  const tiles = (["BTC", "ETH", "SOL"] as const).map((a) => ({ a, row: derivs.rows.find((r) => r.asset === a && r.state === "ok") as DerivsRow | undefined }));
+  const down = derivs.rows.filter((r) => r.state !== "ok");
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-derivs">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        <span className="font-semibold">funding and open interest · perpetuals</span>
+        <span className={derivs.state === "ok" ? "text-emerald-300" : derivs.state === "partial" ? "text-amber-300" : "text-rose-300"}>{derivs.state}</span>
+      </div>
+      <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+        {tiles.map(({ a, row }) => (
+          <div key={a} className="rounded border border-border/40 p-2 text-xs" data-testid={`derivs-${a}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-foreground">{a}</span>
+              <span className="text-[10px] uppercase text-muted-foreground">{row ? row.venue : "no read"}</span>
+            </div>
+            {row ? (
+              <div className="mt-1 space-y-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                <div>funding {fmtSigned(row.fundingPct, 4, "%")}{row.fundingIntervalHours != null ? ` / ${row.fundingIntervalHours}h` : " / interval not stated"}</div>
+                <div>{row.direction ?? "n/a"}{row.funding8hPct != null && row.fundingIntervalHours !== 8 ? ` · ${fmtSigned(row.funding8hPct, 4, "%")} per 8h` : ""}</div>
+                <div>open interest 1h {row.oiState === "ok" ? fmtSigned(row.oi1hChangePct, 2, "%") : row.oiState === "building" ? "building (first hour after a restart)" : "not reported"}</div>
+              </div>
+            ) : <div className="mt-1 text-[11px] text-muted-foreground">unavailable</div>}
+          </div>
+        ))}
+      </div>
+      {down.length > 0 && (
+        <div className="mt-1 text-[11px] text-muted-foreground" data-testid="derivs-down">
+          not reading: {down.map((r) => `${r.venue} ${r.asset} (${r.reason ?? r.state})`).join("; ")}
+        </div>
+      )}
+      <div className="mt-1 text-[11px] text-muted-foreground">{derivs.note}. Stored on each signal so the replay can test it; the desk applies no rule to it yet.</div>
+    </div>
+  );
+}
+
 // ─── majors strip ───────────────────────────────────────────────────────
 
 const fmtPx = (v: number | null) =>
@@ -206,7 +389,7 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
     <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-majors">
       <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px]">
         <TrendingUp className="h-3.5 w-3.5 text-lime-400" />
-        <span className="font-semibold uppercase tracking-[0.15em]">majors · exchange-direct</span>
+        <span className="font-semibold">majors · exchange-direct</span>
         <span className={majors.state === "ok" ? "text-emerald-300" : majors.state === "partial" ? "text-amber-300" : "text-rose-300"}>{majors.state}</span>
         {majors.sources.map((x) => (
           <span key={x.id} className="text-muted-foreground" title={x.error ?? undefined}>
@@ -239,6 +422,60 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
   );
 }
 
+// ─── desk brief: the one-glance read for someone with no time ────────────
+
+function DeskBrief({ feed, health, sig, enters, watches, onPick }: {
+  feed?: FeedResp; health?: HealthResp; sig?: SignalsResp;
+  enters: Candidate[]; watches: Candidate[]; onPick: (c: Candidate) => void;
+}) {
+  const engines = (health?.engines ?? []).filter((e) => e.name !== "watchdog");
+  const notOk = engines.filter((e) => e.status !== "ok");
+  const picks = [...enters, ...[...watches].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))].slice(0, 3);
+  const rec = sig?.stats.enterCoins;
+  const headline = !feed ? "Reading the desk…"
+    : enters.length > 0 ? `${enters.length} coin${enters.length === 1 ? "" : "s"} clear${enters.length === 1 ? "s" : ""} every ENTER rule right now`
+    : watches.length > 0 ? `Nothing clears every ENTER rule. ${watches.length} forming`
+    : "Nothing clears the bar right now";
+  return (
+    <div className="min-h-[15rem] rounded-xl border border-border/60 bg-card/60 p-4 sm:min-h-[11rem]" data-testid="crypto-brief">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
+          <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight" data-testid="crypto-brief-headline">{headline}</h2>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {feed ? `${feed.trackedCount} pools tracked · updated ${new Date(feed.asOf ?? Date.now()).toLocaleTimeString()}` : "warming up"}
+            {notOk.length > 0 ? ` · ${notOk.map((e) => `${e.name} ${e.status}`).join(", ")}` : engines.length > 0 ? " · all agents running" : ""}
+          </p>
+        </div>
+        <AgentStrip health={health} />
+      </div>
+      {picks.length > 0 && (
+        <ul className="mt-3 grid gap-2 sm:grid-cols-3" data-testid="crypto-brief-picks">
+          {picks.map((c) => (
+            <li key={`${c.chain}:${c.pairAddress}`} className="min-w-0">
+              <button type="button" onClick={() => onPick(c)} className="min-h-[44px] w-full rounded-lg border border-border/60 p-2 text-left transition hover:border-foreground/30">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate font-mono text-sm font-bold">{c.symbol}</span>
+                  <span className={`text-[11px] font-semibold ${c.verdict === "ENTER" ? "text-lime-300" : "text-amber-300"}`}>{c.verdict === "ENTER" ? "Enter" : "Watch"}{c.score != null ? ` · ${c.score}` : ""}</span>
+                </div>
+                <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  cap {c.marketCap != null ? fmtUsd(c.marketCap) : "n/a"} · liq {c.liquidityUsd != null ? fmtUsd(c.liquidityUsd) : "n/a"}
+                </div>
+                {c.verdictReasons[0] && <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground">{c.verdictReasons[0]}</div>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 border-t border-border/40 pt-2 text-[11px] text-muted-foreground" data-testid="crypto-brief-record">
+        {rec
+          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} hit the 5-minute target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
+          : "Record so far: loading. Heuristic scores, not calibrated odds. The desk never places orders."}
+      </div>
+    </div>
+  );
+}
+
 // ─── main panel ─────────────────────────────────────────────────────────
 
 export default function CryptoPanel() {
@@ -247,7 +484,7 @@ export default function CryptoPanel() {
 
   const feedQ = useQuery<FeedResp>({ queryKey: ["/api/crypto/feed"], refetchInterval: 45_000 });
   const healthQ = useQuery<HealthResp>({ queryKey: ["/api/crypto/health"], refetchInterval: 30_000 });
-  const sigQ = useQuery<SignalsResp>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000, enabled: view === "signals" });
+  const sigQ = useQuery<SignalsResp>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000 });
 
   const feed = feedQ.data;
   const enters = feed?.candidates.filter((c) => c.verdict === "ENTER") ?? [];
@@ -256,38 +493,25 @@ export default function CryptoPanel() {
 
   return (
     <div className="space-y-4" data-testid="crypto-panel">
-      {/* hero strip */}
-      <div className="relative overflow-hidden rounded-xl border border-fuchsia-500/25 bg-gradient-to-br from-fuchsia-600/15 via-violet-600/10 to-lime-500/10 p-4">
-        <div className="pointer-events-none absolute -right-8 -top-10 h-36 w-36 rounded-full bg-fuchsia-500/20 blur-3xl" />
-        <div className="pointer-events-none absolute -left-6 bottom-0 h-24 w-24 rounded-full bg-lime-400/15 blur-2xl" />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <Rocket className="h-5 w-5 text-fuchsia-400" />
-              <h2 className="text-base font-bold tracking-tight">Digital assets</h2>
-              <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[11px] text-lime-300">
-                small-cap launch scanner
-              </Badge>
-            </div>
-            <p className="mt-1 max-w-xl text-xs leading-snug text-muted-foreground">
-              Exchange-direct prices for majors, plus a tracker for new Solana launches scored on flow
-              acceleration, narrative confirmation and rug filters (hand-set heuristics, not fitted to outcomes). PASS is the default verdict.
-            </p>
-          </div>
-          <AgentStrip health={healthQ.data} />
-        </div>
-      </div>
+      <DeskBrief feed={feed} health={healthQ.data} sig={sigQ.data} enters={enters} watches={watches}
+        onPick={(c) => { setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`); }} />
 
-      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
-      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
+      {/* paste any Solana token address: every desk rule, gate by gate, plus a holder-dump stress test */}
+      <AutopsyCard />
 
       {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />
 
+      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
+      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
+
+      {/* perpetual funding + open interest: recorded context, not a rule input */}
+      <DerivsStrip derivs={feed?.derivs ?? null} loaded={!!feed} />
+
       {/* narrative heat */}
       <div className="flex flex-wrap items-center gap-1.5" data-testid="crypto-narratives">
         <Newspaper className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="mr-1 text-[11px] uppercase tracking-[0.15em] text-muted-foreground">narrative heat</span>
+        <span className="mr-1 text-[11px] font-medium text-muted-foreground">narrative heat</span>
         {(feed?.narrativeHeat ?? []).slice(0, 10).map((n) => (
           <span
             key={n.term}
@@ -349,19 +573,19 @@ export default function CryptoPanel() {
             <>
               <Section
                 icon={<Zap className="h-4 w-4 text-lime-400" />}
-                title="ENTER — flow confirmed, sub-1M"
+                title="Enter · flow confirmed, under $1M"
                 empty="nothing clears the bar right now. that's the system working, not broken."
                 items={enters} expanded={expanded} setExpanded={setExpanded} accent="enter"
               />
               <Section
                 icon={<Eye className="h-4 w-4 text-amber-400" />}
-                title="WATCH — forming, waiting on flow"
+                title="Watch · forming, waiting on flow"
                 empty="no setups forming."
                 items={watches} expanded={expanded} setExpanded={setExpanded} accent="watch"
               />
               <Section
                 icon={<XCircle className="h-4 w-4 text-muted-foreground" />}
-                title="PASS — seen and rejected"
+                title="Pass · seen and rejected"
                 empty="scanner warming up…"
                 items={passes} expanded={expanded} setExpanded={setExpanded} accent="pass" collapsedByDefault
               />
@@ -385,7 +609,7 @@ function AgentStrip({ health }: { health?: HealthResp }) {
     : s === "starting" ? "bg-sky-400 animate-pulse"
     : "bg-rose-500";
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
       <HeartPulse className="h-3.5 w-3.5 text-muted-foreground" />
       {(health?.engines ?? []).filter((e) => e.name !== "watchdog").map((e) => (
         <div key={e.name} className="flex items-center gap-1.5" title={`${e.name}: ${e.status} · ${e.runs} runs · ${e.errors} errors${e.lastError ? ` · ${e.lastError}` : ""}`}>
@@ -410,10 +634,7 @@ function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
     <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
       <p className="text-[11px] leading-snug text-amber-200/90">
-        <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
-        (5M hit / doubled / rugged / dead) but nothing here is stakeable until the audited hit rate exists
-        — same n≥50 rule as the 0DTE desk, counted in distinct first-ENTER coins with a no-data share of 20% or less{graded != null ? ` (${graded} graded ENTER coins so far${sig?.stats.sampleReady ? ", sample-ready" : ""})` : ""}. sub-1M memes
-        are a &gt;90% loss-rate arena; the math only works small, cut fast, and letting 4-5x winners pay for everything.
+        <span className="font-semibold">Tracking mode.</span> Every ENTER and WATCH is logged and graded, but nothing here is stakeable until the audited hit rate exists (n≥50 distinct first-ENTER coins, no-data share 20% or less{graded != null ? `; ${graded} graded so far${sig?.stats.sampleReady ? ", sample-ready" : ""}` : ""}). Sub-$1M memes are a &gt;90% loss-rate arena.
       </p>
     </div>
   );
@@ -431,7 +652,7 @@ function Section({ icon, title, empty, items, expanded, setExpanded, accent, col
     <div>
       <button className="flex w-full items-center gap-2" onClick={() => setOpen((v) => !v)} data-testid={`crypto-section-${accent}`}>
         {icon}
-        <span className="text-xs font-semibold uppercase tracking-[0.12em]">{title}</span>
+        <span className="text-sm font-semibold">{title}</span>
         <span className="rounded-full bg-muted/60 px-1.5 text-[11px] text-muted-foreground">{items.length}</span>
         <span className="ml-auto text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
       </button>
@@ -528,7 +749,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       </div>
 
       {/* stat row */}
-      <div className="mt-2 grid grid-cols-4 gap-1.5 font-mono text-[11px] tabular-nums">
+      <div className="mt-2 grid grid-cols-2 gap-1.5 font-mono text-[11px] tabular-nums xs:grid-cols-4">
         <Stat label="liq" value={fmtUsd(c.liquidityUsd)} />
         <Stat label="vol 1h" value={fmtUsd(c.vol1h, 0)} />
         <Stat label="accel" value={c.volAccel != null ? `${c.volAccel.toFixed(1)}x` : "—"} hot={(c.volAccel ?? 0) >= 2} />
@@ -539,7 +760,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       {isOpen && (
         <div className="mt-3 space-y-2 border-t border-border/40 pt-2.5">
           <div className="text-[11px] leading-snug text-foreground/90">
-            {c.verdictCode && <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
+            {c.verdictCode && <p className="font-mono text-[11px] font-medium text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
             {c.verdictReasons.map((r, i) => <p key={i}>· {r}</p>)}
           </div>
           {c.rugFlags.length > 0 && (
@@ -645,7 +866,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className="rounded bg-muted/25 px-1.5 py-1">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className={`font-semibold ${hot ? "text-lime-300" : ""}`}>{value}</div>
     </div>
   );
@@ -678,7 +899,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
   const { stats } = sig;
   return (
     <div className="space-y-3" data-testid="crypto-signal-log">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {[
           ["coins", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],
@@ -690,7 +911,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         ].map(([label, val, cls]) => (
           <div key={String(label)} className="rounded-lg border border-border/50 bg-card/50 p-2 text-center">
             <div className={`font-mono text-lg font-bold tabular-nums ${cls}`}>{String(val)}</div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{String(label)}</div>
+            <div className="text-[11px] text-muted-foreground">{String(label)}</div>
           </div>
         ))}
       </div>
@@ -715,6 +936,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       )}
       {sig.expectancy && <ExpectancyCard x={sig.expectancy} />}
       {sig.rules && <RuleBookCard r={sig.rules} />}
+      <ReplayCard />
       {!stats.sampleReady && (
         <p className="text-[11px] text-muted-foreground">
           not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. Until then these stats are the whole product: the record, net of cost, not a claim.
@@ -770,7 +992,7 @@ function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-expectancy">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
+        <span className="text-[11px] text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
         <span className={`text-[11px] ${h.sampleReady ? "text-muted-foreground" : "text-amber-300/90"}`} data-testid="crypto-expectancy-gate">
           {h.sampleReady ? `${h.n} graded signals` : `${h.n} of ${h.minSample} needed: counts only`} · <span className={`font-mono ${VAL_CLS[h.validation] ?? ""}`} data-testid="crypto-expectancy-validation">{h.validation}</span>
         </span>
@@ -827,6 +1049,99 @@ function RuleBookCard({ r }: { r: NonNullable<SignalsResp["rules"]> }) {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+const pct = (n: number | null | undefined, dp = 1) => (n == null ? "—" : `${n.toFixed(dp)}%`);
+const num = (n: number | null | undefined, dp = 1) => (n == null ? "—" : n.toFixed(dp));
+
+/** The logged record re-read under the current rule book: timing, cap bands, features vs outcome, in/out-of-sample. Descriptive. */
+function ReplayCard() {
+  const [open, setOpen] = useState(false);
+  const q = useQuery<CryptoReplay>({ queryKey: ["/api/crypto/replay"], refetchInterval: 5 * 60_000, enabled: open });
+  const r = q.data;
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-replay">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left sm:min-h-0" data-testid="crypto-replay-toggle">
+        <span className="text-sm font-semibold text-foreground">Replay: what the record says</span>
+        <span className="text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
+      </button>
+      <p className="text-[11px] text-muted-foreground">Every logged signal re-read under the current rule book: when the peak came relative to the signal, outcomes by cap at entry, which signal-time features sat with winners, and the current rules' pass set split older/newer half, net of cost. Bookkeeping on one desk's record, not a forecast.</p>
+      {open && q.isLoading && <div className="text-[11px] text-muted-foreground">reading the record…</div>}
+      {open && q.isError && <div className="text-[11px] text-amber-300" data-testid="crypto-replay-error">replay unavailable: {String((q.error as any)?.message ?? "server error")}</div>}
+      {open && r && (
+        <div className="space-y-3 text-[11px]" data-testid="crypto-replay-body">
+          <div className="font-mono text-muted-foreground">rules v{r.rulesVersion} · {r.rows.firstSignals} first signals ({r.rows.graded} graded) of {r.rows.total} rows · versions {Object.entries(r.rows.versions).map(([v, n]) => `${v}: ${n}`).join(", ") || "none"}</div>
+
+          <section data-testid="crypto-replay-timing">
+            <div className="text-[11px] font-medium text-muted-foreground">1 · When did the peak come?</div>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums sm:grid-cols-5">
+              <span>at/before signal <span className="text-foreground">{r.timing.peakAtOrBeforeSignal}</span></span>
+              <span>≤ 15 min <span className="text-foreground">{r.timing.within15min}</span></span>
+              <span>≤ 60 min <span className="text-foreground">{r.timing.within60min}</span></span>
+              <span>later <span className="text-foreground">{r.timing.later}</span></span>
+              <span>no peak <span className="text-foreground">{r.timing.noPeak}</span></span>
+            </div>
+            <div className="mt-0.5 text-muted-foreground">median {num(r.timing.medianMinutesToPeak, 0)} min to the sampled peak over {r.timing.n} graded · {r.timing.note}</div>
+          </section>
+
+          <section data-testid="crypto-replay-bands">
+            <div className="text-[11px] font-medium text-muted-foreground">2 · Outcomes by cap at the signal</div>
+            <div className="mt-1 overflow-x-auto">
+              <table className="w-full min-w-[520px] font-mono tabular-nums">
+                <thead><tr className="text-muted-foreground"><th className="text-left">band</th><th className="text-right">n</th><th className="text-right">hit</th><th className="text-right">2x</th><th className="text-right">dead</th><th className="text-right">rug</th><th className="text-right">no data</th><th className="text-right">win %</th><th className="text-right">95% CI</th><th className="text-right">median net</th></tr></thead>
+                <tbody>
+                  {r.bands.map((b) => (
+                    <tr key={b.band} className="border-t border-border/30">
+                      <td>{b.band}</td><td className="text-right">{b.n}</td><td className="text-right">{b.hit}</td><td className="text-right">{b.doubled}</td><td className="text-right">{b.dead}</td><td className="text-right">{b.rugged}</td><td className="text-right">{b.noData}</td>
+                      <td className="text-right text-foreground">{pct(b.winShare)}</td><td className="text-right">{b.winLo == null ? "—" : `${b.winLo}–${b.winHi}`}</td><td className="text-right">{pct(b.medianNetGradedPct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-0.5 text-muted-foreground sm:hidden">swipe for more columns</div>
+          </section>
+
+          <section data-testid="crypto-replay-features">
+            <div className="text-[11px] font-medium text-muted-foreground">3 · Signal-time features: winners vs losers (medians) and win % in the top vs bottom third</div>
+            <div className="mt-1 overflow-x-auto">
+              <table className="w-full min-w-[520px] font-mono tabular-nums">
+                <thead><tr className="text-muted-foreground"><th className="text-left">feature</th><th className="text-right">n win / loss</th><th className="text-right">median win</th><th className="text-right">median loss</th><th className="text-right">top ⅓ win %</th><th className="text-right">bottom ⅓ win %</th></tr></thead>
+                <tbody>
+                  {r.features.map((f) => (
+                    <tr key={f.feature} className="border-t border-border/30">
+                      <td>{f.feature}</td><td className="text-right">{f.nWin} / {f.nLoss}</td><td className="text-right">{num(f.medianWin, 2)}</td><td className="text-right">{num(f.medianLoss, 2)}</td>
+                      <td className="text-right text-foreground">{f.topThirdWinShare == null ? "—" : `${f.topThirdWinShare}% (n ${f.thirdN})`}</td><td className="text-right">{f.bottomThirdWinShare == null ? "—" : `${f.bottomThirdWinShare}%`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-0.5 text-muted-foreground">descriptive only; thirds need at least 3 rows each. A feature that separates here is a candidate for the next rule version, to be tested out of sample, not a rule.</div>
+          </section>
+
+          <section data-testid="crypto-replay-reeval">
+            <div className="text-[11px] font-medium text-muted-foreground">4 · Current rules over the record (first signal per coin)</div>
+            <div className="mt-1 font-mono tabular-nums text-muted-foreground">pass the current rules <span className="text-foreground">{r.reeval.wouldEnter}</span> of {r.reeval.consideredFirstSignals} · originally ENTER {r.reeval.originallyEnter} · agree {r.reeval.agreeEnter} · blockers: {Object.entries(r.reeval.blockerCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}</div>
+            <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
+              {[r.reeval.inSample, r.reeval.outOfSample, r.reeval.all].map((s) => (
+                <div key={s.label} className="rounded border border-border/40 p-2 font-mono tabular-nums">
+                  <div className="text-foreground">{s.label}</div>
+                  <div>n {s.n} · wins {s.wins} ({pct(s.winShare)}{s.winLo != null ? `, CI ${s.winLo}–${s.winHi}` : ""})</div>
+                  <div>mean net {pct(s.meanNetGradedPct)} · median {pct(s.medianNetGradedPct)}</div>
+                  <div>max drawdown {pct(s.maxDrawdownPct)} of $100-per-signal equity</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-0.5 text-muted-foreground">unchecked at re-evaluation (not stored at the time): {r.reeval.unchecked.join("; ")}. {r.reeval.lookAhead}</div>
+          </section>
+
+          <p className="text-muted-foreground">{r.samplingLimit}</p>
+          <p className="text-muted-foreground/80">{r.scope}</p>
+        </div>
       )}
     </div>
   );

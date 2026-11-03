@@ -19,6 +19,10 @@ import type { OdteMap } from "@shared/odteMap";
 
 type MapResp = OdteMap & { forwardAsOf: string; source: string };
 
+// One level tile. Phone: a row (label + note left, number right) so the three
+// tiles stack in price order. From 640 px: a column of label / number / note.
+const LEVEL_TILE = "flex items-center justify-between gap-3 rounded-md border bg-muted/10 px-3 py-2 sm:block sm:p-2.5";
+
 const lvl = (n: number | null | undefined) => (n == null ? "n/a" : Math.round(n).toLocaleString("en-US"));
 const pct = (a: number | null | undefined, spot: number) => (a == null ? "" : `${a >= spot ? "+" : ""}${(((a - spot) / spot) * 100).toFixed(2)}%`);
 
@@ -36,14 +40,14 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
   if (q.isLoading) {
     return (
       <Card data-testid="today-card-loading">
-        <CardContent className="min-h-[224px] p-4 text-[11px] text-muted-foreground">composing today's levels from the chain…</CardContent>
+        <CardContent className="min-h-[224px] p-3 text-[11px] text-muted-foreground sm:p-4">composing today's levels from the chain…</CardContent>
       </Card>
     );
   }
   if (q.isError || !m) {
     return (
       <Card data-testid="today-card-unavailable">
-        <CardContent className="min-h-[224px] p-4">
+        <CardContent className="min-h-[224px] p-3 sm:p-4">
           <div className="mb-2 flex items-center gap-2">
             <MapIcon className="h-4 w-4 text-amber-400" />
             <span className="text-sm font-semibold">Today · {sym}</span>
@@ -79,10 +83,10 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
 
   return (
     <Card data-testid="today-card">
-      <CardContent className="min-h-[224px] space-y-3 p-4">
+      <CardContent className="min-h-[224px] space-y-3 p-3 sm:p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="flex flex-wrap items-baseline gap-3">
-            <span className="text-2xl leading-none tracking-wide sm:text-3xl" style={{ fontFamily: "'Bebas Neue', sans-serif" }} data-testid="today-spot">{sym} {lvl(spot)}</span>
+            <span className="text-3xl leading-none tracking-wide tabular-nums sm:text-4xl" style={{ fontFamily: "'Bebas Neue', sans-serif" }} data-testid="today-spot">{sym} {lvl(spot)}</span>
             {m.gap.pct != null && <span className={`font-mono text-xs ${m.gap.pct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>gap {m.gap.pct >= 0 ? "+" : ""}{m.gap.pct.toFixed(2)}%</span>}
             <span className="font-mono text-[11px] text-muted-foreground">{m.session.state} · {m.expiry} chain</span>
           </div>
@@ -95,21 +99,30 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-3 gap-2" data-testid="today-levels">
-              <div className="rounded-md border border-border/60 bg-muted/10 p-2.5">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{aboveIsPin ? "pin (above)" : "wall above"}</div>
-                <div className="font-mono text-xl font-semibold tabular-nums text-rose-300" data-testid="today-wall-above">{lvl(above)}</div>
-                <div className="font-mono text-[10px] text-muted-foreground">{above != null ? `${pct(above, spot)} · ${share(aboveOi)}` : "none in band"}</div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="today-levels">
+              <div className={LEVEL_TILE + " border-border/60"}>
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{aboveIsPin ? "pin (above)" : "wall above"}</div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{above != null ? `${pct(above, spot)} · ${share(aboveOi)}` : "none in band"}</div>
+                </div>
+                <div className="font-mono text-xl font-semibold tabular-nums text-rose-300 sm:text-2xl" data-testid="today-wall-above">{lvl(above)}</div>
+                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{above != null ? `${pct(above, spot)} · ${share(aboveOi)}` : "none in band"}</div>
               </div>
-              <div className="rounded-md border border-amber-500/50 bg-muted/10 p-2.5">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-amber-300">gamma flip</div>
-                <div className="font-mono text-xl font-semibold tabular-nums text-amber-200" data-testid="today-flip">{lvl(flip)}</div>
-                <div className="font-mono text-[10px] text-muted-foreground">{flip != null ? `spot ${spot >= flip ? "above" : "below"} · ${m.band.atSpot} γ` : "no crossing in band"}</div>
+              <div className={LEVEL_TILE + " border-amber-500/50"}>
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-amber-300">gamma flip</div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{flip != null ? `spot ${spot >= flip ? "above" : "below"} · ${m.band.atSpot} γ` : "no crossing in band"}</div>
+                </div>
+                <div className="font-mono text-xl font-semibold tabular-nums text-amber-200 sm:text-2xl" data-testid="today-flip">{lvl(flip)}</div>
+                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{flip != null ? `spot ${spot >= flip ? "above" : "below"} · ${m.band.atSpot} γ` : "no crossing in band"}</div>
               </div>
-              <div className="rounded-md border border-border/60 bg-muted/10 p-2.5">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{belowIsPin ? "pin (below)" : "magnet below"}</div>
-                <div className="font-mono text-xl font-semibold tabular-nums text-emerald-300" data-testid="today-magnet-below">{lvl(below)}</div>
-                <div className="font-mono text-[10px] text-muted-foreground">{below != null ? `${pct(below, spot)} · ${share(belowOi)}` : "none in band"}</div>
+              <div className={LEVEL_TILE + " border-border/60"}>
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{belowIsPin ? "pin (below)" : "magnet below"}</div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{below != null ? `${pct(below, spot)} · ${share(belowOi)}` : "none in band"}</div>
+                </div>
+                <div className="font-mono text-xl font-semibold tabular-nums text-emerald-300 sm:text-2xl" data-testid="today-magnet-below">{lvl(below)}</div>
+                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{below != null ? `${pct(below, spot)} · ${share(belowOi)}` : "none in band"}</div>
               </div>
             </div>
 

@@ -19,10 +19,11 @@
 //   BROKEN    — CUSUM > 5σ, or DM ≥ +2 (significantly worse than climatology)
 // One row per settled day, 1-day outcome: windows do not overlap (horizon 1).
 
+import { mainDbPath } from "./dbPath";
 import Database from "better-sqlite3";
 import { skillWatchdog } from "./stats";
 
-const sqlite = new Database("data.db");
+const sqlite = new Database(mainDbPath());
 
 export function watchdogStatus(days: number = 60): {
   ok: boolean;

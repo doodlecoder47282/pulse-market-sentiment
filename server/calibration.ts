@@ -26,10 +26,11 @@
 //   Rolling Brier over N days = mean of daily per-scenario Brier scores.
 //   Reference: <0.20 good, <0.10 excellent, 0.06–0.12 = top forecaster.
 
+import { mainDbPath } from "./dbPath";
 import Database from "better-sqlite3";
 import { climatologyBaseline } from "./stats";
 
-const sqlite = new Database("data.db");
+const sqlite = new Database(mainDbPath());
 
 // One-time schema bootstrap. Idempotent — safe to call on every server start.
 sqlite.exec(`

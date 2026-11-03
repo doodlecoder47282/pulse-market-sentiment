@@ -330,7 +330,7 @@ function CostCard({ entry }: { entry: CommunityEntry | null }) {
                   className="w-16 rounded-md border border-border/60 bg-background px-1.5 py-1 font-mono text-xs text-foreground" data-testid="cost-trades" />
               </label>
             </div>
-            <div className="mt-1 grid grid-cols-4 gap-2 font-mono text-xs tabular-nums" data-testid="cost-zero-edge">
+            <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-xs tabular-nums sm:grid-cols-4" data-testid="cost-zero-edge">
               {rows.map((n) => (
                 <div key={n}><span className="text-muted-foreground">{n}: </span>{fmtUsd(zeroEdgeBalance(size, rt ?? 0, n), 0)}</div>
               ))}
