@@ -274,10 +274,13 @@ for (const vp of viewports) {
     if (nClosed > 0) {
       for (let k = 0; k < nClosed; k++) await toggles.first().click({ timeout: 5000 }).catch(() => {});
       await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-      await p.waitForTimeout(1500);
+      await p.waitForTimeout(2500); // the same settle time the closed pass gets
       const openM = await p.evaluate(measure, vp.mobile);
       for (const [k, v] of Object.entries(openM)) if (typeof v === "number" && typeof entry[k] === "number") entry[k] = Math.max(entry[k], v);
       entry.openedDetails = nClosed;
+      // Keep the open pass's samples so a failure names the elements.
+      entry.openSamples = { overlaps: openM.overlaps, clipped: openM.clipped, offscreen: openM.offscreen, tinyTargets: openM.tinyTargets };
+      await p.screenshot({ path: `${OUT}/${vp.name}/${String(i + 1).padStart(2, "0")}-${t}-open.png`, fullPage: true });
     }
     await p.screenshot({ path: `${OUT}/${vp.name}/${String(i + 1).padStart(2, "0")}-${t}.png` });
     report.push(entry);
@@ -335,6 +338,8 @@ console.log("ux audit done", report.length);
   console.log("UX scorecard:", JSON.stringify(scorecard));
   if (failures.length) {
     console.log("UX budget exceeded:\n  " + failures.join("\n  "));
+    for (const e of report.filter((x) => x.openSamples && x.openSamples.overlaps && x.openSamples.overlaps.length)) console.log(`  open-pass overlaps ${e.viewport}/${e.tab}: ${e.openSamples.overlaps.slice(0, 6).join(" | ")}`);
+    for (const e of report.filter((x) => x.overlaps && x.overlaps.length)) console.log(`  overlaps ${e.viewport}/${e.tab}: ${e.overlaps.slice(0, 6).join(" | ")}`);
     process.exitCode = 1;
   } else {
     console.log("UX budget: all checks pass");
