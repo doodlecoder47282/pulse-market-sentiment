@@ -275,6 +275,11 @@ for (const vp of viewports) {
       for (let k = 0; k < nClosed; k++) await toggles.first().click({ timeout: 5000 }).catch(() => {});
       await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
       await p.waitForTimeout(2500); // the same settle time the closed pass gets
+      // Clicking the toggles scrolls the page; the sticky header then sits over
+      // whatever scrolled under it, which is not a layout defect. Measure from the
+      // top, as the closed pass does.
+      await p.evaluate(() => window.scrollTo(0, 0));
+      await p.waitForTimeout(300);
       const openM = await p.evaluate(measure, vp.mobile);
       for (const [k, v] of Object.entries(openM)) if (typeof v === "number" && typeof entry[k] === "number") entry[k] = Math.max(entry[k], v);
       entry.openedDetails = nClosed;
