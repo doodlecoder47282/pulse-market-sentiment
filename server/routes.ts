@@ -3674,7 +3674,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // long-gamma band, ladders; zones only in the personal edition. The first
   // map of the session is kept as the morning plan and settled after the
   // close (server/odteMapLedger.ts).
-  app.get("/api/odte/map", async (req, res) => {
+  app.get("/api/odte/map", internalRoute("/api/odte/map", async (req: ExRequest, res: ExResponse) => {
     try {
       const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
       const { buildOdteForward } = await import("./odteForward");
@@ -3687,7 +3687,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message });
     }
-  });
+  }));
   // SETUP EVENT LOG (server/setupEngine.ts): the rule book, why nothing fires now, the log and its graded summary. Descriptive; no grade below the sample gate.
   // SCAN ANY TICKER (server/tickerScan.ts): instrument, quote, volume read, per-name structure, most active contracts; each section with its own state.
   app.get("/api/scan", async (req, res) => {

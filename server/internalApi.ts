@@ -48,6 +48,8 @@ export const INTERNAL_ROUTES = [
   "/api/mm-stats",
   "/api/regime/predict",
   "/api/gamma-levels-enhanced",
+  // Quick view: the tab headlines lead with today's dealer levels (server/headline.ts).
+  "/api/odte/map",
   "/api/alpha-brief",
   "/api/mm-snapshot",
   "/api/mm-grade",

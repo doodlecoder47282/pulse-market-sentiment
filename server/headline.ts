@@ -6,6 +6,7 @@
 import { predictTransition } from "./regimePredictor";
 import { internalJson } from "./internalApi";
 import { getWhaleAlertHistory } from "./whalePersistence";
+import { levelsLine, whaleLine } from "../shared/headlineLines";
 
 type Tab =
   | "signals"
@@ -70,11 +71,17 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const base = "";
 
   // Always-on shared context: current regime + transition prediction
-  const [regime, models, whaleHist] = await Promise.all([
+  // Today's dealer levels lead the market tabs' answer lines (same map as the Today card).
+  const needsMap = tab === "chart" || tab === "heatseeker";
+  const [regime, models, whaleHist, odteMap] = await Promise.all([
     safeFetch<any>(`${base}/api/regime`),
     safeFetch<any>(`${base}/api/regime/predict?symbol=^GSPC&horizonMinutes=20`, 2500),
     Promise.resolve(getWhaleAlertHistory({ days: 1, symbol: "SPY", limit: 50 })).catch(() => []),
+    needsMap ? safeFetch<any>(`${base}/api/odte/map?symbol=${encodeURIComponent("$SPX")}`, 3000) : Promise.resolve(null),
   ]);
+  void regime;
+  const levels = levelsLine(odteMap);
+  const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
 
   // Missing predictor output is "UNAVAILABLE", never read as NEUTRAL.
   const currentRegime = String(models?.currentRegime ?? "UNAVAILABLE");
@@ -85,18 +92,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const known = currentRegime !== "UNAVAILABLE" && currentRegime !== "GAMMA_UNKNOWN";
   const withRegime = (base: string) => (known ? `${base} — ${regimeWord(currentRegime)} regime.` : `${base}.`);
 
-  // Whale flow last hour — quick directional read
-  const cutoff = Date.now() - 60 * 60_000;
-  const recent = (whaleHist as any[]).filter((w) => w?.detectedAt >= cutoff);
-  const calls = recent.filter((w) => w.type === "C").length;
-  const puts = recent.filter((w) => w.type === "P").length;
-  const whaleSummary = recent.length === 0
-    ? "no whale flow this hour"
-    : calls > puts * 1.5
-    ? `${recent.length} whales, calls leading ${calls}-${puts}`
-    : puts > calls * 1.5
-    ? `${recent.length} whales, puts leading ${puts}-${calls}`
-    : `${recent.length} whales, mixed (${calls}C / ${puts}P)`;
+  // Whale flow last hour: quick directional count (shared/headlineLines.ts)
+  const whaleSummary = whaleLine(whaleHist as any[], Date.now());
 
   // Per-tab synthesis
   switch (tab) {
@@ -104,8 +101,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: "Whale flow — fresh large option trades, tracked positions and recent closes.",
-        subLine: whaleSummary.charAt(0).toUpperCase() + whaleSummary.slice(1) + ".",
+        topLine: `${whaleSummary}${known ? ` · ${regimeWord(currentRegime)} regime` : ""}.`,
+        subLine: "Whale flow: fresh large option trades, tracked positions and recent closes.",
         bullets: [
           "Whale criteria: $2.5M+ premium on one contract, volume/OI 15x, bought above the ask, 1–3 days to expiry.",
           known
@@ -122,8 +119,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: withRegime("SPX cash chart with dealer levels"),
-        subLine: "Dealer levels are estimates from the Schwab option chain.",
+        topLine: levels ?? "Dealer levels unavailable: the Schwab option chain did not answer.",
+        subLine: withRegime("SPX cash chart with dealer levels. Levels are estimates from the Schwab option chain"),
         bullets: [
           "Dealer levels: call wall (resistance), put wall (support), gamma flip (pivot).",
           "Vanna and charm zeros add second-order pin pressure near OpEx.",
@@ -137,7 +134,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: withRegime("Composite model and forward-path projection"),
+        topLine: known ? `${cap(regimeWord(currentRegime))} regime. Composite score and forward path below.` : "Regime unknown until Schwab gamma and VIX term data arrive.",
         subLine: "ML Lab below shows forward path scenarios (bull q90, base q50, bear q10).",
         bullets: [
           "Composite score blends DFI, gamma zone, IV term, vanna bias, charm pin, flow.",
@@ -152,7 +149,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: "0DTE SPX live Greek scanner — $1M+ premium, hot strikes, sticky zones.",
+        topLine: levels ? `0DTE · ${levels}` : "0DTE levels unavailable: the Schwab option chain did not answer.",
         subLine: tone === "warning"
           ? "Heavy chop: price has been pinning around strikes (descriptive, not a trade call)."
           : tone === "bull"
@@ -173,8 +170,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: withRegime("Trade Desk — 20-minute regime outlook, edge tracking and position tools"),
-        subLine: "The outlook scores regime transitions with heuristic weights (not calibrated probabilities).",
+        topLine: headlineRegime || (known ? `${cap(regimeWord(currentRegime))} regime; the 20-minute outlook is warming up.` : "Regime unknown: the 20-minute outlook waits for Schwab gamma and VIX term data."),
+        subLine: "Trade Desk: 20-minute regime outlook, edge tracking and position tools. Heuristic weights, not calibrated probabilities.",
         bullets: [
           "Predictor uses DFI slope, gamma flip, vanna, charm, IV term, VIX term, whale pressure.",
           "Heuristic score 70+/100 = strong transition reading, under 40 = weak; uncalibrated.",
@@ -188,8 +185,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: withRegime("Macro, sector rotation and cross-asset read"),
-        subLine: "Sector rotation map, cross-asset canaries and dealer gamma map.",
+        topLine: known ? `${cap(regimeWord(currentRegime))} regime · ${whaleSummary.charAt(0).toLowerCase() + whaleSummary.slice(1)}.` : "Regime unknown until Schwab gamma and VIX term data arrive.",
+        subLine: "Macro, sector rotation and cross-asset read: sector rotation map, cross-asset canaries and dealer gamma map.",
         bullets: [
           "Sector web shows leadership rotation — risk-on (tech/discretionary) vs risk-off (staples/utilities).",
           "Canary panel compares cross-asset moves against their own 20-day volatility.",
@@ -263,7 +260,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab: "global",
         tone,
-        topLine: headlineRegime || (known ? `${regimeWord(currentRegime)} regime — ${whaleSummary}.` : `Regime unknown — ${whaleSummary}.`),
+        topLine: headlineRegime || (known ? `${cap(regimeWord(currentRegime))} regime · ${whaleSummary.charAt(0).toLowerCase() + whaleSummary.slice(1)}.` : `Regime unknown · ${whaleSummary.charAt(0).toLowerCase() + whaleSummary.slice(1)}.`),
         subLine: "",
         bullets: [],
         asOf: Date.now(),

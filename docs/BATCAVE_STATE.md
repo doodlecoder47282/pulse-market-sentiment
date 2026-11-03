@@ -1269,3 +1269,11 @@ are in) and counts tabs with no answer line in 10 s (budget 1: Edge Lab has none
 eye: no local build in this sandbox; CI screenshots and budgets are the check. Note: the audit's
 overflow and contrast checks now see less content on phones, because the collapsed panels are not
 mounted there.
+Quick view, pass 1b: the tab headlines were descriptions of the tab ("SPX cash chart with dealer levels",
+"0DTE SPX live Greek scanner"), not answers. Their top lines now lead with what was read:
+Chart and Heatseeker = today's dealer levels from the same /api/odte/map the Today card uses ("SPX 6,834 ·
+wall above 6,850 · flip 6,800 · magnet below 6,810 · long gamma at spot", or the reason they are missing);
+Signals = whale count this hour and direction plus the regime; Models, Regime and Trade Desk = the regime
+(Trade Desk: the 20-minute outlook line when it exists). The old descriptions moved to the second line.
+Cosmos, News and Take Five keep their description (no market answer to give). /api/odte/map is registered
+for in-process calls. shared/headlineLines.ts + tests.
