@@ -64,9 +64,10 @@ export const HEADLINE_FEEDS: FeedSourceDef[] = [
   { id: "fed_press", url: "https://www.federalreserve.gov/feeds/press_all.xml", gov: true },
   { id: "fed_speeches", url: "https://www.federalreserve.gov/feeds/speeches.xml", gov: true },
   { id: "sec_press", url: "https://www.sec.gov/news/pressreleases.rss", needsSecUa: true },
-  { id: "cftc_press", url: "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", gov: true },
+  // cftc_press is off: cftc.gov answers 403 to Node's TLS client (curl gets 200), so
+  // it could only ever show as failed. COT data uses publicreporting.cftc.gov.
   // Professional publishers' own syndication feeds.
-  { id: "marketwatch", url: "https://feeds.content.dj-n.com/public/rss/mw_topstories" },
+  { id: "marketwatch", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
   { id: "cnbc", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
   { id: "ft", url: "https://www.ft.com/markets?format=rss" },
   // Aggregator, secondary (Reuters ended its public RSS).

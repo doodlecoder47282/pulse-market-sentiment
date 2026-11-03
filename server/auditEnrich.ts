@@ -568,10 +568,11 @@ export async function computeJumpRegime(currentGex?: number | null): Promise<Jum
   } catch { /* snapshot_history unavailable or query failed */ }
 
   // ── Feature 4: VIX 1-day change ──────────────────────────────────
-  // Schwab getPriceHistory($VIX.X, day, 5, daily, 1) — 5 daily bars, compute 1d change.
+  // Schwab getPriceHistory($VIX, month, 1, daily, 1): last two daily bars give the 1d change.
+  // (periodType=day only accepts minute bars; day+daily is an HTTP 400.)
   try {
     const { getPriceHistory } = await import("./schwab");
-    const vixResp = await getPriceHistory("$VIX.X", "day", 5, "daily", 1);
+    const vixResp = await getPriceHistory("$VIX", "month", 1, "daily", 1);
     const vixCandles = vixResp.candles.filter((c) => c.close > 0);
     if (vixCandles.length >= 2) {
       const vixNow = vixCandles[vixCandles.length - 1].close;

@@ -40,7 +40,7 @@ export const SOURCE_CONTRACTS: readonly SourceContract[] = Object.freeze([
   source("nasdaq.earnings", "Nasdaq earnings calendar", "https://api.nasdaq.com/api/calendar/earnings", "nasdaq.calendar",
     ["earnings"], ["text"], ["api.nasdaq.com"], 1800, "Calendar row checked_at, NOT future event time",
     "Existing local cache only", "Real-row provenance required; not issuer-confirmed and revisions remain unknown."),
-  source("news.marketwatch", "MarketWatch", "https://feeds.content.dj-n.com/public/rss/mw_topstories", "dowjones.marketwatch",
+  source("news.marketwatch", "MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories", "dowjones.marketwatch",
     ["news"], ["text"], ["marketwatch.com", "www.marketwatch.com"], 86400, "Verified publication time",
     "Existing cached feed; health must be checked within 15m", "Headline/context only; content and redistribution rights unverified."),
   source("news.reuters-google", "Reuters Business", "https://news.google.com/rss/search", "reuters.via-google-news",

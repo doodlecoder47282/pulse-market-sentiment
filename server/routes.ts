@@ -4148,8 +4148,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     const stale = s.computedAt != null && Date.now() - s.computedAt * 1000 > staleMs;
     if (empty || stale) {
       console.log(`[backtest] boot rebuild (${empty ? "empty" : "stale"})…`);
-      runBackfill(5).then(r => console.log("[backtest] boot backfill:", r))
-                    .catch(e => console.error("[backtest] boot backfill failed:", e?.message || e));
+      // Retry every 10 min (up to 2 h) when Schwab is disconnected or throttled
+      // at boot; one failed attempt used to leave the backtest stale for days.
+      const attempt = (n: number) => runBackfill(5).then(r => console.log("[backtest] boot backfill:", r))
+        .catch(e => {
+          console.error(`[backtest] boot backfill failed (attempt ${n}):`, e?.message || e);
+          if (n < 12) setTimeout(() => attempt(n + 1), 10 * 60_000).unref?.();
+        });
+      attempt(1);
     }
   }, 8_000);
 

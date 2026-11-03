@@ -706,3 +706,11 @@ export function mergeChainSegments<T extends ChainSegmentLike>(segments: T[]): T
     strikeCoverage: coverage,
   };
 }
+
+/** Schwab pricehistory accepts periodType=day only with minute bars; day +
+ *  daily/weekly/monthly is an HTTP 400. Such a request is widened to one
+ *  month (enough daily bars for any "last N days" caller up to ~20). */
+export function schwabHistoryWindow(periodType: "day" | "month" | "year", period: number, frequencyType: string): { periodType: "day" | "month" | "year"; period: number } {
+  if (periodType === "day" && frequencyType !== "minute") return { periodType: "month", period: 1 };
+  return { periodType, period };
+}

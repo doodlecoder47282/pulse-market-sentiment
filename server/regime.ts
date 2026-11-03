@@ -17,6 +17,7 @@
 // Stage: early (<=2w consistent) / mid (3-6w) / mature (8w+)
 
 import { storage } from "./storage";
+import { lastCompletedSession } from "./breadthMath";
 import { regimeZTest, seedFromString, regimeFdrFlags } from "./macroStats";
 
 // Null-test thresholds (finding 5.4): two-sided 5% under the bootstrap null.
@@ -34,7 +35,8 @@ export const REGIME_UNIVERSE = [
   // fixed income / credit
   "TLT", "HYG", "LQD",
   // FX / commodity anchors
-  "DX-Y.NYB", "GLD", "USO",
+  // DX-Y.NYB removed: a Yahoo ticker Schwab does not carry, and no axis used it.
+  "GLD", "USO",
   // copper via CPER etf (more reliable than HG=F for daily closes)
   "CPER",
   // style
@@ -221,14 +223,15 @@ async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
  * Schwab calls. Caller should invoke this before computing regime.
  */
 export async function ensureUniverseCached(): Promise<{ fetched: string[]; cached: string[]; failed: string[] }> {
-  const today = etDateString(Math.floor(Date.now() / 1000));
+  // Current = holds the last completed session's bar. Today's daily bar does
+  // not exist until the close, so requiring it re-fetched the whole universe
+  // on every load during the session and tripped the 100/min budget.
+  const expected = lastCompletedSession(Date.now());
   const needFetch: string[] = [];
   const stillCached: string[] = [];
   for (const sym of REGIME_UNIVERSE) {
     const latest = storage.getLatestBarDate(sym);
-    // If we have today's bar (or at least yesterday's and market hasn't closed),
-    // skip. Refresh whenever we're >1 trade day stale.
-    if (latest && latest >= today) {
+    if (latest && latest >= expected) {
       stillCached.push(sym);
     } else {
       needFetch.push(sym);
@@ -937,7 +940,12 @@ export async function buildRegimeSnapshot(window: WindowKey = "w4"): Promise<Reg
     warnings.push(`Universe refresh error: ${e?.message ?? e}`);
     return { fetched: [], cached: [], failed: REGIME_UNIVERSE };
   });
-  if (failed.length) warnings.push(`Symbols with no data: ${failed.join(", ")}`);
+  if (failed.length) {
+    const none = failed.filter((s) => !storage.getLatestBarDate(s));
+    const old = failed.filter((s) => !!storage.getLatestBarDate(s));
+    if (none.length) warnings.push(`Symbols with no data: ${none.join(", ")}`);
+    if (old.length) warnings.push(`Not refreshed this read (older stored bars used, expected ${lastCompletedSession(Date.now())}): ${old.map((s) => `${s} ${storage.getLatestBarDate(s)}`).join(", ")}`);
+  }
 
   // Load all cached data into memory
   const rowsBySymbol = new Map<string, DailyRow[]>();

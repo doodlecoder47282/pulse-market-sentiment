@@ -19,7 +19,7 @@ import {
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   chainAsOf, chainLadderSegments, mergeChainSegments,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
-  type ChainCoverage, type ChainAsOfBasis,
+  type ChainCoverage, type ChainAsOfBasis, schwabHistoryWindow,
 } from "./schwabDataPolicy";
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
@@ -902,6 +902,8 @@ export type PriceHistoryResponse = {
 /** Get price history via Schwab. Returns empty candles if not authenticated or on error.
  *  @param needExtendedHours - pass true for pre/post market data (default false)
  */
+export { schwabHistoryWindow };
+
 export async function getPriceHistory(
   symbol: string,
   periodType: "day" | "month" | "year" = "year",
@@ -912,6 +914,7 @@ export async function getPriceHistory(
 ): Promise<PriceHistoryResponse> {
   // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
   const wireSymbol = _normalizeIndexSymbol(symbol);
+  ({ periodType, period } = schwabHistoryWindow(periodType, period, frequencyType));
   const unavailable = (reason: string): PriceHistoryResponse => ({
     symbol, candles: [], source: "schwab", dataState: "unavailable",
     asOfMs: null, ageMs: null, servedFromCache: false, stale: false, maxAgeMs: null, reason,

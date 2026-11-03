@@ -19,11 +19,15 @@ export function validateQuote(payload: Json | null, symbol: string, now: number)
   // lastPrice belongs to the last trade, not a later bid/ask update.
   const at = q.tradeTime;
   if (!timestamp(at, now)) return check(name, "fail", "Provider observation time is missing or invalid; receipt time is not a substitute.");
-  if (!timestamp(q.quoteTime, now)) return check(name, "fail", "Provider quote timestamp is missing or invalid.", at);
+  // Cash indexes ($SPX, $VIX) are calculated values with no bid/ask, so Schwab
+  // sends no quoteTime; the trade (calculation) time is the observation.
+  const isIndex = symbol.startsWith("$");
+  if (!isIndex && !timestamp(q.quoteTime, now)) return check(name, "fail", "Provider quote timestamp is missing or invalid.", at);
   if (row.realtime !== true) return check(name, "partial", "Provider real-time entitlement flag is absent or false.", at);
   if (!isRegularSessionOpen(now)) return check(name, "partial", "Market is outside its regular session. This observation is not certified as a live-session quote.", at);
-  const oldest = Math.min(at, q.quoteTime);
+  const oldest = isIndex ? at : Math.min(at, q.quoteTime);
   if (!fresh(oldest, now, 120_000)) return check(name, "fail", "Trade or quote observation exceeds the two-minute freshness limit.", oldest);
+  if (isIndex) return check(name, "pass", "Exact index, positive calculated value, real-time flag and the provider calculation time checked (indexes carry no bid/ask quote time).", oldest);
   return check(name, "pass", "Exact instrument, positive last-trade price, real-time flag and both provider timestamps checked. Time shown is the older observation.", oldest);
 }
 

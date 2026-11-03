@@ -9,6 +9,8 @@
 // a Jupiter price check; Bluesky and pump.fun (unofficial API) are labeled
 // low-grade attention proxies and are not in the score or verdict.
 
+import CoinLinks from "./CoinLinks";
+import CryptoHowTo from "./CryptoHowTo";
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
 import { apiJson } from "@/lib/queryClient";
@@ -463,6 +465,7 @@ function DeskBrief({ feed, health, sig, enters, watches, onPick }: {
                 </div>
                 {c.verdictReasons[0] && <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground">{c.verdictReasons[0]}</div>}
               </button>
+              <CoinLinks chain={c.chain} mint={c.tokenAddress} symbol={c.symbol} />
             </li>
           ))}
         </ul>
@@ -494,7 +497,13 @@ export default function CryptoPanel() {
   return (
     <div className="space-y-4" data-testid="crypto-panel">
       <DeskBrief feed={feed} health={healthQ.data} sig={sigQ.data} enters={enters} watches={watches}
-        onPick={(c) => { setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`); }} />
+        onPick={(c) => {
+          setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`);
+          setTimeout(() => document.getElementById(`crypto-card-${c.chain}-${c.pairAddress}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+        }} />
+
+      {/* plain-English guide: labels, opening a coin in fomo, the desk's words */}
+      <CryptoHowTo />
 
       {/* paste any Solana token address: every desk rule, gate by gate, plus a holder-dump stress test */}
       <AutopsyCard />
@@ -677,6 +686,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     : "border-border/50 hover:border-border";
   const mcapPct = c.marketCap != null ? Math.min(100, (c.marketCap / 1_000_000) * 100) : 0;
   return (
+    <div id={`crypto-card-${c.chain}-${c.pairAddress}`} className="scroll-mt-24">
     <button
       onClick={toggle}
       className={`group w-full rounded-xl border ${border} bg-card/60 p-3 text-left transition-all`}
@@ -860,6 +870,8 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
         </div>
       )}
     </button>
+    {isOpen && <CoinLinks chain={c.chain} mint={c.tokenAddress} symbol={c.symbol} />}
+    </div>
   );
 }
 

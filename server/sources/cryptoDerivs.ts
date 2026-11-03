@@ -28,6 +28,15 @@ const history: Record<PerpVenue, Record<PerpAsset, OiSample[]>> = {
   okx: { BTC: [], ETH: [], SOL: [] },
 };
 
+// Bybit refuses every US request (CloudFront geo-block, HTTP 403), so a US
+// host (this sandbox, Railway US) only reads OKX by default. Set
+// BATCAVE_PERP_VENUES=bybit,okx on a host where Bybit answers.
+export const ACTIVE_VENUES: PerpVenue[] = (() => {
+  const raw = (process.env.BATCAVE_PERP_VENUES ?? "okx").split(",").map((x) => x.trim().toLowerCase());
+  const v = PERP_VENUES.filter((p) => raw.includes(p));
+  return v.length ? v : ["okx"];
+})();
+
 function remember(venue: PerpVenue, asset: PerpAsset, t: number, v: number | null): void {
   if (v == null) return;
   const h = history[venue][asset];
@@ -60,15 +69,15 @@ let lastResults: Record<PerpVenue, Record<PerpAsset, VenueResult>> | null = null
 
 export async function readDerivs(now = Date.now()): Promise<DerivsSnapshot> {
   const results = { bybit: {}, okx: {} } as Record<PerpVenue, Record<PerpAsset, VenueResult>>;
-  await Promise.all(PERP_VENUES.flatMap((v) => PERP_ASSETS.map(async (a) => {
+  await Promise.all(ACTIVE_VENUES.flatMap((v) => PERP_ASSETS.map(async (a) => {
     const res = await readOne(v, a, now);
     results[v][a] = res;
     remember(v, a, now, res.parsed?.read?.oi ?? null);
   })));
   lastResults = results;
-  return buildDerivsSnapshot(results, history, now);
+  return buildDerivsSnapshot(results, history, now, ACTIVE_VENUES);
 }
 
 export function lastDerivs(now = Date.now()): DerivsSnapshot | null {
-  return lastResults ? buildDerivsSnapshot(lastResults, history, now) : null;
+  return lastResults ? buildDerivsSnapshot(lastResults, history, now, ACTIVE_VENUES) : null;
 }
