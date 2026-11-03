@@ -11,7 +11,7 @@ export async function runRealDataValidationQA(browser, base, out, mode = "all") 
   try {
     await page.goto(`${base}?connect=schwab`, { waitUntil: "domcontentloaded" });
     await page.getByTestId("schwab-settings-dialog").waitFor({ timeout: 45000 });
-    assert.equal(await page.getByTestId("personal-server-address").inputValue(), "https://pulse-market-sentiment-production.up.railway.app");
+    assert.equal(await page.getByTestId("personal-server-address").inputValue(), "https://pulse-market-sentiment-pulse.up.railway.app");
     await page.getByTestId("schwab-selftest-btn").tap();
     await page.getByTestId("market-validation-summary").waitFor();
     assert.match(await page.getByTestId("market-validation-summary").innerText(), /incomplete/);
