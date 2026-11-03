@@ -11,6 +11,8 @@
 
 import CoinLinks from "./CoinLinks";
 import CryptoHowTo from "./CryptoHowTo";
+import BundleRow from "./BundleRow";
+import type { CardBundle } from "@shared/cryptoBundle";
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
 import type { LaunchEvidence } from "@shared/cryptoLaunch";
@@ -58,6 +60,7 @@ interface Candidate {
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
   jupPriceUsd?: number | null; jupGapPct?: number | null; jupCheckedAt?: number | null;
   jupState?: "agree" | "watch" | "diverge" | "no-reliable-price" | "failed" | "unchecked";
+  bundle?: CardBundle | null;
   score: number | null; verdict: Verdict; verdictCode?: string | null; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
@@ -193,6 +196,7 @@ interface AutopsyResp {
   tracked: { verdict: Verdict; verdictCode: string | null; firstSeenAt: number } | null;
   stress: HolderStress | null;
   launch?: LaunchEvidence | null;
+  bundle?: CardBundle | null;
   sourceNotes: string[]; notes: string[];
 }
 
@@ -303,6 +307,7 @@ function AutopsyCard() {
               </div>
             </section>
           )}
+          <BundleRow bundle={ok.bundle} testId="crypto-autopsy-bundle" />
           {ok.stress && (
             <section data-testid="crypto-autopsy-stress">
               <div className="text-[11px] font-medium text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
@@ -854,6 +859,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               </>
             )}
           </div>
+          {c.chain === "solana" && <BundleRow bundle={c.bundle} />}
           {c.socialCheckedAt != null && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span>
