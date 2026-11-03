@@ -24,7 +24,7 @@ import {
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
 import { oauthErrorCode } from "./oauthError";
-import { newOAuthState, type OAuthReturnTo } from "./schwabOAuth";
+import { newOAuthState, schwabRedirectUri, type OAuthReturnTo } from "./schwabOAuth";
 import { editionFromEnv } from "../shared/edition";
 import { demoSchwabPayload } from "./demoMarket";
 import { createSchwabInputValidator } from "./schwabInputValidation";
@@ -44,7 +44,7 @@ import { serialize, deserialize } from "node:v8";
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
 const getClientSecret = () => process.env.SCHWAB_CLIENT_SECRET ?? "";
-const getRedirectUri = () => process.env.SCHWAB_REDIRECT_URI ?? "https://127.0.0.1";
+const getRedirectUri = () => schwabRedirectUri() || "https://127.0.0.1";
 
 const SCHWAB_BASE = "https://api.schwabapi.com";
 // Every Schwab request is bounded: a request that never answers used to hold

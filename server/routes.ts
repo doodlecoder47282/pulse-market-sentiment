@@ -3157,7 +3157,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       return res.status(403).json({ dataState: "unavailable", reason: "This demo runs on simulated sample data; Schwab sign-in is turned off." });
     }
     try {
-      const { schwabConfigProblem, isAutomaticCallback, parseReturnTo } = await import("./schwabOAuth");
+      const { schwabConfigProblem, isAutomaticCallback, parseReturnTo, schwabRedirectUri } = await import("./schwabOAuth");
       const problem = schwabConfigProblem();
       if (problem) return res.status(503).json({ dataState: "unavailable", reason: problem });
       const { tokenStoreStatus } = await import("./schwabTokenStore");
@@ -3167,7 +3167,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const returnTo = parseReturnTo(req.query.return);
       const url = getAuthUrl(returnTo);
       res.setHeader("Cache-Control", "no-store");
-      res.json({ url, automatic: isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? ""), returnTo });
+      res.json({ url, automatic: isAutomaticCallback(schwabRedirectUri()), returnTo });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build auth URL" });
     }
@@ -3178,8 +3178,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try {
       const { redirectedUrl, state } = req.body ?? {};
       const { parseSchwabCallback } = await import("../shared/schwabCallback");
-      const { consumeOAuthState, isAutomaticCallback } = await import("./schwabOAuth");
-      if (isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? "")) {
+      const { consumeOAuthState, isAutomaticCallback, schwabRedirectUri } = await import("./schwabOAuth");
+      if (isAutomaticCallback(schwabRedirectUri())) {
         return res.status(400).json({ message: "This server uses automatic sign-in. Return from Schwab and check connection; do not paste a saved code." });
       }
       if (typeof redirectedUrl !== "string" || typeof state !== "string") {
@@ -3187,7 +3187,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
       let parsed: { code: string; state: string };
       try {
-        parsed = parseSchwabCallback(redirectedUrl, state, process.env.SCHWAB_REDIRECT_URI ?? "");
+        parsed = parseSchwabCallback(redirectedUrl, state, schwabRedirectUri());
       } catch {
         return res.status(400).json({ message: "Callback does not match this sign-in. Use the fresh callback from the latest login link." });
       }

@@ -62,6 +62,7 @@ import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClas
 import { readTokenFacts, indexedRpcAvailable, noteIndexedRateLimit, solRpc, RPC_INDEXED, RPC_ACCOUNT, keyedRpcConfigured, solanaRpcStatus } from "./solanaToken";
 import { bundleEvidence, BUNDLE_MAX_TX, BUNDLE_WINDOW_SLOTS, type BundleEvidence, type CardBundle } from "../shared/cryptoBundle";
 import { startPumpListener, pumpListenerCheck, pumpListenerStatus, launchBundle } from "./pumpListener";
+import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
@@ -632,6 +633,7 @@ function recordPeakSample(c: Candidate): void {
   try {
     _peakStmt = _peakStmt ?? sqlite.prepare(CRYPTO_PEAK_SAMPLE_SQL);
     _peakStmt.run(peakSampleParams(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress));
+    samplePlans(c.chain, c.pairAddress, c.marketCap, c.liquidityUsd, c.lastRefreshAt ?? Date.now());
   } catch (e: any) {
     console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
@@ -1185,6 +1187,7 @@ async function graderTick(): Promise<void> {
     if (g.outcome === "NO_DATA") { markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP)); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
     mark.run(graderMarkParams(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id));
+    if (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000) samplePlans(row.chain, row.pair_address, mcap, liq, now);
   }
 }
 
@@ -1442,6 +1445,7 @@ export function getCryptoSignals(): {
   stats: CryptoDeskStats & { listLimit: number };
   expectancy: { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string; versions: Record<string, number>; currentVersion: string };
   desk: DeskRisk;
+  exitPlan: ReturnType<typeof exitPlanRecord> | null;
   rules: { version: string; items: ReturnType<typeof describeCryptoRules> };
 } {
   // The list is the latest 100 for display; the stats come from aggregate
@@ -1471,6 +1475,7 @@ export function getCryptoSignals(): {
     })),
     stats: { ...stats, listLimit: LIST_LIMIT },
     expectancy: getCryptoExpectancy(),
+    exitPlan: (() => { try { return exitPlanRecord(); } catch { return null; } })(),
     desk: currentDeskRisk(),
     rules: { version: CRYPTO_RULES_VERSION, items: describeCryptoRules() },
   };

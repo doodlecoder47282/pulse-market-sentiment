@@ -9,7 +9,7 @@
  * orders. See docs/CRYPTO_DESK.md for the charter and the method.
  */
 
-export const CRYPTO_RULES_VERSION = "2026.10.27-2";
+export const CRYPTO_RULES_VERSION = "2026.11.03-1";
 
 export const CRYPTO_RULES = {
   universe: {
@@ -114,6 +114,20 @@ export const CRYPTO_RULES = {
     liquidityExitStopPct: -30,
     holdHorizonHours: 24,
   },
+  exitPlan: {
+    /** Take-profit trims, as a market-cap multiple of the entry and a share of the ORIGINAL position (limit sells). */
+    trims: [
+      { atMultiple: 2, sellShare: 0.5 },
+      { atMultiple: 4, sellShare: 0.25 },
+    ],
+    /** The rest is a limit sell at universe.targetMcapUsd; a trim at or above the target folds into it. */
+    runnerAtTarget: true,
+    /** After the first trim the stop moves to the entry (multiple 1.0). */
+    breakevenAfterFirstTrim: true,
+    // Stop, time stop and liquidity stop reuse sizing.suggestedStopPct, sizing.holdHorizonHours and sizing.liquidityExitStopPct.
+    /** Bankroll share lost if the stop fills at its level; size = bankroll x this / |stop|, capped by the pool size. */
+    riskPerTradePct: 1,
+  },
   grading: {
     /** Signals are graded at this horizon; the hold rule exits here. */
     horizonHours: 72,
@@ -167,6 +181,8 @@ export function describeCryptoRules(r: CryptoRules = CRYPTO_RULES): CryptoRuleIt
     { path: "security.retryMinutes", value: `${r.security.retryMinutes} min`, text: "authorities re-read while active; unread top-10 retried" },
     { path: "cost", value: `${r.cost.dexFeePct}% + ${r.cost.platformFeePct}% per leg, $${r.cost.priorityFeeUsd} priority per leg`, text: "every net-of-cost figure and expectancy label uses these with constant-product impact at the pool's depth" },
     { path: "sizing", value: `${pct(r.sizing.poolShare)} of pool, max ${usd(r.sizing.maxPositionUsd)}`, text: "position sized by the exit, never by conviction; the desk places no orders" },
+    { path: "exitPlan", value: `trim ${r.exitPlan.trims.map((t) => `${Math.round(t.sellShare * 100)}% at ${t.atMultiple}x`).join(", ")}, rest at ${usd(r.universe.targetMcapUsd)} cap; stop ${r.sizing.suggestedStopPct}%${r.exitPlan.breakevenAfterFirstTrim ? ", at entry after the first trim" : ""}; liquidity stop ${r.sizing.liquidityExitStopPct}%; time stop ${r.sizing.holdHorizonHours} h`, text: "the plan shown on every ENTER, graded on each coin's sampled path (fills at the level for trims, at the sample for stops); counts, not a claim, until the sample gate passes" },
+    { path: "exitPlan.riskPerTradePct", value: `${r.exitPlan.riskPerTradePct}% of bankroll`, text: "size = bankroll x risk / |stop|, never above the pool-based maximum" },
     { path: "grading.horizonHours", value: `${r.grading.horizonHours} h`, text: "grading horizon; the hold rule exits at this mark" },
     { path: "grading.rugged", value: `liq < ${pct(r.grading.ruggedLiquidityShare)} or cap < ${pct(r.grading.ruggedMcapShare)} of entry`, text: "RUGGED classification" },
     { path: "grading.minSample", value: `${r.grading.minSample} first-signals, no-data share <= ${pct(r.grading.maxNoDataShare)}`, text: "below this the expectancy card reads INSUFFICIENT DATA; passing a test is not a forecast" },
