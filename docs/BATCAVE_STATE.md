@@ -1394,3 +1394,12 @@ symbol; levels drawn only when computed for the chart's own underlying). The ind
 supported:false with the reason (levels exist only on SPY's scale here) and the banner shows it; no
 conversion ratio anywhere, no threshold changed, SPY and single names unchanged. Left separate: bare "SPX"
 candles (toSchwabSymbol does not map "SPX"), the null call/put wall crash, the Invalid Date banner time.
+#47 browser check (owner-approved option 1): Railway serves main only and the Vercel preview serves the
+screens with every /api call sent to "unavailable", so no hosted build of the PR revision can show levels.
+CI now runs tests/ux/chart-levels-acceptance.mjs against the exact build under test: both chart engines,
+desktop 1280 px and phone 402 px; SPY levels and banner distances from SPY's own price; the S&P 500 index
+through the REAL server route (unsupported, no levels, reason readable, inside the screen at 402 px, no
+sideways scroll); rapid SPY -> index -> NVDA with the SPY levels reply delayed, sampled every 40 ms, a level
+must never show on another symbol. SPY/NVDA candles and levels are fixed fixtures (exact expected numbers);
+not live Schwab. Evidence (screenshots, level replies, report.json with the commit) is uploaded as the run's
+"chart-levels-<sha>" artifact. Test hooks: data-gamma-callwall and data-last-close on both chart engines.
