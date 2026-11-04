@@ -61,7 +61,8 @@ export function CandlestickChart({
   const chartRight = width - PADDING.right;
   const chartWidth = chartRight - chartLeft;
 
-  const gammaApplies = showGamma && gamma && (symbol === "SPY" || symbol === "^GSPC" || symbol === "SPX");
+  // The parent passes levels only when they belong to this chart's underlying (shared/chartLevels.ts).
+  const gammaApplies = showGamma && !!gamma;
 
   const { yMin, yMax, xStep, candleW } = useMemo(() => {
     if (!candles.length) return { yMin: 0, yMax: 1, xStep: 0, candleW: 0 };

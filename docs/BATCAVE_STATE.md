@@ -1381,3 +1381,16 @@ Prophecy review of #46 (E1, diff): 2 fixes taken. Completed coverage now ends at
 not at `now`, so a 59-minute record cannot become "this hour" while no further cycle completes before the
 stale deadline; and under one completed minute reads "less than 1 min of complete scans" (it used to be
 rounded up to 1). Both pinned by tests.
+
+2026-11-04: chart levels on the wrong scale (feat/chart-level-scale). Owner pick, Prophecy-scoped: trace
+first, fix only a confirmed mismatch. Trace: ChartPanel loads candles from /api/ohlc?symbol=<chart> and
+levels from /api/gamma-levels?symbol=<chart> (client/src/components/ChartPanel.tsx). For "^GSPC" the
+candles are $SPX (server/schwabSymbols.ts maps ^GSPC -> $SPX) while /api/gamma-levels sent SPX/^GSPC down
+the SPY-snapshot branch (server/routes.ts, isSpy) and returned SPY strikes: SPY levels were drawn as price
+lines on index candles (LightweightCandlestick createPriceLine on the candle series; CandlestickChart did
+the same) and the banner computed distances from the index price to SPY levels (about -90%). Confirmed in
+code; not observed live. Fix: shared/chartLevels.ts (one underlying per index spelling; levels source per
+symbol; levels drawn only when computed for the chart's own underlying). The index now returns
+supported:false with the reason (levels exist only on SPY's scale here) and the banner shows it; no
+conversion ratio anywhere, no threshold changed, SPY and single names unchanged. Left separate: bare "SPX"
+candles (toSchwabSymbol does not map "SPX"), the null call/put wall crash, the Invalid Date banner time.

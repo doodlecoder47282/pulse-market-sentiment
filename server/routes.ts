@@ -1,4 +1,5 @@
 import { vixToAtmPct } from "@shared/vol";
+import { levelsSourceFor, INDEX_NOT_WIRED_REASON } from "../shared/chartLevels";
 import { getCryptoContext } from "./cryptoContext";
 import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
 import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
@@ -1301,8 +1302,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/gamma-levels", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
-      const isSpy = symbol === "SPY" || symbol === "^GSPC" || symbol === "SPX";
-      if (isSpy) {
+      // shared/chartLevels.ts: the S&P 500 index is not answered with SPY-scale
+      // levels (they would be drawn at about a tenth of the index price).
+      const source = levelsSourceFor(symbol);
+      if (source === "index_not_wired") {
+        return res.json({ symbol, supported: false, spot: null, levels: null, reason: INDEX_NOT_WIRED_REASON, asOf: null });
+      }
+      if (source === "spy_snapshot") {
         const snap = await getOrBuild(false);
         const g = snap.gamma;
         return res.json({
