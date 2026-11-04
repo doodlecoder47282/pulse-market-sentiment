@@ -4,6 +4,7 @@
  * Opened via the gear icon in the header.
  */
 
+import BackgroundPicker from "@/components/BackgroundPicker";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
@@ -521,6 +522,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               Stock/index prices, option chains and derived market scores use simulated data in this preview. Crypto and news may come from separate public feeds and retain their own source and freshness limits. Nothing here is investment advice.
             </DialogDescription>
           </DialogHeader>
+          <BackgroundPicker />
           <div className="space-y-3 text-sm text-muted-foreground" data-testid="demo-settings">
             <p>The stock/options screens demonstrate calculations, not current market conditions. Passing the tests does not establish forecast accuracy or a trading edge.</p>
             <p>Schwab sign-in is turned off. Live use requires rotated developer credentials and a verified protected server. This is not a multi-user brokerage service.</p>
@@ -559,6 +561,9 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Appearance: background style, saved on this device */}
+          <BackgroundPicker />
+
           {/* Connection status card */}
           <div className={`rounded-lg border p-4 ${
             isConnected

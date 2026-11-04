@@ -2,10 +2,10 @@
   "appId": "com.batcave.terminal",
   "appName": "Batcave",
   "webDir": "dist/public",
-  "backgroundColor": "#000000",
+  "backgroundColor": "#0A1324",
   "ios": {
     "contentInset": "never",
-    "backgroundColor": "#000000"
+    "backgroundColor": "#0A1324"
   },
   "server": {
     "url": "https://pulse-market-sentiment-production.up.railway.app",
