@@ -1276,6 +1276,24 @@ shared indexed-RPC cooldown; 20 s time box between calls; all caveats rendered; 
 than 0.01%" instead of 0%; a holding above supply is "partial", not clamped to 100%; full address shown for
 inspection; an unfetchable transaction is not described as a missing fee payer. Not verified: live RPC
 payloads and whether the public node serves full history (a pruned node would look like "reached oldest").
+
+2026-11-03: iOS: one Capacitor config again (fix/ios-live-ui). #41 added capacitor.config.ts (bundled UI,
+webDir dist/native, no server.url), which Capacitor reads in preference to capacitor.config.json (live UI
+from the server, the owner's choice in #27). The iOS workflow builds dist/public and edits the JSON, so
+`cap sync` failed ("Could not find the web assets directory: ./dist/native") and main's iOS build broke.
+Owner chose live-from-server (2026-11-03). capacitor.config.ts removed; server.url = the new Railway
+address (pulse-market-sentiment-pulse.up.railway.app); scripts/ios-preflight.mjs now asserts the live-UI
+setup and fails if a second config appears; Xcode docs updated. On the phone the AI curator and evidence
+history now behave as on the web (they were disabled only in the bundled build).
+2026-11-03: institutional navy + background styles (feat/navy-theme). Owner request. The dark theme now
+defaults to institutional navy from the owner's design canvas ("Batcave B Institutional Navy": surfaces
+#0A1324 / #0F1B33, borders #1E2C4A, text #EEF2F8 / #9FB0CC, accent #5B9BFF). Settings has a
+"Background style" picker: Navy (default), Navy glow (soft light at the top), Graphite (neutral
+blue-grey), Black (the original night desk, amber accent). Saved per device (localStorage, guarded);
+painted before the app loads by a small inline script so there is no black flash; the phone's status bar
+colour follows it; capacitor backgroundColor is navy. Only theme tokens change: hard-coded status colours
+(green/red/amber) keep their meaning. Fonts unchanged (the canvas uses IBM Plex; not adopted, to keep
+layouts stable). CI's audit is the visual check (no local build here).
 2026-10-29: record integrity, decision-time gate evidence (feat/gate-evidence). Prophecy's
 review (E1, partial) was right that the replay cannot re-check four ENTER gates because
 rows never stored them (sustained flow, Jupiter state, 1 h sells, desk risk). Every new
