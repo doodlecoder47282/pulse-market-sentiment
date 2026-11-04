@@ -1377,3 +1377,7 @@ says "in the last N min of complete scans", and a count from a short run says ho
 covers. Left (named, separate defects): a failed alert INSERT is still invisible to the history read;
 /api/flow/history and setupEngine still turn a failed DB read into []; failing watchlist symbols are not
 named in the snapshot. Tests: 12 (5 new: stale chain, gap, 59/60 boundary, closed to open, start/stop reset).
+Prophecy review of #46 (E1, diff): 2 fixes taken. Completed coverage now ends at the last completed cycle,
+not at `now`, so a 59-minute record cannot become "this hour" while no further cycle completes before the
+stale deadline; and under one completed minute reads "less than 1 min of complete scans" (it used to be
+rounded up to 1). Both pinned by tests.

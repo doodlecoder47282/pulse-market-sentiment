@@ -68,7 +68,7 @@ export interface Coverage {
   /** For partial: whether symbols failed or were served stale; for closed/stale: since when (epoch ms). */
   partialBecause?: "failed" | "stale" | null;
   since?: number | null;
-  /** Minutes of unbroken successful coverage up to now (null unless fresh). */
+  /** Whole minutes of unbroken complete coverage, up to the last completed cycle (null unless fresh). */
   coveredMinutes: number | null;
 }
 
@@ -84,7 +84,9 @@ export function coverage(r: ScanRecord | null | undefined, running: boolean | nu
   if (now - r.lastAttemptAt > maxAgeMs) return { state: "stale", coveredMinutes: null, since: r.lastSuccessAt };
   if (r.lastAsked === 0 || r.lastFailed >= r.lastAsked) return { state: "failed", coveredMinutes: null };
   if (r.lastFailed > 0 || (r.lastStale ?? 0) > 0) return { state: "partial", coveredMinutes: null, partialBecause: r.lastFailed > 0 ? "failed" : "stale" };
-  const mins = r.coveredSince == null ? 0 : Math.max(0, Math.floor((now - r.coveredSince) / 60_000));
+  // Completed coverage ends at the last completed cycle, not at `now`: time
+  // passing before the stale deadline adds no coverage.
+  const mins = r.coveredSince == null || r.lastAttemptAt == null ? 0 : Math.max(0, Math.floor((r.lastAttemptAt - r.coveredSince) / 60_000));
   return { state: "fresh", coveredMinutes: mins };
 }
 
@@ -116,14 +118,15 @@ export function whaleCoverageLine(alerts: Array<{ type?: string; detectedAt?: nu
     not_running: "whale scan not running",
     unknown: "whale scan state unknown",
   };
-  const m = cov.state === "fresh" ? Math.max(1, cov.coveredMinutes ?? 0) : 0;
+  // Never round up: under one completed minute is said as such.
+  const span = (cov.coveredMinutes ?? 0) >= 1 ? `the last ${cov.coveredMinutes} min` : "less than 1 min";
   const shortRun = cov.state === "fresh" && (cov.coveredMinutes ?? 0) < 60;
   if (recent.length === 0) {
-    if (cov.state === "fresh") return shortRun ? `No whale flow in the last ${m} min of complete scans` : "No whale flow this hour";
+    if (cov.state === "fresh") return shortRun ? `No whale flow in ${span} of complete scans` : "No whale flow this hour";
     const w = why[cov.state];
     return `${w.charAt(0).toUpperCase()}${w.slice(1)}`;
   }
-  const tail = cov.state === "fresh" ? (shortRun ? ` (complete scans for the last ${m} min)` : "") : ` (${why[cov.state]})`;
+  const tail = cov.state === "fresh" ? (shortRun ? ` (complete scans for ${span})` : "") : ` (${why[cov.state]})`;
   const n = `${recent.length} whale${recent.length === 1 ? "" : "s"} this hour`;
   if (calls > puts * 1.5) return `${n}, calls leading ${calls}-${puts}${tail}`;
   if (puts > calls * 1.5) return `${n}, puts leading ${puts}-${calls}${tail}`;

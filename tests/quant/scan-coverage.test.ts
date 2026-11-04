@@ -130,16 +130,27 @@ test("a pause between cycles breaks the run: no quiet hour claimed across a gap"
   const cov = coverage(r, true, now);
   assert.equal(cov.state, "fresh");
   assert.equal(cov.coveredMinutes, 0);
-  assert.equal(whaleCoverageLine([], now, cov), "No whale flow in the last 1 min of complete scans");
+  assert.equal(whaleCoverageLine([], now, cov), "No whale flow in less than 1 min of complete scans", "zero completed minutes is never rounded up to one");
+  assert.equal(whaleCoverageLine([w("P", now - 1000)], now, cov), "1 whale this hour, puts leading 1-0 (complete scans for less than 1 min)");
   // A normal 30 s cadence keeps the run.
   const ok = cycles(EMPTY_SCAN_RECORD, T0, T0 + 61 * MIN);
   assert.equal(coverage(ok, true, T0 + 61 * MIN + 10_000).coveredMinutes, 61);
 });
 
-test("boundary: 59 minutes of complete scans is not an hour; 60 is", () => {
-  const r = cycles(EMPTY_SCAN_RECORD, T0, T0 + 60 * MIN);
-  assert.equal(whaleCoverageLine([], T0 + 59 * MIN + 59_000, coverage(r, true, T0 + 59 * MIN + 59_000)), "No whale flow in the last 59 min of complete scans");
-  assert.equal(whaleCoverageLine([], T0 + 60 * MIN + 1000, coverage(r, true, T0 + 60 * MIN + 1000)), "No whale flow this hour");
+test("boundary: 59 completed minutes is not an hour, and time passing before the stale deadline adds no coverage", () => {
+  // Cycles every 30 s; the last one ends 59 min after the run started.
+  const r = cycles(EMPTY_SCAN_RECORD, T0, T0 + 59 * MIN); // last cycle ends at 59:05
+  const at59 = coverage(r, true, T0 + 59 * MIN + 10_000);
+  assert.equal(at59.coveredMinutes, 59);
+  assert.equal(whaleCoverageLine([], T0 + 59 * MIN + 10_000, at59), "No whale flow in the last 59 min of complete scans");
+  // Two more minutes pass with no completed cycle: still fresh (under the 3 min stale deadline), still 59.
+  const later = coverage(r, true, T0 + 61 * MIN);
+  assert.equal(later.state, "fresh");
+  assert.equal(later.coveredMinutes, 59, "coverage ends at the last completed cycle, not at now");
+  assert.equal(whaleCoverageLine([], T0 + 61 * MIN, later), "No whale flow in the last 59 min of complete scans");
+  // One more completed cycle past the hour mark makes it an hour.
+  const r60 = recordCycle(r, { startedAt: T0 + 59 * MIN + 30_000, endedAt: T0 + 60 * MIN + 1000, asked: 15, failed: 0 });
+  assert.equal(whaleCoverageLine([], T0 + 60 * MIN + 2000, coverage(r60, true, T0 + 60 * MIN + 2000)), "No whale flow this hour");
 });
 
 test("closed to open: the first in-session cycles start a new run", () => {
