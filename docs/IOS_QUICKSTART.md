@@ -44,11 +44,11 @@ In Xcode:
 1. Select the **App** target, then **Signing & Capabilities**.
 2. Select your Apple development team and enable automatic signing.
 3. If needed, replace `com.batcave.terminal` with a bundle identifier available
-   to your team. Keep `appId` in `capacitor.config.ts` and the Xcode identifier
+   to your team. Keep `appId` in `capacitor.config.json` and the Xcode identifier
    aligned if you change it.
 4. Select an iPhone simulator or your connected iPhone. Run.
-5. Expect the **Connect terminal** screen, not live data. No backend credentials
-   are bundled. The first native build is read-only.
+5. Expect the terminal from your Railway server (it loads live). No backend
+   credentials are in the app; Schwab sign-in happens on the server.
 
 Apple supports personal-device testing through Xcode with a free Apple Account;
 Personal Team provisioning expires after seven days. TestFlight/App Store
