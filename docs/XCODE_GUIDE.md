@@ -12,7 +12,7 @@ Do not invite other brokerage users during this personal prototype.
 ## What goes where
 
 ```text
-iPhone: bundled React UI + Capacitor/WKWebView
+iPhone: Capacitor/WKWebView loading the terminal live from your Railway server
     |
     | HTTPS, separate owner access token, read-only allowlisted requests
     v
@@ -117,13 +117,15 @@ What these do:
 
 - **`npm ci`:** Installs the lockfile's package versions.
 - **Tests:** Run isolated regression checks; they do not require your Schwab login.
-- **`ios:sync`:** Builds `dist/native` and copies its assets/plugins into the
-  existing iOS project.
+- **`ios:sync`:** Builds `dist/public` (the fallback shell) and copies it and the
+  plugins into the existing iOS project. The app itself loads the terminal live
+  from `server.url` in `capacitor.config.json`, so merged changes reach the phone
+  without an Xcode rebuild.
 - **`ios:open`:** Opens that project in Xcode.
 
 No `.env`, brokerage credentials, mobile token, backend startup, `START-PULSE`,
 watchdog, database reseed, or database migration is needed to reach the setup
-screen. Do not put secrets into `capacitor.config.ts`, a `VITE_` variable,
+screen. Do not put secrets into `capacitor.config.json`, a `VITE_` variable,
 the Xcode project, or the generated JavaScript.
 
 If the open command fails but sync succeeded, use:
@@ -132,9 +134,11 @@ If the open command fails but sync succeeded, use:
 open ios/App/App.xcodeproj
 ```
 
-Let Xcode finish resolving Swift packages. The checked-in configuration uses
-bundled files rather than a remote `server.url`; do not replace it with a
-Perplexity preview address.
+Let Xcode finish resolving Swift packages. The checked-in configuration loads
+the terminal live from your Railway address (`server.url`, https only). Keep it
+pointed at your own server; never a preview address. There is one Capacitor
+config, `capacitor.config.json`: a `capacitor.config.ts` would silently override
+it (the preflight check fails if one appears).
 
 ## Run in the simulator first
 
@@ -203,7 +207,7 @@ and choose your team ([Apple signing/run instructions](https://developer.apple.c
 The default bundle identifier is `com.batcave.terminal`. If signing requires a
 unique identifier, choose one under your control, such as
 `com.yourchosennamespace.batcave`, and update both the App target's bundle
-identifier and `appId` in `capacitor.config.ts`. Re-run `npm run ios:sync`;
+identifier and `appId` in `capacitor.config.json`. Re-run `npm run ios:sync`;
 do not assume changing the Capacitor file retroactively edits all native settings.
 
 Select your iPhone as the destination and press **Command-R**. Keep the device

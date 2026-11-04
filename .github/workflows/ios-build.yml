@@ -14,6 +14,14 @@ on:
       - "capacitor.config.json"
       - ".github/ios-build.txt"
       - ".github/workflows/ios-build.yml"
+  # Also check PRs that touch the iOS setup, so a broken sync is caught before main.
+  pull_request:
+    paths:
+      - "ios/**"
+      - "capacitor.config.json"
+      - "capacitor.config.ts"
+      - "scripts/ios-preflight.mjs"
+      - ".github/workflows/ios-build.yml"
 
 permissions:
   contents: write
@@ -192,7 +200,7 @@ jobs:
           name: Batcave-iOS-Xcode
           path: out/Batcave-iOS-Xcode.zip
       - name: Publish build report to ci-reports-ios branch
-        if: always()
+        if: always() && github.event_name == 'push'
         run: |
           mkdir -p /tmp/rep && cp -R reports/. /tmp/rep/ 2>/dev/null || true
           rm -f /tmp/rep/04-xcodebuild-full.log
