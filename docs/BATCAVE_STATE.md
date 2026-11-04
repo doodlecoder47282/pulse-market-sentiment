@@ -1403,3 +1403,6 @@ sideways scroll); rapid SPY -> index -> NVDA with the SPY levels reply delayed, 
 must never show on another symbol. SPY/NVDA candles and levels are fixed fixtures (exact expected numbers);
 not live Schwab. Evidence (screenshots, level replies, report.json with the commit) is uploaded as the run's
 "chart-levels-<sha>" artifact. Test hooks: data-gamma-callwall and data-last-close on both chart engines.
+First CI run of the chart acceptance: 34/35 pass. The one failure was real: on the first switch to the
+index, the banner briefly said "no option-chain levels were returned" while the levels reply was still in
+flight (no answer yet is not "none returned"). The banner now waits for this symbol's reply.

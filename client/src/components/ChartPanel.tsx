@@ -403,7 +403,10 @@ export default function ChartPanel() {
           {viewMode === "price" && showGamma && gammaQuery.isError && (
             <UnavailablePanel compact title={`Gamma walls (${activeChart})`} error={gammaQuery.error} testId="gamma-banner-unavailable" />
           )}
-          {viewMode === "price" && showGamma && !gammaQuery.isError && (
+          {/* Wait for this symbol's levels reply: while it is in flight there is no
+              answer yet, so nothing is said (the CI acceptance test caught a
+              "no levels were returned" note flashing before the reply). */}
+          {viewMode === "price" && showGamma && !gammaQuery.isError && gamma != null && (
             <GammaContextBanner
               spot={
                 engine === "tv"
