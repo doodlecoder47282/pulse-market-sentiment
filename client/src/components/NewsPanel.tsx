@@ -183,7 +183,7 @@ interface NewsResponse {
   filings?: { watchlist: FilingItem[]; wire: FilingItem[]; state: SourceState | "unavailable"; note: string };
 }
 
-const HEADLINE_SOURCE_IDS = new Set(["fed_press", "fed_speeches", "sec_press", "cftc_press", "marketwatch", "cnbc", "ft", "google_news_reuters"]);
+const HEADLINE_SOURCE_IDS = new Set(["fed_press", "fed_speeches", "sec_press", "marketwatch", "cnbc", "ft", "google_news_reuters"]);
 const CALENDAR_SOURCE_IDS = new Set(["bls_calendar", "bea_calendar", "treasury_auctions", "nasdaq_econ"]);
 const FILING_SOURCE_IDS = new Set(["sec_edgar_current", "sec_edgar_submissions"]);
 

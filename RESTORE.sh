@@ -7,7 +7,7 @@
 #
 # Three layers of defense against wipe:
 #   1. GitHub repo is source of truth — every meaningful change committed + pushed
-#   2. .env.local creds backed up in agent memory (not in git for security)
+#   2. Credentials restored from owner-controlled secret storage, never chat memory
 #   3. This script — single command to rebuild the world
 #
 # Usage:
@@ -15,7 +15,7 @@
 #   OR if workspace is wiped:
 #   cd /home/user/workspace && git clone https://github.com/doodlecoder47282/pulse-market-sentiment sentiment-app && bash sentiment-app/RESTORE.sh
 
-set -e
+set -euo pipefail
 
 WORKSPACE="/home/user/workspace"
 APP="$WORKSPACE/sentiment-app"
@@ -26,20 +26,28 @@ cd "$WORKSPACE"
 
 if [ ! -d "$APP/.git" ]; then
   echo "[restore] sentiment-app missing or not a git repo — cloning from GitHub"
-  rm -rf "$APP"
+  if [ -e "$APP" ]; then
+    echo "[restore] refusing to remove an existing non-repository folder: $APP" >&2
+    exit 1
+  fi
   git clone https://github.com/doodlecoder47282/pulse-market-sentiment sentiment-app
 fi
 
 cd "$APP"
 
 echo "[restore] Step 2/5 — pulling latest from GitHub"
-git pull --rebase origin main 2>/dev/null || git pull --rebase origin master 2>/dev/null || echo "[restore] (no remote pull — using local state)"
+BRANCH=$(git branch --show-current)
+if [ -z "$BRANCH" ]; then
+  echo "[restore] detached HEAD; choose the intended branch before restoring" >&2
+  exit 1
+fi
+git pull --ff-only origin "$BRANCH"
 
 echo "[restore] Step 3/5 — checking .env.local"
 if [ ! -f "$APP/.env.local" ]; then
   # Pull from environment variables if set (preferred for CI / scripted restore),
   # otherwise look for a backup file in $HOME/.pulse-secrets/.env.local (untracked).
-  if [ -n "$SCHWAB_CLIENT_ID" ] && [ -n "$SCHWAB_CLIENT_SECRET" ]; then
+  if [ -n "${SCHWAB_CLIENT_ID:-}" ] && [ -n "${SCHWAB_CLIENT_SECRET:-}" ]; then
     cat > "$APP/.env.local" <<EOF
 SCHWAB_CLIENT_ID=$SCHWAB_CLIENT_ID
 SCHWAB_CLIENT_SECRET=$SCHWAB_CLIENT_SECRET
@@ -62,7 +70,7 @@ EOF
     echo "[restore]   - Set SCHWAB_CLIENT_ID + SCHWAB_CLIENT_SECRET env vars, OR"
     echo "[restore]   - Place creds at $WORKSPACE/.pulse-secrets/.env.local (primary), OR"
     echo "[restore]   - Place creds at ~/.pulse-secrets/.env.local (secondary), OR"
-    echo "[restore]   - Ask the agent: memory_search 'Schwab credentials recovery'"
+    echo "[restore]   - Use the secure credential workflow, never chat memory"
   fi
 else
   echo "[restore] .env.local already present — leaving alone"
@@ -88,5 +96,5 @@ echo "  3. Deploy via pplx-tool deploy_website"
 echo ""
 echo "Sandbox-wipe defenses active:"
 echo "  - Git: doodlecoder47282/pulse-market-sentiment"
-echo "  - Creds: agent memory backup (call memory_search 'Schwab credentials')"
+echo "  - Creds: owner-controlled secret storage, never chat memory"
 echo "  - This script: rerun anytime to rebuild from scratch"

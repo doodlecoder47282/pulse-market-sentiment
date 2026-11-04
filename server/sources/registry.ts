@@ -134,7 +134,7 @@ export const SOURCES: Record<string, SourceSpec> = {
   // ── Professional publishers (their own syndication feeds) ──
   marketwatch: {
     id: "marketwatch", name: "MarketWatch", publisher: "Dow Jones & Company",
-    tier: "publisher", area: "news", access: "Dow Jones RSS host (feeds.content.dj-n.com)", cost: "free", key: "none",
+    tier: "publisher", area: "news", access: "Dow Jones RSS host (feeds.content.dowjones.io)", cost: "free", key: "none",
     terms: "publisher RSS for headline + link display with attribution; full text stays on the publisher site",
     termsUrl: null, feeds: "News headlines", minIntervalMs: 2 * MIN,
   },

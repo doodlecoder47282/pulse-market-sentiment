@@ -28,6 +28,11 @@ keyless feeds. Nothing in the app places orders.
    is counts, not a claim. Passing a predefined test is not a forecast.
 4. Copy is descriptive: no "expect", "will", "edge", "high probability",
    no advice verbs.
+   Exception (owner decision 2026-11-03): the rule-book exit plan on an
+   ENTER states its levels as instructions ("sell 50% at 2x", "stop"), and
+   the owner's "Copy AI prompt" text may ask their own AI for a take /
+   wait / skip call. Neither claims an outcome; the plan's record is graded
+   under the same 50-sample gate.
 5. No brokerage secret or wallet key ever appears in code, docs or the
    phone build. The repo is public.
 
@@ -113,7 +118,8 @@ stale -> unknown (fails closed).
 - Do not propose a keyed or paid crypto service without flagging that it
   needs the owner's approval.
 - Do not propose LLM "committees" that vote on trades; the desk is
-  deterministic rules with a graded record.
+  deterministic rules with a graded record. The owner pastes the card's prompt into their
+  own AI by hand (2026-11-03); the server never calls an LLM for a trade.
 - Do not propose execution. The desk reads and grades.
 - Do not describe anything as an edge, a probability or a forecast unless
   the graded record in the app says so for that rule version.

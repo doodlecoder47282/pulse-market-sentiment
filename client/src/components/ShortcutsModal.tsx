@@ -5,18 +5,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { SHORTCUT_DOCS, TAB_LABELS } from "@/hooks/use-keyboard-shortcuts";
-import type { TabKey } from "@/components/TickerContext";
+import { SHORTCUT_DOCS, TAB_LABELS, TAB_KEYS as TAB_ORDER } from "@/hooks/use-keyboard-shortcuts";
 import { Keyboard } from "lucide-react";
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
-
-const TAB_ORDER: TabKey[] = [
-  "signals", "chart", "models", "tradedesk", "regime", "news", "voices", "takefive",
-];
 
 export default function ShortcutsModal({ open, onClose }: Props) {
   return (

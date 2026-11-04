@@ -16,12 +16,22 @@ const pending = new Map<string, { expiresAt: number; returnTo: OAuthReturnTo }>(
 
 type Env = Record<string, string | undefined>;
 
+/** The registered callback: SCHWAB_REDIRECT_URI, or on Railway this app's
+ *  own callback on its public domain (Railway sets RAILWAY_PUBLIC_DOMAIN).
+ *  The value must match the Callback URL registered at developer.schwab.com. */
+export function schwabRedirectUri(env: Env = process.env): string {
+  const set = (env.SCHWAB_REDIRECT_URI ?? "").trim();
+  if (set) return set;
+  const dom = (env.RAILWAY_PUBLIC_DOMAIN ?? "").trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return dom ? `https://${dom}${OAUTH_CALLBACK_PATH}` : "";
+}
+
 /** Which required Schwab settings are missing, in words; null when complete. */
 export function schwabConfigProblem(env: Env = process.env): string | null {
   const missing = [
     !(env.SCHWAB_CLIENT_ID ?? "").trim() && "SCHWAB_CLIENT_ID (App Key)",
     !(env.SCHWAB_CLIENT_SECRET ?? "").trim() && "SCHWAB_CLIENT_SECRET (Secret)",
-    !(env.SCHWAB_REDIRECT_URI ?? "").trim() && "SCHWAB_REDIRECT_URI (Callback URL)",
+    !schwabRedirectUri(env) && "SCHWAB_REDIRECT_URI (Callback URL; on Railway it defaults to this app's domain)",
   ].filter(Boolean) as string[];
   return missing.length ? `The server is missing ${missing.join(", ")}. Set it in the host's environment variables and redeploy.` : null;
 }
