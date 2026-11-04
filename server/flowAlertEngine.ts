@@ -18,6 +18,7 @@
 //   - read-only observer over buildSchwabFlow output (Schwab chain only)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { EMPTY_SCAN_RECORD, recordClosedSkip, recordCycle, type ScanRecord } from "../shared/scanCoverage";
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 import { getFlowConfig } from "./flowConfig";
 import { loadRecentDedupKeys } from "./whalePersistence";
@@ -162,6 +163,8 @@ export interface FlowSnapshot {
   lastCycleErrors: number;
   /** Tickers the last cycle scanned (priority every 30 s, full list every 60 s). */
   lastCycleScanned: number;
+  /** What the scanner actually read (shared/scanCoverage.ts): attempts, successes, closed-market skips, covered run. */
+  scan: ScanRecord;
   pendingByTicker: Record<string, WhaleHit[]>;
   recentFired: Array<{ ticker: string; hits: number; firedAt: number }>;
   config: {
@@ -186,6 +189,7 @@ let lastEvalDurationMs = 0;
 let evalCount = 0;
 let errorCount = 0;
 let lastCycleErrors = 0;
+let scanRecord: ScanRecord = EMPTY_SCAN_RECORD;
 
 // pending hits per ticker, awaiting coalesce flush
 const pendingByTicker = new Map<string, WhaleHit[]>();
@@ -573,9 +577,14 @@ async function evalCycle(): Promise<void> {
   if (!isRthNow()) {
     lastEvalAt = Date.now();
     lastEvalDurationMs = Date.now() - t0;
+    scanRecord = recordClosedSkip(scanRecord, lastEvalAt);
     return;
   }
 
+  // Coverage bookkeeping: symbols asked for and read this cycle. A cycle that
+  // throws part-way counts every unread symbol as failed.
+  let asked = 0;
+  let readOk = 0;
   try {
     // Priority first, then watchlist — sequential is fine on Schwab (no 429 risk)
     const cfg = getFlowConfig();
@@ -586,9 +595,10 @@ async function evalCycle(): Promise<void> {
     const scanNow = watchlistTick % 2 === 1 ? universe : universe.filter((s) => cfg.priority.includes(s));
     let cycleErrors = 0;
     lastCycleScanned = scanNow.length;
+    asked = scanNow.length;
     for (const sym of scanNow) {
       const { hits, error } = await scanTicker(sym);
-      if (error) cycleErrors++;
+      if (error) cycleErrors++; else readOk++;
       for (const h of hits) queueHit(h);
     }
     lastCycleErrors = cycleErrors;
@@ -620,6 +630,7 @@ async function evalCycle(): Promise<void> {
     lastEvalAt = Date.now();
     lastEvalDurationMs = lastEvalAt - t0;
     evalCount++;
+    scanRecord = recordCycle(scanRecord, { startedAt: t0, endedAt: lastEvalAt, asked, failed: asked - readOk });
   }
 }
 
@@ -662,6 +673,7 @@ export function getFlowSnapshot(): FlowSnapshot {
     errorCount,
     lastCycleErrors,
     lastCycleScanned,
+    scan: { ...scanRecord },
     pendingByTicker: pending,
     recentFired: [...recentFired],
     config: ((): FlowSnapshot["config"] => {

@@ -1356,3 +1356,15 @@ with the predictor's forecast sentence; a failed headline or crypto feed shows a
 instead of an endless skeleton; an empty scanner says "no pools scanned yet"; collapsed sections are opened
 and measured by the audit on phones. Left: the 0DTE map ledger's note text; whale history DB-read failures
 still return an empty list (scanner state now covers the common case).
+
+2026-11-04: whale scan coverage (feat/scan-coverage). Signals audit item 1, confirmed by the audit and by
+Prophecy (E1): the engine stamped lastEvalAt on closed-market skips and on cycles where every chain read
+failed, so the headline's scanState read "fresh" and printed "No whale flow this hour" for a tape nobody
+read; a failed alert-history read also returned []. Now shared/scanCoverage.ts keeps what was READ: every
+cycle is recorded (in finally, so a thrown cycle counts unread symbols as failed) with symbols asked and
+failed, the last successful read, closed-market skips, and the start of the unbroken run of fully
+successful cycles. States: fresh / partial / failed / closed / stale / not_running / unknown. "No whale
+flow this hour" only when fresh coverage spans the hour; a shorter run says "in the last N min"; every
+other state names itself; a failed history read says so. getFlowSnapshot().scan exposes the record.
+Tests: 7 (closed, all failed, partial, covered zero, stale, clamping, engine/headline wiring), driven
+through the engine's own reducer. Scope kept to this defect: no thresholds, panels or gamma views changed.

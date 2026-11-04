@@ -44,35 +44,5 @@ export function levelsLine(m: MapLike | null | undefined, label = "SPX"): string
   return parts.join(" · ");
 }
 
-export type ScanState = "fresh" | "stale" | "not_running" | "unknown";
-
-/** The whale scanner's state from its snapshot: running and evaluated within maxAgeMs counts as fresh. */
-export function scanState(snap: { running?: boolean; lastEvalAt?: number | null } | null | undefined, now: number, maxAgeMs = 3 * 60_000): ScanState {
-  if (!snap) return "unknown";
-  if (!snap.running) return "not_running";
-  if (typeof snap.lastEvalAt !== "number" || now - snap.lastEvalAt > maxAgeMs) return "stale";
-  return "fresh";
-}
-
-/**
- * "3 whales this hour, calls leading 2-1" over every scanned symbol. A count of
- * zero is only stated when the scan is fresh; otherwise the line says the scan
- * is not running or stale, so a stopped scanner never reads as a quiet tape.
- */
-export function whaleLine(alerts: Array<{ type?: string; detectedAt?: number }>, now: number, scan: ScanState): string {
-  const cutoff = now - 60 * 60_000;
-  const recent = alerts.filter((w) => typeof w?.detectedAt === "number" && w.detectedAt >= cutoff);
-  const calls = recent.filter((w) => w.type === "C").length;
-  const puts = recent.filter((w) => w.type === "P").length;
-  const tail = scan === "fresh" ? "" : scan === "stale" ? " (whale scan stale)" : scan === "not_running" ? " (whale scan not running)" : " (whale scan state unknown)";
-  if (recent.length === 0) {
-    if (scan === "not_running") return "Whale scan not running: no flow read this hour";
-    if (scan === "stale") return "Whale scan stale: no fresh flow read this hour";
-    if (scan === "unknown") return "Whale scan state unknown: no flow read this hour";
-    return "No whale flow this hour";
-  }
-  const n = `${recent.length} whale${recent.length === 1 ? "" : "s"} this hour`;
-  if (calls > puts * 1.5) return `${n}, calls leading ${calls}-${puts}${tail}`;
-  if (puts > calls * 1.5) return `${n}, puts leading ${puts}-${calls}${tail}`;
-  return `${n}, mixed (${calls} calls / ${puts} puts)${tail}`;
-}
+// The whale count line moved to shared/scanCoverage.ts (whaleCoverageLine), which
+// reads what the scanner actually covered, not only when it last ran.
