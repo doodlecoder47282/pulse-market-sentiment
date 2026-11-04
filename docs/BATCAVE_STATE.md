@@ -1285,3 +1285,12 @@ Owner chose live-from-server (2026-11-03). capacitor.config.ts removed; server.u
 address (pulse-market-sentiment-pulse.up.railway.app); scripts/ios-preflight.mjs now asserts the live-UI
 setup and fails if a second config appears; Xcode docs updated. On the phone the AI curator and evidence
 history now behave as on the web (they were disabled only in the bundled build).
+2026-11-03: institutional navy + background styles (feat/navy-theme). Owner request. The dark theme now
+defaults to institutional navy from the owner's design canvas ("Batcave B Institutional Navy": surfaces
+#0A1324 / #0F1B33, borders #1E2C4A, text #EEF2F8 / #9FB0CC, accent #5B9BFF). Settings has a
+"Background style" picker: Navy (default), Navy glow (soft light at the top), Graphite (neutral
+blue-grey), Black (the original night desk, amber accent). Saved per device (localStorage, guarded);
+painted before the app loads by a small inline script so there is no black flash; the phone's status bar
+colour follows it; capacitor backgroundColor is navy. Only theme tokens change: hard-coded status colours
+(green/red/amber) keep their meaning. Fonts unchanged (the canvas uses IBM Plex; not adopted, to keep
+layouts stable). CI's audit is the visual check (no local build here).

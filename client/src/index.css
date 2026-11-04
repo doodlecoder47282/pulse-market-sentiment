@@ -1222,3 +1222,74 @@
 .recharts-surface {
   overflow: hidden !important;
 }
+
+/* ── Background styles (dark theme) ─────────────────────────────────────────
+   data-bg on <html>, set by ThemeContext. "black" keeps the original .dark
+   tokens above (amber accent). The others repaint surfaces and the accent. */
+.dark[data-bg="navy"], .dark[data-bg="navy-glow"] {
+  --background: 219 57% 9%;
+  --foreground: 216 42% 95%;
+  --border: 221 42% 20%;
+  --card: 220 55% 13%;
+  --card-foreground: 216 42% 95%;
+  --card-border: 221 42% 18%;
+  --sidebar: 220 55% 11%;
+  --sidebar-foreground: 216 42% 95%;
+  --sidebar-border: 221 42% 20%;
+  --sidebar-primary: 217 100% 68%;
+  --sidebar-primary-foreground: 217 76% 10%;
+  --sidebar-accent: 216 57% 18%;
+  --sidebar-accent-foreground: 216 42% 95%;
+  --sidebar-ring: 217 100% 68%;
+  --popover: 220 52% 16%;
+  --popover-foreground: 216 42% 95%;
+  --popover-border: 221 42% 22%;
+  --primary: 217 100% 68%;
+  --primary-foreground: 217 76% 10%;
+  --secondary: 216 57% 18%;
+  --secondary-foreground: 216 42% 95%;
+  --muted: 220 45% 17%;
+  --muted-foreground: 217 31% 71%;
+  --accent: 216 57% 18%;
+  --accent-foreground: 216 42% 95%;
+  --input: 220 37% 26%;
+  --ring: 217 100% 68%;
+  --chart-3: 217 100% 68%;
+}
+.dark[data-bg="navy-glow"] body {
+  background-image:
+    radial-gradient(1100px 520px at 15% -12%, hsl(217 70% 22% / 0.55), transparent 62%),
+    radial-gradient(900px 480px at 105% 0%, hsl(205 70% 20% / 0.30), transparent 60%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+.dark[data-bg="graphite"] {
+  --background: 220 13% 10%;
+  --foreground: 220 14% 96%;
+  --border: 220 11% 20%;
+  --card: 220 13% 13%;
+  --card-foreground: 220 14% 96%;
+  --card-border: 220 11% 18%;
+  --sidebar: 220 13% 12%;
+  --sidebar-foreground: 220 14% 96%;
+  --sidebar-border: 220 11% 20%;
+  --sidebar-primary: 216 100% 72%;
+  --sidebar-primary-foreground: 220 30% 10%;
+  --sidebar-accent: 220 12% 18%;
+  --sidebar-accent-foreground: 220 14% 96%;
+  --sidebar-ring: 216 100% 72%;
+  --popover: 220 13% 15%;
+  --popover-foreground: 220 14% 96%;
+  --popover-border: 220 11% 22%;
+  --primary: 216 100% 72%;
+  --primary-foreground: 220 30% 10%;
+  --secondary: 220 12% 18%;
+  --secondary-foreground: 220 14% 96%;
+  --muted: 220 10% 18%;
+  --muted-foreground: 220 9% 70%;
+  --accent: 220 12% 18%;
+  --accent-foreground: 220 14% 96%;
+  --input: 220 10% 28%;
+  --ring: 216 100% 72%;
+  --chart-3: 216 100% 72%;
+}
