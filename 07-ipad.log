@@ -1,0 +1,323 @@
+++ find build/dd/Build/Products -name App.app -maxdepth 3
+++ head -1
++ APP=build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl shutdown all
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown all
++ for want in '"iPad Pro 13-inch"' '"iPad Air 11-inch"' '"iPad mini"'
+++ xcrun simctl list devices available -j
+++ python3 -c '
+import json,sys
+w=sys.argv[1]
+d=json.load(sys.stdin)['\''devices'\'']
+c=[x for k,v in d.items() if '\''iOS'\'' in k for x in v if x['\''name'\''].startswith(w)]
+print(c[-1]['\''udid'\''] if c else '\'''\'')' 'iPad Pro 13-inch'
++ UDID=8263B284-48BD-4DEF-8C9A-CCE8BBC8F362
++ '[' -z 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 ']'
+++ echo 'iPad Pro 13-inch'
+++ tr -c A-Za-z0-9 -
+++ sed 's/-*$//'
++ tag=iPad-Pro-13-inch
++ echo '--- iPad Pro 13-inch (8263B284-48BD-4DEF-8C9A-CCE8BBC8F362)'
+--- iPad Pro 13-inch (8263B284-48BD-4DEF-8C9A-CCE8BBC8F362)
++ t 180 xcrun simctl boot 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl boot 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362
++ t 180 xcrun simctl bootstatus 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 -b
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl bootstatus 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 -b
+Monitoring boot status for iPad Pro 13-inch (M4) (8263B284-48BD-4DEF-8C9A-CCE8BBC8F362).
+[2026-11-04 06:51:27 +0000] Status=2, isTerminal=NO, Elapsed=00:59.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:55 seconds
+
+[2026-11-04 06:51:28 +0000] Status=2, isTerminal=NO, Elapsed=01:00.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:56 seconds
+
+[2026-11-04 06:51:34 +0000] Status=2, isTerminal=NO, Elapsed=01:06.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:57 seconds
+
+[2026-11-04 06:51:35 +0000] Status=2, isTerminal=NO, Elapsed=01:07.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:01 seconds
+
+[2026-11-04 06:51:36 +0000] Status=2, isTerminal=NO, Elapsed=01:07.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:02 seconds
+
+[2026-11-04 06:51:36 +0000] Status=2, isTerminal=NO, Elapsed=01:08.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:03 seconds
+
+[2026-11-04 06:51:37 +0000] Status=2, isTerminal=NO, Elapsed=01:09.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:04 seconds
+
+[2026-11-04 06:51:38 +0000] Status=2, isTerminal=NO, Elapsed=01:10.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:05 seconds
+
+[2026-11-04 06:51:38 +0000] Status=2, isTerminal=NO, Elapsed=01:10.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:06 seconds
+
+[2026-11-04 06:51:40 +0000] Status=2, isTerminal=NO, Elapsed=01:11.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:07 seconds
+
+[2026-11-04 06:51:41 +0000] Status=2, isTerminal=NO, Elapsed=01:12.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:08 seconds
+
+[2026-11-04 06:51:42 +0000] Status=2, isTerminal=NO, Elapsed=01:14.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:09 seconds
+
+[2026-11-04 06:51:42 +0000] Status=2, isTerminal=NO, Elapsed=01:14.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:10 seconds
+
+[2026-11-04 06:51:43 +0000] Status=2, isTerminal=NO, Elapsed=01:15.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.addressbook.migrator (AddressBookLegacy.migrator)
+		Migration Elapsed:01:11 seconds
+
+[2026-11-04 06:51:44 +0000] Status=2, isTerminal=NO, Elapsed=01:16.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)
+		Migration Elapsed:01:12 seconds
+
+[2026-11-04 06:51:45 +0000] Status=2, isTerminal=NO, Elapsed=01:17.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.cleanup.migrator (MCCleanup.migrator)
+		Migration Elapsed:01:13 seconds
+
+[2026-11-04 06:51:47 +0000] Status=4, isTerminal=NO, Elapsed=01:19.
+	Waiting on System App
+
+[2026-11-04 06:51:49 +0000] Status=4, isTerminal=NO, Elapsed=01:20.
+	Waiting on System App
+
+[2026-11-04 06:51:49 +0000] Status=4, isTerminal=NO, Elapsed=01:21.
+	Waiting on System App
+
+[2026-11-04 06:51:50 +0000] Status=4, isTerminal=NO, Elapsed=01:21.
+	Waiting on System App
+
+[2026-11-04 06:51:50 +0000] Status=4, isTerminal=NO, Elapsed=01:22.
+	Waiting on System App
+
+[2026-11-04 06:51:51 +0000] Status=4, isTerminal=NO, Elapsed=01:23.
+	Waiting on System App
+
+[2026-11-04 06:51:53 +0000] Status=4, isTerminal=NO, Elapsed=01:25.
+	Waiting on System App
+
+[2026-11-04 06:51:53 +0000] Status=4, isTerminal=NO, Elapsed=01:25.
+	Waiting on System App
+
+[2026-11-04 06:51:58 +0000] Status=4294967295, isTerminal=YES, Elapsed=01:30.
+	Finished
+
++ t 30 xcrun simctl status_bar 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 override --time 9:41 --batteryState charged --batteryLevel 100
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl status_bar 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 override --time 9:41 --batteryState charged --batteryLevel 100
+/Users/runner/work/_temp/cfa5fb4c-5b65-49ab-a05c-212414f838db.sh: line 6: 17190 Alarm clock: 14         perl -e 'alarm shift; exec @ARGV' "$@"
++ true
++ t 30 xcrun simctl ui 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 appearance dark
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl ui 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 appearance dark
++ t 180 xcrun simctl install 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl install 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl launch 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 com.batcave.terminal
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl launch 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 com.batcave.terminal
+com.batcave.terminal: 19108
++ sleep 45
++ t 60 xcrun simctl io 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 screenshot reports/ipad-iPad-Pro-13-inch.png
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl io 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362 screenshot reports/ipad-iPad-Pro-13-inch.png
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ipad-iPad-Pro-13-inch.png
++ t 60 xcrun simctl shutdown 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown 8263B284-48BD-4DEF-8C9A-CCE8BBC8F362
++ for want in '"iPad Pro 13-inch"' '"iPad Air 11-inch"' '"iPad mini"'
+++ xcrun simctl list devices available -j
+++ python3 -c '
+import json,sys
+w=sys.argv[1]
+d=json.load(sys.stdin)['\''devices'\'']
+c=[x for k,v in d.items() if '\''iOS'\'' in k for x in v if x['\''name'\''].startswith(w)]
+print(c[-1]['\''udid'\''] if c else '\'''\'')' 'iPad Air 11-inch'
++ UDID=40889409-80F7-4A30-91A4-683882A8DC17
++ '[' -z 40889409-80F7-4A30-91A4-683882A8DC17 ']'
+++ echo 'iPad Air 11-inch'
+++ tr -c A-Za-z0-9 -
+++ sed 's/-*$//'
++ tag=iPad-Air-11-inch
++ echo '--- iPad Air 11-inch (40889409-80F7-4A30-91A4-683882A8DC17)'
+--- iPad Air 11-inch (40889409-80F7-4A30-91A4-683882A8DC17)
++ t 180 xcrun simctl boot 40889409-80F7-4A30-91A4-683882A8DC17
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl boot 40889409-80F7-4A30-91A4-683882A8DC17
++ t 180 xcrun simctl bootstatus 40889409-80F7-4A30-91A4-683882A8DC17 -b
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl bootstatus 40889409-80F7-4A30-91A4-683882A8DC17 -b
+Monitoring boot status for iPad Air 11-inch (M2) (40889409-80F7-4A30-91A4-683882A8DC17).
+Device already booted, nothing to do.
+
++ t 30 xcrun simctl status_bar 40889409-80F7-4A30-91A4-683882A8DC17 override --time 9:41 --batteryState charged --batteryLevel 100
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl status_bar 40889409-80F7-4A30-91A4-683882A8DC17 override --time 9:41 --batteryState charged --batteryLevel 100
+/Users/runner/work/_temp/cfa5fb4c-5b65-49ab-a05c-212414f838db.sh: line 6: 22435 Alarm clock: 14         perl -e 'alarm shift; exec @ARGV' "$@"
++ true
++ t 30 xcrun simctl ui 40889409-80F7-4A30-91A4-683882A8DC17 appearance dark
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl ui 40889409-80F7-4A30-91A4-683882A8DC17 appearance dark
++ t 180 xcrun simctl install 40889409-80F7-4A30-91A4-683882A8DC17 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl install 40889409-80F7-4A30-91A4-683882A8DC17 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl launch 40889409-80F7-4A30-91A4-683882A8DC17 com.batcave.terminal
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl launch 40889409-80F7-4A30-91A4-683882A8DC17 com.batcave.terminal
+com.batcave.terminal: 23902
++ sleep 45
++ t 60 xcrun simctl io 40889409-80F7-4A30-91A4-683882A8DC17 screenshot reports/ipad-iPad-Air-11-inch.png
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl io 40889409-80F7-4A30-91A4-683882A8DC17 screenshot reports/ipad-iPad-Air-11-inch.png
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ipad-iPad-Air-11-inch.png
++ t 60 xcrun simctl shutdown 40889409-80F7-4A30-91A4-683882A8DC17
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown 40889409-80F7-4A30-91A4-683882A8DC17
++ for want in '"iPad Pro 13-inch"' '"iPad Air 11-inch"' '"iPad mini"'
+++ xcrun simctl list devices available -j
+++ python3 -c '
+import json,sys
+w=sys.argv[1]
+d=json.load(sys.stdin)['\''devices'\'']
+c=[x for k,v in d.items() if '\''iOS'\'' in k for x in v if x['\''name'\''].startswith(w)]
+print(c[-1]['\''udid'\''] if c else '\'''\'')' 'iPad mini'
++ UDID=58FC786A-CE65-4DA0-B4B5-579AA6B53315
++ '[' -z 58FC786A-CE65-4DA0-B4B5-579AA6B53315 ']'
+++ echo 'iPad mini'
+++ tr -c A-Za-z0-9 -
+++ sed 's/-*$//'
++ tag=iPad-mini
++ echo '--- iPad mini (58FC786A-CE65-4DA0-B4B5-579AA6B53315)'
+--- iPad mini (58FC786A-CE65-4DA0-B4B5-579AA6B53315)
++ t 180 xcrun simctl boot 58FC786A-CE65-4DA0-B4B5-579AA6B53315
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl boot 58FC786A-CE65-4DA0-B4B5-579AA6B53315
++ t 180 xcrun simctl bootstatus 58FC786A-CE65-4DA0-B4B5-579AA6B53315 -b
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl bootstatus 58FC786A-CE65-4DA0-B4B5-579AA6B53315 -b
+Monitoring boot status for iPad mini (A17 Pro) (58FC786A-CE65-4DA0-B4B5-579AA6B53315).
+[2026-11-04 07:00:56 +0000] Status=2, isTerminal=NO, Elapsed=00:58.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:52 seconds
+
+[2026-11-04 07:00:57 +0000] Status=2, isTerminal=NO, Elapsed=00:59.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:53 seconds
+
+[2026-11-04 07:00:58 +0000] Status=2, isTerminal=NO, Elapsed=01:00.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:54 seconds
+
+[2026-11-04 07:00:59 +0000] Status=2, isTerminal=NO, Elapsed=01:01.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:55 seconds
+
+[2026-11-04 07:01:00 +0000] Status=2, isTerminal=NO, Elapsed=01:02.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:56 seconds
+
+[2026-11-04 07:01:01 +0000] Status=2, isTerminal=NO, Elapsed=01:03.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:57 seconds
+
+[2026-11-04 07:01:08 +0000] Status=2, isTerminal=NO, Elapsed=01:09.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.securityd.KeychainMigrator (KeychainMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:58 seconds
+
+[2026-11-04 07:01:09 +0000] Status=2, isTerminal=NO, Elapsed=01:11.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:03 seconds
+
+[2026-11-04 07:01:09 +0000] Status=2, isTerminal=NO, Elapsed=01:11.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:05 seconds
+
+[2026-11-04 07:01:12 +0000] Status=2, isTerminal=NO, Elapsed=01:13.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:05 seconds
+
+[2026-11-04 07:01:16 +0000] Status=2, isTerminal=NO, Elapsed=01:17.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)
+		Migration Elapsed:01:07 seconds
+
+[2026-11-04 07:01:17 +0000] Status=2, isTerminal=NO, Elapsed=01:18.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.locationd.migrator (CoreLocationMigrator.migrator) (Concurrent: Running plugin com.apple.MobileSlideShow (MobileSlideShow.migrator, concurrent after com.apple.accounts.migrator))
+		Migration Elapsed:01:11 seconds
+
+[2026-11-04 07:01:21 +0000] Status=2, isTerminal=NO, Elapsed=01:23.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.vibration.migrator (Vibrations.migrator)
+		Migration Elapsed:01:12 seconds
+
+[2026-11-04 07:01:23 +0000] Status=4, isTerminal=NO, Elapsed=01:25.
+	Waiting on System App
+
+[2026-11-04 07:01:24 +0000] Status=4, isTerminal=NO, Elapsed=01:26.
+	Waiting on System App
+
+[2026-11-04 07:01:26 +0000] Status=4, isTerminal=NO, Elapsed=01:27.
+	Waiting on System App
+
+[2026-11-04 07:01:26 +0000] Status=4, isTerminal=NO, Elapsed=01:28.
+	Waiting on System App
+
+[2026-11-04 07:01:27 +0000] Status=4, isTerminal=NO, Elapsed=01:29.
+	Waiting on System App
+
+[2026-11-04 07:01:28 +0000] Status=4, isTerminal=NO, Elapsed=01:30.
+	Waiting on System App
+
+[2026-11-04 07:01:29 +0000] Status=4, isTerminal=NO, Elapsed=01:30.
+	Waiting on System App
+
+[2026-11-04 07:01:30 +0000] Status=4, isTerminal=NO, Elapsed=01:32.
+	Waiting on System App
+
+[2026-11-04 07:01:35 +0000] Status=4, isTerminal=NO, Elapsed=01:37.
+	Waiting on System App
+
+[2026-11-04 07:01:40 +0000] Status=4294967295, isTerminal=YES, Elapsed=01:42.
+	Finished
+
++ t 30 xcrun simctl status_bar 58FC786A-CE65-4DA0-B4B5-579AA6B53315 override --time 9:41 --batteryState charged --batteryLevel 100
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl status_bar 58FC786A-CE65-4DA0-B4B5-579AA6B53315 override --time 9:41 --batteryState charged --batteryLevel 100
+/Users/runner/work/_temp/cfa5fb4c-5b65-49ab-a05c-212414f838db.sh: line 6: 26747 Alarm clock: 14         perl -e 'alarm shift; exec @ARGV' "$@"
++ true
++ t 30 xcrun simctl ui 58FC786A-CE65-4DA0-B4B5-579AA6B53315 appearance dark
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl ui 58FC786A-CE65-4DA0-B4B5-579AA6B53315 appearance dark
++ t 180 xcrun simctl install 58FC786A-CE65-4DA0-B4B5-579AA6B53315 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl install 58FC786A-CE65-4DA0-B4B5-579AA6B53315 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl launch 58FC786A-CE65-4DA0-B4B5-579AA6B53315 com.batcave.terminal
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl launch 58FC786A-CE65-4DA0-B4B5-579AA6B53315 com.batcave.terminal
+/Users/runner/work/_temp/cfa5fb4c-5b65-49ab-a05c-212414f838db.sh: line 6: 27569 Alarm clock: 14         perl -e 'alarm shift; exec @ARGV' "$@"
++ t 60 xcrun simctl shutdown 58FC786A-CE65-4DA0-B4B5-579AA6B53315
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown 58FC786A-CE65-4DA0-B4B5-579AA6B53315
++ continue
++ pkill -f dist/index.cjs

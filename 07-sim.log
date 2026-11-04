@@ -1,0 +1,19 @@
+    iPhone 17 (8C9F4118-331E-4250-B1FC-194972BA6726) (Shutdown) 
+	Finished
+
+com.batcave.terminal: 7626
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ios-launch.png
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ios-sim.png
+/api/snapshot -> 200 in 0.007333s
+/api/regime -> 200 in 0.003274s
+/api/macro -> 200 in 0.003183s
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ios-sim-later.png
+An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=60):
+Simulator device failed to open http://127.0.0.1:5080/#/.
+Operation timed out
+Underlying error (domain=NSPOSIXErrorDomain, code=60):
+	The operation couldn’t be completed. Operation timed out
+	Operation timed out

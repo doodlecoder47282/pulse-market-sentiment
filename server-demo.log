@@ -1,0 +1,275 @@
+6:39:44 AM [security] BATCAVE_ACCESS_KEY not set: /api is open on loopback 127.0.0.1 only.
+6:39:44 AM [security] Schwab tokens: generated a local encryption key file at /Users/runner/.batcave/token.key (mode 0600). Back it up with the database or reconnect Schwab if it is lost.
+[odteTracker] started, polling every 60000ms in session (60000ms off-hours) for ATM ±20 0DTE $SPX contracts
+[pump] listener started (api.mainnet-beta.solana.com); restored 0 recent launches
+[crypto] engines started — scanner/momentum/narratives/security/social/grader + watchdog
+[mmScheduler] started — 10:00/13:00/15:30 ET snapshots, 16:30 ET grading (weekdays only, holidays skipped)
+[discordScheduler] started — daily 9:30 ET + 9:30 0DTE pre-open scan + 10:00 regime snapshot + 30-min cadence (10:00–16:00 ET) + 0DTE bangers (9:45–15:45 ET), alerts on level breaks + gamma flips + macro news
+[tradeEnv] watch started — 60s cadence, alerts on LOADED/STRIKE transitions, 30min refire cap
+[outcomeGrader] started — 30-min cadence, grades whale + regime predictions
+[dbBackup] started — daily snapshots, retention 7
+[seedSpotHistory] Schwab returned 390 candles, 0 in last 30m
+[seedSpotHistory] no bars available from Schwab, spotHistory not seeded
+[scheduler] seedSpotHistory: seeded=0 oldestTs=null newestTs=null
+[playbookScheduler] started — 9:00 ET lock + 5min drift refresh
+[regimeHistoryTicker] started — 60s cadence during 9:00–16:00 ET
+[ml-service] autostart disabled via PULSE_ML_AUTOSTART=0
+[stockBars] started — 6h cadence, 16 stock symbols
+[canary] watch started — 5min cadence RTH, divergence/alarm to Discord, 4h refire cap
+[exitBrain] started — 30s eval cadence, hard stop bid <= 0.80 x entry ask, exit≥75 trim≥55
+[flowAlerts] started — 30s eval, WHALE-ONLY (prem≥$2.5M, vol/OI≥15x OR new-strike, AT_ASK, dte 1-3), 60s coalesce
+[flowAlerts] dedup hydrated — 0 keys from whale_alerts (last 18h)
+[stockBars] refresh — fetched=41 cached=0 failed=0
+6:39:48 AM [express] serving on 127.0.0.1:5080
+[ml:retrain] disabled: requires non-demo edition and PULSE_ML_RETRAIN_ENABLED=1
+[schwab-stream] demo edition: simulated sample data, no streamer
+6:39:48 AM [express] GET /api/health 200 in 2ms
+6:39:48 AM [express] GET /api/health 200 in 0ms
+[crypto] desk risk unknown -> on: BTC +0.97% vs its Kraken 24 h VWAP (Kraken mid)
+[voices] warmed cache: 22 items, X disabled
+[backtest] boot rebuild (empty)…
+[backtest] boot backfill: {
+  status: 'ok',
+  datesProcessed: 640,
+  observations: 28160,
+  aggregates: 44
+}
+[crypto:momentum] dexscreener batch failed: This operation was aborted
+[crypto:derivs] no perpetual-futures read from Bybit or OKX
+[crypto:scanner] geckoterminal unreachable: This operation was aborted
+[crypto:bundle] pump.fun stream silent for 74 s
+[crypto:scanner] geckoterminal unreachable: This operation was aborted
+[crypto:derivs] no perpetual-futures read from Bybit or OKX
+[crypto] desk risk on -> unknown: Kraken BTC read failed
+[dbBackup] snapshot saved: /Users/runner/work/pulse-market-sentiment/pulse-market-sentiment/backups/data.2026-11-04T06-45-56-646Z.db (15.00MB)
+[oiCapture] ok=$SPX,SPY,QQQ,IWM failed=-
+[crypto] desk risk unknown -> on: BTC +0.93% vs its Kraken 24 h VWAP (Kraken mid)
+6:48:29 AM [express] GET /api/health 200 in 50ms
+6:48:30 AM [express] GET /api/health 200 in 47ms
+6:48:32 AM [express] GET /api/odte/map 200 in 1671ms
+6:48:32 AM [express] GET /api/quotes 200 in 41ms
+6:48:43 AM [express] GET /api/regime 200 in 10684ms
+6:48:43 AM [express] GET /api/layout/signals 200 in 10ms
+6:48:45 AM [express] GET /api/regime/headline 200 in 1640ms
+6:48:46 AM [express] GET /api/whales/performance 200 in 16ms
+[signedTickVolume] computeOfiTrend: bars=389 cum=-2291798 slope15m=-1431972 slope5m=-1169492 trend=BEARISH accel=ACCELERATING method=tick-rule-1m
+6:48:47 AM [express] GET /api/trade-environment 200 in 209ms
+6:48:47 AM [express] GET /api/flow/preview 200 in 277ms
+6:48:47 AM [express] GET /api/flow/followups 200 in 5ms
+6:48:47 AM [express] GET /api/schwab/status 200 in 105ms
+6:48:47 AM [express] GET /api/flow/followups 200 in 14ms
+6:48:47 AM [express] GET /api/uoa/preview 200 in 27ms
+6:48:47 AM [express] GET /api/signals/tracked 200 in 63ms
+6:48:48 AM [express] GET /api/breadth 200 in 350ms
+6:48:49 AM [express] GET /api/quotes 200 in 6ms
+6:48:49 AM [express] GET /api/flow 200 in 750ms
+6:48:49 AM [express] GET /api/quotes 200 in 5ms
+6:48:49 AM [express] GET /api/health 200 in 7ms
+6:48:49 AM [express] GET /api/schwab/status 304 in 7ms
+6:48:49 AM [express] GET /api/headline 200 in 2548ms
+6:48:50 AM [express] GET /api/regime/headline 200 in 976ms
+6:48:50 AM [express] GET /api/trade-environment 304 in 13ms
+6:48:50 AM [express] GET /api/regime 304 in 8ms
+6:48:50 AM [express] GET /api/odte/map 200 in 194ms
+6:48:50 AM [express] GET /api/flow/preview 304 in 8ms
+6:48:50 AM [express] GET /api/layout/signals 304 in 1ms
+6:48:50 AM [express] GET /api/flow/followups 200 in 1ms
+6:48:50 AM [express] GET /api/whales/performance 200 in 1ms
+6:48:50 AM [express] GET /api/signals/tracked 200 in 0ms
+6:48:54 AM [express] GET /api/flow-intraday 200 in 394ms
+6:48:54 AM [express] GET /api/quotes 200 in 4ms
+6:48:54 AM [express] GET /api/market/option-chain/SPX 200 in 4273ms
+6:48:54 AM [express] GET /api/macro 200 in 6950ms
+[crypto:momentum] dexscreener batch failed: This operation was aborted
+6:49:13 AM [express] GET /api/macro 304 in 2ms
+6:49:14 AM [express] GET /api/flow 200 in 310ms
+6:49:14 AM [express] GET /api/quotes 200 in 82ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] computeJumpRegime: score=1/4 regime=false gap=null% range=null% gexFlip=null vix1d=16.30%
+[schwab] fetchVixSpot: 15.7
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=15.70 vix5mAgo=null vixPct=null% spxNow=7141.2 spx5mAgo=null spxPct=null% breakdown=false dir=null
+[sdZones] detectSDZones: 6 live zones (390 candles)
+[wickTiming] computeWickTiming: bars=390 last3=MIXED strongCount15m=15 strongDir=BEARISH
+[crypto] desk risk on -> unknown: Kraken BTC read stale
+6:49:17 AM [express] GET /api/flow/followups 200 in 7ms
+6:49:17 AM [express] GET /api/uoa/preview 200 in 5ms
+6:49:17 AM [express] GET /api/signals/tracked 200 in 9ms
+6:49:19 AM [express] GET /api/schwab/status 304 in 4ms
+6:49:20 AM [express] GET /api/quotes 200 in 16ms
+6:49:20 AM [express] GET /api/flow/preview 200 in 263ms
+6:49:20 AM [express] GET /api/flow/followups 200 in 0ms
+6:49:20 AM [express] GET /api/signals/tracked 200 in 18ms
+6:49:24 AM [express] GET /api/macro 304 in 38ms
+6:49:25 AM [express] GET /api/market/option-chain/SPX 200 in 414ms
+6:49:25 AM [express] GET /api/quotes 200 in 39ms
+6:49:25 AM [express] GET /api/flow 200 in 814ms
+6:49:30 AM [express] GET /api/quotes 200 in 5ms
+6:49:34 AM [express] GET /api/macro 304 in 25ms
+6:49:36 AM [express] GET /api/quotes 200 in 15ms
+6:49:36 AM [express] GET /api/flow 200 in 439ms
+6:49:37 AM [express] GET /api/snapshot 200 in 2ms
+6:49:37 AM [express] GET /api/regime 200 in 2ms
+6:49:37 AM [express] GET /api/macro 200 in 1ms
+6:49:41 AM [express] GET /api/quotes 200 in 23ms
+6:49:44 AM [express] GET /api/macro 304 in 4ms
+6:49:46 AM [express] GET /api/quotes 200 in 3ms
+6:49:46 AM [express] GET /api/flow 200 in 289ms
+6:49:47 AM [express] GET /api/flow/followups 200 in 4ms
+6:49:47 AM [express] GET /api/uoa/preview 200 in 1ms
+6:49:47 AM [express] GET /api/signals/tracked 200 in 1ms
+6:49:49 AM [express] GET /api/schwab/status 304 in 6ms
+6:49:57 AM [express] GET /api/headline 200 in 8290ms
+6:49:57 AM [express] GET /api/flow/followups 200 in 1ms
+6:49:57 AM [express] GET /api/quotes 200 in 5ms
+[signedTickVolume] computeOfiTrend: bars=389 cum=-2291798 slope15m=-1431972 slope5m=-1169492 trend=BEARISH accel=ACCELERATING method=tick-rule-1m
+6:49:57 AM [express] GET /api/trade-environment 200 in 132ms
+6:49:57 AM [express] GET /api/macro 304 in 25ms
+6:49:58 AM [express] GET /api/flow-intraday 200 in 221ms
+6:49:58 AM [express] GET /api/odte/map 200 in 314ms
+6:49:58 AM [express] GET /api/snapshot 200 in 25ms
+6:50:00 AM [express] GET /api/market/option-chain/SPX 200 in 2154ms
+6:50:01 AM [express] GET /api/whales/performance 200 in 7ms
+6:50:01 AM [express] GET /api/flow 200 in 604ms
+6:50:05 AM [express] GET /api/regime/headline 200 in 3675ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[schwab] fetchVixSpot: 15.7
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=15.70 vix5mAgo=null vixPct=null% spxNow=7141.2 spx5mAgo=null spxPct=null% breakdown=false dir=null
+[wickTiming] computeWickTiming: bars=390 last3=MIXED strongCount15m=15 strongDir=BEARISH
+6:50:06 AM [express] GET /api/flow/preview 200 in 234ms
+[crypto:derivs] no perpetual-futures read from Bybit or OKX
+6:50:06 AM [express] GET /api/quotes 200 in 1ms
+6:50:06 AM [express] GET /api/signals/tracked 200 in 0ms
+[crypto:scanner] geckoterminal unreachable: This operation was aborted
+[crypto:narratives] all RSS feeds unreachable
+[crypto:security] solana rpc failing: This operation was aborted @ api.mainnet-beta.solana.com
+[crypto:derivs] no perpetual-futures read from Bybit or OKX
+[crypto:momentum] dexscreener batch failed: This operation was aborted
+[crypto] desk risk unknown -> on: BTC +1.07% vs its Kraken 24 h VWAP (Kraken mid)
+6:54:03 AM [express] GET /api/health 200 in 26ms
+6:54:03 AM [express] GET /api/health 200 in 36ms
+6:54:04 AM [express] GET /api/odte/map 200 in 697ms
+6:54:04 AM [express] GET /api/quotes 200 in 10ms
+6:54:04 AM [express] GET /api/regime 200 in 1ms
+6:54:04 AM [express] GET /api/layout/signals 200 in 26ms
+6:54:05 AM [express] GET /api/regime/headline 200 in 576ms
+6:54:05 AM [express] GET /api/whales/performance 200 in 51ms
+[signedTickVolume] computeOfiTrend: bars=389 cum=-2291798 slope15m=-1431972 slope5m=-1169492 trend=BEARISH accel=ACCELERATING method=tick-rule-1m
+6:54:06 AM [express] GET /api/trade-environment 200 in 412ms
+6:54:06 AM [express] GET /api/flow/preview 200 in 461ms
+6:54:06 AM [express] GET /api/flow/followups 200 in 0ms
+6:54:06 AM [express] GET /api/schwab/status 200 in 6ms
+6:54:06 AM [express] GET /api/flow/followups 200 in 1ms
+6:54:06 AM [express] GET /api/uoa/preview 200 in 10ms
+6:54:06 AM [express] GET /api/signals/tracked 200 in 0ms
+6:54:07 AM [express] GET /api/breadth 200 in 7ms
+6:54:07 AM [express] GET /api/schwab/status 304 in 2ms
+6:54:07 AM [express] GET /api/flow 200 in 196ms
+6:54:07 AM [express] GET /api/regime/headline 200 in 564ms
+6:54:07 AM [express] GET /api/health 200 in 0ms
+6:54:07 AM [express] GET /api/quotes 304 in 1ms
+6:54:07 AM [express] GET /api/trade-environment 304 in 0ms
+6:54:07 AM [express] GET /api/odte/map 200 in 65ms
+6:54:07 AM [express] GET /api/regime 304 in 1ms
+6:54:07 AM [express] GET /api/layout/signals 304 in 0ms
+6:54:07 AM [express] GET /api/flow/preview 304 in 1ms
+6:54:07 AM [express] GET /api/flow/followups 200 in 0ms
+6:54:07 AM [express] GET /api/whales/performance 200 in 1ms
+6:54:07 AM [express] GET /api/signals/tracked 200 in 0ms
+6:54:08 AM [express] GET /api/market/option-chain/SPX 200 in 213ms
+6:54:08 AM [express] GET /api/headline 200 in 2731ms
+6:54:08 AM [express] GET /api/flow-intraday 200 in 122ms
+6:54:08 AM [express] GET /api/macro 200 in 1550ms
+6:54:15 AM [express] GET /api/snapshot 200 in 9916ms
+6:54:15 AM [express] GET /api/quotes 200 in 3ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] computeJumpRegime: score=1/4 regime=false gap=null% range=null% gexFlip=null vix1d=16.30%
+[schwab] fetchVixSpot: 15.7
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=15.70 vix5mAgo=15.70 vixPct=0.00% spxNow=7141.2 spx5mAgo=null spxPct=null% breakdown=false dir=null
+[sdZones] detectSDZones: 6 live zones (390 candles)
+[wickTiming] computeWickTiming: bars=390 last3=MIXED strongCount15m=15 strongDir=BEARISH
+6:54:17 AM [express] GET /api/flow 200 in 86ms
+6:54:18 AM [express] GET /api/macro 304 in 9ms
+6:54:20 AM [express] GET /api/quotes 200 in 10ms
+6:54:25 AM [express] GET /api/quotes 200 in 1ms
+6:54:27 AM [express] GET /api/flow 200 in 83ms
+6:54:28 AM [express] GET /api/macro 304 in 3ms
+6:54:30 AM [express] GET /api/quotes 200 in 12ms
+6:54:35 AM [express] GET /api/quotes 200 in 1ms
+6:54:36 AM [express] GET /api/flow/followups 200 in 1ms
+6:54:36 AM [express] GET /api/uoa/preview 200 in 1ms
+6:54:36 AM [express] GET /api/signals/tracked 200 in 2ms
+6:54:37 AM [express] GET /api/schwab/status 304 in 1ms
+6:54:37 AM [express] GET /api/flow 200 in 89ms
+6:54:38 AM [express] GET /api/flow/preview 200 in 68ms
+6:54:38 AM [express] GET /api/flow/followups 200 in 0ms
+6:54:38 AM [express] GET /api/signals/tracked 200 in 0ms
+6:54:38 AM [express] GET /api/market/option-chain/SPX 200 in 247ms
+6:54:38 AM [express] GET /api/macro 304 in 3ms
+6:54:40 AM [express] GET /api/quotes 200 in 8ms
+[crypto:scanner] geckoterminal unreachable: This operation was aborted
+[crypto:security] solana rpc failing: This operation was aborted @ api.mainnet-beta.solana.com
+[crypto:derivs] no perpetual-futures read from Bybit or OKX
+[crypto:narratives] all RSS feeds unreachable
+[crypto:momentum] dexscreener batch failed: This operation was aborted
+[crypto:scanner] geckoterminal unreachable: This operation was aborted
+[crypto:security] solana rpc failing: This operation was aborted @ api.mainnet-beta.solana.com
+[crypto] desk risk on -> unknown: Kraken BTC read failed
+6:58:56 AM [express] GET /api/health 200 in 33ms
+6:58:57 AM [express] GET /api/health 200 in 7ms
+6:58:57 AM [express] GET /api/quotes 200 in 28ms
+6:58:57 AM [express] GET /api/regime 200 in 26ms
+6:59:01 AM [express] GET /api/odte/map 200 in 4627ms
+6:59:08 AM [express] GET /api/regime/headline 200 in 6897ms
+[signedTickVolume] computeOfiTrend: bars=389 cum=-2291798 slope15m=-1431972 slope5m=-1169492 trend=BEARISH accel=ACCELERATING method=tick-rule-1m
+6:59:10 AM [express] GET /api/trade-environment 200 in 276ms
+6:59:10 AM [express] GET /api/flow/followups 200 in 14ms
+6:59:10 AM [express] GET /api/schwab/status 200 in 106ms
+6:59:10 AM [express] GET /api/flow/followups 200 in 1ms
+6:59:10 AM [express] GET /api/uoa/preview 200 in 14ms
+6:59:11 AM [express] GET /api/signals/tracked 200 in 12ms
+6:59:12 AM [express] GET /api/whales/performance 200 in 257ms
+6:59:12 AM [express] GET /api/headline 200 in 3166ms
+6:59:12 AM [express] GET /api/flow 200 in 876ms
+6:59:12 AM [express] GET /api/breadth 200 in 290ms
+6:59:13 AM [express] GET /api/quotes 200 in 13ms
+6:59:13 AM [express] GET /api/layout/signals 200 in 7ms
+6:59:13 AM [express] GET /api/flow/preview 200 in 436ms
+6:59:13 AM [express] GET /api/health 200 in 1ms
+6:59:13 AM [express] GET /api/schwab/status 304 in 3ms
+6:59:13 AM [express] GET /api/quotes 200 in 7ms
+6:59:15 AM [express] GET /api/regime/headline 200 in 1313ms
+6:59:15 AM [express] GET /api/trade-environment 304 in 7ms
+6:59:15 AM [express] GET /api/odte/map 200 in 598ms
+6:59:15 AM [express] GET /api/flow/followups 200 in 29ms
+6:59:16 AM [express] GET /api/regime 304 in 26ms
+6:59:16 AM [express] GET /api/signals/tracked 200 in 1ms
+6:59:16 AM [express] GET /api/market/option-chain/SPX 200 in 829ms
+6:59:17 AM [express] GET /api/flow-intraday 200 in 797ms
+6:59:18 AM [express] GET /api/macro 200 in 7664ms
+6:59:20 AM [express] GET /api/quotes 200 in 2ms
+6:59:43 AM [express] GET /api/snapshot 200 in 30984ms
+6:59:46 AM [express] GET /api/quotes 200 in 30ms
+6:59:48 AM [express] GET /api/schwab/status 304 in 3ms
+6:59:48 AM [express] GET /api/macro 304 in 10ms
+6:59:51 AM [express] GET /api/flow/followups 200 in 45ms
+6:59:51 AM [express] GET /api/flow/followups 200 in 1ms
+6:59:51 AM [express] GET /api/flow 200 in 1146ms
+6:59:51 AM [express] GET /api/signals/tracked 200 in 4ms
+6:59:56 AM [express] GET /api/market/option-chain/SPX 200 in 4589ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] computeJumpRegime: score=1/4 regime=false gap=null% range=null% gexFlip=null vix1d=16.30%
+[schwab] fetchVixSpot: 15.7
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=15.70 vix5mAgo=15.70 vixPct=0.00% spxNow=7141.2 spx5mAgo=null spxPct=null% breakdown=false dir=null
+[sdZones] detectSDZones: 6 live zones (390 candles)
+[signedTickVolume] computeOfiTrend: bars=389 cum=-2291798 slope15m=-1431972 slope5m=-1169492 trend=BEARISH accel=ACCELERATING method=tick-rule-1m
+[wickTiming] computeWickTiming: bars=390 last3=MIXED strongCount15m=15 strongDir=BEARISH
+6:59:56 AM [express] GET /api/uoa/preview 200 in 2ms
+6:59:56 AM [express] GET /api/quotes 200 in 2ms
+6:59:56 AM [express] GET /api/signals/tracked 200 in 2ms
+6:59:56 AM [express] GET /api/flow/preview 200 in 97ms
+[crypto:scanner] geckoterminal unreachable: This operation was aborted
+[crypto:momentum] dexscreener batch failed: This operation was aborted
+[crypto:derivs] no perpetual-futures read from Bybit or OKX
+[crypto:scanner] geckoterminal unreachable: This operation was aborted
+[crypto:social] social sources failing: bsky fetch failed
+[crypto] desk risk unknown -> on: BTC +0.91% vs its Kraken 24 h VWAP (Kraken mid)

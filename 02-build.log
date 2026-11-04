@@ -1,0 +1,30 @@
+[2m../dist/public/[22m[2massets/[22m[36mTradeDesk-DhR3WPEr.js            [39m[1m[2m127.47 kB[22m[1m[22m[2m │ gzip:  32.45 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-markdown-Cu-PlWSa.js      [39m[1m[2m141.60 kB[22m[1m[22m[2m │ gzip:  41.66 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-charts-DTMCGkQZ.js        [39m[1m[2m272.93 kB[22m[1m[22m[2m │ gzip:  62.77 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mindex-DVPvTBnL.js                [39m[1m[2m397.28 kB[22m[1m[22m[2m │ gzip: 108.17 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-three-D3dLVpBC.js         [39m[1m[2m493.34 kB[22m[1m[22m[2m │ gzip: 123.93 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-BkTSUg5J.js               [39m[1m[33m653.57 kB[39m[22m[2m │ gzip: 210.94 kB[22m
+[33m
+(!) Some chunks are larger than 600 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 9.58s[39m
+building server...
+▲ [WARNING] Duplicate key "target" in object literal [duplicate-object-key]
+
+    tsconfig.json:11:4:
+      11 │     "target": "ES2022",
+         ╵     ~~~~~~~~
+
+  The original key "target" is here:
+
+    tsconfig.json:8:4:
+      8 │     "target": "ES2022",
+        ╵     ~~~~~~~~
+
+1 warning
+
+  dist/index.cjs  2.6mb ⚠️
+
+⚡ Done in 819ms

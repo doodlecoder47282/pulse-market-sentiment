@@ -1,0 +1,10 @@
+(!) Some chunks are larger than 600 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 17.44s[39m
+✔ Copying web assets from public to ios/App/App/public in 28.42ms
+✔ Creating capacitor.config.json in ios/App/App in 805.83μs
+✔ copy ios in 226.44ms
+live UI server.url present in the zip
+zip bundle clean
