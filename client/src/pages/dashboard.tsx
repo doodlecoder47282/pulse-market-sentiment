@@ -61,6 +61,7 @@ const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
 const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"));
 const TabHeadline = lazy(() => import("@/components/TabHeadline"));
+import QuickDetails from "@/components/QuickDetails";
 const GexChart = lazy(() => import("@/components/GexChart"));
 const Heatseeker = lazy(() => import("@/components/Heatseeker"));
 const OdteForward = lazy(() => import("@/components/OdteForward"));
@@ -607,6 +608,8 @@ export default function Dashboard() {
               </Suspense>
             </ErrorBoundary>
 
+            <QuickDetails id="models-detail" label="ML lab and the daily playbook">
+            <>
             {/* ── ML Lab ── */}
             <Separator className="my-2" />
             <h2 className="text-lg font-semibold sm:text-xl">ML Lab</h2>
@@ -624,6 +627,8 @@ export default function Dashboard() {
                 <DailyPlaybookChart symbol="SPY" />
               </Suspense>
             </ErrorBoundary>
+            </>
+            </QuickDetails>
           </TabsContent>
 
           {/* ── Heatseeker tab (lazy) ─ 0DTE live Greeks + sticky zones ── */}
@@ -742,6 +747,9 @@ export default function Dashboard() {
             {/* Customizable widget stack — reorder, hide, or add widgets from anywhere */}
             <WidgetStack tab="signals" defaults={["whale-flow", "tracked-signals", "pc-flow"]} />
 
+            {/* Answer first: everything below opens on tap on phones (QuickDetails). */}
+            <QuickDetails id="signals-detail" label="breadth, sentiment gauges, gamma and term structure, social and Fear & Greed">
+            <>
             {/* MISSION FIX #6 — sampled participation breadth from cached daily bars */}
             <Suspense fallback={null}><BreadthCard /></Suspense>
 
@@ -1077,6 +1085,8 @@ export default function Dashboard() {
                 </CollapsibleCard>
               </div>
             </section>
+            </>
+            </QuickDetails>
 
           </TabsContent>
         </Tabs>

@@ -1323,3 +1323,36 @@ guessed; a changed rule changes the answer (tested). Copy now says only that the
 re-checked. Limit stated: the scoring-order guarantee is a source guard plus a behavioural test of the
 pre-push window on the shared function; the engine itself is not executed by the quant suite (it needs the
 database), so full engine parity is not demonstrated.
+2026-11-03: quick view, pass 1 (feat/quick-view). Owner goal: an app built for quick responses. Each tab
+answers first; supporting panels sit behind one "More detail" tap (QuickDetails): closed by default under
+1024 px, open on wider screens, the reader's choice remembered per section on the device. Closed sections
+do not mount, so their requests and rendering do not run on a phone until asked. Applied to Signals
+(breadth, composite and sub-gauges, gamma and term structure, social and Fear & Greed go behind the tap;
+headline, Today card, ticker scan and the flow widgets stay up), Models (ML lab and the playbook) and
+Crypto (majors, funding/OI and narrative heat). Single-panel tabs are unchanged. CI's UX audit now times
+"answerMs" (tap to the tab's one-line answer showing data; budget 4 s, to be lowered once real numbers
+are in) and counts tabs with no answer line in 10 s (budget 1: Edge Lab has none yet). Not verified by
+eye: no local build in this sandbox; CI screenshots and budgets are the check. Note: the audit's
+overflow and contrast checks now see less content on phones, because the collapsed panels are not
+mounted there.
+Quick view, pass 1b: the tab headlines were descriptions of the tab ("SPX cash chart with dealer levels",
+"0DTE SPX live Greek scanner"), not answers. Their top lines now lead with what was read:
+Chart and Heatseeker = today's dealer levels from the same /api/odte/map the Today card uses ("SPX 6,834 ·
+wall above 6,850 · flip 6,800 · magnet below 6,810 · long gamma at spot", or the reason they are missing);
+Signals = whale count this hour and direction plus the regime; Models, Regime and Trade Desk = the regime
+(Trade Desk: the 20-minute outlook line when it exists). The old descriptions moved to the second line.
+Cosmos, News and Take Five keep their description (no market answer to give). /api/odte/map is registered
+for in-process calls. shared/headlineLines.ts + tests.
+Review of feat/quick-view (independent): 2 MUST-FIX fixed. (1) The audit waited up to 10 s for an answer
+on Edge Lab before taking switchMs, which would fail tabSwitchMs everywhere; the answer is now timed in
+parallel with the network settling, and tabs without an answer are a NAMED exemption (answerExempt:
+["edgelab"]), so any other missing answer fails the run. (2) The Signals answer counted SPY whales only and
+said "no whale flow" when the scanner was down or the read failed; it now counts every scanned symbol and
+says "whale scan not running / stale" from the scanner's own snapshot. SHOULD-FIX taken: /api/headline is
+built once per tab per 20 s; the levels line mirrors the Today card (pin fallback, each missing level
+named, "session closed" instead of "chain stale", the map's own no_gex reason); missing levels carry the
+map's reason; "predictor did not answer" is told apart from "no gamma data"; Trade Desk no longer leads
+with the predictor's forecast sentence; a failed headline or crypto feed shows an honest unavailable line
+instead of an endless skeleton; an empty scanner says "no pools scanned yet"; collapsed sections are opened
+and measured by the audit on phones. Left: the 0DTE map ledger's note text; whale history DB-read failures
+still return an empty list (scanner state now covers the common case).

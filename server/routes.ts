@@ -3059,6 +3059,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
   // ─── Plain-English headlines (per-tab synthesis) ────────────────────────
 
+  const headlineCache = new Map<string, { at: number; value: unknown }>();
   app.get("/api/headline", async (req, res) => {
     try {
       const tab = String(req.query.tab || "global").toLowerCase();
@@ -3066,9 +3067,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (!allowed.includes(tab)) {
         return res.status(400).json({ error: `tab must be one of: ${allowed.join(", ")}` });
       }
+      // One build per tab per 20 s: every open phone polls this, and Chart and
+      // Heatseeker compose the option-chain map for it.
+      const hit = headlineCache.get(tab);
+      if (hit && Date.now() - hit.at < 20_000) return res.json(hit.value);
       const { buildHeadline } = await import("./headline");
       const port = Number(process.env.PORT || 5000);
       const headline = await buildHeadline({ tab: tab as any, port });
+      headlineCache.set(tab, { at: Date.now(), value: headline });
       res.json(headline);
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e) });
@@ -3731,7 +3737,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // long-gamma band, ladders; zones only in the personal edition. The first
   // map of the session is kept as the morning plan and settled after the
   // close (server/odteMapLedger.ts).
-  app.get("/api/odte/map", async (req, res) => {
+  app.get("/api/odte/map", internalRoute("/api/odte/map", async (req: ExRequest, res: ExResponse) => {
     try {
       const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
       const { buildOdteForward } = await import("./odteForward");
@@ -3744,7 +3750,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message });
     }
-  });
+  }));
   // SETUP EVENT LOG (server/setupEngine.ts): the rule book, why nothing fires now, the log and its graded summary. Descriptive; no grade below the sample gate.
   // SCAN ANY TICKER (server/tickerScan.ts): instrument, quote, volume read, per-name structure, most active contracts; each section with its own state.
   app.get("/api/scan", async (req, res) => {
