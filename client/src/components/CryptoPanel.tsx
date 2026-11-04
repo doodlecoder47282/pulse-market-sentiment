@@ -9,9 +9,15 @@
 // a Jupiter price check; Bluesky and pump.fun (unofficial API) are labeled
 // low-grade attention proxies and are not in the score or verdict.
 
+import CoinLinks from "./CoinLinks";
+import CryptoHowTo from "./CryptoHowTo";
+import BundleRow from "./BundleRow";
+import CoinDesk from "./CoinDesk";
+import type { CardBundle } from "@shared/cryptoBundle";
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
 import QuickDetails from "@/components/QuickDetails";
+import type { LaunchEvidence } from "@shared/cryptoLaunch";
 import { apiJson } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +62,7 @@ interface Candidate {
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
   jupPriceUsd?: number | null; jupGapPct?: number | null; jupCheckedAt?: number | null;
   jupState?: "agree" | "watch" | "diverge" | "no-reliable-price" | "failed" | "unchecked";
+  bundle?: CardBundle | null;
   score: number | null; verdict: Verdict; verdictCode?: string | null; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
@@ -190,6 +197,8 @@ interface AutopsyResp {
   parity: { agrees: boolean; detail: string | null } | null;
   tracked: { verdict: Verdict; verdictCode: string | null; firstSeenAt: number } | null;
   stress: HolderStress | null;
+  launch?: LaunchEvidence | null;
+  bundle?: CardBundle | null;
   sourceNotes: string[]; notes: string[];
 }
 
@@ -278,6 +287,29 @@ function AutopsyCard() {
               </section>
             );
           })}
+          {ok.launch && (
+            <section data-testid="crypto-autopsy-launch">
+              <div className="text-[11px] font-medium text-muted-foreground">Launch and ownership evidence · public RPC, descriptive, not a rule</div>
+              <div className="mt-1 space-y-1 rounded border border-border/40 p-2 leading-snug">
+                <div className="break-words" data-testid="crypto-autopsy-launch-slot">
+                  <span className="font-medium text-foreground">Launch block: </span>
+                  {ok.launch.slot.state === "ok"
+                    ? <span className="font-mono tabular-nums">slot {ok.launch.slot.firstSlot} · {ok.launch.slot.sameSlotTx} transaction{ok.launch.slot.sameSlotTx === 1 ? "" : "s"} touching the mint in that slot · {ok.launch.slot.firstThreeSlotsTx} in the first three slots{ok.launch.slot.failedTxInFirstThreeSlots ? ` (+${ok.launch.slot.failedTxInFirstThreeSlots} failed)` : ""} · read {ok.launch.slot.signaturesRead}</span>
+                    : <span className="text-amber-600 dark:text-amber-400">{ok.launch.slot.state === "partial" ? "not established: " : "unread: "}{ok.launch.slot.reason}</span>}
+                </div>
+                <div className="break-words" data-testid="crypto-autopsy-launch-creator">
+                  <span className="font-medium text-foreground">Earliest fee payer: </span>
+                  {ok.launch.creator.feePayer
+                    ? <span className="font-mono tabular-nums"><span className="break-all">{ok.launch.creator.feePayer}</span> · {ok.launch.creator.holdsPctOfSupply != null ? (ok.launch.creator.holdsLessThanStep ? "holds less than 0.01% of supply now" : `holds ${ok.launch.creator.holdsPctOfSupply}% of supply now`) : <span className="text-amber-600 dark:text-amber-400">holding unread: {ok.launch.creator.reason}</span>}</span>
+                    : <span className="text-amber-600 dark:text-amber-400">{ok.launch.creator.state === "partial" ? "not established: " : "unread: "}{ok.launch.creator.reason}</span>}
+                </div>
+                <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                  {[...(ok.launch.slot.state === "ok" ? ok.launch.slot.caveats : []), ...(ok.launch.creator.feePayer ? ok.launch.creator.caveats : [])].map((cv) => <li key={cv} className="break-words">{cv}</li>)}
+                </ul>
+              </div>
+            </section>
+          )}
+          <BundleRow bundle={ok.bundle} testId="crypto-autopsy-bundle" />
           {ok.stress && (
             <section data-testid="crypto-autopsy-stress">
               <div className="text-[11px] font-medium text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
@@ -465,6 +497,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
                 </div>
                 {c.verdictReasons[0] && <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground">{c.verdictReasons[0]}</div>}
               </button>
+              <CoinLinks chain={c.chain} mint={c.tokenAddress} symbol={c.symbol} />
             </li>
           ))}
         </ul>
@@ -496,7 +529,13 @@ export default function CryptoPanel() {
   return (
     <div className="space-y-4" data-testid="crypto-panel">
       <DeskBrief feed={feed} feedError={feedQ.isError} health={healthQ.data} sig={sigQ.data} enters={enters} watches={watches}
-        onPick={(c) => { setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`); }} />
+        onPick={(c) => {
+          setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`);
+          setTimeout(() => document.getElementById(`crypto-card-${c.chain}-${c.pairAddress}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+        }} />
+
+      {/* plain-English guide: labels, opening a coin in fomo, the desk's words */}
+      <CryptoHowTo />
 
       {/* paste any Solana token address: every desk rule, gate by gate, plus a holder-dump stress test */}
       <AutopsyCard />
@@ -684,6 +723,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     : "border-border/50 hover:border-border";
   const mcapPct = c.marketCap != null ? Math.min(100, (c.marketCap / 1_000_000) * 100) : 0;
   return (
+    <div id={`crypto-card-${c.chain}-${c.pairAddress}`} className="scroll-mt-24">
     <button
       onClick={toggle}
       className={`group w-full rounded-xl border ${border} bg-card/60 p-3 text-left transition-all`}
@@ -827,6 +867,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               </>
             )}
           </div>
+          {c.chain === "solana" && <BundleRow bundle={c.bundle} />}
           {c.socialCheckedAt != null && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span>
@@ -867,6 +908,9 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
         </div>
       )}
     </button>
+    {isOpen && <CoinDesk c={c} />}
+    {isOpen && <CoinLinks chain={c.chain} mint={c.tokenAddress} symbol={c.symbol} />}
+    </div>
   );
 }
 

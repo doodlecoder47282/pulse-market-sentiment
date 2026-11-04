@@ -14,6 +14,8 @@
 //     after any 429, and it is non-fatal: authorities alone complete a read.
 //     The scanner (45 s tick) and the community watch (60 s tick) each make
 //     at most one indexed call per tick, so about two a minute in all.
+//     The owner-triggered autopsy adds up to six indexed calls per run (gap 20 s,
+//     time-boxed to 20 s) and reports any 429 to the same cooldown.
 // A fact that could not be read is null with a state, never a value.
 
 import { holderConcentration, observedNumber, type DexPool, type HolderAccount } from "./cryptoStats";
@@ -24,13 +26,83 @@ let rpcId = 1;
 let indexedCooldownUntil = 0; // set after a 429: back off 5 min, shared by every caller
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// ── Keyed RPC (owner-approved 2026-11-03: Helius free plan, 1M credits/month,
+// 10 req/s). Server-side only: BATCAVE_SOLANA_RPC_URL is the full https URL
+// including the key; it is never logged, returned or sent to the browser.
+// When set it is tried first for every read, with the public RPCs as the
+// fallback. A daily call cap keeps the month inside the free credits.
+const KEYED_GAP_MS = 125; // <= 8 req/s, under the plan's 10
+const KEYED_DAILY_CAP = Math.max(100, Number(process.env.BATCAVE_SOLANA_RPC_DAILY_CAP) || 25_000);
+let keyedCooldownUntil = 0;
+let keyedNextAt = 0;
+let keyedDay = "";
+let keyedCallsToday = 0;
+let keyedLastError: string | null = null;
+
+export function keyedRpcUrl(): string | null {
+  const v = (process.env.BATCAVE_SOLANA_RPC_URL ?? "").trim();
+  if (!v) return null;
+  try { const u = new URL(v); return u.protocol === "https:" ? u.toString() : null; } catch { return null; }
+}
+
+function keyedAvailable(now = Date.now()): boolean {
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (day !== keyedDay) { keyedDay = day; keyedCallsToday = 0; }
+  return keyedRpcUrl() != null && now > keyedCooldownUntil && keyedCallsToday < KEYED_DAILY_CAP;
+}
+
+/** True when the keyed RPC is configured (regardless of cooldown or cap). */
+export function keyedRpcConfigured(): boolean { return keyedRpcUrl() != null; }
+
+/** Indexed-method endpoints: keyed first when usable, then the public node. */
+export function indexedUrls(): string[] {
+  const k = keyedRpcUrl();
+  return k && keyedAvailable() ? [k, ...RPC_INDEXED] : RPC_INDEXED;
+}
+function accountUrls(): string[] {
+  const k = keyedRpcUrl();
+  return k && keyedAvailable() ? [k, ...RPC_ACCOUNT] : RPC_ACCOUNT;
+}
+
+/** Safe status for health/diag: never the URL or the key. */
+export function solanaRpcStatus(now = Date.now()) {
+  const k = keyedRpcUrl();
+  keyedAvailable(now);
+  return {
+    keyed: k != null,
+    keyedHost: k ? new URL(k).hostname : null,
+    keyedCallsToday, keyedDailyCap: KEYED_DAILY_CAP,
+    keyedCoolingDown: now < keyedCooldownUntil,
+    keyedLastError,
+    publicIndexedCoolingDown: now < indexedCooldownUntil,
+  };
+}
+
+/** Any caller that sees a 429 from the indexed RPC starts the shared 5-minute back-off. */
+export function noteIndexedRateLimit(e: unknown, now = Date.now()): void {
+  const m = String((e as any)?.message ?? e);
+  if (/429/.test(m) && !/@ keyed/.test(m)) indexedCooldownUntil = now + 5 * 60_000;
+}
+
 export function indexedRpcAvailable(now = Date.now()): boolean {
-  return now > indexedCooldownUntil;
+  return keyedAvailable(now) || now > indexedCooldownUntil;
 }
 
 export async function solRpc(method: string, params: any[], urls: string[]): Promise<any> {
   let lastErr: any = null;
-  for (const url of urls) {
+  const keyed = keyedRpcUrl();
+  // Callers pass RPC_INDEXED / RPC_ACCOUNT; the keyed endpoint is put in front here.
+  const list = urls === RPC_INDEXED ? indexedUrls() : urls === RPC_ACCOUNT ? accountUrls() : urls;
+  for (const url of list) {
+    const isKeyed = keyed != null && url === keyed;
+    if (isKeyed) {
+      if (!keyedAvailable()) continue;
+      const wait = keyedNextAt - Date.now();
+      keyedNextAt = Math.max(Date.now(), keyedNextAt) + KEYED_GAP_MS;
+      if (wait > 0) await sleep(wait);
+      keyedCallsToday++;
+    }
+    const label = isKeyed ? "keyed" : new URL(url).hostname;
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 12_000);
     try {
@@ -39,13 +111,20 @@ export async function solRpc(method: string, params: any[], urls: string[]): Pro
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: rpcId++, method, params }),
       });
-      if (!r.ok) throw new Error(`rpc ${r.status} @ ${new URL(url).hostname}`);
+      if (!r.ok) throw new Error(`rpc ${r.status} @ ${label}`);
       const j = await r.json();
-      if (j.error) throw new Error(`rpc: ${j.error?.message ?? "unknown"}`);
+      if (j.error) throw new Error(`rpc: ${String(j.error?.message ?? "unknown").slice(0, 120)} @ ${label}`);
+      if (isKeyed) keyedLastError = null;
       return j.result;
     } catch (e: any) {
-      lastErr = e;
-      await sleep(400);
+      // Never let a URL (and its key) ride along in an error message.
+      const msg = String(e?.message ?? e).split(url).join(label);
+      lastErr = new Error(msg.includes("@") ? msg : `${msg} @ ${label}`);
+      if (isKeyed) {
+        keyedLastError = lastErr.message.slice(0, 120);
+        if (/\b(429|401|403)\b/.test(msg)) keyedCooldownUntil = Date.now() + (/429/.test(msg) ? 60_000 : 30 * 60_000);
+      }
+      await sleep(isKeyed ? 50 : 400);
       continue;
     } finally {
       clearTimeout(t);
@@ -109,7 +188,7 @@ export async function readTokenFacts(tokenAddress: string, pools: DexPool[], opt
     out.concentration = conc.top10Pct == null ? "unavailable" : "ok";
     if (conc.top10Pct == null) out.concentrationError = conc.method;
   } catch (e: any) {
-    if (/429/.test(String(e?.message))) indexedCooldownUntil = Date.now() + 5 * 60_000;
+    noteIndexedRateLimit(e);
     out.concentration = "unavailable";
     out.concentrationError = String(e?.message ?? e).slice(0, 100);
   }

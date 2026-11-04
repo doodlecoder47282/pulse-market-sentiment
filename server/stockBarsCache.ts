@@ -6,6 +6,7 @@
 // Target universe = whale watchlist + priority symbols from flowConfig.
 
 import { storage } from "./storage";
+import { lastCompletedSession } from "./breadthMath";
 
 interface DailyRow { date: string; close: number; t: number }
 
@@ -85,13 +86,14 @@ export interface StockBarsBackfillResult {
  * (latest bar date >= today). Uses 6-symbol parallel batches to be polite.
  */
 export async function ensureStockBarsCached(): Promise<StockBarsBackfillResult> {
-  const today = etDateString(Math.floor(Date.now() / 1000));
+  // Current = holds the last completed session's bar (today's bar exists only after the close).
+  const expected = lastCompletedSession(Date.now());
   const needFetch: string[] = [];
   const stillCached: string[] = [];
 
   for (const sym of STOCK_BARS_UNIVERSE) {
     const latest = storage.getLatestBarDate(sym);
-    if (latest && latest >= today) {
+    if (latest && latest >= expected) {
       stillCached.push(sym);
     } else {
       needFetch.push(sym);
@@ -123,6 +125,7 @@ export async function ensureStockBarsCached(): Promise<StockBarsBackfillResult> 
 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
 
+export const STOCK_BARS_RETRY_MS = 10 * 60 * 1000;
 let started = false;
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -143,6 +146,9 @@ export function startStockBarsRefresher(): void {
           (r.failed.length > 0 ? ` (failed: ${r.failed.join(",")})` : ""),
         );
       }
+      // A failed refresh (Schwab disconnected or throttled) retries in 10 min
+      // instead of waiting the 6 h cadence with stale bars.
+      if (r.failed.length > 0) setTimeout(() => void tick(), STOCK_BARS_RETRY_MS).unref?.();
     } catch (e: any) {
       console.warn(`[stockBars] tick failed: ${e?.message ?? e}`);
     }

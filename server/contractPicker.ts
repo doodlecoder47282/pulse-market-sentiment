@@ -350,8 +350,8 @@ export function computeMinutesToClose(nowMs: number): number {
 export async function computeRv5d(): Promise<number | null> {
   try {
     const { getPriceHistory } = await import("./schwab");
-    // Fetch 10 trading days to ensure we have 5 returns even with gaps
-    const resp = await getPriceHistory("$SPX.X", "day", 10, "daily", 1);
+    // One month of daily bars (Schwab rejects periodType=day with daily bars: HTTP 400)
+    const resp = await getPriceHistory("$SPX", "month", 1, "daily", 1);
     const candles = resp.candles;
     if (!candles || candles.length < 6) return null;
 

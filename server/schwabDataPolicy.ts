@@ -16,7 +16,7 @@
 // User decision 2026-10-08: Schwab is the only market-data source. No CBOE,
 // no delayed or cached fallback presented as current.
 
-import { isRegularSessionOpen } from "./exchangeCalendar";
+import { isRegularSessionOpen, isTradingDay, etDate, sessionCloseMs, prevTradingDay } from "./exchangeCalendar";
 
 export type SchwabDataKind = "quotes" | "chains" | "minute_bars" | "daily_bars" | "markets" | "other";
 
@@ -86,6 +86,25 @@ export const MAX_SERVE_AGE_MS: Record<"rth" | "closed", Record<SchwabDataKind, n
   },
 };
 
+/**
+ * Fresh TTL on non-trading days (weekend/holiday). Prices cannot move until
+ * Sunday-evening futures / Monday's session, so re-reading Friday's close every
+ * 20 s only burns the shared Schwab budget. Refreshed every few minutes instead;
+ * fetch time stays the real fetch time. Weekday overnight keeps FRESH_TTL_MS.
+ */
+export const NON_TRADING_DAY_TTL_MS: Record<SchwabDataKind, number> = {
+  quotes: 5 * 60_000,
+  chains: 15 * 60_000,
+  minute_bars: 15 * 60_000,
+  daily_bars: 60 * 60_000,
+  markets: 6 * 3600_000,
+  other: 0,
+};
+
+export function freshTtlMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
+  return isTradingDay(etDate(nowMs)) ? FRESH_TTL_MS[kind] : Math.max(FRESH_TTL_MS[kind], NON_TRADING_DAY_TTL_MS[kind]);
+}
+
 export function maxServeAgeMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
   return MAX_SERVE_AGE_MS[isRegularSessionOpen(nowMs) ? "rth" : "closed"][kind];
 }
@@ -129,6 +148,15 @@ export function staleServeDecision(
     return { serve: false, ageMs: null, maxAgeMs, reason: `${reason}; no cached Schwab response` };
   }
   const ageMs = Math.max(0, nowMs - fetchedAtMs);
+  // Market closed: a chain or daily bar read after the last session settled
+  // is still the latest Schwab data (nothing trades until the next open), so
+  // it is served, labelled stale with its real age, whatever that age is.
+  // Quotes and minute bars move after hours and keep the age cap.
+  const settled = lastSettledCloseMs(nowMs);
+  if ((kind === "chains" || kind === "daily_bars") && !isRegularSessionOpen(nowMs) && settled != null && fetchedAtMs >= settled) {
+    const why = `${reason}; market closed, last-session copy`;
+    return { serve: true, freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: true, maxAgeMs, reason: why } };
+  }
   if (maxAgeMs <= 0 || ageMs > maxAgeMs) {
     return {
       serve: false, ageMs, maxAgeMs,
@@ -139,6 +167,18 @@ export function staleServeDecision(
     serve: true,
     freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: true, maxAgeMs, reason },
   };
+}
+
+/** Close of the most recent finished session + 15 min (index options settle
+ *  their last prints by 16:15 ET), or null when the calendar cannot say. */
+export function lastSettledCloseMs(nowMs: number = Date.now()): number | null {
+  let d = etDate(nowMs);
+  for (let i = 0; i < 10; i++) {
+    const c = isTradingDay(d) ? sessionCloseMs(d) : null;
+    if (c != null && c + 15 * 60_000 <= nowMs) return c + 15 * 60_000;
+    d = prevTradingDay(d);
+  }
+  return null;
 }
 
 /** Freshness of a payload served fresh (new request) or from a TTL cache hit. */
@@ -665,4 +705,12 @@ export function mergeChainSegments<T extends ChainSegmentLike>(segments: T[]): T
     strikePlan: segments.map((s) => s.strikePlan).join(" | "),
     strikeCoverage: coverage,
   };
+}
+
+/** Schwab pricehistory accepts periodType=day only with minute bars; day +
+ *  daily/weekly/monthly is an HTTP 400. Such a request is widened to one
+ *  month (enough daily bars for any "last N days" caller up to ~20). */
+export function schwabHistoryWindow(periodType: "day" | "month" | "year", period: number, frequencyType: string): { periodType: "day" | "month" | "year"; period: number } {
+  if (periodType === "day" && frequencyType !== "minute") return { periodType: "month", period: 1 };
+  return { periodType, period };
 }

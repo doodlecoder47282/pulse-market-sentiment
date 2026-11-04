@@ -238,7 +238,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <span className="ml-auto whitespace-nowrap text-muted-foreground">
+        <span className="ml-auto flex flex-wrap items-center justify-end gap-y-1 text-muted-foreground">
           {data?.computedAt != null && Date.now() - data.computedAt * 1000 > 7 * 24 * 60 * 60 * 1000 && (
             <Badge variant="outline" className="mr-1.5 border-rose-500/40 font-mono text-[11px] text-rose-300" data-testid="badge-backtest-stale">
               STALE · REBUILDING

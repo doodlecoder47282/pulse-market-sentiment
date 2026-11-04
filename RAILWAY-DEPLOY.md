@@ -47,6 +47,26 @@ for cooldowns, stale serves and chain request sizes.
 ### 5. Add environment variables
 - Click your service → "Variables" tab → "Raw Editor", paste and fill in:
 
+Minimum (2026-11-03): three variables, with the volume from step 3 attached.
+
+```
+SCHWAB_CLIENT_ID = <your Schwab app key>
+SCHWAB_CLIENT_SECRET = <your Schwab app secret>
+BATCAVE_ACCESS_KEY = <openssl rand -hex 32>
+```
+
+- Callback: unset `SCHWAB_REDIRECT_URI` defaults to
+  `https://$RAILWAY_PUBLIC_DOMAIN/api/schwab/oauth/callback` (Railway sets
+  the domain). Use that only if it is the Callback URL registered on
+  developer.schwab.com; otherwise keep `SCHWAB_REDIRECT_URI` set to the
+  registered value (e.g. `https://127.0.0.1`).
+- Token key: unset `BATCAVE_TOKEN_KEY` with a volume attached generates a key
+  once at `$RAILWAY_VOLUME_MOUNT_PATH/.batcave/token.key` (mode 0600). It
+  survives redeploys. Trade-off: it sits on the same volume as the database,
+  so a copy of the whole volume carries its own key. Removing an existing
+  `BATCAVE_TOKEN_KEY` makes the stored tokens unreadable: reconnect Schwab once.
+- The details below describe every variable, including the optional ones.
+
 ```
 SCHWAB_CLIENT_ID = <your Schwab app key>
 SCHWAB_CLIENT_SECRET = <your Schwab app secret, freshly rotated>

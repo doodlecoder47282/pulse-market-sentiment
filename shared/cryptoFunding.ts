@@ -152,9 +152,10 @@ export function buildDerivsSnapshot(
   results: Record<PerpVenue, Record<PerpAsset, VenueResult>>,
   history: Record<PerpVenue, Record<PerpAsset, OiSample[]>>,
   nowMs: number,
+  venues: PerpVenue[] = PERP_VENUES,
 ): DerivsSnapshot {
   const rows: DerivsRow[] = [];
-  for (const venue of PERP_VENUES) {
+  for (const venue of venues) {
     for (const asset of PERP_ASSETS) {
       const res = results[venue]?.[asset];
       const read = res?.parsed?.read ?? null;

@@ -18,14 +18,16 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { parseTokenKey, wantsLocalKeyFile, tokenKeyPolicy, type LocalKey, type TokenKeyPolicy } from "./tokenCrypto";
+import { parseTokenKey, wantsLocalKeyFile, tokenKeyPolicy, railwayVolume, type LocalKey, type TokenKeyPolicy } from "./tokenCrypto";
 import type { EnvLike } from "./accessGate";
 
 export const TOKEN_KEY_FILE_ENV = "BATCAVE_TOKEN_KEY_FILE";
 
 export function localKeyPath(env: EnvLike, home: string = os.homedir()): string {
   const o = (env[TOKEN_KEY_FILE_ENV] ?? "").trim();
-  return o ? path.resolve(o) : path.join(home, ".batcave", "token.key");
+  if (o) return path.resolve(o);
+  const vol = railwayVolume(env);
+  return vol ? path.join(vol, ".batcave", "token.key") : path.join(home, ".batcave", "token.key");
 }
 
 function isInside(child: string, parent: string): boolean {
@@ -34,9 +36,13 @@ function isInside(child: string, parent: string): boolean {
 }
 
 /** Reads the key file, or creates it when `create` and it does not exist. */
-export function loadLocalKey(p: string, opts: { create: boolean; cwd?: string } = { create: true }): LocalKey | null {
+export function loadLocalKey(p: string, opts: { create: boolean; cwd?: string; volume?: string | null } = { create: true }): LocalKey | null {
   const cwd = opts.cwd ?? process.cwd();
-  if (isInside(p, cwd) || isInside(p, path.join(cwd, "data"))) {
+  // A Railway volume (RAILWAY_VOLUME_MOUNT_PATH, e.g. /app/data) is the one
+  // place a reachable deploy can keep a key across redeploys; it is allowed
+  // even inside the app directory. Mode and length checks still apply.
+  const onVolume = !!opts.volume && isInside(p, opts.volume);
+  if (!onVolume && (isInside(p, cwd) || isInside(p, path.join(cwd, "data")))) {
     return { ok: false, path: p, error: "key file path is inside the app directory; use a path outside the repo (default ~/.batcave/token.key)" };
   }
   try {
@@ -75,7 +81,7 @@ export function resolveTokenKeyPolicy(env: EnvLike = process.env): { policy: Tok
   const want = wantsLocalKeyFile(env);
   const sig = `${p}|${want}`;
   if (!_resolved || _resolved.sig !== sig || (want && !_resolved.local?.ok)) {
-    _resolved = { sig, local: loadLocalKey(p, { create: want }) };
+    _resolved = { sig, local: loadLocalKey(p, { create: want, volume: railwayVolume(env) }) };
   }
   return { policy: tokenKeyPolicy(env, _resolved.local), local: _resolved.local };
 }

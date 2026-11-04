@@ -220,6 +220,7 @@ export function deriveTargets(args: {
   }
 
   caveats.push("adjusted probabilities scale unconditional walk-forward rates by the reflection-principle barrier formula fitted at each kind's median distance; not a fitted conditional model and not calibrated — treat as ordering, not odds");
+  caveats.push("historical wall/magnet/flip observations use price-volatility proxies, not historical option-chain reconstruction; matching names do not establish live-level calibration");
 
   return {
     side, spot, t1, t2,
