@@ -183,15 +183,15 @@ export interface WhaleAlertHistoryRow {
   directionalConfidence: number | null;
 }
 
-/** Pull recent whale alerts. days=1 → last 24h. limit caps result size. */
+let historyReadFailed = false;
 /** Same read as getWhaleAlertHistory, but null when the database read fails (a failed read is not an empty history). */
 export function getWhaleAlertHistoryOrNull(opts: { days?: number; symbol?: string; limit?: number } = {}): WhaleAlertHistoryRow[] | null {
   historyReadFailed = false;
   const rows = getWhaleAlertHistory(opts);
   return historyReadFailed ? null : rows;
 }
-let historyReadFailed = false;
 
+/** Pull recent whale alerts. days=1 → last 24h. limit caps result size. */
 export function getWhaleAlertHistory(opts: {
   days?: number;
   symbol?: string;

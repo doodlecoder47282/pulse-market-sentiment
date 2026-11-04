@@ -1368,3 +1368,12 @@ flow this hour" only when fresh coverage spans the hour; a shorter run says "in 
 other state names itself; a failed history read says so. getFlowSnapshot().scan exposes the record.
 Tests: 7 (closed, all failed, partial, covered zero, stale, clamping, engine/headline wiring), driven
 through the engine's own reducer. Scope kept to this defect: no thresholds, panels or gamma views changed.
+Review of feat/scan-coverage (independent): 1 MUST-FIX fixed: a chain served stale after a failed Schwab
+refresh counted as a good read; scanTicker now passes the chain's stale flag, a stale read makes the cycle
+"partial" (some chains were stale) and breaks the covered run. SHOULD-FIX taken: a pause over 90 s between
+cycles breaks the run (no quiet hour claimed across a gap) and coverage resets on start/stop; copy names
+since when for closed/stale ("paused since 4:00 PM ET") instead of "no flow read this hour"; a short run
+says "in the last N min of complete scans", and a count from a short run says how much of the hour it
+covers. Left (named, separate defects): a failed alert INSERT is still invisible to the history read;
+/api/flow/history and setupEngine still turn a failed DB read into []; failing watchlist symbols are not
+named in the snapshot. Tests: 12 (5 new: stale chain, gap, 59/60 boundary, closed to open, start/stop reset).

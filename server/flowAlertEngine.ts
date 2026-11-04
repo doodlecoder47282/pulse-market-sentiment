@@ -357,7 +357,7 @@ export function isWhale(c: SchwabFlowContract, s: FlowSummary | null = null): { 
 }
 
 // ─── Per-ticker scan ──────────────────────────────────────────────────────────
-async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: string | null }> {
+async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: string | null; stale?: boolean }> {
   try {
     const flow = await buildSchwabFlow(symbol, {
       minVolOi: 2.0,
@@ -438,7 +438,8 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
       hits.push(enrichHit(baseHit, c, flow.spot ?? null));
     }
     classifyIntent(hits, flow.contracts, now);
-    return { hits, error: null };
+    // A chain served from cache after a failed refresh is a stale read, not a fresh one (coverage).
+    return { hits, error: null, stale: !!(flow as any).stale };
   } catch (e: any) {
     const msg = String(e?.message ?? e);
     console.warn(`[flowAlerts] scan ${symbol} failed: ${msg}`);
@@ -585,6 +586,7 @@ async function evalCycle(): Promise<void> {
   // throws part-way counts every unread symbol as failed.
   let asked = 0;
   let readOk = 0;
+  let readStale = 0;
   try {
     // Priority first, then watchlist — sequential is fine on Schwab (no 429 risk)
     const cfg = getFlowConfig();
@@ -597,8 +599,8 @@ async function evalCycle(): Promise<void> {
     lastCycleScanned = scanNow.length;
     asked = scanNow.length;
     for (const sym of scanNow) {
-      const { hits, error } = await scanTicker(sym);
-      if (error) cycleErrors++; else readOk++;
+      const { hits, error, stale } = await scanTicker(sym);
+      if (error) cycleErrors++; else { readOk++; if (stale) readStale++; }
       for (const h of hits) queueHit(h);
     }
     lastCycleErrors = cycleErrors;
@@ -630,13 +632,14 @@ async function evalCycle(): Promise<void> {
     lastEvalAt = Date.now();
     lastEvalDurationMs = lastEvalAt - t0;
     evalCount++;
-    scanRecord = recordCycle(scanRecord, { startedAt: t0, endedAt: lastEvalAt, asked, failed: asked - readOk });
+    scanRecord = recordCycle(scanRecord, { startedAt: t0, endedAt: lastEvalAt, asked, failed: asked - readOk, stale: readStale });
   }
 }
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 export function startFlowAlerts(): void {
   if (intervalHandle) return;
+  scanRecord = EMPTY_SCAN_RECORD;
   // Log the live runtime config, not the compile-time constants (they can differ via env).
   const cfg0 = getFlowConfig();
   console.log(
@@ -652,6 +655,7 @@ export function startFlowAlerts(): void {
 }
 
 export function stopFlowAlerts(): void {
+  scanRecord = EMPTY_SCAN_RECORD;
   if (intervalHandle) {
     clearInterval(intervalHandle);
     intervalHandle = null;
