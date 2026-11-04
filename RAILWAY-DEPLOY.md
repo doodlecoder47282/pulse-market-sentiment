@@ -4,7 +4,7 @@ This puts Batcave on Railway's infrastructure — runs 24/7, no GCP Akamai block
 
 ## What this gets you
 
-- Batcave running at a public URL like `pulse-market-sentiment-production.up.railway.app`
+- Batcave running at a public URL like `pulse-market-sentiment-pulse.up.railway.app`
 - Schwab connects from Railway's IP (not blocked)
 - Server stays up when your PC is off
 - Auto-redeploys when you push to GitHub

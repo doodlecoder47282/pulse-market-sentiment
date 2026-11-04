@@ -1276,6 +1276,53 @@ shared indexed-RPC cooldown; 20 s time box between calls; all caveats rendered; 
 than 0.01%" instead of 0%; a holding above supply is "partial", not clamped to 100%; full address shown for
 inspection; an unfetchable transaction is not described as a missing fee payer. Not verified: live RPC
 payloads and whether the public node serves full history (a pruned node would look like "reached oldest").
+
+2026-11-03: iOS: one Capacitor config again (fix/ios-live-ui). #41 added capacitor.config.ts (bundled UI,
+webDir dist/native, no server.url), which Capacitor reads in preference to capacitor.config.json (live UI
+from the server, the owner's choice in #27). The iOS workflow builds dist/public and edits the JSON, so
+`cap sync` failed ("Could not find the web assets directory: ./dist/native") and main's iOS build broke.
+Owner chose live-from-server (2026-11-03). capacitor.config.ts removed; server.url = the new Railway
+address (pulse-market-sentiment-pulse.up.railway.app); scripts/ios-preflight.mjs now asserts the live-UI
+setup and fails if a second config appears; Xcode docs updated. On the phone the AI curator and evidence
+history now behave as on the web (they were disabled only in the bundled build).
+2026-11-03: institutional navy + background styles (feat/navy-theme). Owner request. The dark theme now
+defaults to institutional navy from the owner's design canvas ("Batcave B Institutional Navy": surfaces
+#0A1324 / #0F1B33, borders #1E2C4A, text #EEF2F8 / #9FB0CC, accent #5B9BFF). Settings has a
+"Background style" picker: Navy (default), Navy glow (soft light at the top), Graphite (neutral
+blue-grey), Black (the original night desk, amber accent). Saved per device (localStorage, guarded);
+painted before the app loads by a small inline script so there is no black flash; the phone's status bar
+colour follows it; capacitor backgroundColor is navy. Only theme tokens change: hard-coded status colours
+(green/red/amber) keep their meaning. Fonts unchanged (the canvas uses IBM Plex; not adopted, to keep
+layouts stable). CI's audit is the visual check (no local build here).
+2026-10-29: record integrity, decision-time gate evidence (feat/gate-evidence). Prophecy's
+review (E1, partial) was right that the replay cannot re-check four ENTER gates because
+rows never stored them (sustained flow, Jupiter state, 1 h sells, desk risk). Every new
+signal now stores `features_json.gates` {flowPolls/flowHits/flowNeed/flowWindow, jupState,
+jupGapPct, buys1h, sells1h, deskRisk}; wouldEnterNow re-checks them when present and lists
+them as unchecked when absent, so the pass count stays an upper bound until a row carries
+the evidence. The replay readout says how many first signals carry it. Rule book version
+unchanged (2026.10.27-2); no gate or score changed; old rows are not rewritten or guessed.
+Tests: 3 new in crypto-replay.test.ts. Not done (named by the same review, each its own
+PR): ownership quality (creator/bundle/common-funding), size-specific executable quotes,
+a frozen-rule prospective ledger separate from retrospective matches. Prophecy's claim
+that the chronological split does not show rules were frozen is correct and already
+stated in the readout ("older half first").
+Review of feat/gate-evidence (independent): 1 MUST-FIX fixed (on the momentum pass the evidence was
+read after the poll was appended to hist, shifting the flow window by one and letting a WATCH row
+that the engine blocked on "flow not sustained" read as passing; now captured as the first step of
+scoreCandidate, `gatesAtScore`). SHOULD-FIX taken: an empty record no longer prints "every gate
+re-checked"; stored gates are type-validated on load (malformed counts as not recorded). The
+evidence builder lives in shared/cryptoReplay.ts (buildGateEvidence) so it is unit-tested.
+Second review of feat/gate-evidence (Prophecy, E1, diff only): 2 MUST-FIX taken. (1) Stored evidence is now
+validated on its invariants, not just types (integer non-negative counts, readings array capped at 10 with
+histLen consistent, known Jupiter and desk-risk states); anything inconsistent counts as "not recorded".
+(2) The replay no longer re-checks against a stored pass count: signals store the RAW decision-time
+acceleration readings (last 10) and the replay re-runs the CURRENT rules over them (sustainedFlow, shared
+with the engine's own ENTER gate); a window longer than the stored readings is listed unchecked, not
+guessed; a changed rule changes the answer (tested). Copy now says only that the four recorded gates were
+re-checked. Limit stated: the scoring-order guarantee is a source guard plus a behavioural test of the
+pre-push window on the shared function; the engine itself is not executed by the quant suite (it needs the
+database), so full engine parity is not demonstrated.
 2026-11-03: quick view, pass 1 (feat/quick-view). Owner goal: an app built for quick responses. Each tab
 answers first; supporting panels sit behind one "More detail" tap (QuickDetails): closed by default under
 1024 px, open on wider screens, the reader's choice remembered per section on the device. Closed sections

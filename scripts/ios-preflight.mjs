@@ -48,33 +48,35 @@ assert.ok(!info.NSAppTransportSecurity?.NSAllowsArbitraryLoads, "Unsafe ATS over
 pass("Parsed Xcode project, shared scheme, Swift sources, plist and SPM wiring");
 
 const config = json("ios/App/App/capacitor.config.json");
-assert.equal(config.webDir, "dist/native");
-assert.equal(config.server?.iosScheme, "capacitor");
-assert.equal(config.server?.hostname, "localhost");
-assert.ok(!config.server?.url, "Remote server.url must not replace bundled assets");
+// Owner's choice (2026-11-03): the app loads the terminal LIVE from the owner's
+// server (capacitor.config.json server.url), so merges reach the phone without an
+// Xcode rebuild. The bundled dist/public copy is the fallback shell only.
+assert.equal(config.webDir, "dist/public");
+assert.ok(typeof config.server?.url === "string" && /^https:\/\/[a-z0-9.-]+\.up\.railway\.app\/?$/.test(config.server.url), "server.url must be the owner's https Railway address");
+assert.ok(config.server?.cleartext !== true, "No cleartext to the live server");
+assert.ok(!existsSync("capacitor.config.ts"), "One Capacitor config only: capacitor.config.ts would silently override capacitor.config.json");
 const ids = [...pbx.matchAll(/PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/g)].map(m=>m[1].replaceAll('"',""));
-assert.ok(ids.length >= 2 && ids.every(id=>id===config.appId), "Debug/Release bundle IDs must match capacitor.config.ts");
+assert.ok(ids.length >= 2 && ids.every(id=>id===config.appId), "Debug/Release bundle IDs must match capacitor.config.json");
 pass("App ID, bundled origin and no remote server.url");
 
 const walk = dir => readdirSync(dir, {withFileTypes:true}).flatMap(e => {
   const p=path.join(dir,e.name);
   return e.isDirectory() ? walk(p) : [p];
 });
-const files = walk("dist/native");
-assert.ok(files.includes("dist/native/index.html"));
+const files = walk("dist/public");
+assert.ok(files.includes("dist/public/index.html"));
 for (const file of files) {
-  const dest = file.replace("dist/native", "ios/App/App/public");
+  const dest = file.replace("dist/public", "ios/App/App/public");
   assert.ok(existsSync(dest), `Missing synced asset: ${dest}`);
   assert.deepEqual(readFileSync(dest), readFileSync(file), `Stale synced asset: ${dest}`);
   assert.ok(!/\.(?:db|sqlite|sqlite3|pem|p12|mobileprovision|map)$/.test(file), `Unexpected bundled file: ${file}`);
 }
-const html=read("dist/native/index.html");
+const html=read("dist/public/index.html");
 for (const match of html.matchAll(/(?:src|href)="(\.?\/assets\/[^"]+)"/g)) {
-  assert.ok(existsSync(path.join("dist/native",match[1].replace(/^\.?\//,""))), `Missing entry asset ${match[1]}`);
+  assert.ok(existsSync(path.join("dist/public",match[1].replace(/^\.?\//,""))), `Missing entry asset ${match[1]}`);
 }
-assert.ok(files.some(p=>/NativeShell-.*\.js$/.test(p)), "Native shell chunk missing");
 assert.ok(html.includes("viewport-fit=cover"));
-pass(`${files.length} native build files match their synced Xcode copies`);
+pass(`${files.length} fallback-shell files match their synced Xcode copies`);
 
 const iconDir="ios/App/App/Assets.xcassets/AppIcon.appiconset";
 for (const image of json(`${iconDir}/Contents.json`).images) {
