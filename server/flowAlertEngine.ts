@@ -18,6 +18,7 @@
 //   - read-only observer over buildSchwabFlow output (Schwab chain only)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { EMPTY_SCAN_RECORD, recordClosedSkip, recordCycle, type ScanRecord } from "../shared/scanCoverage";
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 import { getFlowConfig } from "./flowConfig";
 import { loadRecentDedupKeys } from "./whalePersistence";
@@ -162,6 +163,8 @@ export interface FlowSnapshot {
   lastCycleErrors: number;
   /** Tickers the last cycle scanned (priority every 30 s, full list every 60 s). */
   lastCycleScanned: number;
+  /** What the scanner actually read (shared/scanCoverage.ts): attempts, successes, closed-market skips, covered run. */
+  scan: ScanRecord;
   pendingByTicker: Record<string, WhaleHit[]>;
   recentFired: Array<{ ticker: string; hits: number; firedAt: number }>;
   config: {
@@ -186,6 +189,7 @@ let lastEvalDurationMs = 0;
 let evalCount = 0;
 let errorCount = 0;
 let lastCycleErrors = 0;
+let scanRecord: ScanRecord = EMPTY_SCAN_RECORD;
 
 // pending hits per ticker, awaiting coalesce flush
 const pendingByTicker = new Map<string, WhaleHit[]>();
@@ -353,7 +357,7 @@ export function isWhale(c: SchwabFlowContract, s: FlowSummary | null = null): { 
 }
 
 // ─── Per-ticker scan ──────────────────────────────────────────────────────────
-async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: string | null }> {
+async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: string | null; stale?: boolean }> {
   try {
     const flow = await buildSchwabFlow(symbol, {
       minVolOi: 2.0,
@@ -434,7 +438,8 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
       hits.push(enrichHit(baseHit, c, flow.spot ?? null));
     }
     classifyIntent(hits, flow.contracts, now);
-    return { hits, error: null };
+    // A chain served from cache after a failed refresh is a stale read, not a fresh one (coverage).
+    return { hits, error: null, stale: !!(flow as any).stale };
   } catch (e: any) {
     const msg = String(e?.message ?? e);
     console.warn(`[flowAlerts] scan ${symbol} failed: ${msg}`);
@@ -573,9 +578,15 @@ async function evalCycle(): Promise<void> {
   if (!isRthNow()) {
     lastEvalAt = Date.now();
     lastEvalDurationMs = Date.now() - t0;
+    scanRecord = recordClosedSkip(scanRecord, lastEvalAt);
     return;
   }
 
+  // Coverage bookkeeping: symbols asked for and read this cycle. A cycle that
+  // throws part-way counts every unread symbol as failed.
+  let asked = 0;
+  let readOk = 0;
+  let readStale = 0;
   try {
     // Priority first, then watchlist — sequential is fine on Schwab (no 429 risk)
     const cfg = getFlowConfig();
@@ -586,9 +597,10 @@ async function evalCycle(): Promise<void> {
     const scanNow = watchlistTick % 2 === 1 ? universe : universe.filter((s) => cfg.priority.includes(s));
     let cycleErrors = 0;
     lastCycleScanned = scanNow.length;
+    asked = scanNow.length;
     for (const sym of scanNow) {
-      const { hits, error } = await scanTicker(sym);
-      if (error) cycleErrors++;
+      const { hits, error, stale } = await scanTicker(sym);
+      if (error) cycleErrors++; else { readOk++; if (stale) readStale++; }
       for (const h of hits) queueHit(h);
     }
     lastCycleErrors = cycleErrors;
@@ -620,12 +632,14 @@ async function evalCycle(): Promise<void> {
     lastEvalAt = Date.now();
     lastEvalDurationMs = lastEvalAt - t0;
     evalCount++;
+    scanRecord = recordCycle(scanRecord, { startedAt: t0, endedAt: lastEvalAt, asked, failed: asked - readOk, stale: readStale });
   }
 }
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 export function startFlowAlerts(): void {
   if (intervalHandle) return;
+  scanRecord = EMPTY_SCAN_RECORD;
   // Log the live runtime config, not the compile-time constants (they can differ via env).
   const cfg0 = getFlowConfig();
   console.log(
@@ -641,6 +655,7 @@ export function startFlowAlerts(): void {
 }
 
 export function stopFlowAlerts(): void {
+  scanRecord = EMPTY_SCAN_RECORD;
   if (intervalHandle) {
     clearInterval(intervalHandle);
     intervalHandle = null;
@@ -662,6 +677,7 @@ export function getFlowSnapshot(): FlowSnapshot {
     errorCount,
     lastCycleErrors,
     lastCycleScanned,
+    scan: { ...scanRecord },
     pendingByTicker: pending,
     recentFired: [...recentFired],
     config: ((): FlowSnapshot["config"] => {

@@ -1356,3 +1356,28 @@ with the predictor's forecast sentence; a failed headline or crypto feed shows a
 instead of an endless skeleton; an empty scanner says "no pools scanned yet"; collapsed sections are opened
 and measured by the audit on phones. Left: the 0DTE map ledger's note text; whale history DB-read failures
 still return an empty list (scanner state now covers the common case).
+
+2026-11-04: whale scan coverage (feat/scan-coverage). Signals audit item 1, confirmed by the audit and by
+Prophecy (E1): the engine stamped lastEvalAt on closed-market skips and on cycles where every chain read
+failed, so the headline's scanState read "fresh" and printed "No whale flow this hour" for a tape nobody
+read; a failed alert-history read also returned []. Now shared/scanCoverage.ts keeps what was READ: every
+cycle is recorded (in finally, so a thrown cycle counts unread symbols as failed) with symbols asked and
+failed, the last successful read, closed-market skips, and the start of the unbroken run of fully
+successful cycles. States: fresh / partial / failed / closed / stale / not_running / unknown. "No whale
+flow this hour" only when fresh coverage spans the hour; a shorter run says "in the last N min"; every
+other state names itself; a failed history read says so. getFlowSnapshot().scan exposes the record.
+Tests: 7 (closed, all failed, partial, covered zero, stale, clamping, engine/headline wiring), driven
+through the engine's own reducer. Scope kept to this defect: no thresholds, panels or gamma views changed.
+Review of feat/scan-coverage (independent): 1 MUST-FIX fixed: a chain served stale after a failed Schwab
+refresh counted as a good read; scanTicker now passes the chain's stale flag, a stale read makes the cycle
+"partial" (some chains were stale) and breaks the covered run. SHOULD-FIX taken: a pause over 90 s between
+cycles breaks the run (no quiet hour claimed across a gap) and coverage resets on start/stop; copy names
+since when for closed/stale ("paused since 4:00 PM ET") instead of "no flow read this hour"; a short run
+says "in the last N min of complete scans", and a count from a short run says how much of the hour it
+covers. Left (named, separate defects): a failed alert INSERT is still invisible to the history read;
+/api/flow/history and setupEngine still turn a failed DB read into []; failing watchlist symbols are not
+named in the snapshot. Tests: 12 (5 new: stale chain, gap, 59/60 boundary, closed to open, start/stop reset).
+Prophecy review of #46 (E1, diff): 2 fixes taken. Completed coverage now ends at the last completed cycle,
+not at `now`, so a 59-minute record cannot become "this hour" while no further cycle completes before the
+stale deadline; and under one completed minute reads "less than 1 min of complete scans" (it used to be
+rounded up to 1). Both pinned by tests.

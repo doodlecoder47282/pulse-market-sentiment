@@ -43,8 +43,8 @@ test("answer lines carry the marker the audit times", () => {
   assert.match(audit, /quick-details-toggle-/, "collapsed sections are opened and measured too");
 });
 
-test("headline answer lines: dealer levels and whale counts from what was read; missing inputs are named", async () => {
-  const { levelsLine, whaleLine } = await import("../../shared/headlineLines");
+test("headline answer lines: dealer levels from what was read; missing inputs are named", async () => {
+  const { levelsLine } = await import("../../shared/headlineLines");
   const m = { spot: 6834.4, dataState: "ok", chainStale: false, band: { atSpot: "long" }, landmarks: { wallAbove: 6850, magnetBelow: 6810, flip: 6800 } };
   assert.equal(levelsLine(m), "SPX 6,834 · wall above 6,850 · flip 6,800 · magnet below 6,810 · long gamma at spot");
   assert.equal(levelsLine({ ...m, band: { atSpot: "indeterminate" }, landmarks: { wallAbove: null, magnetBelow: null, flip: null } }), "SPX 6,834 · no wall above in band · no flip in band · no magnet below in band · gamma sign not determined");
@@ -54,24 +54,6 @@ test("headline answer lines: dealer levels and whale counts from what was read; 
   assert.match(String(levelsLine({ ...m, chainStale: true })), /chain stale$/);
   assert.match(String(levelsLine({ ...m, dataState: "stale_session" })), /session closed, last map of the day$/, "a closed session is not a stale chain");
   for (const bad of [null, undefined, { ...m, spot: 0 }, { ...m, spot: NaN }]) assert.equal(levelsLine(bad as any), null);
-  const now = 10_000_000;
-  const w = (type: string, ago: number) => ({ type, detectedAt: now - ago });
-  assert.equal(whaleLine([], now, "fresh"), "No whale flow this hour");
-  assert.equal(whaleLine([w("C", 1), w("C", 2), w("P", 3)], now, "fresh"), "3 whales this hour, calls leading 2-1");
-  assert.equal(whaleLine([w("P", 1), w("P", 2)], now, "fresh"), "2 whales this hour, puts leading 2-0");
-  assert.equal(whaleLine([w("C", 1), w("P", 2)], now, "fresh"), "2 whales this hour, mixed (1 calls / 1 puts)");
-  assert.equal(whaleLine([w("C", 61 * 60_000)], now, "fresh"), "No whale flow this hour", "older than an hour is not counted");
-  // A stopped or stale scanner is never a quiet tape.
-  assert.equal(whaleLine([], now, "not_running"), "Whale scan not running: no flow read this hour");
-  assert.equal(whaleLine([], now, "stale"), "Whale scan stale: no fresh flow read this hour");
-  assert.equal(whaleLine([], now, "unknown"), "Whale scan state unknown: no flow read this hour");
-  assert.equal(whaleLine([w("C", 1)], now, "stale"), "1 whale this hour, calls leading 1-0 (whale scan stale)");
-  const { scanState } = await import("../../shared/headlineLines");
-  assert.equal(scanState(null, now), "unknown");
-  assert.equal(scanState({ running: false, lastEvalAt: now }, now), "not_running");
-  assert.equal(scanState({ running: true, lastEvalAt: now - 4 * 60_000 }, now), "stale");
-  assert.equal(scanState({ running: true, lastEvalAt: null }, now), "stale");
-  assert.equal(scanState({ running: true, lastEvalAt: now - 30_000 }, now), "fresh");
   // The market tabs lead with the answer, not a description of the tab.
   const h = src("server/headline.ts");
   assert.doesNotMatch(h, /topLine: "0DTE SPX live Greek scanner/);

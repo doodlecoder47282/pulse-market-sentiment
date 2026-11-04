@@ -5,8 +5,9 @@
 
 import { predictTransition } from "./regimePredictor";
 import { internalJson, callInternal } from "./internalApi";
-import { getWhaleAlertHistory } from "./whalePersistence";
-import { levelsLine, whaleLine, scanState } from "../shared/headlineLines";
+import { getWhaleAlertHistoryOrNull } from "./whalePersistence";
+import { levelsLine } from "../shared/headlineLines";
+import { coverage, whaleCoverageLine } from "../shared/scanCoverage";
 
 type Tab =
   | "signals"
@@ -76,7 +77,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const needsMap = tab === "chart" || tab === "heatseeker";
   const [models, whaleHist, mapRes, flowSnap] = await Promise.all([
     safeFetch<any>(`${base}/api/regime/predict?symbol=^GSPC&horizonMinutes=20`, 2500),
-    Promise.resolve(getWhaleAlertHistory({ days: 1, limit: 200 })).catch(() => []),
+    Promise.resolve(getWhaleAlertHistoryOrNull({ days: 1, limit: 200 })).catch(() => null),
     needsMap ? callInternal<any>(`${base}/api/odte/map?symbol=${encodeURIComponent("$SPX")}`, { timeoutMs: 3000 }).catch((e: any) => ({ ok: false, status: 0, body: null, error: String(e?.message ?? e) })) : Promise.resolve(null),
     import("./flowAlertEngine").then((m) => m.getFlowSnapshot()).catch(() => null),
   ]);
@@ -101,7 +102,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
     : "Regime unknown until Schwab gamma and VIX term data arrive.";
 
   // Whale flow last hour: quick directional count (shared/headlineLines.ts)
-  const whaleSummary = whaleLine(whaleHist as any[], Date.now(), scanState(flowSnap as any, Date.now()));
+  const whaleSummary = whaleCoverageLine(whaleHist as any[] | null, Date.now(), coverage((flowSnap as any)?.scan, (flowSnap as any)?.running ?? null, Date.now()));
 
   // Per-tab synthesis
   switch (tab) {
