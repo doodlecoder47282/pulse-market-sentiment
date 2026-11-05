@@ -1381,3 +1381,24 @@ Prophecy review of #46 (E1, diff): 2 fixes taken. Completed coverage now ends at
 not at `now`, so a 59-minute record cannot become "this hour" while no further cycle completes before the
 stale deadline; and under one completed minute reads "less than 1 min of complete scans" (it used to be
 rounded up to 1). Both pinned by tests.
+
+2026-11-05: macro strip request efficiency (feat/macro-request-efficiency). Evidence (owner-run, live, 2026-11-05
+~01:00 ET): Settings self-test "Rate budget: 109/100 req/min" with quotes, chains and gamma levels failing on
+"self-throttle (100 requests/min)"; /api/schwab/diag in one minute: 75 admitted requests, 34 of them
+"pricehistory <17 symbols> <- api /macro" (2 each). Cause in code: server/macro.ts fetchOne read 5-minute
+intraday bars AND a month of daily bars for every Schwab-covered symbol on every build. Now
+server/macroCore.ts (pure, injected deps): one batched quote request per build for the 17 symbols derived
+from UNIVERSE; daily history only when a completed session is missing (session change, late vendor bar
+retried every 10 min, 6 h max age for corrections, explicit invalidateMacroHistory), failed reads back off
+2 min, history reads bounded to 6 at once, concurrent builds share one in-flight build (cleared on success
+and failure). Price meaning kept: last regular-session trade (regularMarketLastPrice; the old bars were
+regular-hours only; an after-hours print is never shown), prior close through dayChange.resolvePrevClose
+with the same quote fields plus completed daily bars; today's forming bar is never stored. A missing quote
+shows the last completed close labelled "close" with that session's date and time; nothing is dropped from
+the strip (unavailable rows stay listed, coverage counts on the payload). Commodity labels name the ETF
+("Oil (USO)"). Tape label says "Closed" outside the regular session instead of "Live". Demo quotes carry
+regularMarketLastPrice. Tests: tests/quant/macro-request-efficiency.test.ts (14; request counts cold/warm/
+concurrent, failed shared build, partial batch, quote failure with cached history, forming bar, session
+transition and late bar, backoff, invalidation, rolled close, extended hours, weekend/pre-market/holiday/
+early close, stale quote, crypto/FX untouched). Not verified live: savings on Railway (expected about 34
+fewer requests per overnight build); the headline chain reads and the flow requests are separate next items.

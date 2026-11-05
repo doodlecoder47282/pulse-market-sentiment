@@ -23,10 +23,19 @@ type MacroQuote = {
   change: number | null;
   changePct: number | null;
   spark: number[];
+  /** Where the price comes from (server/macroCore.ts). Optional: older servers omit it. */
+  basis?: "regular_session_last" | "last_daily_close" | "public_fallback" | "unavailable";
+  dataState?: "ok" | "partial" | "unavailable";
+  reason?: string | null;
+  priceAsOfMs?: number | null;
+  priceSessionDate?: string | null;
+  stale?: boolean;
 };
 
 type MacroResponse = {
   asOf: number;
+  sessionOpen?: boolean;
+  coverage?: { total: number; ok: number; partial: number; unavailable: number };
   groups: { category: MacroCategory; label: string; quotes: MacroQuote[] }[];
   tape: MacroQuote[];
 };
@@ -98,6 +107,17 @@ function Sparkline({ data, positive }: { data: number[]; positive: boolean | nul
   );
 }
 
+/** Tooltip: what the row's price is and what is missing. */
+function rowTitle(q: MacroQuote): string {
+  const parts: string[] = [q.symbol];
+  if (q.basis === "last_daily_close") parts.push(`last close of ${q.priceSessionDate ?? "the last completed session"}, not a current price`);
+  else if (q.basis === "regular_session_last") parts.push("last regular-session trade");
+  else if (q.basis === "public_fallback") parts.push("public source");
+  if (q.stale) parts.push("stale");
+  if (q.reason) parts.push(q.reason);
+  return parts.join(" · ");
+}
+
 // -------- Quote pill --------
 
 function QuotePill({ q, compact = false }: { q: MacroQuote; compact?: boolean }) {
@@ -109,12 +129,15 @@ function QuotePill({ q, compact = false }: { q: MacroQuote; compact?: boolean })
 
   return (
     <div
-      className={`flex items-center gap-2 whitespace-nowrap ${compact ? "text-xs" : "text-sm"}`}
+      className={`flex items-center gap-2 whitespace-nowrap ${compact ? "text-xs" : "text-sm"} ${q.dataState === "unavailable" ? "opacity-60" : ""}`}
       data-testid={`ticker-${q.symbol}`}
+      data-basis={q.basis ?? ""}
+      title={rowTitle(q)}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} aria-hidden />
       <span className="font-semibold tracking-tight">{q.label}</span>
       <span className="font-mono tabular-nums">{formatPrice(q)}</span>
+      {q.basis === "last_daily_close" && <span className="text-[10px] uppercase text-muted-foreground">close</span>}
       <span className={`flex items-center gap-0.5 font-mono tabular-nums ${color}`}>
         <Icon className="h-3 w-3" />
         {q.changePct != null ? `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(2)}%` : "—"}
@@ -139,6 +162,9 @@ export function MacroTicker() {
 
   // Duplicate the list so the CSS marquee animation loops seamlessly.
   const items = [...data.tape, ...data.tape];
+  // "Live" only while the regular session is open; otherwise the tape shows
+  // the last session's prices and says so. Older servers omit sessionOpen.
+  const live = data.sessionOpen !== false;
 
   return (
     <div
@@ -150,6 +176,11 @@ export function MacroTicker() {
         <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-indigo-400/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label">
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-indigo-300" />
           <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-200">Sample</span>
+        </div>
+      ) : !live ? (
+        <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label" title="Regular session closed: last session's prices">
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Closed</span>
         </div>
       ) : (
         <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-emerald-500/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label">
@@ -246,8 +277,8 @@ export function MacroCarousel() {
         </div>
         <div className="hidden shrink-0 text-right text-[11px] uppercase leading-tight tracking-wider text-muted-foreground sm:block">
           Auto-rotating
-          <div className="font-mono normal-case tracking-normal">
-            {new Date(data.asOf * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          <div className="font-mono normal-case tracking-normal" title="When this snapshot was built. Each price carries its own time (hover a row).">
+            built {new Date(data.asOf * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </div>
         </div>
       </div>
@@ -268,6 +299,8 @@ export function MacroCarousel() {
               key={q.symbol}
               className={`group flex flex-col gap-1 rounded-lg border border-border/40 bg-gradient-to-br ${bgTint} px-3 py-2 transition hover:border-border`}
               data-testid={`carousel-quote-${q.symbol}`}
+              data-basis={q.basis ?? ""}
+              title={rowTitle(q)}
             >
               {/* Row 1: ticker symbol (lead) + % change */}
               <div className="flex items-center justify-between gap-2">
@@ -282,6 +315,8 @@ export function MacroCarousel() {
               <div className="flex items-center justify-between gap-2">
                 <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
                   {formatPrice(q)}
+                  {q.basis === "last_daily_close" && <span className="ml-1 text-[10px] uppercase">close</span>}
+                  {q.dataState === "unavailable" && <span className="ml-1 text-[10px]">unavailable</span>}
                 </div>
                 <Sparkline data={q.spark} positive={up} />
               </div>

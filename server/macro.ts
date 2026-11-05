@@ -1,13 +1,15 @@
 // server/macro.ts
-// Macro carousel — categorized cross-asset quotes for the top-of-page ticker tape
-// + rotating carousel. Pulls via Schwab API (through quotes.ts wrappers).
-//
-// Categories: Equities / Bonds / Credit / Commods / FX / Crypto
-// All quotes show last price, day change, day change%, plus a small 1M sparkline
-// so the carousel feels alive.
+// Macro carousel: categorized cross-asset quotes for the top-of-page ticker
+// tape + rotating carousel. Collection, caching and price meaning live in
+// server/macroCore.ts (pure, unit-tested); this file wires it to Schwab (one
+// batched quote request per build, daily history only when a completed
+// session is missing) and to the public crypto/FX fallbacks below.
 
-import { fetchIntraday, fetchDailyCloses } from "./quotes";
-import { prevCloseFromDailyBars, dailyBarSessionDate, dayChange } from "./dayChange";
+import { getQuotes, getPriceHistory } from "./schwab";
+import { toSchwabSymbol } from "./schwabSymbols";
+import { createMacroBuilder, type MacroResponse, type TickerDef, type DailyBarsIn } from "./macroCore";
+
+export type { MacroCategory, MacroQuote, MacroResponse } from "./macroCore";
 
 // --------- External fallbacks (Schwab can't quote crypto or =X FX pairs) ---------
 // CoinGecko (free, no key) for crypto. Frankfurter (ECB, free, no key) for FX.
@@ -139,180 +141,40 @@ async function fetchFxFallback(symbol: string): Promise<{ price: number | null; 
   return { price, prevClose, spark };
 }
 
-
-
-export type MacroCategory =
-  | "equities"
-  | "bonds"
-  | "credit"
-  | "commods"
-  | "fx"
-  | "crypto";
-
-export type MacroQuote = {
-  category: MacroCategory;
-  symbol: string;      // raw symbol we query (e.g. "EURUSD=X")
-  display: string;     // pretty display name
-  label: string;       // short ticker used in UI (e.g. "EUR/USD")
-  price: number | null;
-  prevClose: number | null;
-  change: number | null;
-  changePct: number | null;
-  /** Last ~22 daily closes for sparkline. */
-  spark: number[];
-};
-
-export type MacroResponse = {
-  asOf: number; // epoch seconds
-  groups: {
-    category: MacroCategory;
-    label: string;
-    quotes: MacroQuote[];
-  }[];
-  /** Flat list for ticker tape (in display order). */
-  tape: MacroQuote[];
-};
-
-// ----- Universe -----
-
-type TickerDef = {
-  symbol: string;
-  label: string;
-  category: MacroCategory;
-};
-
-const UNIVERSE: TickerDef[] = [
-  // Equities — index ETFs
-  { symbol: "SPY", label: "SPY", category: "equities" },
-  { symbol: "QQQ", label: "QQQ", category: "equities" },
-  { symbol: "IWM", label: "IWM", category: "equities" },
-  { symbol: "DIA", label: "DIA", category: "equities" },
-
-  // Bonds — duration ladder
-  { symbol: "SHY", label: "SHY 1-3Y", category: "bonds" },
-  { symbol: "IEF", label: "IEF 7-10Y", category: "bonds" },
-  { symbol: "TLT", label: "TLT 20+Y", category: "bonds" },
-
-  // Credit
-  { symbol: "HYG", label: "HYG HY", category: "credit" },
-  { symbol: "LQD", label: "LQD IG", category: "credit" },
-  { symbol: "JNK", label: "JNK HY", category: "credit" },
-
-  // Commodities
-  { symbol: "USO", label: "Oil", category: "commods" },
-  { symbol: "UNG", label: "NatGas", category: "commods" },
-  { symbol: "GLD", label: "Gold", category: "commods" },
-  { symbol: "SLV", label: "Silver", category: "commods" },
-  { symbol: "CPER", label: "Copper", category: "commods" },
-  { symbol: "CORN", label: "Corn", category: "commods" },
-  { symbol: "WEAT", label: "Wheat", category: "commods" },
-
-  // FX
-  { symbol: "DX-Y.NYB", label: "DXY", category: "fx" },
-  { symbol: "EURUSD=X", label: "EUR/USD", category: "fx" },
-  { symbol: "USDJPY=X", label: "USD/JPY", category: "fx" },
-  { symbol: "GBPUSD=X", label: "GBP/USD", category: "fx" },
-
-  // Crypto
-  { symbol: "BTC-USD", label: "BTC", category: "crypto" },
-  { symbol: "ETH-USD", label: "ETH", category: "crypto" },
-];
-
-const CATEGORY_LABELS: Record<MacroCategory, string> = {
-  equities: "Equities",
-  bonds: "Bonds",
-  credit: "Credit",
-  commods: "Commodities",
-  fx: "FX",
-  crypto: "Crypto",
-};
-
-const CATEGORY_ORDER: MacroCategory[] = [
-  "equities",
-  "bonds",
-  "credit",
-  "commods",
-  "fx",
-  "crypto",
-];
-
-async function fetchOne(def: TickerDef): Promise<MacroQuote | null> {
-  try {
-    // Intraday for latest price + daily closes for sparkline.
-    // Schwab cannot quote crypto or Yahoo-style FX symbols (=X, -USD, .NYB):
-    // asking anyway failed every refresh, was never cached, and spent the shared
-    // request budget. Those go straight to their public fallbacks below.
-    const schwabCovers = def.category !== "crypto" && def.category !== "fx";
-    const [intra, daily] = schwabCovers
-      ? await Promise.all([
-          fetchIntraday(def.symbol, "1d", "5m").catch(() => null),
-          fetchDailyCloses(def.symbol, 30).catch(() => []),
-        ])
-      : [null, [] as Awaited<ReturnType<typeof fetchDailyCloses>>];
-    let spark: number[] = (daily || []).map((d) => d.c).filter((c) => c != null && isFinite(c));
-    // Day change vs the prior session close (server/dayChange.ts). Without an
-    // intraday series, use the latest daily bar and the daily bar dated before it.
-    let price: number | null = intra?.price ?? null;
-    let prevClose: number | null = intra?.price != null ? intra.prevClose : null;
-    if (price == null && daily && daily.length) {
-      const lastBar = daily[daily.length - 1];
-      price = lastBar.c;
-      prevClose = prevCloseFromDailyBars(daily, dailyBarSessionDate(lastBar.t))?.close ?? null;
-    }
-
-    // Schwab can't quote crypto or =X FX pairs — fall back to public endpoints.
-    if ((price == null || spark.length < 2) && def.category === "crypto") {
-      const fb = await fetchCryptoFallback(def.symbol);
-      if (fb) {
-        price = fb.price;
-        prevClose = fb.prevClose;
-        spark = fb.spark;
-      }
-    } else if ((price == null || spark.length < 2) && def.category === "fx") {
-      const fb = await fetchFxFallback(def.symbol);
-      if (fb) {
-        price = fb.price;
-        prevClose = fb.prevClose;
-        spark = fb.spark;
-      }
-    }
-
-    if (price == null) return null;
-    const { change, changePct } = dayChange(price, prevClose);
-    return {
-      category: def.category,
-      symbol: def.symbol,
-      display: intra?.displayName || def.label,
-      label: def.label,
-      price,
-      prevClose,
-      change,
-      changePct,
-      spark: spark.slice(-22),
-    };
-  } catch {
-    return null;
-  }
+async function schwabDailyBars(symbol: string): Promise<DailyBarsIn> {
+  // ~1 month of daily bars (the same request quotes.fetchDailyCloses made).
+  const r = await getPriceHistory(toSchwabSymbol(symbol), "month", 1, "daily", 1);
+  return {
+    bars: r.candles.map((c) => ({ t: Math.floor(c.datetime / 1000), c: c.close })),
+    dataState: r.dataState ?? (r.candles.length ? "ok" : "unavailable"),
+    reason: r.reason ?? null,
+  };
 }
 
-export async function buildMacroSnapshot(): Promise<MacroResponse> {
-  // Fire everything in parallel.
-  const results = await Promise.all(UNIVERSE.map(fetchOne));
-  const quotes = results.filter((q): q is MacroQuote => q != null);
+async function publicFallback(def: TickerDef) {
+  return def.category === "crypto" ? fetchCryptoFallback(def.symbol)
+    : def.category === "fx" ? fetchFxFallback(def.symbol)
+    : null;
+}
 
-  const groups = CATEGORY_ORDER.map((cat) => ({
-    category: cat,
-    label: CATEGORY_LABELS[cat],
-    quotes: quotes.filter((q) => q.category === cat),
-  })).filter((g) => g.quotes.length > 0);
+const builder = createMacroBuilder({
+  now: () => Date.now(),
+  // Batched: one /quotes request carries every Schwab-covered symbol.
+  getQuotes: async (symbols) => (await getQuotes(symbols.map(toSchwabSymbol))).map((q) => ({
+    ...q,
+    // getQuotes returns the caller's symbol; map back if toSchwabSymbol changed it.
+    symbol: symbols.find((s) => toSchwabSymbol(s) === q.symbol) ?? q.symbol,
+  })),
+  getDailyBars: schwabDailyBars,
+  getFallback: publicFallback,
+});
 
-  // Tape order: equities, crypto, fx, commods, bonds, credit — high-velocity first
-  const tapeOrder: MacroCategory[] = ["equities", "crypto", "fx", "commods", "bonds", "credit"];
-  const tape = tapeOrder.flatMap((cat) => quotes.filter((q) => q.category === cat));
+/** One snapshot; concurrent callers share one build (server/macroCore.ts). */
+export function buildMacroSnapshot(): Promise<MacroResponse> {
+  return builder.build();
+}
 
-  return {
-    asOf: Math.floor(Date.now() / 1000),
-    groups,
-    tape,
-  };
+/** Drop cached daily history (all symbols, or one): the next build re-reads it. */
+export function invalidateMacroHistory(symbol?: string): void {
+  builder.invalidateHistory(symbol);
 }

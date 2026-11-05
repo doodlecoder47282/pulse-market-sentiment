@@ -437,6 +437,8 @@ export function demoQuote(sym: string, t: number): any | null {
     netPercentChange: pct,
     openPrice: round(ohlc.open),
     quoteTime,
+    // No extended hours in the sample market: the last regular-session trade is the last price.
+    regularMarketLastPrice: round(last),
     securityStatus: "Normal",
     totalVolume: volume,
     tradeTime: quoteTime,
