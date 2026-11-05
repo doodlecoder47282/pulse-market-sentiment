@@ -665,7 +665,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const macroCacheMs = () => (isRegularSessionOpen() ? 15_000 : 5 * 60_000);
   app.get("/api/macro", async (_req, res) => {
     try {
-      if (macroCache && Date.now() - macroCache.at < macroCacheMs()) {
+      // A snapshot built on the other side of the open or close is rebuilt:
+      // its session state (and the tape's Live/closed label) would be wrong.
+      if (macroCache && Date.now() - macroCache.at < macroCacheMs()
+          && (macroCache.data.sessionOpen === undefined || macroCache.data.sessionOpen === isRegularSessionOpen())) {
         return res.json(macroCache.data);
       }
       const data = await buildMacroSnapshot();

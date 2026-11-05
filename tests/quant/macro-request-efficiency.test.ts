@@ -5,9 +5,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  createMacroBuilder, SCHWAB_SYMBOLS, UNIVERSE, INCOMPLETE_RETRY_MS, FAIL_BACKOFF_MS, HISTORY_MAX_AGE_MS,
+  createMacroBuilder, toQuoteIn, SCHWAB_SYMBOLS, UNIVERSE, INCOMPLETE_RETRY_MS, FAIL_BACKOFF_MS, HISTORY_MAX_AGE_MS, SETTLE_MS,
   type MacroDeps, type QuoteIn, type DailyBarsIn, type MacroQuote,
 } from "../../server/macroCore.ts";
+import { regularFields } from "../../server/schwabQuoteFields.ts";
 
 // November 2026 is EST (UTC-5). Wed 2026-11-04 is a regular session;
 // Thu 11-26 Thanksgiving (closed); Fri 11-27 closes at 13:00 ET.
@@ -20,7 +21,9 @@ const bar = (date: string, c: number) => {
   const [y, m, d] = date.split("-").map(Number);
   return { t: Date.UTC(y, m - 1, d, 6) / 1000, c };
 };
-const SESSIONS = ["2026-10-28", "2026-10-29", "2026-10-30", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"];
+const SESSIONS = ["2026-10-28", "2026-10-29", "2026-10-30", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06",
+  "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19",
+  "2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25", "2026-11-27"];
 /** Close for a symbol on a session: distinct per day so a wrong session shows. */
 const closeOf = (sym: string, date: string) => 100 + SESSIONS.indexOf(date) + (sym.charCodeAt(0) % 7) / 10;
 
@@ -58,11 +61,11 @@ function harness(start: number, quoteFn?: (syms: string[], now: number) => Quote
   return h;
 }
 
-/** Quote during or after Wed 11-04: closePrice = Tue's close (not rolled), regular last = 200. */
+/** REST quote on Wed 11-04: closePrice = Tue's close (not rolled), regular last = 200 traded at 15:59 ET. */
 function defaultQuotes(syms: string[]): QuoteIn[] {
   return syms.map((s) => ({
     symbol: s, last: 200, change: 200 - closeOf(s, "2026-11-03"), prevClose: closeOf(s, "2026-11-03"),
-    regularMarketLast: 200, quoteTimeMs: et("2026-11-04", 15, 59), fetchedAtMs: null, stale: false,
+    regularMarketLast: 200, regularMarketTradeTimeMs: et("2026-11-04", 10, 59), quoteTimeMs: et("2026-11-04", 10, 59), fetchedAtMs: null, stale: false,
   }));
 }
 const totalDaily = (h: Harness) => Array.from(h.dailyCalls.values()).reduce((a, b) => a + b, 0);
@@ -115,15 +118,16 @@ test("macro: concurrent builds share one build; a failed build does not poison t
 });
 
 test("macro: a symbol missing from the batch shows its last close, labelled; with no history it stays listed as unavailable", async () => {
-  const h = harness(et("2026-11-04", 23, 30), (syms) => defaultQuotes(syms).filter((q) => q.symbol !== "GLD" && q.symbol !== "WEAT"));
+  const h = harness(et("2026-11-04", 11, 0), (syms) => defaultQuotes(syms).filter((q) => q.symbol !== "GLD" && q.symbol !== "WEAT"));
   h.dailyFail.add("WEAT");
   const r = await createMacroBuilder(h.deps).build();
   const gld = row(r, "GLD");
-  assert.equal(gld.basis, "last_daily_close");
+  assert.equal(gld.basis, "last_daily_close", "mid-session, a missing quote is never shown as today's price");
   assert.equal(gld.dataState, "partial");
-  assert.equal(gld.price, closeOf("GLD", "2026-11-04"));
-  assert.equal(gld.priceSessionDate, "2026-11-04");
-  assert.match(gld.reason ?? "", /quote unavailable/);
+  assert.equal(gld.price, closeOf("GLD", "2026-11-03"));
+  assert.equal(gld.priceSessionDate, "2026-11-03");
+  assert.equal(gld.priceAsOfMs, et("2026-11-03", 16));
+  assert.match(gld.reason ?? "", /quote unavailable: showing the 2026-11-03 close/);
   const weat = row(r, "WEAT");
   assert.equal(weat.dataState, "unavailable");
   assert.equal(weat.price, null);
@@ -135,6 +139,7 @@ test("macro: a symbol missing from the batch shows its last close, labelled; wit
 });
 
 test("macro: quote failure with cached history keeps the close's own age, never the build time", async () => {
+  // After the close: the session's own daily bar is the regular-session close (what the old bars ended on).
   const h = harness(et("2026-11-04", 23, 30));
   const b = createMacroBuilder(h.deps);
   await b.build();
@@ -142,14 +147,24 @@ test("macro: quote failure with cached history keeps the close's own age, never 
   h.clock.t += 60_000;
   const r = await b.build();
   for (const q of r.tape.filter((x) => SCHWAB_SYMBOLS.includes(x.symbol))) {
-    assert.equal(q.basis, "last_daily_close", q.symbol);
+    assert.equal(q.basis, "session_close", q.symbol);
+    assert.equal(q.price, closeOf(q.symbol, "2026-11-04"));
     assert.equal(q.priceAsOfMs, et("2026-11-04", 16), `${q.symbol}: dated at that session's close`);
     assert.notEqual(q.priceAsOfMs, h.clock.t);
-    // Prior close for a 11-04 price is the 11-03 bar.
     assert.equal(q.prevClose, closeOf(q.symbol, "2026-11-03"));
     assert.equal(q.prevCloseSource, "daily_bar");
+    assert.equal(q.dataState, "ok");
   }
   assert.equal(totalDaily(h), 17, "no history re-read on a quote failure");
+
+  // During the session the same failure is a labelled substitute.
+  const h2 = harness(et("2026-11-05", 11, 0));
+  const b2 = createMacroBuilder(h2.deps);
+  h2.quotes = () => [];
+  const spy = row(await b2.build(), "SPY");
+  assert.equal(spy.basis, "last_daily_close");
+  assert.equal(spy.dataState, "partial");
+  assert.equal(spy.priceAsOfMs, et("2026-11-04", 16));
 });
 
 test("macro: during the session the forming daily bar is never stored; prior close and change are the quote's", async () => {
@@ -171,30 +186,53 @@ test("macro: during the session the forming daily bar is never stored; prior clo
   assert.equal(spy.dataState, "ok");
 });
 
-test("macro: session close re-reads history once; a late vendor bar is retried every 10 min, not every poll", async () => {
+test("macro: session close re-reads history once, settles the closing bar, retries a late bar every 10 min, never per poll", async () => {
   const h = harness(et("2026-11-04", 15, 50));
   const b = createMacroBuilder(h.deps);
   await b.build();
-  assert.equal(totalDaily(h), 17);
+  assert.equal(totalDaily(h), 17, "cold start");
   h.barsUpTo.date = "2026-11-03"; // Schwab has not posted 11-04 yet
   h.clock.t = et("2026-11-04", 16, 1);
   await b.build();
-  assert.equal(totalDaily(h), 34, "session completed: one re-read per symbol");
+  await b.settle();
+  assert.equal(totalDaily(h), 34, "session completed: one re-read per symbol (in the background)");
   h.clock.t = et("2026-11-04", 16, 5);
-  await b.build();
+  await b.build(); await b.settle();
   assert.equal(totalDaily(h), 34, "incomplete copy is not re-read on every poll");
   const kept = row(await b.build(), "SPY");
-  assert.match(kept.reason ?? "", /11-04 daily bar was not posted yet/);
+  assert.equal(kept.basis, "regular_session_last", "the quote still carries the regular close");
   h.barsUpTo.date = "2026-11-04";
   h.clock.t = et("2026-11-04", 16, 1) + INCOMPLETE_RETRY_MS;
-  await b.build();
+  await b.build(); await b.settle();
   assert.equal(totalDaily(h), 51, "retried after the interval");
+  h.clock.t = et("2026-11-04", 16, 1) + 2 * INCOMPLETE_RETRY_MS;
+  assert.ok(h.clock.t >= et("2026-11-04", 16) + SETTLE_MS);
+  await b.build(); await b.settle();
+  assert.equal(totalDaily(h), 68, "the bar read inside the settle window is read once more");
   h.clock.t += 60_000;
+  await b.build(); await b.settle();
+  assert.equal(totalDaily(h), 68, "settled and complete: no further reads");
+  h.clock.t = et("2026-11-04", 16, 21) + HISTORY_MAX_AGE_MS;
+  await b.build(); await b.settle();
+  assert.equal(totalDaily(h), 85, "a complete copy is still refreshed after the maximum age (vendor corrections)");
+});
+
+test("macro: a kept copy answers at once while it refreshes in the background", async () => {
+  const h = harness(et("2026-11-04", 23, 30));
+  const b = createMacroBuilder(h.deps);
   await b.build();
-  assert.equal(totalDaily(h), 51, "complete now: no further reads");
-  h.clock.t = et("2026-11-04", 16, 11) + HISTORY_MAX_AGE_MS;
-  await b.build();
-  assert.equal(totalDaily(h), 68, "a complete copy is still refreshed after the maximum age (vendor corrections)");
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const inner = h.deps.getDailyBars;
+  h.deps.getDailyBars = async (sym) => { await gate; return inner(sym); };
+  h.clock.t += HISTORY_MAX_AGE_MS;
+  const before = totalDaily(h);
+  const r = await b.build(); // must not wait for the gated reads
+  assert.equal(r.coverage.unavailable, 0);
+  assert.equal(row(r, "SPY").price, 200);
+  release();
+  await b.settle();
+  assert.equal(totalDaily(h), before + 17, "the background refresh ran once per symbol");
 });
 
 test("macro: a failed history read backs off instead of retrying on each poll", async () => {
@@ -215,7 +253,7 @@ test("macro: a failed history read backs off instead of retrying on each poll", 
 });
 
 test("macro: invalidateHistory forces one re-read", async () => {
-  const h = harness(et("2026-11-04", 23, 30));
+  const h = harness(et("2026-11-05", 1, 30));
   const b = createMacroBuilder(h.deps);
   await b.build();
   b.invalidateHistory("TLT");
@@ -231,7 +269,7 @@ test("macro: after the close a rolled quote close is caught by the daily bars (n
   // Schwab rolled closePrice to TODAY's close: last - closePrice would read ~0.
   const h = harness(et("2026-11-04", 23, 30), (syms) => syms.map((s) => ({
     symbol: s, last: closeOf(s, "2026-11-04"), change: 0, prevClose: closeOf(s, "2026-11-04"),
-    regularMarketLast: closeOf(s, "2026-11-04"), quoteTimeMs: et("2026-11-04", 16), fetchedAtMs: null, stale: false,
+    regularMarketLast: closeOf(s, "2026-11-04"), regularMarketTradeTimeMs: et("2026-11-04", 15, 59), quoteTimeMs: et("2026-11-04", 16), fetchedAtMs: null, stale: false,
   })));
   const spy = row(await createMacroBuilder(h.deps).build(), "SPY");
   assert.equal(spy.prevClose, closeOf("SPY", "2026-11-03"));
@@ -253,8 +291,60 @@ test("macro: after the close an extended-hours print is not shown as the regular
     regularMarketLast: null, quoteTimeMs: et("2026-11-04", 18, 59), fetchedAtMs: null, stale: false,
   })));
   const spy = row(await createMacroBuilder(h2.deps).build(), "SPY");
-  assert.equal(spy.basis, "last_daily_close", "no regular-session price after hours: the close, labelled");
+  assert.equal(spy.basis, "session_close", "no quoted regular price after hours: that session's own daily close");
   assert.equal(spy.price, closeOf("SPY", "2026-11-04"));
+  assert.equal(spy.priceAsOfMs, et("2026-11-04", 16), "dated at the close, not at the 18:59 quote");
+  assert.equal(spy.dataState, "ok");
+
+  // Same, but the 11-04 bar is not posted yet: the 11-03 close is a labelled substitute, not today's price.
+  const h3 = harness(et("2026-11-04", 16, 30), (syms) => syms.map((s) => ({
+    symbol: s, last: 205, change: 5, prevClose: closeOf(s, "2026-11-03"),
+    regularMarketLast: null, quoteTimeMs: et("2026-11-04", 16, 29), fetchedAtMs: null, stale: false,
+  })));
+  h3.barsUpTo.date = "2026-11-03";
+  const late = row(await createMacroBuilder(h3.deps).build(), "SPY");
+  assert.equal(late.basis, "last_daily_close");
+  assert.equal(late.dataState, "partial");
+  assert.equal(late.priceSessionDate, "2026-11-03");
+  assert.match(late.reason ?? "", /showing the 2026-11-03 close/);
+});
+
+test("macro: REST dates the price by its regular-session trade time (09:30 boundary, thin ETFs)", async () => {
+  // Thu 09:45, open; WEAT has not traded today: its regular last is Wednesday's 15:58 trade.
+  const h = harness(et("2026-11-05", 9, 45), (syms) => syms.map((s) => s === "WEAT"
+    ? { symbol: s, last: 4.9, change: 0, prevClose: closeOf(s, "2026-11-04"), regularMarketLast: closeOf(s, "2026-11-04"),
+        regularMarketTradeTimeMs: et("2026-11-04", 15, 58), quoteTimeMs: et("2026-11-05", 9, 44), fetchedAtMs: null, stale: false }
+    : { symbol: s, last: 210, change: 1, prevClose: closeOf(s, "2026-11-04"), regularMarketLast: 210,
+        regularMarketTradeTimeMs: et("2026-11-05", 9, 44), quoteTimeMs: et("2026-11-05", 9, 44), fetchedAtMs: null, stale: false }));
+  const r = await createMacroBuilder(h.deps).build();
+  const weat = row(r, "WEAT");
+  assert.equal(weat.price, closeOf("WEAT", "2026-11-04"), "not the 4.90 pre-market print");
+  assert.equal(weat.priceSessionDate, "2026-11-04");
+  assert.equal(weat.prevClose, closeOf("WEAT", "2026-11-03"), "compared with the session before it, not shown as 0.00% today");
+  assert.equal(weat.dataState, "partial");
+  assert.match(weat.reason ?? "", /no regular-session trade yet today/);
+  const spy = row(r, "SPY");
+  assert.equal(spy.priceSessionDate, "2026-11-05");
+  assert.equal(spy.priceAsOfMs, et("2026-11-05", 9, 44));
+  assert.equal(spy.prevClose, closeOf("SPY", "2026-11-04"));
+  assert.equal(spy.dataState, "ok");
+});
+
+test("macro: Schwab's REST quote shape: the regular-session last trade is read from `regular`", () => {
+  const rest = { quote: { lastPrice: 205, closePrice: 199, quoteTime: 2 }, regular: { regularMarketLastPrice: 200, regularMarketTradeTime: 1762290000000 } };
+  assert.deepEqual(regularFields(rest), { regularMarketLast: 200, regularMarketTradeTimeMs: 1762290000000 });
+  assert.deepEqual(regularFields({ quote: { lastPrice: 205 } }), { regularMarketLast: null, regularMarketTradeTimeMs: null }, "absent stays null, never lastPrice");
+  assert.deepEqual(regularFields({ quote: { regularMarketLastPrice: 201 } }).regularMarketLast, 201, "a payload carrying it in quote still reads");
+  assert.deepEqual(regularFields({ regular: { regularMarketLastPrice: 0 } }).regularMarketLast, null, "0 is not a price");
+  assert.deepEqual(regularFields(null), { regularMarketLast: null, regularMarketTradeTimeMs: null });
+});
+
+test("macro: the server wrapper's quote mapping keeps the asked symbol and turns a null stale flag into false", () => {
+  const q = toQuoteIn({ symbol: "GLD", last: 1, change: null, stale: null, regularMarketLast: 2, regularMarketTradeTimeMs: 3 }, "GLD");
+  assert.equal(q.stale, false);
+  assert.equal(q.symbol, "GLD");
+  assert.equal(q.regularMarketTradeTimeMs, 3);
+  assert.equal(toQuoteIn({ symbol: "X", last: null, change: null, stale: true }, "X").stale, true);
 });
 
 test("macro: weekend, pre-market, holiday and early close date the price and prior close correctly", async () => {
@@ -280,19 +370,39 @@ test("macro: weekend, pre-market, holiday and early close date the price and pri
   assert.equal(p.prevClose, closeOf("SPY", "2026-11-03"));
 
   // Thanksgiving noon: no session today; Wednesday 11-25 is the last started session.
-  const hol = harness(et("2026-11-26", 12, 0));
+  const hol = harness(et("2026-11-26", 12, 0), (syms) => syms.map((x) => ({
+    symbol: x, last: closeOf(x, "2026-11-25"), change: 0, prevClose: closeOf(x, "2026-11-25"),
+    regularMarketLast: closeOf(x, "2026-11-25"), regularMarketTradeTimeMs: et("2026-11-25", 15, 59), quoteTimeMs: et("2026-11-25", 16), fetchedAtMs: null, stale: false,
+  })));
+  hol.barsUpTo.date = "2026-11-25";
   const r = await createMacroBuilder(hol.deps).build();
   assert.equal(r.sessionOpen, false);
-  assert.equal(row(r, "SPY").priceSessionDate, "2026-11-25");
+  const hs = row(r, "SPY");
+  assert.equal(hs.priceSessionDate, "2026-11-25");
+  assert.equal(hs.prevClose, closeOf("SPY", "2026-11-24"), "holiday: Wednesday vs Tuesday");
+  assert.equal(hs.dataState, "ok");
 
-  // Friday 11-27 at 14:00 ET: the 13:00 early close has passed.
-  const early = harness(et("2026-11-27", 14, 0));
-  const e = await createMacroBuilder(early.deps).build();
+  // Friday 11-27 at 14:00 ET: the 13:00 early close has passed; the history key moves to 11-27.
+  const early = harness(et("2026-11-27", 12, 30));
+  early.barsUpTo.date = "2026-11-27"; // the vendor returns the forming bar
+  const eb = createMacroBuilder(early.deps);
+  await eb.build();
+  assert.equal(totalDaily(early), 17);
+  early.clock.t = et("2026-11-27", 14, 0);
+  const e = await eb.build();
+  await eb.settle();
   assert.equal(e.sessionOpen, false);
+  assert.equal(totalDaily(early), 34, "the 13:00 close completes the session: one re-read");
+  early.deps.getQuotes = async () => [];
+  const ec = row(await eb.build(), "SPY");
+  assert.equal(ec.basis, "session_close");
+  assert.equal(ec.priceSessionDate, "2026-11-27");
+  assert.equal(ec.priceAsOfMs, et("2026-11-27", 13), "dated at the early close");
+  assert.equal(ec.prevClose, closeOf("SPY", "2026-11-25"), "compared with Wednesday (Thursday was a holiday)");
 });
 
 test("macro: a stale quote keeps its own time and is marked partial", async () => {
-  const h = harness(et("2026-11-04", 11, 0), (syms) => defaultQuotes(syms).map((q) => ({ ...q, stale: true, quoteTimeMs: et("2026-11-04", 10, 40) })));
+  const h = harness(et("2026-11-04", 11, 0), (syms) => defaultQuotes(syms).map((q) => ({ ...q, stale: true, regularMarketTradeTimeMs: et("2026-11-04", 10, 40), quoteTimeMs: et("2026-11-04", 10, 40) })));
   const spy = row(await createMacroBuilder(h.deps).build(), "SPY");
   assert.equal(spy.stale, true);
   assert.equal(spy.dataState, "partial");

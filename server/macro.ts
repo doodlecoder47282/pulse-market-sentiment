@@ -7,7 +7,7 @@
 
 import { getQuotes, getPriceHistory } from "./schwab";
 import { toSchwabSymbol } from "./schwabSymbols";
-import { createMacroBuilder, type MacroResponse, type TickerDef, type DailyBarsIn } from "./macroCore";
+import { createMacroBuilder, toQuoteIn, type MacroResponse, type TickerDef, type DailyBarsIn } from "./macroCore";
 
 export type { MacroCategory, MacroQuote, MacroResponse } from "./macroCore";
 
@@ -160,11 +160,9 @@ async function publicFallback(def: TickerDef) {
 const builder = createMacroBuilder({
   now: () => Date.now(),
   // Batched: one /quotes request carries every Schwab-covered symbol.
-  getQuotes: async (symbols) => (await getQuotes(symbols.map(toSchwabSymbol))).map((q) => ({
-    ...q,
-    // getQuotes returns the caller's symbol; map back if toSchwabSymbol changed it.
-    symbol: symbols.find((s) => toSchwabSymbol(s) === q.symbol) ?? q.symbol,
-  })),
+  // getQuotes answers under the symbol it was asked for; map back to ours.
+  getQuotes: async (symbols) => (await getQuotes(symbols.map(toSchwabSymbol)))
+    .map((q) => toQuoteIn(q, symbols.find((s) => toSchwabSymbol(s) === q.symbol) ?? q.symbol)),
   getDailyBars: schwabDailyBars,
   getFallback: publicFallback,
 });

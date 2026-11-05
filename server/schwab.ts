@@ -6,6 +6,7 @@
  */
 
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import { regularFields } from "./schwabQuoteFields";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { applyOiHold, type ChainOiState } from "./oiHold";
 import type { ChainSegmentLike } from "./schwabDataPolicy";
@@ -690,8 +691,10 @@ export type NormalizedQuote = {
   ageMs?: number | null;
   /** Older than 2 min during the regular session (quoteFreshness.ts), or re-served from cache after a failed refresh; null = age unknown. */
   stale?: boolean | null;
-  /** Schwab regularMarketLastPrice (last regular-session trade). */
+  /** Schwab regular.regularMarketLastPrice (last regular-session trade). */
   regularMarketLast?: number | null;
+  /** Schwab regular.regularMarketTradeTime, epoch ms (REST only). */
+  regularMarketTradeTimeMs?: number | null;
   /** When this quote payload was received from Schwab, epoch ms. */
   fetchedAtMs?: number | null;
   /** true when the payload came from the in-memory cache. */
@@ -864,7 +867,9 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           volume: qd.totalVolume ?? null,
           source: "schwab",
           prevClose: typeof qd.closePrice === "number" && qd.closePrice > 0 ? qd.closePrice : null,
-          regularMarketLast: typeof qd.regularMarketLastPrice === "number" && qd.regularMarketLastPrice > 0 ? qd.regularMarketLastPrice : null,
+          // In Schwab's quotes response the regular-session last trade sits in
+          // q.regular, not q.quote (server/schwabQuoteFields.ts).
+          ...regularFields(q),
           quoteTimeMs,
           ageMs: fresh.ageMs,
           // A payload re-served after a failed refresh is stale even if its own

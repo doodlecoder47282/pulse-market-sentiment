@@ -437,8 +437,6 @@ export function demoQuote(sym: string, t: number): any | null {
     netPercentChange: pct,
     openPrice: round(ohlc.open),
     quoteTime,
-    // No extended hours in the sample market: the last regular-session trade is the last price.
-    regularMarketLastPrice: round(last),
     securityStatus: "Normal",
     totalVolume: volume,
     tradeTime: quoteTime,
@@ -458,6 +456,9 @@ export function demoQuote(sym: string, t: number): any | null {
     realtime: true,
     quoteType: "NBBO",
     quote: q,
+    // Schwab's shape: the last regular-session trade in its own object. No
+    // extended hours in the sample market, so it is the last price.
+    regular: { regularMarketLastPrice: round(last), regularMarketTradeTime: quoteTime },
     reference: { description: `${spec.description} - ${DEMO_DISCLOSURE}`, exchangeName: spec.kind === "equity" ? "NYSE" : "IND" },
   };
 }

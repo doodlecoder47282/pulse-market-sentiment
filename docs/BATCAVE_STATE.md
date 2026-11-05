@@ -1391,11 +1391,27 @@ server/macroCore.ts (pure, injected deps): one batched quote request per build f
 from UNIVERSE; daily history only when a completed session is missing (session change, late vendor bar
 retried every 10 min, 6 h max age for corrections, explicit invalidateMacroHistory), failed reads back off
 2 min, history reads bounded to 6 at once, concurrent builds share one in-flight build (cleared on success
-and failure). Price meaning kept: last regular-session trade (regularMarketLastPrice; the old bars were
-regular-hours only; an after-hours print is never shown), prior close through dayChange.resolvePrevClose
-with the same quote fields plus completed daily bars; today's forming bar is never stored. A missing quote
-shows the last completed close labelled "close" with that session's date and time; nothing is dropped from
-the strip (unavailable rows stay listed, coverage counts on the payload). Commodity labels name the ETF
+and failure); a kept copy refreshes in the background, only a cold symbol is awaited; a bar read within
+20 min of its session's close is re-read once (closing prints settle). Price: the last regular-session
+trade dated by Schwab's regular-session trade time; outside the session with no quoted regular price, that
+session's own daily close (what the old regular-hours 5-minute bars ended on); an older close only as a
+labelled substitute ("close", partial, its own date). Prior close through dayChange.resolvePrevClose with the
+same quote fields plus completed daily bars; today's forming bar is never stored. Nothing is dropped from
+the strip (unavailable rows stay listed, coverage counts on the payload). The route rebuilds a cached
+snapshot from the other side of the open/close.
+Review of feat/macro-request-efficiency (independent): 2 MUST-FIX fixed. (1) Schwab's REST quote carries the
+regular-session last trade in `regular` (regular.regularMarketLastPrice / regularMarketTradeTime), but the
+quote parser read quote.regularMarketLastPrice, so it was ALWAYS null from REST (pre-existing bug; the first
+draft and its fixtures, and the demo, assumed the wrong shape and would have shown every row as a substitute
+close outside the session). Parser fixed in server/schwabQuoteFields.ts (pure, tested), used by schwab.ts;
+also feeds dayChange's rolled-or-flat check, which fell back to lastPrice before. Demo moved to the real
+shape. (2) a stale flag of null failed the strict type check (toQuoteIn maps it). SHOULD-FIX taken: price
+time from the regular trade time, not the after-hours quote time; settle window after the close; dating by
+trade time fixes the 09:30 boundary for thin ETFs (no 0.00% and no pre-market print as today's price);
+"Stocks closed" instead of "Closed" (crypto/FX keep moving); route cache invalidated across the open/close;
+background refresh of kept history; ok rows carry no warning text; tests for REST shape, 09:30, early-close
+key and holiday prior close. Not verified live: that the Railway REST payload carries `regular` as Schwab's
+published schema says (checked against a published client's typings by the reviewer, not a live response). Commodity labels name the ETF
 ("Oil (USO)"). Tape label says "Closed" outside the regular session instead of "Live". Demo quotes carry
 regularMarketLastPrice. Tests: tests/quant/macro-request-efficiency.test.ts (14; request counts cold/warm/
 concurrent, failed shared build, partial batch, quote failure with cached history, forming bar, session

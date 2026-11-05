@@ -24,7 +24,7 @@ type MacroQuote = {
   changePct: number | null;
   spark: number[];
   /** Where the price comes from (server/macroCore.ts). Optional: older servers omit it. */
-  basis?: "regular_session_last" | "last_daily_close" | "public_fallback" | "unavailable";
+  basis?: "regular_session_last" | "session_close" | "last_daily_close" | "public_fallback" | "unavailable";
   dataState?: "ok" | "partial" | "unavailable";
   reason?: string | null;
   priceAsOfMs?: number | null;
@@ -112,6 +112,7 @@ function rowTitle(q: MacroQuote): string {
   const parts: string[] = [q.symbol];
   if (q.basis === "last_daily_close") parts.push(`last close of ${q.priceSessionDate ?? "the last completed session"}, not a current price`);
   else if (q.basis === "regular_session_last") parts.push("last regular-session trade");
+  else if (q.basis === "session_close") parts.push(`regular-session close ${q.priceSessionDate ?? ""}`.trim());
   else if (q.basis === "public_fallback") parts.push("public source");
   if (q.stale) parts.push("stale");
   if (q.reason) parts.push(q.reason);
@@ -178,9 +179,9 @@ export function MacroTicker() {
           <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-200">Sample</span>
         </div>
       ) : !live ? (
-        <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label" title="Regular session closed: last session's prices">
+        <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label" title="Regular stock session closed: stock and ETF rows show their regular-session close; crypto and FX keep updating">
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Closed</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Stocks closed</span>
         </div>
       ) : (
         <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-emerald-500/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label">
