@@ -278,7 +278,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     .sort((a: any, b: any) => Math.abs(a.distance) - Math.abs(b.distance)).slice(0, 14);
   // Today's 0DTE chain must be today's expiry while the session runs; before
   // the next session, the next session's expiry.
-  const expiryMismatch = horizon === "rest_of_today" ? nearestDte !== 0 : false;
+  const expiryMismatch = horizon === "rest_of_today" ? nearestDte !== 0 : expiryDate !== nextTradingDay(todayEt);
   const wiener = wienerMap({
     spot,
     // emSigma is the chain's IV only when the chain had IV; a straddle-derived
@@ -289,7 +289,9 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     startAbsMin,
     horizon,
     fromPreviousClose: sessionState !== "intraday",
-    unavailableReason: expiryMismatch ? `the nearest unsettled expiry is ${expiryDate}, not today: no 0DTE chain to take today's volatility from` : null,
+    unavailableReason: !expiryMismatch ? null : horizon === "rest_of_today"
+      ? `the nearest unsettled expiry is ${expiryDate}, not today: no 0DTE chain to take today's volatility from`
+      : `the nearest unsettled expiry is ${expiryDate}, not the next session (${nextTradingDay(todayEt)}): its volatility covers more than one session`,
     levels: wienerLevels.map((L: any) => ({
       price: L.price, kind: L.kind, label: L.label,
       // "Traded earlier today" only describes today's session.
@@ -305,7 +307,8 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
       const m = (parseInt(p.find((x) => x.type === "hour")?.value || "0", 10) % 24) * 60 + parseInt(p.find((x) => x.type === "minute")?.value || "0", 10);
       return { min: m, close: +Number(c.close).toFixed(2) };
     })
-    .filter((x: { min: number }) => x.min >= OPEN && (todayClose == null || x.min < todayClose));
+    // Completed bars only: a bar still forming (its end after now) is left out.
+    .filter((x: { min: number }) => x.min >= OPEN && (todayClose == null || x.min < todayClose) && (sessionState !== "intraday" || x.min + 5 <= nowMin));
 
   // The chain's own provenance travels with the forward so every card shows
   // the data's age, not this computation's time (asOf). A chain re-served from

@@ -10,7 +10,7 @@ import { sqlite } from "./storage";
 import { editionFromEnv } from "../shared/edition";
 import { etDate, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
 import { composeOdteMap, type OdteMap, type ForwardLike } from "../shared/odteMap";
-import { evaluateSettle, tallySettles, type SettleEvaluation } from "../shared/odteSettle";
+import { evaluateSettle, tallySettles, wienerScoringStartMs, type SettleEvaluation } from "../shared/odteSettle";
 import { wienerScorecard } from "../shared/odteWiener";
 import { settleFromCandles } from "./odteSettleInputs";
 
@@ -140,7 +140,7 @@ export async function settleToday(symbol: string, deps: SettleDeps, nowMs = Date
   // Extremes after the morning map's odds were stated score them: from the
   // chain's own time (the spot the odds start from), else when the map was kept.
   // Minute bars: the bar containing that time is included (up to 59 s early).
-  const s = settleFromCandles(hist?.candles ?? [], nowMs, day.first.chainAsOfMs ?? day.firstAt);
+  const s = settleFromCandles(hist?.candles ?? [], nowMs, wienerScoringStartMs(day.first, day.firstAt));
   if (!s) return { ok: false, why: "no regular-session candles for today" };
   const out = recordSettle(date, symbol, s, nowMs);
   return { ok: out.ok, why: out.why };

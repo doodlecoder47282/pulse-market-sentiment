@@ -58,7 +58,7 @@ export function hitProbability(a: number, mu: number, sigma: number, T: number):
 export function logNormCdf(x: number): number {
   if (x > -8) return Math.log(normCdf(x));
   const x2 = x * x;
-  return -x2 / 2 - Math.log(-x) - 0.5 * Math.log(2 * Math.PI) + Math.log(1 - 1 / x2 + 3 / (x2 * x2));
+  return -x2 / 2 - Math.log(-x) - 0.5 * Math.log(2 * Math.PI) + Math.log(1 - 1 / x2 + 3 / (x2 * x2) - 15 / (x2 * x2 * x2));
 }
 
 /** z-scores of the band percentiles. */

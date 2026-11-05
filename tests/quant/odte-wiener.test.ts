@@ -324,17 +324,53 @@ test("wiener (review): intraday without a same-day expiry the map is unavailable
   }
 });
 
-test("wiener (review): the level list keeps real levels the sigma rails used to displace", async () => {
+test("wiener (review): sigma rails can displace a real level in the level-map dedupe, so the Wiener levels are built without them", async () => {
+  const { buildLevelMap } = await import("../../server/odteProjection.ts");
+  const spot = 6800, sigma = 30;
+  // A secondary gamma shelf one strike-width-ish from spot + 1 sigma (inside the dedupe bucket of spot*0.0004 = 2.72 pts).
+  const args = { spot, levels: { callWall: 6900, putWall: 6700, gammaFlip: 6780, pin: 6800 }, gexPeaks: [{ strike: 6831, gex: 1e8 }, { strike: 6800, gex: 2e9 }, { strike: 6900, gex: 1e9 }], bars: { priorClose: null, sessionHigh: null, sessionLow: null, orbHigh: null, orbLow: null, vwap: null }, totalAbsGex: 4e9 };
+  const withRails = buildLevelMap({ ...args, sigmaToClose: sigma });
+  const without = buildLevelMap({ ...args, sigmaToClose: 0 });
+  const hasPeak = (xs: any[]) => xs.some((l) => l.kind === "gex_peak" && l.price === 6831);
+  assert.equal(hasPeak(without), true, "kept when no rails are added");
+  assert.equal(hasPeak(withRails), false, "the +1 sigma rail (6830, stronger) displaces it: why the forward builds Wiener levels without rails");
+  // And the forward's Wiener list never carries a rail.
   const { etWallToEpochMs } = await import("../../server/exchangeCalendar.ts");
   const fwd = await forwardAt(etWallToEpochMs("2026-10-12", 11 * 60));
+  assert.ok((fwd.body as any).wiener.levels.every((l: any) => l.kind !== "sigma"));
+});
+
+test("wiener (review): the exchange calendar says when the one-day chain window holds no expiry", async () => {
+  const { noExpiryInOneDayWindow, etWallToEpochMs } = await import("../../server/exchangeCalendar.ts");
+  const at = (d: string, h: number, m = 0) => noExpiryInOneDayWindow(etWallToEpochMs(d, h * 60 + m));
+  assert.equal(at("2026-10-12", 11), false, "Monday in session");
+  assert.equal(at("2026-10-12", 17), false, "Monday evening: Tuesday expiry");
+  assert.equal(at("2026-10-16", 17), true, "Friday evening");
+  assert.equal(at("2026-10-17", 12), true, "Saturday");
+  assert.equal(at("2026-10-18", 12), false, "Sunday noon: Monday is inside the window");
+  assert.equal(at("2026-11-25", 17), true, "evening before Thanksgiving");
+  assert.equal(at("2026-11-26", 12), false, "Thanksgiving noon: the half-day Friday is inside the window");
+  assert.equal(at("2026-11-27", 12), false, "half-day Friday before 13:00");
+  assert.equal(at("2026-11-27", 14), true, "after the half-day close");
+  assert.equal(at("2026-12-25", 12), true, "Christmas, with the weekend next");
+});
+
+test("wiener (review): scoring starts at the chain's own time, else when the map was kept", async () => {
+  const { wienerScoringStartMs } = await import("../../shared/odteSettle.ts");
+  assert.equal(wienerScoringStartMs({ chainAsOfMs: 1000 }, 5000), 1000, "the odds' spot is the chain's");
+  assert.equal(wienerScoringStartMs({ chainAsOfMs: null }, 5000), 5000);
+  assert.equal(wienerScoringStartMs(null, 5000), 5000);
+  assert.equal(wienerScoringStartMs(null, null), null);
+});
+
+test("wiener (review): before the next session the chain's expiry must be that session's", async () => {
+  const { etWallToEpochMs } = await import("../../server/exchangeCalendar.ts");
+  // Monday 17:00 with a chain whose nearest expiry is Wednesday (shifted two days): not one session of variance.
+  const fwd = await forwardAt(etWallToEpochMs("2026-10-12", 17 * 60), undefined, 2);
+  assert.equal(fwd.status, 200);
   const w: any = (fwd.body as any).wiener;
-  assert.ok(w.levels.every((l: any) => l.kind !== "sigma"));
-  const ds = w.levels.map((l: any) => Math.abs(l.distance));
-  assert.ok(w.levels.length > 0);
-  assert.ok(w.levels.length <= 14);
-  // nearest first before the high-to-low sort: the furthest kept level is no nearer than any dropped one is unknowable here,
-  // but every kept level must be within the chart's +-3 sigma reach or be a named landmark.
-  assert.ok(ds.every((d: number) => Number.isFinite(d)));
+  assert.equal(w.state, "unavailable");
+  assert.match(w.reason, /not the next session/);
 });
 
 test("wiener (review): first passage survives exp overflow and a zero sigma", () => {

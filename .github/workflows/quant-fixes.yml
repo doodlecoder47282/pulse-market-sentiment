@@ -235,6 +235,11 @@ jobs:
           IP=$(hostname -I | awk '{print $1}')
           B="http://$IP:5072"
           fail=0
+          # The exchange calendar decides when the 0DTE forward's one-day chain window holds no expiry
+          # (weekends, holidays, evenings before them, after a half-day close): only then is "unavailable" honest.
+          NO_EXPIRY_EXPECTED=$(node --experimental-transform-types --no-warnings -e 'import("./server/exchangeCalendar.ts").then((c) => console.log(c.noExpiryInOneDayWindow(Date.now()) ? "1" : "0"))')
+          export NO_EXPIRY_EXPECTED
+          echo "no expiry expected in the one-day window: $NO_EXPIRY_EXPECTED"
           check() { if [ "$1" = "$2" ]; then echo "PASS $3 ($1)"; else echo "FAIL $3 (got $1, want $2)"; fail=1; fi; }
           {
             curl -s "$B/api/health" | grep -q '"edition":"demo"' && echo "PASS health edition demo" || { echo "FAIL health edition"; fail=1; }
@@ -306,10 +311,8 @@ jobs:
               // In the last half hour 0DTE gamma sits on a handful of strikes, so few clear the 1% share floor.
               const nearClose = j.session && j.session.state === "open" && j.session.minutesToClose <= 30;
               // From Friday's close to Monday's open the one-day chain window holds no expiry: "unavailable / no_expiries" is the honest answer.
-              const et = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) et[x.type] = x.value;
-              const etMin = (Number(et.hour) % 24) * 60 + Number(et.minute);
-              const weekendGap = et.weekday === "Sat" || et.weekday === "Sun" || (et.weekday === "Fri" && etMin >= 16 * 60) || (et.weekday === "Mon" && etMin < 9 * 60 + 30);
-              if (weekendGap && j.dataState === "unavailable" && j.error === "no_expiries") { console.log("PASS 0DTE map: no expiry inside the one-day window between Friday's close and Monday's open (unavailable / no_expiries, as it should be)"); process.exit(0); }
+              const weekendGap = process.env.NO_EXPIRY_EXPECTED === "1"; // exchange calendar: no expiry inside the one-day window
+              if (weekendGap && j.dataState === "unavailable" && j.error === "no_expiries") { console.log("PASS 0DTE map: no expiry inside the one-day window per the exchange calendar (unavailable / no_expiries, as it should be)"); process.exit(0); }
               const ok = priced && (j.strikes || []).length > (nearClose ? 2 : 5) && labelled.includes("pin") && j.zones === null && j.range && j.range.straddle > 0 && j.ledger && j.ledger.kept === false
                 && (j.strikes || []).every((s) => Math.abs(s.gexPt - Math.round(s.gexPct / (j.spot / 100))) <= 1);
               console.log((ok ? "PASS" : "FAIL") + " 0DTE map: state " + j.dataState + ", spot " + j.spot + ", " + (j.strikes || []).length + " strikes, labels " + labelled.join("/") + ", straddle " + (j.range && j.range.straddle) + ", band " + JSON.stringify(j.band && [j.band.low, j.band.high]) + ", zones " + j.zones + ", ledger " + (j.ledger && j.ledger.why));
@@ -566,11 +569,9 @@ jobs:
               const why = panel ? (await wp.locator('[data-testid="odte-wiener-unavailable"]').innerText()).trim() : (await wp.locator('[data-testid="odte-forward-error"]').innerText()).trim();
               // Unavailable is only the honest answer between Friday's close and Monday's open (the
               // one-day chain window holds no expiry); any other time it is a failure.
-              const et = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) et[x.type] = x.value;
-              const etMin = (Number(et.hour) % 24) * 60 + Number(et.minute);
-              const weekendGap = et.weekday === "Sat" || et.weekday === "Sun" || (et.weekday === "Fri" && etMin >= 16 * 60) || (et.weekday === "Mon" && etMin < 9 * 60 + 30);
+              const weekendGap = process.env.NO_EXPIRY_EXPECTED === "1"; // exchange calendar: no expiry inside the one-day window
               okW = weekendGap && /unavailable/i.test(why);
-              detail = (weekendGap ? "weekend gap, " : "NOT the weekend gap, ") + "unavailable state shown: " + why.slice(0, 120);
+              detail = (weekendGap ? "no expiry expected (calendar), " : "an expiry IS expected (calendar), ") + "unavailable state shown: " + why.slice(0, 120);
             }
             console.log((okW ? "PASS" : "FAIL") + " 0DTE Wiener map at 402px: " + detail);
             await wp.close();

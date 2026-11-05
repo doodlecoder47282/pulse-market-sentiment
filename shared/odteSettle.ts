@@ -108,6 +108,17 @@ export function evaluateSettle(m: OdteMap, s: SettleInputs): SettleEvaluation {
   return { settle: s.settle, sessionHigh: s.sessionHigh, sessionLow: s.sessionLow, settleInStraddle, sessionInStraddle, settleInSigma, sessionInSigma, pinDistance, nearestLandmark: nearest, bandHeld, zones, lesson: parts.join("; "), lessonLevels, wiener };
 }
 
+/**
+ * Where scoring of the morning map's Wiener odds starts: the chain's own time
+ * (the spot the odds were computed from), else when the map was kept. The
+ * caller includes the minute bar containing it (up to 59 s early).
+ */
+export function wienerScoringStartMs(first: Pick<OdteMap, "chainAsOfMs"> | null | undefined, firstAt: number | null | undefined): number | null {
+  const c = first?.chainAsOfMs;
+  if (typeof c === "number" && Number.isFinite(c) && c > 0) return c;
+  return typeof firstAt === "number" && Number.isFinite(firstAt) ? firstAt : null;
+}
+
 export interface SettleTally {
   days: number;
   settleInStraddle: { yes: number; of: number };

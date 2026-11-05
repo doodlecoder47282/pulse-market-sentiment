@@ -1415,3 +1415,11 @@ a = mu = 30 was wrong: the true value is 0.5 + 1/(60 sqrt(2 pi)) = 0.5066, now p
 base-rate Brier as its reference instead of "0.25 = coin flip"; copy: "morning map (first map after the
 open)", 5-minute closes plotted and read at the bar's end, model close ranges in text on every screen,
 tag stack clamped, readout clears on touch end, role="group"; tests assert their branches run.
+Re-review (same reviewer): first-round MUST-FIX 1-2 verified; reviewer agreed hitProbability(30,30,1,1) = 0.5066.
+New MUST-FIX fixed: the weekday-only "weekend gap" rule would FAIL CI on market holidays and evenings before
+them (one-day chain window empty). server/exchangeCalendar.ts noExpiryInOneDayWindow(ms) now decides (tested
+on Friday/weekend, the evening before Thanksgiving, after the half-day close, Christmas); CI computes it once
+(NO_EXPIRY_EXPECTED) and both the /api/odte/map smoke and the Wiener rendered check use it. SHOULD-FIX taken:
+next-session map unavailable unless the chain's expiry is the next trading day; scoring start is a tested
+pure helper (wienerScoringStartMs); the vacuous rails test replaced by one that shows the displacement;
+logNormCdf seam reduced (-15/x^6 term); the forming 5-minute bar is left out of today's path.
