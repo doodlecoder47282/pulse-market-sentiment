@@ -1381,3 +1381,21 @@ Prophecy review of #46 (E1, diff): 2 fixes taken. Completed coverage now ends at
 not at `now`, so a 59-minute record cannot become "this hour" while no further cycle completes before the
 stale deadline; and under one completed minute reads "less than 1 min of complete scans" (it used to be
 rounded up to 1). Both pinned by tests.
+
+2026-11-05: 0DTE Wiener map, core (feat/odte-wiener; owner request: "a more defined 0DTE map with a chart using
+the Wiener model ... for the day only"; owner chose: replace the current cone, core scope first). Found: the
+old 0DTE forward cone mixed unlabelled rules of thumb into its median (pin pull up to 60%, charm tilt, 15%
+wider cone in short gamma) and drew seeded synthetic candles, while its touch odds were driftless. Now
+shared/odteWiener.ts (pure): arithmetic Brownian motion, zero drift, sigma to the close = the 0DTE chain's
+ATM IV (straddle/sqrt(2/pi) as fallback and cross-check); percentile bands (2.5-97.5) every 5 min to the
+close; per level the exact first-passage touch odds and the close-above/below odds; expected remaining
+high/low/range (sigma*sqrt(2/pi)); close distribution in strike-width buckets; drift-aware first passage
+(hitProbability) available and tested against a simulation, unused (mu = 0). server/odteForward.ts adds
+`wiener`, `todayPath` and `pathBasis` (the old path is now labelled a heuristic overlay); no extra Schwab
+request (test counts 1 chain + 1 history read). Card (Heatseeker tab): today's path, bands, levels with touch
+odds, close distribution beside the chart on wide screens, level odds table, dealer overlay off by default
+and labelled, 44 px toggles. Scorecard: the 09:35 morning map carries the Wiener odds; after the close the
+settle scores them on the extremes from the map's minute onward (levels already traded or at the price are
+left out); /api/odte/map/ledger returns wienerScorecard (calibration buckets, Brier, untested below 50
+days). CI demo step renders it at 402 px (FAIL gate). Not in this PR: time-of-day variance weighting; the
+options-implied close distribution comparison. Not verified live.

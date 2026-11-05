@@ -539,6 +539,37 @@ jobs:
             }
           } catch (e) { console.log("FAIL 3D surface: " + String(e && e.message || e).split("\n")[0]); }
           finally { if (g) await g.close().catch(() => {}); }
+          // 0DTE Wiener map (Heatseeker tab) at 402 px: the chart and its level odds, or an explicit unavailable reason;
+          // both toggles at least 44 px tall; no sideways scroll.
+          try {
+            const wp = await b.newPage({ viewport: { width: 402, height: 874 } });
+            await wp.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await wp.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
+            await wp.locator('[data-testid="tab-heatseeker"]').first().click({ timeout: 10000 });
+            await wp.locator('[data-testid="odte-forward-panel"], [data-testid="odte-forward-error"]').first().waitFor({ timeout: 60000 });
+            const panel = await wp.locator('[data-testid="odte-forward-panel"]').count();
+            const unavailable = await wp.locator('[data-testid="odte-wiener-unavailable"]').count();
+            let detail = "", okW = false;
+            if (panel && !unavailable) {
+              await wp.locator('[data-testid="odte-cone"] canvas').waitFor({ timeout: 20000 });
+              const cv = await wp.locator('[data-testid="odte-cone"] canvas').boundingBox();
+              const rows = await wp.locator('[data-testid="odte-level-map"] tbody tr').count();
+              const sigma = (await wp.locator('[data-testid="odte-em-sigma"]').innerText()).trim();
+              const btns = await wp.evaluate(() => ["button-toggle-levelmap", "button-toggle-overlay"].map((id) => { const r = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect(); return r ? Math.round(r.height) : 0; }));
+              const overflowX = await wp.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+              await wp.locator('[data-testid="button-toggle-overlay"]').click();
+              const note = await wp.locator('[data-testid="odte-overlay-note"]').count();
+              await wp.locator('[data-testid="odte-forward-panel"]').screenshot({ path: "rep/demo/19-odte-wiener-402.png" });
+              okW = !!cv && cv.height >= 300 && rows > 0 && /^±[0-9]/.test(sigma) && btns.every((h) => h >= 44) && !overflowX && note === 1;
+              detail = `chart ${cv ? Math.round(cv.width) + "x" + Math.round(cv.height) : "missing"}, ${rows} level rows, sigma ${sigma}, toggles ${btns.join("/")}px, overlay note ${note}, overflowX ${overflowX}`;
+            } else {
+              const why = panel ? (await wp.locator('[data-testid="odte-wiener-unavailable"]').innerText()).trim() : (await wp.locator('[data-testid="odte-forward-error"]').innerText()).trim();
+              okW = /unavailable/i.test(why);
+              detail = "unavailable state shown: " + why.slice(0, 120);
+            }
+            console.log((okW ? "PASS" : "FAIL") + " 0DTE Wiener map at 402px: " + detail);
+            await wp.close();
+          } catch (e) { console.log("FAIL 0DTE Wiener map at 402px: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));

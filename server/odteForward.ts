@@ -14,6 +14,8 @@ import { timeToExpiry } from "./timeToExpiry";
 import { etDate, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
+import { wienerMap } from "../shared/odteWiener";
+import { strikeSpacing } from "../shared/odteMap";
 
 export interface OdteForwardResult { status: number; body: any }
 
@@ -262,6 +264,31 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     pinPullMax, charmNorm, seed: proj.sessionSeed(),
   });
 
+  // ── Wiener baseline (shared/odteWiener.ts): the plain random walk with the
+  // market's own implied sigma to the close, no dealer overlay. Same chain
+  // and bars as above: no extra Schwab request.
+  const startAbsMin = sessionState === "intraday" ? nowMin : OPEN;
+  const wiener = wienerMap({
+    spot,
+    sigmaFromIv: emSigma,
+    straddle: straddle > 0 ? straddle : null,
+    minutesLeft: projMinutes,
+    startAbsMin,
+    horizon: sessionState === "closed" ? "next_session" : "rest_of_today",
+    levels: levelMap.filter((L: any) => L.kind !== "sigma").slice(0, 14)
+      .map((L: any) => ({ price: L.price, kind: L.kind, label: L.label, touchedToday: L.touched === true })),
+    bucket: strikeSpacing(rows.map((r) => r.strike)) ?? 5,
+  });
+  // Today's regular-session path so far (5-minute closes), for the left side of the chart.
+  const todayPath = sessionState === "closed" && todayClose == null ? [] : ((hist as any)?.candles ?? [])
+    .filter((c: any) => Number.isFinite(c?.datetime) && Number.isFinite(c?.close) && etDate(c.datetime) === todayEt)
+    .map((c: any) => {
+      const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(c.datetime));
+      const m = (parseInt(p.find((x) => x.type === "hour")?.value || "0", 10) % 24) * 60 + parseInt(p.find((x) => x.type === "minute")?.value || "0", 10);
+      return { min: m, close: +Number(c.close).toFixed(2) };
+    })
+    .filter((x: { min: number }) => x.min >= OPEN && (todayClose == null || x.min < todayClose));
+
   // The chain's own provenance travels with the forward so every card shows
   // the data's age, not this computation's time (asOf). A chain re-served from
   // cache after a failed refresh is stale here and on the map.
@@ -286,6 +313,11 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     flipInputs: flipInputs({ weight: "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
     weightTotals: { oi: totalOI, volume: totalVol },
     path,
+    // The path above is the dealer-positioning overlay (pin pull, charm tilt,
+    // 15% wider in short gamma): rules of thumb, not part of the Wiener baseline.
+    pathBasis: "dealer overlay (heuristic, untested): pin pull up to 60% toward the pin, charm tilt, cone 15% wider in short gamma",
+    wiener,
+    todayPath,
     strikes: rows.map(r => ({ strike: r.strike, gex: +r.gex.toFixed(0), callOI: r.callOI, putOI: r.putOI })),
     // Additive (0DTE map): every re-priced zero crossing of this expiry's
     // net gamma within +-5% (the long-gamma band is read off these), the

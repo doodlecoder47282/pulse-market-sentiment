@@ -1,62 +1,65 @@
 /**
- * OdteForward.tsx — 0DTE FORWARD SESSION MAP.
+ * OdteForward.tsx — 0DTE WIENER MAP (today only).
  *
- * Renders the model's projected shape for the rest of the session:
- *   - PROJECTED CANDLES (cyan) from now to 16:00 ET, routed along the median path
- *     with level attraction, wicks scaled by per-bucket sigma. Seeded per session
- *     so the shape is stable across refreshes.
- *   - SHADED ENVELOPE = 1-sigma cone around the route.
- *   - LEVEL MAP = every meaningful price for the day with a real P(touch) from the
- *     reflection principle, right-axis tagged (red above spot, green below).
- *
- * These project the model's expected SHAPE, not actual future bars.
+ * The baseline is a plain random walk (Wiener process, zero drift) from the
+ * current price to today's close, with the market's own implied volatility
+ * from the 0DTE chain (shared/odteWiener.ts, server/odteForward.ts):
+ *   - today's path so far (solid), then shaded percentile bands to the close
+ *     (2.5-97.5, 10-90, 25-75) and the median;
+ *   - map levels with the model's touch and close odds;
+ *   - the model's close distribution (wide screens: beside the chart);
+ *   - the morning odds' running scorecard from the settle ledger.
+ * The dealer-positioning path (pin pull, charm tilt) is an optional overlay,
+ * labelled as a heuristic. Nothing here is a forecast or a direction.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
-interface ProjCandle {
-  minute: number; et: string;
-  open: number; high: number; low: number; close: number;
-  bandUp: number; bandDn: number;
+type BandKey = "p025" | "p10" | "p25" | "p50" | "p75" | "p90" | "p975";
+interface WienerBand { minute: number; et: string; q: Record<BandKey, number> }
+interface WienerLevel {
+  price: number; kind: string; label: string; side: "above" | "below" | "at";
+  distance: number; distanceSigma: number; pTouch: number; pCloseAbove: number; pCloseBelow: number; touchedToday: boolean;
 }
-interface MappedLevel {
-  price: number; kind: string; label: string;
-  side: "above" | "below" | "at";
-  distance: number; distancePct: number;
-  pTouch: number; touched: boolean; strength: number; note: string;
+interface WienerMapT {
+  state: "ok" | "unavailable"; reason: string | null; model: string;
+  horizon: "rest_of_today" | "next_session";
+  spot: number | null; sigmaToClose: number | null; sigmaSource: "atm_iv" | "atm_straddle" | null; sigmaFromStraddle: number | null;
+  minutesLeft: number; bands: WienerBand[]; levels: WienerLevel[];
+  expected: { high: number; low: number; range: number } | null;
+  closeDist: Array<{ lo: number | null; hi: number | null; p: number }>;
+  caveats: string[];
 }
+interface OverlayPoint { minute: number; et: string; median: number }
 interface OdteResponse {
-  symbol: string; asOf: string; spot: number; source: string;
-  expiry: string; dte: number;
+  symbol: string; asOf: string; spot: number; expiry: string; dte: number;
   session: { state: "preopen" | "intraday" | "closed"; minutesToClose: number; projMinutes: number };
   atmIV: number; atmIVSource?: "chain" | "straddle"; gexValid?: boolean;
-  expectedMove: { sigma: number | null; straddle: number | null };
-  netGex: number | null; netCharm: number | null;
-  regime: "long_gamma" | "short_gamma" | "indeterminate";
+  netGex: number | null; regime: "long_gamma" | "short_gamma" | "indeterminate";
   levels: { callWall: number | null; putWall: number | null; gammaFlip: number | null; pin: number | null };
-  bars: { priorClose: number | null; sessionHigh: number | null; sessionLow: number | null; orbHigh: number | null; orbLow: number | null; vwap: number | null };
-  levelMap: MappedLevel[];
-  candles: ProjCandle[];
-  weightTotals: { oi: number; volume: number };
+  chainStale?: boolean; chainAgeMs?: number | null;
+  wiener?: WienerMapT;
+  todayPath?: Array<{ min: number; close: number }>;
+  path?: OverlayPoint[];
+  pathBasis?: string;
+}
+interface Calib { lo: number; hi: number; n: number; stated: number | null; observed: number | null }
+interface LedgerResp {
+  wienerScorecard?: { days: number; minDays: number; tested: boolean; touch: { n: number; buckets: Calib[]; brier: number | null }; close: { n: number; buckets: Calib[]; brier: number | null } };
 }
 
-const CYAN = "#4fd1e8";
-const AMBER = "#fbbf24";
-const LIME = "#7cf04b";
-const RED = "#ff4d52";
-const PURPLE = "#a78bfa";
-
 const KIND_COLOR: Record<string, string> = {
-  call_wall: LIME, put_wall: RED, gamma_flip: PURPLE, pin: AMBER,
-  gex_peak: "#7c8ea8", prior_close: "#94a3b8", session_high: "#94a3b8",
-  session_low: "#94a3b8", orb_high: "#c084fc", orb_low: "#c084fc",
-  vwap: "#38bdf8", sigma: "rgba(251,191,36,0.55)",
+  call_wall: "#7cf04b", put_wall: "#ff4d52", gamma_flip: "#a78bfa", pin: "#fbbf24",
+  gex_peak: "#7c8ea8", prior_close: "#94a3b8", session_high: "#94a3b8", session_low: "#94a3b8",
+  orb_high: "#c084fc", orb_low: "#c084fc", vwap: "#38bdf8",
 };
+const pct = (p: number) => (p >= 0.995 ? ">99%" : p <= 0.005 ? "<1%" : `${Math.round(p * 100)}%`);
+const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(Math.round(m % 60)).padStart(2, "0")}`;
+const OPEN = 9 * 60 + 30;
 
 function fmtUsd(v: number): string {
   const a = Math.abs(v);
-  if (a >= 1e12) return `$${(v / 1e12).toFixed(1)}T`;
   if (a >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
   if (a >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
   return `$${v.toFixed(0)}`;
@@ -65,17 +68,20 @@ function fmtUsd(v: number): string {
 export default function OdteForward() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [hover, setHover] = useState<number | null>(null);
   const [wrapW, setWrapW] = useState(0);
-  const [showMap, setShowMap] = useState(true);
+  const [hoverMin, setHoverMin] = useState<number | null>(null);
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [showLevels, setShowLevels] = useState(true);
 
   const { data, isLoading, isError } = useQuery<OdteResponse>({
     queryKey: ["/api/odte/forward"],
-    queryFn: async () => {
-      const r = await apiRequest("GET", "/api/odte/forward?symbol=%24SPX");
-      return r.json();
-    },
+    queryFn: async () => (await apiRequest("GET", "/api/odte/forward?symbol=%24SPX")).json(),
     refetchInterval: 60_000,
+  });
+  const { data: ledger } = useQuery<LedgerResp>({
+    queryKey: ["/api/odte/map/ledger", "$SPX"],
+    queryFn: async () => (await apiRequest("GET", "/api/odte/map/ledger?symbol=%24SPX")).json(),
+    staleTime: 10 * 60_000,
   });
 
   useEffect(() => {
@@ -87,11 +93,22 @@ export default function OdteForward() {
     return () => ro.disconnect();
   }, [data]);
 
-  const H = 380;
+  const w = data?.wiener;
+  const ok = w?.state === "ok";
+  // Chart geometry in ET minutes: from the open (today's path) or the band start, to the close.
+  const geo = useMemo(() => {
+    if (!data || !w || !ok || !w.bands.length) return null;
+    const startAbs = data.session.state === "intraday" ? Number(w.bands[0].et.slice(0, 2)) * 60 + Number(w.bands[0].et.slice(3)) : OPEN;
+    const endAbs = startAbs + w.minutesLeft;
+    const path = w.horizon === "rest_of_today" ? (data.todayPath ?? []) : [];
+    const x0 = path.length ? Math.min(OPEN, path[0].min) : startAbs;
+    return { startAbs, endAbs, x0, path };
+  }, [data, w, ok]);
 
+  const H = 360;
   useEffect(() => {
     const cv = canvasRef.current;
-    if (!cv || !data?.candles?.length || wrapW < 80) return;
+    if (!cv || !data || !w || !ok || !geo || wrapW < 80) return;
     const dpr = window.devicePixelRatio || 1;
     const W = wrapW;
     cv.width = W * dpr; cv.height = H * dpr;
@@ -101,175 +118,123 @@ export default function OdteForward() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
 
-    const padL = 6, padR = 62, padT = 12, padB = 24;
+    const wide = W >= 640;
+    const histW = wide ? 70 : 0;
+    const padL = 6, padR = 70 + histW, padT = 12, padB = 22;
     const iw = W - padL - padR, ih = H - padT - padB;
-    const cs = data.candles;
-    const spot = data.spot;
-
-    // y-range is driven by the CANDLES + 1σ envelope only. Far levels (2σ rails,
-    // distant walls) must not stretch the scale or the candles collapse to a line.
-    let lo = Infinity, hi = -Infinity;
-    for (const c of cs) {
-      lo = Math.min(lo, c.low, c.bandDn); hi = Math.max(hi, c.high, c.bandUp);
-    }
-    lo = Math.min(lo, spot); hi = Math.max(hi, spot);
-    const pad = ((hi - lo) || 1) * 0.08;
+    const last = w.bands[w.bands.length - 1].q;
+    let lo = Math.min(last.p025, w.spot ?? Infinity), hi = Math.max(last.p975, w.spot ?? -Infinity);
+    for (const p of geo.path) { lo = Math.min(lo, p.close); hi = Math.max(hi, p.close); }
+    const pad = (hi - lo || 1) * 0.06;
     lo -= pad; hi += pad;
-    // only draw levels that actually fall inside the projection window
-    const visibleLevels = data.levelMap.filter((L) => L.price >= lo && L.price <= hi);
-
-    const n = cs.length;
-    const slotW = iw / n;
-    const X = (i: number) => padL + slotW * (i + 0.5);
+    const X = (abs: number) => padL + iw * ((abs - geo.x0) / Math.max(1, geo.endAbs - geo.x0));
     const Y = (v: number) => padT + ih * (1 - (v - lo) / (hi - lo));
 
-    // ── shaded projection zone (the box in your chart) ──
-    ctx.fillStyle = "rgba(79,209,232,0.045)";
-    ctx.fillRect(padL, padT, iw, ih);
-
-    // ── grid + time labels ──
+    // time grid every hour
     ctx.font = "10px ui-monospace, monospace";
-    ctx.strokeStyle = "rgba(148,163,184,0.08)";
-    ctx.fillStyle = "rgba(148,163,184,0.5)";
-    ctx.lineWidth = 1;
-    const step = Math.max(1, Math.floor(n / 5));
-    for (let i = 0; i < n; i += step) {
-      const x = X(i);
+    ctx.fillStyle = "rgba(148,163,184,0.75)";
+    ctx.strokeStyle = "rgba(148,163,184,0.10)";
+    ctx.textAlign = "center";
+    for (let m = Math.ceil(geo.x0 / 60) * 60; m <= geo.endAbs; m += 60) {
+      const x = X(m);
       ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih); ctx.stroke();
-      ctx.textAlign = "center";
-      ctx.fillText(cs[i].et, x, H - 8);
+      ctx.fillText(hhmm(m), x, H - 6);
     }
 
-    // ── 1σ envelope ──
+    // bands (outer to inner)
+    const fillBand = (a: BandKey, b: BandKey, alpha: number) => {
+      ctx.beginPath();
+      w.bands.forEach((pt, i) => { const x = X(geo.startAbs + pt.minute), y = Y(pt.q[b]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      for (let i = w.bands.length - 1; i >= 0; i--) ctx.lineTo(X(geo.startAbs + w.bands[i].minute), Y(w.bands[i].q[a]));
+      ctx.closePath();
+      ctx.fillStyle = `rgba(79,209,232,${alpha})`;
+      ctx.fill();
+    };
+    fillBand("p025", "p975", 0.07);
+    fillBand("p10", "p90", 0.10);
+    fillBand("p25", "p75", 0.14);
+    ctx.strokeStyle = "rgba(79,209,232,0.8)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
     ctx.beginPath();
-    cs.forEach((c, i) => { const x = X(i), y = Y(c.bandUp); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
-    for (let i = n - 1; i >= 0; i--) ctx.lineTo(X(i), Y(cs[i].bandDn));
-    ctx.closePath();
-    ctx.fillStyle = "rgba(79,209,232,0.07)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(79,209,232,0.22)";
-    ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    cs.forEach((c, i) => { const x = X(i), y = Y(c.bandUp); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
-    ctx.stroke();
-    ctx.beginPath();
-    cs.forEach((c, i) => { const x = X(i), y = Y(c.bandDn); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
-    ctx.stroke();
-    ctx.setLineDash([]);
+    w.bands.forEach((pt, i) => { const x = X(geo.startAbs + pt.minute), y = Y(pt.q.p50); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke(); ctx.setLineDash([]);
 
-    // ── horizontal level lines + right-axis tags ──
-    const tagged: Array<{ y: number; price: number; color: string; p: number }> = [];
-    for (const L of visibleLevels) {
-      const y = Y(L.price);
-      if (y < padT || y > padT + ih) continue;
-      const color = KIND_COLOR[L.kind] || "#94a3b8";
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + iw, y);
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = L.touched ? 0.22 : 0.32 + L.strength * 0.3;
-      ctx.lineWidth = L.strength > 0.8 ? 1.4 : 1;
-      ctx.setLineDash(L.kind === "sigma" ? [2, 4] : L.strength > 0.8 ? [] : [5, 4]);
+    // dealer overlay (heuristic), only when asked
+    if (showOverlay && data.path?.length) {
+      ctx.strokeStyle = "rgba(251,191,36,0.85)"; ctx.setLineDash([2, 3]); ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      data.path.forEach((pt, i) => { const x = X(geo.startAbs + pt.minute), y = Y(pt.median); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    // today's path so far
+    if (geo.path.length > 1) {
+      ctx.strokeStyle = "rgba(226,232,240,0.9)"; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      geo.path.forEach((p, i) => { const x = X(p.min + 2.5), y = Y(p.close); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.stroke();
+    }
+
+    // levels inside the window, tags on the right with touch odds
+    const tags: Array<{ y: number; text: string; color: string }> = [];
+    for (const L of w.levels) {
+      if (L.price < lo || L.price > hi) continue;
+      const y = Y(L.price), color = KIND_COLOR[L.kind] ?? "#94a3b8";
+      ctx.strokeStyle = color; ctx.globalAlpha = L.touchedToday ? 0.25 : 0.5; ctx.setLineDash(L.touchedToday ? [2, 4] : [6, 4]);
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + iw, y); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
-      tagged.push({ y, price: L.price, color, p: L.pTouch });
+      tags.push({ y, color, text: `${Math.round(L.price)} ${L.side === "at" ? "at" : pct(L.pTouch)}` });
     }
-    // right-axis price tags — MISSION FIX: nudge instead of drop. old code
-    // silently skipped any label within 10px of the previous one, so clustered
-    // levels (wall+pin+sigma stacked tight) lost their tags. now every level
-    // keeps a tag: greedy push-down with a second pass pulling the stack back
-    // up if it overflows the chart bottom. leader line connects tag to its
-    // true level y when nudged.
-    tagged.sort((a, b) => a.y - b.y);
-    const TAG_H = 11;
-    const minY = padT + TAG_H / 2;
-    const maxY = padT + ih - TAG_H / 2 + 8;
-    const yAdj: number[] = [];
-    for (let i = 0; i < tagged.length; i++) {
-      const want = Math.max(tagged[i].y, minY);
-      yAdj.push(i === 0 ? want : Math.max(want, yAdj[i - 1] + TAG_H));
+    tags.sort((a, b) => a.y - b.y);
+    const TAG_H = 13;
+    for (let i = 1; i < tags.length; i++) if (tags[i].y < tags[i - 1].y + TAG_H) tags[i].y = tags[i - 1].y + TAG_H;
+    ctx.font = "10px ui-monospace, monospace"; ctx.textAlign = "left";
+    for (const t of tags) {
+      const y = Math.min(t.y, padT + ih);
+      ctx.fillStyle = t.color; ctx.globalAlpha = 0.9; ctx.fillRect(padL + iw + histW + 3, y - 6, 64, 12); ctx.globalAlpha = 1;
+      ctx.fillStyle = "#0a0a0a"; ctx.fillText(t.text, padL + iw + histW + 5, y + 3.5);
     }
-    for (let i = tagged.length - 1; i >= 0; i--) {
-      const cap = i === tagged.length - 1 ? maxY : yAdj[i + 1] - TAG_H;
-      if (yAdj[i] > cap) yAdj[i] = cap;
-    }
-    ctx.font = "8px ui-monospace, monospace";
-    ctx.textAlign = "left";
-    for (let i = 0; i < tagged.length; i++) {
-      const t = tagged[i];
-      const ty = yAdj[i];
-      const label = `${t.price}`;
-      const w = ctx.measureText(label).width + 6;
-      if (Math.abs(ty - t.y) > 1.5) {
-        // leader line from level to displaced tag
-        ctx.strokeStyle = t.color;
-        ctx.globalAlpha = 0.5;
-        ctx.lineWidth = 0.8;
-        ctx.beginPath(); ctx.moveTo(padL + iw, t.y); ctx.lineTo(padL + iw + 3, ty); ctx.stroke();
-        ctx.globalAlpha = 1;
+
+    // close distribution beside the plot (wide screens)
+    if (wide) {
+      const inner = w.closeDist.filter((b) => b.lo != null && b.hi != null);
+      const maxP = Math.max(...inner.map((b) => b.p), 1e-9);
+      ctx.fillStyle = "rgba(79,209,232,0.55)";
+      for (const b of inner) {
+        const y1 = Y(b.hi!), y2 = Y(b.lo!);
+        if (y2 < padT || y1 > padT + ih) continue;
+        ctx.fillRect(padL + iw + 2, y1 + 0.5, (histW - 6) * (b.p / maxP), Math.max(1, y2 - y1 - 1));
       }
-      ctx.fillStyle = t.color;
-      ctx.globalAlpha = 0.85;
-      ctx.fillRect(padL + iw + 3, ty - 5.5, w, 11);
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = "#0a0a0a";
-      ctx.fillText(label, padL + iw + 6, ty + 2.5);
     }
 
-    // ── projected candles ──
-    const bw = Math.max(2, Math.min(9, slotW * 0.6));
-    cs.forEach((c, i) => {
-      const x = X(i);
-      const up = c.close >= c.open;
-      ctx.strokeStyle = up ? CYAN : "rgba(79,209,232,0.7)";
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x, Y(c.high)); ctx.lineTo(x, Y(c.low)); ctx.stroke();
-      const yo = Y(c.open), yc = Y(c.close);
-      const top = Math.min(yo, yc), hgt = Math.max(1.5, Math.abs(yc - yo));
-      if (up) {
-        ctx.fillStyle = "rgba(79,209,232,0.28)";
-        ctx.fillRect(x - bw / 2, top, bw, hgt);
-        ctx.strokeRect(x - bw / 2, top, bw, hgt);
-      } else {
-        ctx.fillStyle = CYAN;
-        ctx.fillRect(x - bw / 2, top, bw, hgt);
-      }
-    });
-
-    // ── spot marker (left edge = now) ──
-    const sy = Y(spot);
-    ctx.strokeStyle = "rgba(251,191,36,0.85)";
-    ctx.lineWidth = 1; ctx.setLineDash([1, 3]);
-    ctx.beginPath(); ctx.moveTo(padL, sy); ctx.lineTo(padL + iw, sy); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = AMBER;
-    ctx.beginPath(); ctx.arc(padL + 2, sy, 3, 0, Math.PI * 2); ctx.fill();
-    ctx.font = "10px ui-monospace, monospace";
-    ctx.textAlign = "left";
-    ctx.fillText(spot.toFixed(0), padL + 8, sy - 6);
-
-    // ── hover ──
-    if (hover != null && hover >= 0 && hover < n) {
-      const x = X(hover);
-      ctx.strokeStyle = "rgba(255,255,255,0.28)";
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih); ctx.stroke();
+    // now / spot
+    if (w.spot != null) {
+      const x = X(geo.startAbs), y = Y(w.spot);
+      ctx.fillStyle = "#fbbf24"; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
     }
-  }, [data, wrapW, hover]);
+    if (hoverMin != null) {
+      const x = X(hoverMin);
+      ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih); ctx.stroke();
+    }
+  }, [data, w, ok, geo, wrapW, hoverMin, showOverlay]);
 
-  const hoverCandle = useMemo(
-    () => (hover != null && data?.candles ? data.candles[hover] ?? null : null),
-    [hover, data],
-  );
-
-  const onMove = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!data?.candles?.length || !wrapRef.current) return;
+  const onMove = (clientX: number | undefined) => {
+    if (clientX == null || !geo || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    const cx = "touches" in e ? e.touches[0]?.clientX : (e as React.MouseEvent).clientX;
-    if (cx == null) return;
-    const iw = rect.width - 6 - 62;
-    const rel = cx - rect.left - 6;
-    const idx = Math.floor((rel / iw) * data.candles.length);
-    setHover(Math.max(0, Math.min(data.candles.length - 1, idx)));
+    const histW = rect.width >= 640 ? 70 : 0;
+    const iw = rect.width - 6 - 70 - histW;
+    const abs = geo.x0 + ((clientX - rect.left - 6) / iw) * (geo.endAbs - geo.x0);
+    setHoverMin(Math.max(geo.x0, Math.min(geo.endAbs, abs)));
   };
+  const readout = useMemo(() => {
+    if (hoverMin == null || !w || !geo) return null;
+    if (hoverMin < geo.startAbs) {
+      const p = [...geo.path].reverse().find((x) => x.min <= hoverMin);
+      return p ? { kind: "path" as const, et: hhmm(p.min), close: p.close } : null;
+    }
+    const t = hoverMin - geo.startAbs;
+    const b = w.bands.reduce((best, x) => (Math.abs(x.minute - t) < Math.abs(best.minute - t) ? x : best), w.bands[0]);
+    return { kind: "band" as const, et: b.et, q: b.q };
+  }, [hoverMin, w, geo]);
 
   if (isLoading) {
     return (
@@ -282,124 +247,143 @@ export default function OdteForward() {
   if (isError || !data) {
     return (
       <div className="rounded border border-border bg-card/40 p-4 text-xs font-mono text-muted-foreground" data-testid="odte-forward-error">
-        0DTE FORWARD — chain unavailable (schwab auth or no 0dte expiry)
+        0DTE Wiener map unavailable: the option chain did not answer (Schwab sign-in or no 0DTE expiry)
       </div>
     );
   }
 
-  const { session, expectedMove, levels, regime, levelMap } = data;
-  const sessionLabel = session.state === "intraday" ? `${session.minutesToClose}m to close` : session.state === "preopen" ? "pre-open · full session" : "closed · next session";
-  const longG = regime === "long_gamma";
-  const indet = regime === "indeterminate";
-  const untouched = levelMap.filter((L) => !L.touched);
-  const projClose = data.candles.length ? data.candles[data.candles.length - 1].close : null;
+  const { session, levels, regime } = data;
+  const sessionLabel = session.state === "intraday" ? `${session.minutesToClose}m to close` : session.state === "preopen" ? "pre-open, full session" : "closed, next session from the last price";
+  const sc = ledger?.wienerScorecard;
 
   return (
     <div className="rounded border border-border bg-card/40 p-3" data-testid="odte-forward-panel">
-      {/* header */}
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-cyan-300">0DTE Forward Map</span>
-        <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{data.symbol} · exp {data.expiry} · {sessionLabel}</span>
-        <span className={`text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${indet ? "border-border text-muted-foreground" : longG ? "border-lime-500/40 text-lime-400" : "border-red-500/40 text-red-400"}`} data-testid="odte-regime">
-          {indet ? "greeks pending open" : longG ? "long gamma · pin" : "short gamma · amplify"}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-cyan-300">0DTE Wiener map · today</span>
+        <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{data.symbol} · exp {data.expiry} · {sessionLabel}{data.chainStale ? " · chain stale" : ""}</span>
+        <span className={`rounded border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${regime === "indeterminate" ? "border-border text-muted-foreground" : regime === "long_gamma" ? "border-lime-500/40 text-lime-400" : "border-red-500/40 text-red-400"}`} data-testid="odte-regime">
+          {regime === "indeterminate" ? "gamma sign not determined" : regime === "long_gamma" ? "long gamma at spot" : "short gamma at spot"}
         </span>
-        <button
-          onClick={() => setShowMap((v) => !v)}
-          className="ml-auto min-h-[44px] text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-cyan-500/40 sm:min-h-0"
-          data-testid="button-toggle-levelmap"
-        >
-          {showMap ? "hide levels" : "show levels"}
-        </button>
       </div>
 
-      {/* chips */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mb-2">
-        <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">EM (expected move) to close (1σ)</div>
-          <div className="text-xs font-mono text-amber-400" data-testid="odte-em-sigma">{expectedMove.sigma != null ? `±${expectedMove.sigma}` : "—"}</div>
+      {!ok ? (
+        <div className="rounded border border-border/60 p-3 text-xs text-muted-foreground" data-testid="odte-wiener-unavailable">
+          Wiener map unavailable: {w?.reason ?? "the forward did not include it"}
         </div>
-        <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">path end (model shape)</div>
-          <div className="text-xs font-mono text-cyan-300" data-testid="odte-proj-close">{projClose ?? "—"}</div>
-        </div>
-        <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">0DTE net GEX</div>
-          <div className={`text-xs font-mono ${data.netGex == null ? "text-muted-foreground" : data.netGex >= 0 ? "text-lime-400" : "text-red-400"}`} data-testid="odte-net-gex">{data.netGex != null ? fmtUsd(data.netGex) : "—"}</div>
-        </div>
-        <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Pin</div>
-          <div className="text-xs font-mono text-amber-400" data-testid="odte-pin">{levels.pin ?? "—"}</div>
-        </div>
-        <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Wall / Flip</div>
-          <div className="text-xs font-mono text-foreground" data-testid="odte-walls">{levels.putWall ?? "—"}–{levels.callWall ?? "—"} <span className="text-purple-400">/{levels.gammaFlip ?? "—"}</span></div>
-        </div>
-      </div>
-
-      {/* projection chart */}
-      <div
-        ref={wrapRef}
-        className="relative select-none touch-pan-y"
-        onMouseMove={onMove}
-        onMouseLeave={() => setHover(null)}
-        onTouchMove={onMove}
-        onTouchEnd={() => setHover(null)}
-        data-testid="odte-cone"
-      >
-        <canvas ref={canvasRef} />
-        {hoverCandle && (
-          <div className="absolute top-1 left-1 rounded border border-border bg-background/92 px-2 py-1 text-[11px] font-mono pointer-events-none z-10">
-            <div className="text-muted-foreground">{hoverCandle.et} ET · projected</div>
-            <div className="text-cyan-300">O {hoverCandle.open} · C {hoverCandle.close}</div>
-            <div className="text-foreground">H {hoverCandle.high} · L {hoverCandle.low}</div>
-            <div className="text-muted-foreground">1σ {hoverCandle.bandDn} – {hoverCandle.bandUp}</div>
+      ) : (
+        <>
+          <div className="mb-2 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+            <Chip label="1σ to the close" testId="odte-em-sigma" value={`±${w!.sigmaToClose}`} sub={w!.sigmaSource === "atm_iv" ? `ATM IV ${data.atmIV}%${w!.sigmaFromStraddle != null ? `; straddle implies ±${w!.sigmaFromStraddle}` : ""}` : "from the ATM straddle (no IV)"} />
+            <Chip label="Expected high left" testId="odte-exp-high" value={`${w!.expected!.high}`} sub="mean of the remaining high" />
+            <Chip label="Expected low left" testId="odte-exp-low" value={`${w!.expected!.low}`} sub="mean of the remaining low" />
+            <Chip label="Expected range left" testId="odte-exp-range" value={`${w!.expected!.range} pts`} sub="mean high minus low" />
+            <Chip label="Pin · walls · flip" testId="odte-walls" value={`${levels.pin ?? "n/a"} · ${levels.putWall ?? "n/a"}–${levels.callWall ?? "n/a"} · ${levels.gammaFlip ?? "n/a"}`} sub={data.netGex != null ? `0DTE net GEX ${fmtUsd(data.netGex)}` : "gamma not priced"} />
           </div>
-        )}
-      </div>
 
-      {/* level map */}
-      {showMap && (
-        <div className="mt-2" data-testid="odte-level-map">
-          <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground mb-1">
-            Level map · model touch frequency (driftless, σ from chain) · {untouched.length} untouched
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5">
-            {levelMap.slice(0, 14).map((L) => (
-              <div
-                key={`${L.kind}-${L.price}`}
-                className="flex items-center gap-2 text-[11px] font-mono py-0.5 border-b border-border/40"
-                title={L.note}
-                data-testid={`level-${L.kind}-${L.price}`}
-              >
-                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: KIND_COLOR[L.kind] || "#94a3b8" }} />
-                <span className="w-14 shrink-0 tabular-nums text-foreground">{L.price}</span>
-                <span className="w-24 shrink-0 whitespace-normal break-words text-muted-foreground">{L.label}</span>
-                <span className={`w-12 shrink-0 tabular-nums ${L.side === "above" ? "text-red-400" : L.side === "below" ? "text-lime-400" : "text-amber-400"}`}>
-                  {L.distance > 0 ? "+" : ""}{L.distance.toFixed(0)}
-                </span>
-                {/* P(touch) bar */}
-                <span className="flex-1 h-1.5 rounded-sm bg-muted/40 overflow-hidden min-w-[30px]">
-                  <span
-                    className="block h-full rounded-sm"
-                    style={{
-                      width: `${Math.round(L.pTouch * 100)}%`,
-                      background: L.touched ? "rgba(148,163,184,0.4)" : KIND_COLOR[L.kind] || "#94a3b8",
-                    }}
-                  />
-                </span>
-                <span className={`w-9 shrink-0 text-right tabular-nums ${L.touched ? "text-muted-foreground" : "text-foreground"}`}>
-                  {L.touched ? "hit" : `${Math.round(L.pTouch * 100)}%`}
-                </span>
+          <div
+            ref={wrapRef}
+            className="relative touch-pan-y select-none"
+            onMouseMove={(e) => onMove(e.clientX)}
+            onMouseLeave={() => setHoverMin(null)}
+            onTouchStart={(e) => onMove(e.touches[0]?.clientX)}
+            onTouchMove={(e) => onMove(e.touches[0]?.clientX)}
+            data-testid="odte-cone"
+            aria-label="Today's path so far and the Wiener model's percentile bands to the close"
+          >
+            <canvas ref={canvasRef} role="img" aria-label="0DTE Wiener map chart" />
+            {readout && (
+              <div className="pointer-events-none absolute left-1 top-1 z-10 rounded border border-border bg-background/95 px-2 py-1 text-[11px] font-mono" data-testid="odte-readout">
+                {readout.kind === "path" ? (
+                  <div>{readout.et} ET · traded {readout.close}</div>
+                ) : (
+                  <>
+                    <div className="text-muted-foreground">{readout.et} ET · model percentiles</div>
+                    <div>median {readout.q.p50} · 25–75%: {readout.q.p25}–{readout.q.p75}</div>
+                    <div>10–90%: {readout.q.p10}–{readout.q.p90} · 2.5–97.5%: {readout.q.p025}–{readout.q.p975}</div>
+                  </>
+                )}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      )}
 
-      {/* method */}
-      <div className="mt-1.5 text-[11px] font-mono text-muted-foreground leading-relaxed">
-        projected shape, not a bar forecast · candles routed on median path (pin gravity + charm tilt + wall clamp), wicks scaled by bucket σ, seeded per session so it doesn't flicker · P(touch) = 2·Φ(−|L−S|/σ√t), reflection principle · ATM IV {data.atmIV}%{data.atmIVSource === "straddle" ? " straddle-derived" : ""} · prior close {data.bars.priorClose ?? "—"} · ORB (opening range) {data.bars.orbLow ?? "—"}–{data.bars.orbHigh ?? "—"}
-      </div>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <button type="button" onClick={() => setShowLevels((v) => !v)} aria-expanded={showLevels} data-testid="button-toggle-levelmap"
+              className="min-h-[44px] rounded border border-border px-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
+              {showLevels ? "Hide level odds" : "Show level odds"}
+            </button>
+            <button type="button" onClick={() => setShowOverlay((v) => !v)} aria-pressed={showOverlay} data-testid="button-toggle-overlay"
+              className="min-h-[44px] rounded border border-border px-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
+              {showOverlay ? "Hide dealer overlay" : "Dealer overlay (heuristic)"}
+            </button>
+          </div>
+          {showOverlay && (
+            <div className="mt-1 text-[11px] text-amber-300/90" data-testid="odte-overlay-note">
+              Amber dotted line: {data.pathBasis ?? "dealer-positioning rules of thumb"}. Not part of the Wiener baseline and not graded.
+            </div>
+          )}
+
+          {showLevels && (
+            <div className="mt-2 overflow-x-auto" data-testid="odte-level-map">
+              <table className="w-full text-[11px] font-mono">
+                <thead className="text-muted-foreground">
+                  <tr className="text-left">
+                    <th className="py-1 pr-2 font-normal">Level</th>
+                    <th className="py-1 pr-2 font-normal">Price</th>
+                    <th className="py-1 pr-2 font-normal">Away</th>
+                    <th className="py-1 pr-2 font-normal">Touch by close</th>
+                    <th className="py-1 font-normal">Close above</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {w!.levels.map((L) => (
+                    <tr key={`${L.kind}-${L.price}`} className="border-t border-border/40" data-testid={`level-${L.kind}-${L.price}`}>
+                      <td className="py-1 pr-2"><span className="mr-1 inline-block h-1.5 w-1.5 rounded-full" style={{ background: KIND_COLOR[L.kind] ?? "#94a3b8" }} />{L.label}</td>
+                      <td className="py-1 pr-2 tabular-nums">{Math.round(L.price)}</td>
+                      <td className="py-1 pr-2 tabular-nums">{L.side === "at" ? "at price" : `${L.distance > 0 ? "+" : ""}${Math.round(L.distance)} (${L.distanceSigma}σ)`}</td>
+                      <td className="py-1 pr-2 tabular-nums">{L.side === "at" ? "at price" : pct(L.pTouch)}{L.touchedToday ? " · traded earlier today" : ""}</td>
+                      <td className="py-1 tabular-nums">{pct(L.pCloseAbove)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="mt-2 rounded border border-border/60 p-2 text-[11px]" data-testid="odte-wiener-scorecard">
+            <div className="font-mono uppercase tracking-wider text-muted-foreground">Morning odds scorecard</div>
+            {!sc ? (
+              <div className="text-muted-foreground">Scorecard unavailable: the settle ledger did not answer.</div>
+            ) : sc.days === 0 ? (
+              <div className="text-muted-foreground">No scored days yet. Each session's 09:35 odds are scored after the close; the odds stay untested until {sc.minDays} days are scored.</div>
+            ) : (
+              <>
+                <div className={sc.tested ? "text-foreground" : "text-amber-300/90"}>
+                  {sc.days} scored day{sc.days === 1 ? "" : "s"}{sc.tested ? "" : ` of ${sc.minDays} needed: untested`} · touch Brier {sc.touch.brier ?? "n/a"} (lower is better, 0.25 = coin flip)
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
+                  {sc.touch.buckets.filter((b) => b.n > 0).map((b) => (
+                    <span key={b.lo}>{Math.round(b.lo * 100)}–{Math.round(b.hi * 100)}%: said {pct(b.stated ?? 0)}, happened {pct(b.observed ?? 0)} (n {b.n})</span>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground" data-testid="odte-wiener-method">
+            {w!.model}. Bands are percentiles of the price at each time, not paths. Touch = trading at the level at least once before the close (exact for this model). {w!.caveats.join("; ")}.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Chip({ label, value, sub, testId }: { label: string; value: string; sub?: string; testId: string }) {
+  return (
+    <div className="rounded border border-border bg-card/40 px-2 py-1.5">
+      <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-xs font-mono text-foreground" data-testid={testId}>{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
     </div>
   );
 }
