@@ -1418,3 +1418,13 @@ concurrent, failed shared build, partial batch, quote failure with cached histor
 transition and late bar, backoff, invalidation, rolled close, extended hours, weekend/pre-market/holiday/
 early close, stale quote, crypto/FX untouched). Not verified live: savings on Railway (expected about 34
 fewer requests per overnight build); the headline chain reads and the flow requests are separate next items.
+Second review of feat/macro-request-efficiency (same reviewer, on the fixes): 2 MUST-FIX fixed. (1) The
+background refresh chained one full re-read per build while a slow read was running and skipped the failure
+backoff (5 builds during one slow refresh = 102 reads instead of 17); now one runner drains a queued set and
+re-checks the need with the current clock and session before each read (tested with back-to-back builds).
+(2) An out-of-date history copy produced a prior close from an older bar, i.e. a two-day change labelled
+"ok"; a daily-bar prior close must now be the session right before the price's session, otherwise it is
+unavailable with the reason. SHOULD-FIX taken: a bar posted at the close is re-read once at close + 20 min
+(2 reads per symbol per close, not 3); a streamed regular last with no trade time that equals the prior
+close in the first 5 minutes after the open is dated to the prior session; a session-close substitute from a
+kept copy is partial with its reason.

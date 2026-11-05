@@ -30,7 +30,7 @@
 // Today's still-forming daily bar is never stored, and a bar read within
 // SETTLE_MS of its session's close is re-read once (closing prints settle).
 
-import { resolvePrevClose, dayChange, dailyBarSessionDate, type PrevCloseSource } from "./dayChange";
+import { resolvePrevClose, dayChange, dailyBarSessionDate, sameClose, type PrevCloseSource } from "./dayChange";
 import { etClock, etDate, prevTradingDay, sessionCloseMs, isTradingDay, isRegularSessionOpen, type IsoDate } from "./exchangeCalendar";
 import { lastCompletedSession } from "./breadthMath";
 
@@ -200,7 +200,9 @@ interface HistoryEntry {
   /** Completed-session bars, oldest first. */
   bars: { t: number; c: number; date: IsoDate }[];
   fetchedAt: number;
-  /** true when the bars include the key session and were read after it settled. */
+  /** true when the bars include the key session. */
+  posted: boolean;
+  /** true when posted and read after the key session's close settled. */
   complete: boolean;
 }
 
@@ -254,7 +256,12 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     const e = history.get(sym);
     if (!e) return true;
     if (e.key !== key) return true;
-    if (!e.complete) return now - e.fetchedAt >= INCOMPLETE_RETRY_MS;
+    if (!e.posted) return now - e.fetchedAt >= INCOMPLETE_RETRY_MS;
+    if (!e.complete) {
+      // Posted but read before the close settled: read once more after it settles.
+      const keyClose = sessionCloseMs(key);
+      return keyClose == null || now >= keyClose + SETTLE_MS;
+    }
     return now - e.fetchedAt >= HISTORY_MAX_AGE_MS;
   };
 
@@ -278,7 +285,8 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
         failures.delete(sym);
         const keyClose = sessionCloseMs(key);
         const settled = keyClose == null || now >= keyClose + SETTLE_MS;
-        history.set(sym, { key, bars, fetchedAt: now, complete: bars[bars.length - 1].date === key && settled });
+        const posted = bars[bars.length - 1].date === key;
+        history.set(sym, { key, bars, fetchedAt: now, posted, complete: posted && settled });
       } catch (e: any) {
         failures.set(sym, { at: deps.now(), reason: `daily history read failed: ${e?.message ?? e}` });
       }
@@ -292,10 +300,9 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     const f = failures.get(sym);
     if (!e) return { bars: [], state: "none", reason: f?.reason ?? "daily history not read yet" };
     if (e.key === key && e.complete) return { bars: e.bars, state: "fresh", reason: null };
-    const posted = e.bars.length > 0 && e.bars[e.bars.length - 1].date === key;
     const why = e.key !== key
       ? `daily history from before ${key}${f ? ` (${f.reason})` : ""}`
-      : posted ? `the ${key} daily bar is read again once closing prints settle` : `the ${key} daily bar was not posted yet`;
+      : e.posted ? `the ${key} daily bar is read again once closing prints settle` : `the ${key} daily bar was not posted yet`;
     return { bars: e.bars, state: "kept", reason: why };
   };
 
@@ -305,7 +312,25 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
       await Promise.all(symbols.slice(i, i + HISTORY_CONCURRENCY).map((s) => readHistory(s, key)));
     }
   }
-  let background: Promise<void> = Promise.resolve();
+  // Background refresh: at most ONE runner. Builds add due symbols to a set;
+  // the runner drains it, re-checking needsRead with the current clock and
+  // session key just before reading, so a slow refresh never queues
+  // duplicate reads and the failure backoff holds.
+  const queued = new Set<string>();
+  let runner: Promise<void> | null = null;
+  function scheduleBackground(symbols: string[]): void {
+    for (const s of symbols) queued.add(s);
+    if (runner) return;
+    runner = (async () => {
+      while (queued.size) {
+        const batch = Array.from(queued);
+        queued.clear();
+        const now = deps.now();
+        const key = lastCompletedSession(now);
+        await readAll(batch.filter((s) => needsRead(s, key, now)), key);
+      }
+    })().catch(() => { /* readHistory records its own failures */ }).finally(() => { runner = null; });
+  }
 
   /**
    * Symbols with no history at all are read before the build answers (cold
@@ -316,10 +341,7 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     const due = symbols.filter((s) => needsRead(s, key, now));
     const cold = due.filter((s) => !history.has(s));
     const warm = due.filter((s) => history.has(s));
-    if (warm.length) {
-      const prev = background;
-      background = prev.then(() => readAll(warm, key)).catch(() => {});
-    }
+    if (warm.length) scheduleBackground(warm);
     await readAll(cold, key);
   }
 
@@ -342,10 +364,15 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     //    Schwab gives it (REST); the stream gives no time: the last started session.
     const reg = q?.regularMarketLast != null && Number.isFinite(q.regularMarketLast) && q.regularMarketLast > 0 ? q.regularMarketLast : null;
     const regTime = q?.regularMarketTradeTimeMs != null && Number.isFinite(q.regularMarketTradeTimeMs) && q.regularMarketTradeTimeMs > 0 ? q.regularMarketTradeTimeMs : null;
+    // A stream record has no trade time: in the first minutes after the open a
+    // regular last equal to the prior close is most likely yesterday's close.
+    const openMinutes = etClock(now).minutes - (9 * 60 + 30);
+    const streamNoTradeYet = reg != null && regTime == null && open && openMinutes >= 0 && openMinutes < 5
+      && q?.prevClose != null && sameClose(reg, q.prevClose);
     if (reg != null) {
       price = reg;
       basis = "regular_session_last";
-      priceSessionDate = regTime != null ? etDate(regTime) : started;
+      priceSessionDate = regTime != null ? etDate(regTime) : streamNoTradeYet ? prevTradingDay(started) : started;
       priceAsOfMs = regTime ?? (open ? (q?.quoteTimeMs ?? q?.fetchedAtMs ?? null) : sessionCloseMs(started));
       if (priceSessionDate < started) {
         notes.push(open ? `no regular-session trade yet today: last regular trade ${priceSessionDate}` : `last regular trade ${priceSessionDate}`);
@@ -395,7 +422,19 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
       dailyBars: h.bars.length ? h.bars : null,
       afterSessionClose,
     });
-    if (pc.prevClose == null) notes.push(pc.reason ?? "prior close unavailable");
+    // A prior close from the daily bars must be the session right before the
+    // price's session: an out-of-date copy would otherwise turn a two-day move
+    // into "day change".
+    if (pc.prevClose != null && pc.source === "daily_bar" && pc.prevCloseDate !== prevTradingDay(priceSessionDate)) {
+      notes.push(`prior close unavailable: the ${prevTradingDay(priceSessionDate)} daily bar was not read${h.reason ? ` (${h.reason})` : ""}`);
+      pc.prevClose = null;
+      pc.source = "unavailable";
+      pc.prevCloseDate = null;
+    } else if (pc.prevClose == null) {
+      notes.push(pc.reason ?? "prior close unavailable");
+    }
+    // A substitute price from a kept, unsettled or out-of-date copy says so.
+    if (basis === "session_close" && h.state !== "fresh" && h.reason) notes.push(h.reason);
     const { change, changePct } = dayChange(price, pc.prevClose);
 
     const closes = h.bars.map((b) => b.c);
@@ -403,7 +442,8 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     const spark = (!lastBarDate || priceSessionDate > lastBarDate) ? [...closes, price] : closes;
 
     // "partial" = the shown price or prior close is a substitute, stale or missing.
-    const partial = basis === "last_daily_close" || stale || pc.prevClose == null || priceSessionDate < started;
+    const partial = basis === "last_daily_close" || stale || pc.prevClose == null || priceSessionDate < started
+      || (basis === "session_close" && h.state !== "fresh");
     return {
       ...base, price, prevClose: pc.prevClose, change, changePct, spark: spark.slice(-22),
       basis, dataState: partial ? "partial" : "ok", reason: notes.length ? notes.join("; ") : null,
@@ -476,7 +516,7 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
       buildInFlight = p;
       return p;
     },
-    settle(): Promise<void> { return background; },
+    async settle(): Promise<void> { while (runner) await runner; },
     invalidateHistory(symbol?: string): void {
       if (symbol) { history.delete(symbol); failures.delete(symbol); }
       else { history.clear(); failures.clear(); }

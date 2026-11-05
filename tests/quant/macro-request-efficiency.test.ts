@@ -193,28 +193,93 @@ test("macro: session close re-reads history once, settles the closing bar, retri
   assert.equal(totalDaily(h), 17, "cold start");
   h.barsUpTo.date = "2026-11-03"; // Schwab has not posted 11-04 yet
   h.clock.t = et("2026-11-04", 16, 1);
-  await b.build();
-  await b.settle();
+  await b.build(); await b.settle();
   assert.equal(totalDaily(h), 34, "session completed: one re-read per symbol (in the background)");
   h.clock.t = et("2026-11-04", 16, 5);
   await b.build(); await b.settle();
-  assert.equal(totalDaily(h), 34, "incomplete copy is not re-read on every poll");
-  const kept = row(await b.build(), "SPY");
-  assert.equal(kept.basis, "regular_session_last", "the quote still carries the regular close");
+  assert.equal(totalDaily(h), 34, "a missing bar is not re-read on every poll");
+  assert.equal(row(await b.build(), "SPY").basis, "regular_session_last", "the quote still carries the regular close");
   h.barsUpTo.date = "2026-11-04";
   h.clock.t = et("2026-11-04", 16, 1) + INCOMPLETE_RETRY_MS;
   await b.build(); await b.settle();
-  assert.equal(totalDaily(h), 51, "retried after the interval");
-  h.clock.t = et("2026-11-04", 16, 1) + 2 * INCOMPLETE_RETRY_MS;
-  assert.ok(h.clock.t >= et("2026-11-04", 16) + SETTLE_MS);
+  assert.equal(totalDaily(h), 51, "late bar retried after the interval (posted now, read before it settled)");
+  h.clock.t = et("2026-11-04", 16, 15);
   await b.build(); await b.settle();
-  assert.equal(totalDaily(h), 68, "the bar read inside the settle window is read once more");
+  assert.equal(totalDaily(h), 51, "a posted, unsettled bar waits for the settle time, not the 10-minute interval");
+  h.clock.t = et("2026-11-04", 16) + SETTLE_MS;
+  await b.build(); await b.settle();
+  assert.equal(totalDaily(h), 68, "read once more after the close settles");
   h.clock.t += 60_000;
   await b.build(); await b.settle();
   assert.equal(totalDaily(h), 68, "settled and complete: no further reads");
-  h.clock.t = et("2026-11-04", 16, 21) + HISTORY_MAX_AGE_MS;
+  h.clock.t = et("2026-11-04", 16, 20) + HISTORY_MAX_AGE_MS;
   await b.build(); await b.settle();
   assert.equal(totalDaily(h), 85, "a complete copy is still refreshed after the maximum age (vendor corrections)");
+});
+
+test("macro: a bar posted at the close costs 2 reads per symbol (close + settle), not 3", async () => {
+  const h = harness(et("2026-11-04", 15, 50));
+  const b = createMacroBuilder(h.deps);
+  await b.build();
+  for (const m of [1, 5, 11, 15, 19]) { h.clock.t = et("2026-11-04", 16, m); await b.build(); await b.settle(); }
+  assert.equal(totalDaily(h), 34);
+  h.clock.t = et("2026-11-04", 16, 21); await b.build(); await b.settle();
+  assert.equal(totalDaily(h), 51);
+});
+
+test("macro: overlapping builds during a slow refresh queue no duplicate reads and keep the backoff", async () => {
+  const h = harness(et("2026-11-04", 23, 30));
+  const b = createMacroBuilder(h.deps);
+  await b.build();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const inner = h.deps.getDailyBars;
+  h.deps.getDailyBars = async (sym) => { await gate; return inner(sym); };
+  h.clock.t += HISTORY_MAX_AGE_MS;
+  for (let i = 0; i < 5; i++) { await b.build(); h.clock.t += 15_000; }
+  release();
+  await b.settle();
+  assert.equal(totalDaily(h), 34, "one refresh per symbol, not one per build");
+
+  // Failing reads under the backoff: back-to-back builds do not re-read.
+  const h2 = harness(et("2026-11-04", 23, 30));
+  const b2 = createMacroBuilder(h2.deps);
+  await b2.build();
+  h2.dailyFail.add("SPY");
+  h2.clock.t += HISTORY_MAX_AGE_MS;
+  for (let i = 0; i < 4; i++) { await b2.build(); await b2.settle(); h2.clock.t += 15_000; }
+  assert.equal(h2.dailyCalls.get("SPY"), 2, "one failed refresh, then the 2-minute backoff holds");
+});
+
+test("macro: an out-of-date history copy never yields a multi-day change labelled ok", async () => {
+  const h = harness(et("2026-11-04", 23, 30));
+  const b = createMacroBuilder(h.deps);
+  await b.build(); // history through Wed 11-04
+  for (const s of SCHWAB_SYMBOLS) h.dailyFail.add(s);
+  h.clock.t = et("2026-11-07", 12, 0); // Saturday; Friday's regular trade quoted
+  h.quotes = (syms) => syms.map((s) => ({
+    symbol: s, last: 205, change: 0, prevClose: closeOf(s, "2026-11-05"), regularMarketLast: 205,
+    regularMarketTradeTimeMs: et("2026-11-06", 15, 59), quoteTimeMs: et("2026-11-06", 16), fetchedAtMs: null, stale: false,
+  }));
+  const r = await b.build(); await b.settle();
+  const spy = row(await b.build(), "SPY");
+  assert.equal(spy.price, 205);
+  assert.equal(spy.prevClose, null, "Thursday's bar was never read: no prior close, not Wednesday's");
+  assert.equal(spy.change, null);
+  assert.equal(spy.dataState, "partial");
+  assert.match(spy.reason ?? "", /2026-11-05 daily bar was not read/);
+  assert.ok(r);
+});
+
+test("macro: a streamed regular last with no trade time is not taken as today's trade right after the open", async () => {
+  const h = harness(et("2026-11-05", 9, 31), (syms) => syms.map((s) => ({
+    symbol: s, last: 210, change: 0, prevClose: closeOf(s, "2026-11-04"), regularMarketLast: closeOf(s, "2026-11-04"),
+    regularMarketTradeTimeMs: null, quoteTimeMs: et("2026-11-05", 9, 31), fetchedAtMs: null, stale: false,
+  })));
+  const spy = row(await createMacroBuilder(h.deps).build(), "SPY");
+  assert.equal(spy.priceSessionDate, "2026-11-04", "yesterday's close, not 0.00% today");
+  assert.equal(spy.prevClose, closeOf("SPY", "2026-11-03"));
+  assert.equal(spy.dataState, "partial");
 });
 
 test("macro: a kept copy answers at once while it refreshes in the background", async () => {
