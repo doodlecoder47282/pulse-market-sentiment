@@ -548,7 +548,15 @@ jobs:
             const wp = await b.newPage({ viewport: { width: 402, height: 874 } });
             await wp.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
             await wp.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
-            await wp.locator('[data-testid="tab-heatseeker"]').first().click({ timeout: 10000 });
+            // Phones navigate with the bottom bar; Heatseeker may sit in its "More" sheet (same order as the UX audit).
+            if (await wp.locator('[data-testid="tab-heatseeker"]').first().isVisible().catch(() => false)) {
+              await wp.locator('[data-testid="tab-heatseeker"]').first().click({ timeout: 10000 });
+            } else if (await wp.locator('[data-testid="bottomnav-heatseeker"]').first().isVisible().catch(() => false)) {
+              await wp.locator('[data-testid="bottomnav-heatseeker"]').first().click({ timeout: 10000 });
+            } else {
+              await wp.locator('[data-testid="bottomnav-more"]').click({ timeout: 10000 });
+              await wp.locator('[data-testid="moresheet-heatseeker"]').click({ timeout: 10000 });
+            }
             await wp.locator('[data-testid="odte-forward-panel"], [data-testid="odte-forward-error"]').first().waitFor({ timeout: 60000 });
             const panel = await wp.locator('[data-testid="odte-forward-panel"]').count();
             const unavailable = await wp.locator('[data-testid="odte-wiener-unavailable"]').count();
