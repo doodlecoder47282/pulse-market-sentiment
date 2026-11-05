@@ -1453,3 +1453,10 @@ daily bar is read or when the stream's regular last differs from it (stream reco
 time; streaming is off today: Schwab 401 on the Trader API); the Details toggle is 32 px tall (passes the
 24 px audit floor, under the 44 px guideline). Next: measure live dispatch counts after merge; then the
 headline SPY-chain reads.
+Prophecy review of #49 (E1, 2026-11-05 10:18): HOLD on the Details control: min-h 32 px is under Batcave's
+mandatory 44 px touch rule (the audit's 24 px floor is not the rule). Now the tape is at least 44 px tall and
+the button's hit area fills its height (>= 44 x 44) with the compact pill drawn inside. CI's demo step
+renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is the element under its own
+centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
+and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
+failure in the demo step is the separate #48 defect and still prints until #48 is merged.

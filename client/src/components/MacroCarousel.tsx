@@ -198,7 +198,7 @@ export function MacroTicker() {
   return (
     <div>
     <div
-      className="relative overflow-hidden border-y border-border/50 bg-gradient-to-r from-black/40 via-black/20 to-black/40 py-2"
+      className="relative flex min-h-[44px] items-center overflow-hidden border-y border-border/50 bg-gradient-to-r from-black/40 via-black/20 to-black/40 py-2"
       data-testid="macro-ticker-tape"
     >
       {/* Tap-accessible row details (tooltips do not work on phones). */}
@@ -208,9 +208,12 @@ export function MacroTicker() {
         aria-expanded={detailsOpen}
         aria-controls="macro-tape-details"
         data-testid="macro-tape-details-toggle"
-        className="absolute right-2 top-1/2 z-10 flex min-h-[32px] -translate-y-1/2 items-center rounded-full border border-border/60 bg-background/90 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur hover:text-foreground"
+        className="group absolute inset-y-0 right-0 z-10 flex min-h-[44px] min-w-[44px] items-center justify-center px-2"
       >
-        {detailsOpen ? "Hide" : "Details"}{notHealthy > 0 ? ` · ${notHealthy} not ok` : ""}
+        {/* Compact pill inside a full-height (>= 44 px) hit area. */}
+        <span className="rounded-full border border-border/60 bg-background/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur group-hover:text-foreground">
+          {detailsOpen ? "Hide" : "Details"}{notHealthy > 0 ? ` · ${notHealthy} not ok` : ""}
+        </span>
       </button>
       {/* Live pulse indicator (Sample on the demo: those prices are simulated) */}
       {isDemo ? (
