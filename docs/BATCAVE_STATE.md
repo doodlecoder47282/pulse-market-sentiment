@@ -1423,3 +1423,8 @@ on Friday/weekend, the evening before Thanksgiving, after the half-day close, Ch
 next-session map unavailable unless the chain's expiry is the next trading day; scoring start is a tested
 pure helper (wienerScoringStartMs); the vacuous rails test replaced by one that shows the displacement;
 logNormCdf seam reduced (-15/x^6 term); the forming 5-minute bar is left out of today's path.
+Third review (same reviewer): no MUST-FIX; the calendar rule agreed with the forward's 503 no_expiries in all
+360 probe cases (24 dates x 15 times incl. holidays, half days, MLK, Good Friday). SHOULD-FIX taken: the
+Wiener CI check re-reads the calendar at check time (a run crossing a close) and requires the forward's own
+503 no_expiries answer (a server error on a no-expiry day still fails); the displacement test is named for
+what it proves (mechanism + no rail in the list), not for the forward's ordering.

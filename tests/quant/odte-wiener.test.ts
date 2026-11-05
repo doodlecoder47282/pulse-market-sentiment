@@ -324,7 +324,9 @@ test("wiener (review): intraday without a same-day expiry the map is unavailable
   }
 });
 
-test("wiener (review): sigma rails can displace a real level in the level-map dedupe, so the Wiener levels are built without them", async () => {
+// Proves the mechanism (a rail can displace a real level in the dedupe) and that no rail reaches the Wiener
+// list; it does not by itself prove the forward builds its list before the rails are added.
+test("wiener (review): sigma rails can displace a real level in the level-map dedupe; no rail reaches the Wiener list", async () => {
   const { buildLevelMap } = await import("../../server/odteProjection.ts");
   const spot = 6800, sigma = 30;
   // A secondary gamma shelf one strike-width-ish from spot + 1 sigma (inside the dedupe bucket of spot*0.0004 = 2.72 pts).
