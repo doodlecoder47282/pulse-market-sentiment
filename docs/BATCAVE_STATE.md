@@ -1381,3 +1381,9 @@ Prophecy review of #46 (E1, diff): 2 fixes taken. Completed coverage now ends at
 not at `now`, so a 59-minute record cannot become "this hour" while no further cycle completes before the
 stale deadline; and under one completed minute reads "less than 1 min of complete scans" (it used to be
 rounded up to 1). Both pinned by tests.
+
+2026-11-04: CI method-page check repaired (feat/method-check). It sat in the personal-edition screenshot
+script, which never defines `base`, so every run printed "FAIL method page: base is not defined" and nothing
+failed the step (that script's FAILs are not gated). The check expects the demo edition's note and writes to
+rep/demo, so it now runs in the demo screenshot script, whose FAIL lines already fail the build. Until this
+merges, a green CI does not include a working method-page check.
