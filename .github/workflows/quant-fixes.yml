@@ -535,9 +535,9 @@ jobs:
             const note = await p.locator('[data-testid="method-demo-note"]').count();
             const back = await p.locator('[data-testid="method-back"]').count();
             const txt = await p.locator('[data-testid="method-page"]').innerText();
-            const ok = note === 1 && back === 1 && /not investment advice/i.test(txt) && /observed zero/i.test(txt) && !/dark pool detected/i.test(txt);
+            const ok = note === 1 && back === 1 && /(not|nothing on this site is) investment advice/i.test(txt) && /observed zero/i.test(txt) && !/dark pool detected/i.test(txt);
             await p.screenshot({ path: "rep/demo/18-method.png", fullPage: true });
-            console.log((ok ? "PASS" : "FAIL") + " method page: demo note " + note + ", back link " + back + ", " + txt.length + " chars");
+            console.log((ok ? "PASS" : "FAIL") + " method page: demo note " + note + ", back link " + back + ", disclaimer " + /(not|nothing on this site is) investment advice/i.test(txt) + ", observed zero " + /observed zero/i.test(txt) + ", " + txt.length + " chars");
           } catch (e) { console.log("FAIL method page: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
