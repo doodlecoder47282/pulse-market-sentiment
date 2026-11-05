@@ -121,6 +121,7 @@ const etFmt = (ms: number) => new Date(ms).toLocaleString("en-US", { timeZone: "
 
 /** The row's time in words: a trade time, a session-close reference, or "time unavailable". */
 function timeText(q: MacroQuote): string {
+  if (q.basis === "public_fallback") return "time not provided by the source";
   if (q.priceAsOfMs == null || q.priceTimeBasis === "unavailable") return "time unavailable";
   if (q.priceTimeBasis === "session_close_reference") return `session close ${etFmt(q.priceAsOfMs)} (scheduled close, not a trade time)`;
   return `traded ${etFmt(q.priceAsOfMs)}`;
@@ -209,7 +210,7 @@ export function MacroTicker() {
         data-testid="macro-tape-details-toggle"
         className="absolute right-2 top-1/2 z-10 flex min-h-[32px] -translate-y-1/2 items-center rounded-full border border-border/60 bg-background/90 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur hover:text-foreground"
       >
-        {detailsOpen ? "Hide" : "Details"}{notHealthy > 0 ? ` · ${notHealthy} partial` : ""}
+        {detailsOpen ? "Hide" : "Details"}{notHealthy > 0 ? ` · ${notHealthy} not ok` : ""}
       </button>
       {/* Live pulse indicator (Sample on the demo: those prices are simulated) */}
       {isDemo ? (
@@ -252,7 +253,7 @@ export function MacroTicker() {
     {detailsOpen && (
       <div id="macro-tape-details" className="max-h-72 overflow-y-auto border-b border-border/50 bg-background/95 px-3 py-2 text-xs" data-testid="macro-tape-details">
         <div className="mb-1 text-[11px] text-muted-foreground">
-          Each row: price basis, its own time, session, and anything missing. Commodity rows are ETF share prices. Snapshot built {new Date(data.asOf * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+          Each row: price basis, its own time, session, and anything missing. Commodity rows are ETF share prices. Snapshot built {etFmt(data.asOf * 1000)}.
         </div>
         <ul className="divide-y divide-border/40">
           {data.tape.map((q) => (

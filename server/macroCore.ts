@@ -421,7 +421,7 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
         sessionDateAssumed = true;
         notes.push(`regular trade time unavailable; session ${started} assumed`);
       }
-    } else if (open && num(q?.last) != null) {
+    } else if (open && num(q?.last) != null && !tradedBeforeTodaysOpen) {
       // 2. Inside the session the quote's last price, dated only by a trade
       //    time inside today's session.
       price = q!.last!;

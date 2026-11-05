@@ -1444,3 +1444,12 @@ tag on non-healthy pills and a "Details" button that opens a static, tappable li
 time or "time unavailable", session (assumed or not), state and reason. Reporting corrections: history is
 also re-read at the 6 h maximum age and on invalidation; a warm rebuild is 1 request instead of 34 (33
 fewer), not a guaranteed saving; actual dispatch counts still need measuring live.
+Fourth review (independent, on the provenance fixes): no MUST-FIX; Prophecy's two MUST-FIX and its SHOULD-FIX
+verified resolved; live-like probes: REST in/after session, stream in session, demo all stay "ok". Taken: a
+pre-market print is never shown as today's regular price inside the session (falls to the labelled older
+close); Details copy says "N not ok", crypto/FX say "time not provided by the source", build time in ET.
+Left (named): with streaming enabled, SPY/QQQ/IWM/DIA can read partial after the close until the day's
+daily bar is read or when the stream's regular last differs from it (stream records carry no regular trade
+time; streaming is off today: Schwab 401 on the Trader API); the Details toggle is 32 px tall (passes the
+24 px audit floor, under the 44 px guideline). Next: measure live dispatch counts after merge; then the
+headline SPY-chain reads.

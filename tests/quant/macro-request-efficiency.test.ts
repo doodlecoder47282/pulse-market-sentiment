@@ -554,3 +554,15 @@ test("macro: crypto and FX rows keep their public fallbacks and never reach Schw
     assert.equal(h.dailyCalls.get(sym), undefined);
   }
 });
+
+test("macro: inside the session a pre-market print is never shown as a regular-session trade", async () => {
+  const h = harness(et("2026-11-05", 9, 40), (syms) => syms.map((s) => ({
+    symbol: s, last: 211, change: 0, prevClose: closeOf(s, "2026-11-04"), regularMarketLast: null, regularMarketTradeTimeMs: null,
+    lastTradeTimeMs: et("2026-11-05", 9, 10), quoteTimeMs: et("2026-11-05", 9, 39), fetchedAtMs: null, stale: false,
+  })));
+  const spy = row(await createMacroBuilder(h.deps).build(), "SPY");
+  assert.notEqual(spy.price, 211, "the 09:10 print is not today's regular price");
+  assert.equal(spy.basis, "last_daily_close");
+  assert.equal(spy.priceSessionDate, "2026-11-04");
+  assert.equal(spy.dataState, "partial");
+});
