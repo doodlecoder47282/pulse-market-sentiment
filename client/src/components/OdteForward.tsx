@@ -46,7 +46,7 @@ interface OdteResponse {
 }
 interface Calib { lo: number; hi: number; n: number; stated: number | null; observed: number | null }
 interface LedgerResp {
-  wienerScorecard?: { days: number; minDays: number; tested: boolean; touch: { n: number; buckets: Calib[]; brier: number | null }; close: { n: number; buckets: Calib[]; brier: number | null } };
+  wienerScorecard?: { days: number; minDays: number; tested: boolean; touch: { n: number; buckets: Calib[]; brier: number | null; brierBaseRate?: number | null }; close: { n: number; buckets: Calib[]; brier: number | null; brierBaseRate?: number | null } };
 }
 
 const KIND_COLOR: Record<string, string> = {
@@ -170,11 +170,12 @@ export default function OdteForward() {
     if (geo.path.length > 1) {
       ctx.strokeStyle = "rgba(226,232,240,0.9)"; ctx.lineWidth = 1.4;
       ctx.beginPath();
-      geo.path.forEach((p, i) => { const x = X(p.min + 2.5), y = Y(p.close); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      // A 5-minute bar's close is plotted at the bar's end.
+      geo.path.forEach((p, i) => { const x = X(p.min + 5), y = Y(p.close); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.stroke();
     }
 
-    // levels inside the window, tags on the right with touch odds
+    // levels inside the window, tags on the right with touch odds (stacked without overlap, kept inside the plot)
     const tags: Array<{ y: number; text: string; color: string }> = [];
     for (const L of w.levels) {
       if (L.price < lo || L.price > hi) continue;
@@ -187,9 +188,14 @@ export default function OdteForward() {
     tags.sort((a, b) => a.y - b.y);
     const TAG_H = 13;
     for (let i = 1; i < tags.length; i++) if (tags[i].y < tags[i - 1].y + TAG_H) tags[i].y = tags[i - 1].y + TAG_H;
+    // Second pass upward so a stack pushed past the bottom does not pile on itself.
+    for (let i = tags.length - 1; i >= 0; i--) {
+      const cap = i === tags.length - 1 ? padT + ih : tags[i + 1].y - TAG_H;
+      if (tags[i].y > cap) tags[i].y = cap;
+    }
     ctx.font = "10px ui-monospace, monospace"; ctx.textAlign = "left";
     for (const t of tags) {
-      const y = Math.min(t.y, padT + ih);
+      const y = t.y;
       ctx.fillStyle = t.color; ctx.globalAlpha = 0.9; ctx.fillRect(padL + iw + histW + 3, y - 6, 64, 12); ctx.globalAlpha = 1;
       ctx.fillStyle = "#0a0a0a"; ctx.fillText(t.text, padL + iw + histW + 5, y + 3.5);
     }
@@ -228,8 +234,8 @@ export default function OdteForward() {
   const readout = useMemo(() => {
     if (hoverMin == null || !w || !geo) return null;
     if (hoverMin < geo.startAbs) {
-      const p = [...geo.path].reverse().find((x) => x.min <= hoverMin);
-      return p ? { kind: "path" as const, et: hhmm(p.min), close: p.close } : null;
+      const p = [...geo.path].reverse().find((x) => x.min + 5 <= hoverMin);
+      return p ? { kind: "path" as const, et: hhmm(p.min + 5), close: p.close } : null;
     }
     const t = hoverMin - geo.startAbs;
     const b = w.bands.reduce((best, x) => (Math.abs(x.minute - t) < Math.abs(best.minute - t) ? x : best), w.bands[0]);
@@ -247,7 +253,7 @@ export default function OdteForward() {
   if (isError || !data) {
     return (
       <div className="rounded border border-border bg-card/40 p-4 text-xs font-mono text-muted-foreground" data-testid="odte-forward-error">
-        0DTE Wiener map unavailable: the option chain did not answer (Schwab sign-in or no 0DTE expiry)
+        0DTE Wiener map unavailable: the 0DTE forward request failed (Schwab sign-in, no 0DTE expiry, or a server error)
       </div>
     );
   }
@@ -259,7 +265,7 @@ export default function OdteForward() {
   return (
     <div className="rounded border border-border bg-card/40 p-3" data-testid="odte-forward-panel">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-cyan-300">0DTE Wiener map · today</span>
+        <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-cyan-300">0DTE Wiener map · {w?.horizon === "next_session" ? "next session" : "today"}</span>
         <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{data.symbol} · exp {data.expiry} · {sessionLabel}{data.chainStale ? " · chain stale" : ""}</span>
         <span className={`rounded border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${regime === "indeterminate" ? "border-border text-muted-foreground" : regime === "long_gamma" ? "border-lime-500/40 text-lime-400" : "border-red-500/40 text-red-400"}`} data-testid="odte-regime">
           {regime === "indeterminate" ? "gamma sign not determined" : regime === "long_gamma" ? "long gamma at spot" : "short gamma at spot"}
@@ -287,14 +293,16 @@ export default function OdteForward() {
             onMouseLeave={() => setHoverMin(null)}
             onTouchStart={(e) => onMove(e.touches[0]?.clientX)}
             onTouchMove={(e) => onMove(e.touches[0]?.clientX)}
+            onTouchEnd={() => setHoverMin(null)}
             data-testid="odte-cone"
+            role="group"
             aria-label="Today's path so far and the Wiener model's percentile bands to the close"
           >
             <canvas ref={canvasRef} role="img" aria-label="0DTE Wiener map chart" />
             {readout && (
               <div className="pointer-events-none absolute left-1 top-1 z-10 rounded border border-border bg-background/95 px-2 py-1 text-[11px] font-mono" data-testid="odte-readout">
                 {readout.kind === "path" ? (
-                  <div>{readout.et} ET · traded {readout.close}</div>
+                  <div>{readout.et} ET · 5-minute close {readout.close}</div>
                 ) : (
                   <>
                     <div className="text-muted-foreground">{readout.et} ET · model percentiles</div>
@@ -315,6 +323,9 @@ export default function OdteForward() {
               className="min-h-[44px] rounded border border-border px-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
               {showOverlay ? "Hide dealer overlay" : "Dealer overlay (heuristic)"}
             </button>
+          </div>
+          <div className="mt-1 text-[11px] text-muted-foreground" data-testid="odte-close-range">
+            Model close: 50% between {w!.bands[w!.bands.length - 1].q.p25} and {w!.bands[w!.bands.length - 1].q.p75}; 80% between {w!.bands[w!.bands.length - 1].q.p10} and {w!.bands[w!.bands.length - 1].q.p90}; 95% between {w!.bands[w!.bands.length - 1].q.p025} and {w!.bands[w!.bands.length - 1].q.p975}.
           </div>
           {showOverlay && (
             <div className="mt-1 text-[11px] text-amber-300/90" data-testid="odte-overlay-note">
@@ -354,11 +365,11 @@ export default function OdteForward() {
             {!sc ? (
               <div className="text-muted-foreground">Scorecard unavailable: the settle ledger did not answer.</div>
             ) : sc.days === 0 ? (
-              <div className="text-muted-foreground">No scored days yet. Each session's 09:35 odds are scored after the close; the odds stay untested until {sc.minDays} days are scored.</div>
+              <div className="text-muted-foreground">No scored days yet. Each session's morning map (the first map after the open) has its odds scored after the close; the odds stay untested until {sc.minDays} days are scored.</div>
             ) : (
               <>
                 <div className={sc.tested ? "text-foreground" : "text-amber-300/90"}>
-                  {sc.days} scored day{sc.days === 1 ? "" : "s"}{sc.tested ? "" : ` of ${sc.minDays} needed: untested`} · touch Brier {sc.touch.brier ?? "n/a"} (lower is better, 0.25 = coin flip)
+                  {sc.days} scored day{sc.days === 1 ? "" : "s"}{sc.tested ? "" : ` of ${sc.minDays} needed: untested`} · touch Brier {sc.touch.brier ?? "n/a"} vs {sc.touch.brierBaseRate ?? "n/a"} for always stating the base rate (lower is better)
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
                   {sc.touch.buckets.filter((b) => b.n > 0).map((b) => (

@@ -1399,3 +1399,19 @@ settle scores them on the extremes from the map's minute onward (levels already 
 left out); /api/odte/map/ledger returns wienerScorecard (calibration buckets, Brier, untested below 50
 days). CI demo step renders it at 402 px (FAIL gate). Not in this PR: time-of-day variance weighting; the
 options-implied close distribution comparison. Not verified live.
+Review of feat/odte-wiener (independent): 3 MUST-FIX fixed. (1) A straddle-derived sigma (straddle/0.8) went in
+as "ATM IV" with a circular straddle cross-check; now only chain IV is passed as IV, else the model's own
+straddle conversion is used and labelled (test forces the fallback: no IV, no bid/ask). (2) The next-session
+projection was always 390 min to 16:00; projMinutes for the closed state now comes from the next trading
+day's calendar (210 min to 13:00 before a half day; tested on Thanksgiving). (3) The CI rendered check passed
+on any "unavailable" text; unavailable now passes only in the Friday-close-to-Monday-open gap, as the map
+smoke does. SHOULD-FIX taken: intraday with no same-day expiry -> unavailable with the reason; today's
+touches no longer flagged on the next-session map; pre-open/next-session maps state that the overnight part
+of the implied move is spread across the session (gap not modelled) and the header says "next session";
+Wiener levels built without the sigma rails (which could displace a real level in the dedupe), nearest 14;
+scoring window starts at the chain's own time (the odds' spot), bar containing it included (documented);
+hitProbability keeps the crossing term in log space and handles sigma = 0 (the reviewer's "about 1" for
+a = mu = 30 was wrong: the true value is 0.5 + 1/(60 sqrt(2 pi)) = 0.5066, now pinned); scorecard shows the
+base-rate Brier as its reference instead of "0.25 = coin flip"; copy: "morning map (first map after the
+open)", 5-minute closes plotted and read at the bar's end, model close ranges in text on every screen,
+tag stack clamped, readout clears on touch end, role="group"; tests assert their branches run.

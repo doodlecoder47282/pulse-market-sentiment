@@ -137,8 +137,10 @@ export async function settleToday(symbol: string, deps: SettleDeps, nowMs = Date
   if (!day || !day.first) return { ok: false, why: "no morning map today" };
   if (day.settle) return { ok: false, why: "already settled" };
   const hist = await deps.getPriceHistory(symbol, "day", 1, "minute", 1, false).catch(() => null);
-  // Extremes after the morning map was taken score its Wiener level odds.
-  const s = settleFromCandles(hist?.candles ?? [], nowMs, day.firstAt);
+  // Extremes after the morning map's odds were stated score them: from the
+  // chain's own time (the spot the odds start from), else when the map was kept.
+  // Minute bars: the bar containing that time is included (up to 59 s early).
+  const s = settleFromCandles(hist?.candles ?? [], nowMs, day.first.chainAsOfMs ?? day.firstAt);
   if (!s) return { ok: false, why: "no regular-session candles for today" };
   const out = recordSettle(date, symbol, s, nowMs);
   return { ok: out.ok, why: out.why };

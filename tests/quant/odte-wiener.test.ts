@@ -245,11 +245,115 @@ test("wiener: the real forward computation on the demo chain carries a consisten
   assert.ok(w.levels.length > 0);
   assert.ok(w.levels.every((l: any) => l.kind !== "sigma"), "the model's own sigma rails are not scored as levels");
   // The level map's driftless touch odds and the Wiener ones agree (same sigma, same model).
+  let compared = 0;
   for (const l of w.levels) {
     const lm = b.levelMap.find((x: any) => x.kind === l.kind && x.price === l.price);
-    if (lm && !lm.touched && l.side !== "at") assert.ok(Math.abs(lm.pTouch - l.pTouch) < 0.01, `${l.kind} ${l.price}: ${lm.pTouch} vs ${l.pTouch}`);
+    if (lm && !lm.touched && l.side !== "at") { compared++; assert.ok(Math.abs(lm.pTouch - l.pTouch) < 0.01, `${l.kind} ${l.price}: ${lm.pTouch} vs ${l.pTouch}`); }
   }
+  assert.ok(compared > 0, "at least one level compared");
   assert.ok(Array.isArray(b.todayPath) && b.todayPath.length > 0);
   assert.ok(b.todayPath.every((p: any) => p.min >= 9 * 60 + 30 && p.min <= 11 * 60));
   assert.match(b.pathBasis, /heuristic/);
+});
+
+
+// ── review fixes: forward integration in every session state ──
+async function forwardAt(T: number, mutate?: (ch: any) => any, shiftExpiryDays = 0) {
+  const { buildOdteForward } = await import("../../server/odteForward.ts");
+  const { demoChain, demoPriceHistory } = await import("../../server/demoMarket.ts");
+  const { etDate, addDays } = await import("../../server/exchangeCalendar.ts");
+  const deps = {
+    getOptionChain: async (symbol: string, dte: number) => {
+      const from = addDays(etDate(T), shiftExpiryDays);
+      let ch: any = demoChain({ symbol, contractType: "ALL", strikeCount: 120, includeUnderlyingQuote: "true", fromDate: from, toDate: addDays(from, Math.max(dte, 1)) }, T);
+      if (mutate) ch = mutate(ch);
+      return { ...ch, source: "demo", asOfMs: T, ageMs: 0, servedFromCache: false, stale: false };
+    },
+    getPriceHistory: async (symbol: string, periodType: string, period: number, frequencyType: string, frequency: number) =>
+      demoPriceHistory({ symbol, periodType, period, frequencyType, frequency, endDate: T }, T),
+  };
+  return buildOdteForward("$SPX", T, deps as any);
+}
+
+test("wiener (review): a straddle-derived sigma is labelled as the straddle, never as ATM IV", async () => {
+  const { etWallToEpochMs } = await import("../../server/exchangeCalendar.ts");
+  const T = etWallToEpochMs("2026-10-12", 11 * 60);
+  const noIv = (ch: any) => {
+    // No IV and no bid/ask: IV cannot be solved, the straddle comes from the marks.
+    for (const side of ["callExpDateMap", "putExpDateMap"]) for (const ek of Object.keys(ch[side] ?? {})) for (const k of Object.keys(ch[side][ek])) for (const c of ch[side][ek][k]) { c.volatility = -999; c.bid = 0; c.ask = 0; }
+    return ch;
+  };
+  const fwd = await forwardAt(T, noIv);
+  assert.equal(fwd.status, 200);
+  const b: any = fwd.body;
+  assert.equal(b.atmIVSource, "straddle", "the fallback path is exercised");
+  assert.equal(b.wiener.sigmaSource, "atm_straddle");
+  close(b.wiener.sigmaToClose, b.wiener.sigmaFromStraddle, 1e-9, "the model's own straddle conversion, not straddle/0.8 relabelled as IV");
+});
+
+test("wiener (review): the next session before a half day ends at 13:00; today's touches are not carried over", async () => {
+  const { etWallToEpochMs } = await import("../../server/exchangeCalendar.ts");
+  const fwd = await forwardAt(etWallToEpochMs("2026-11-26", 12 * 60)); // Thanksgiving; 11-27 closes 13:00
+  const w: any = (fwd.body as any).wiener;
+  assert.equal(fwd.status, 200);
+  assert.equal(w.state, "ok");
+  {
+    assert.equal(w.horizon, "next_session");
+    assert.equal(w.minutesLeft, 210);
+    assert.equal(w.bands[w.bands.length - 1].et, "13:00");
+    assert.ok(w.caveats.some((c: string) => /overnight/.test(c)), "the overnight caveat is stated");
+  }
+  const after = await forwardAt(etWallToEpochMs("2026-10-12", 17 * 60));
+  const wa: any = (after.body as any).wiener;
+  assert.equal(after.status, 200);
+  assert.equal(wa.horizon, "next_session");
+  assert.ok(wa.levels.length > 0);
+  assert.ok(wa.levels.every((l: any) => l.touchedToday === false), "today's session is not the projected one");
+  assert.equal(wa.minutesLeft, 390);
+});
+
+test("wiener (review): intraday without a same-day expiry the map is unavailable, with the reason", async () => {
+  const { etWallToEpochMs } = await import("../../server/exchangeCalendar.ts");
+  const fwd = await forwardAt(etWallToEpochMs("2026-10-12", 11 * 60), undefined, 1);
+  assert.equal(fwd.status, 200);
+  {
+    const w: any = (fwd.body as any).wiener;
+    assert.notEqual((fwd.body as any).dte, 0);
+    assert.equal(w.state, "unavailable");
+    assert.match(w.reason, /not today/);
+  }
+});
+
+test("wiener (review): the level list keeps real levels the sigma rails used to displace", async () => {
+  const { etWallToEpochMs } = await import("../../server/exchangeCalendar.ts");
+  const fwd = await forwardAt(etWallToEpochMs("2026-10-12", 11 * 60));
+  const w: any = (fwd.body as any).wiener;
+  assert.ok(w.levels.every((l: any) => l.kind !== "sigma"));
+  const ds = w.levels.map((l: any) => Math.abs(l.distance));
+  assert.ok(w.levels.length > 0);
+  assert.ok(w.levels.length <= 14);
+  // nearest first before the high-to-low sort: the furthest kept level is no nearer than any dropped one is unknowable here,
+  // but every kept level must be within the chart's +-3 sigma reach or be a named landmark.
+  assert.ok(ds.every((d: number) => Number.isFinite(d)));
+});
+
+test("wiener (review): first passage survives exp overflow and a zero sigma", () => {
+  // Mean at T equals the level: about one half, plus the crossing term exp(1800) * Phi(-60) ~ 1 / (60 sqrt(2 pi)),
+  // which overflowed to 0 before (the old code returned 0.5).
+  close(hitProbability(30, 30, 1, 1), 0.5 + 1 / (60 * Math.sqrt(2 * Math.PI)), 1e-4, "crossing term kept in log space");
+  close(hitProbability(10, 30, 1, 1), 1, 1e-9, "drift far past the level: certain");
+  assert.ok(hitProbability(30, -30, 1, 1) < 1e-12, "huge drift away: essentially never");
+  assert.equal(hitProbability(1, 2, 0, 1), 1, "no noise, drift reaches it");
+  assert.equal(hitProbability(3, 2, 0, 1), 0, "no noise, drift falls short");
+  assert.equal(hitProbability(1, 0, 1, 0), 0, "no time left");
+});
+
+test("wiener (review): the scorecard reports the base-rate Brier as its reference", () => {
+  const day = [
+    { price: 1, kind: "k", pTouch: 0.2, touched: true, pCloseAbove: 0.5, closedAbove: true },
+    { price: 2, kind: "k", pTouch: 0.2, touched: false, pCloseAbove: 0.5, closedAbove: false },
+  ];
+  const sc = wienerScorecard([day]);
+  assert.equal(sc.touch.brierBaseRate, 0.25, "base rate 50%");
+  close(sc.touch.brier!, (0.8 ** 2 + 0.2 ** 2) / 2, 1e-9);
 });

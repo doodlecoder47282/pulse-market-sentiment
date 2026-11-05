@@ -564,8 +564,13 @@ jobs:
               detail = `chart ${cv ? Math.round(cv.width) + "x" + Math.round(cv.height) : "missing"}, ${rows} level rows, sigma ${sigma}, toggles ${btns.join("/")}px, overlay note ${note}, overflowX ${overflowX}`;
             } else {
               const why = panel ? (await wp.locator('[data-testid="odte-wiener-unavailable"]').innerText()).trim() : (await wp.locator('[data-testid="odte-forward-error"]').innerText()).trim();
-              okW = /unavailable/i.test(why);
-              detail = "unavailable state shown: " + why.slice(0, 120);
+              // Unavailable is only the honest answer between Friday's close and Monday's open (the
+              // one-day chain window holds no expiry); any other time it is a failure.
+              const et = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) et[x.type] = x.value;
+              const etMin = (Number(et.hour) % 24) * 60 + Number(et.minute);
+              const weekendGap = et.weekday === "Sat" || et.weekday === "Sun" || (et.weekday === "Fri" && etMin >= 16 * 60) || (et.weekday === "Mon" && etMin < 9 * 60 + 30);
+              okW = weekendGap && /unavailable/i.test(why);
+              detail = (weekendGap ? "weekend gap, " : "NOT the weekend gap, ") + "unavailable state shown: " + why.slice(0, 120);
             }
             console.log((okW ? "PASS" : "FAIL") + " 0DTE Wiener map at 402px: " + detail);
             await wp.close();

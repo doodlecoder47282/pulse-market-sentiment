@@ -22,7 +22,7 @@
 
 export const WIENER_MODEL = "arithmetic Brownian motion (Wiener), zero drift, sigma from the 0DTE chain's implied volatility";
 
-/** Standard normal CDF via erf (W. J. Cody-style rational approximation, |error| < 1.2e-7). */
+/** Standard normal CDF via the Numerical Recipes erfcc approximation (fractional error < 1.2e-7). */
 export function normCdf(x: number): number {
   if (!Number.isFinite(x)) return x > 0 ? 1 : 0;
   // erfc via Numerical Recipes erfcc (fractional error < 1.2e-7).
@@ -41,13 +41,24 @@ export function normCdf(x: number): number {
  * Only valid for this model; it is not a conversion of arbitrary scenario weights.
  */
 export function hitProbability(a: number, mu: number, sigma: number, T: number): number {
-  if (!(sigma > 0) || !(T > 0)) return a <= 0 ? 1 : 0;
   if (a <= 0) return 1;
+  if (!(T > 0)) return 0;
+  // No noise: the path is the straight line mu*t.
+  if (!(sigma > 0)) return mu * T >= a ? 1 : 0;
   const sT = sigma * Math.sqrt(T);
   if (mu === 0) return Math.min(1, Math.max(0, 2 * (1 - normCdf(a / sT))));
-  const e = Math.exp((2 * mu * a) / (sigma * sigma));
-  const p = normCdf((mu * T - a) / sT) + (Number.isFinite(e) ? e * normCdf((-mu * T - a) / sT) : 0);
+  // Second term in log space: exp(2 mu a / sigma^2) overflows long before the product does.
+  const logE = (2 * mu * a) / (sigma * sigma);
+  const second = Math.exp(logE + logNormCdf((-mu * T - a) / sT));
+  const p = normCdf((mu * T - a) / sT) + (Number.isFinite(second) ? second : 0);
   return Math.min(1, Math.max(0, p));
+}
+
+/** log Phi(x), accurate in the far left tail (asymptotic series below -8). */
+export function logNormCdf(x: number): number {
+  if (x > -8) return Math.log(normCdf(x));
+  const x2 = x * x;
+  return -x2 / 2 - Math.log(-x) - 0.5 * Math.log(2 * Math.PI) + Math.log(1 - 1 / x2 + 3 / (x2 * x2));
 }
 
 /** z-scores of the band percentiles. */
@@ -126,6 +137,10 @@ export interface WienerInputs {
   /** ET minute-of-day where the projection starts (now intraday; 09:30 otherwise). */
   startAbsMin: number;
   horizon: "rest_of_today" | "next_session";
+  /** true when the projection starts from the last price before the open (pre-open or next session). */
+  fromPreviousClose?: boolean;
+  /** Set by the caller when an input makes the model inapplicable (e.g. no expiry for today). */
+  unavailableReason?: string | null;
   levels: WienerLevelIn[];
   /** Bucket width for the close distribution (strike spacing); default 5. */
   bucket?: number;
@@ -159,6 +174,7 @@ export function wienerMap(i: WienerInputs): WienerMap {
   const sStrad = strad != null ? strad / SQRT_2_OVER_PI : null;
   const sigma = sIv ?? sStrad;
   const sigmaSource = sIv != null ? "atm_iv" as const : sStrad != null ? "atm_straddle" as const : null;
+  if (i.unavailableReason) return { ...base, state: "unavailable", reason: i.unavailableReason, spot, sigmaToClose: null, sigmaSource: null, sigmaFromStraddle: null };
   if (spot == null) return { ...base, state: "unavailable", reason: "no current price from the chain", spot: null, sigmaToClose: null, sigmaSource: null, sigmaFromStraddle: sStrad != null ? r2(sStrad) : null };
   if (sigma == null) return { ...base, state: "unavailable", reason: "no implied volatility or straddle from the 0DTE chain", spot, sigmaToClose: null, sigmaSource: null, sigmaFromStraddle: null };
   if (!(i.minutesLeft > 0)) return { ...base, state: "unavailable", reason: "no session time left to project", spot, sigmaToClose: r2(sigma), sigmaSource, sigmaFromStraddle: sStrad != null ? r2(sStrad) : null };
@@ -217,8 +233,11 @@ export function wienerMap(i: WienerInputs): WienerMap {
   for (let a = lo; a < hi; a += w) closeDist.push({ lo: a, hi: a + w, p: r4(cdf(a + w) - cdf(a)) });
   closeDist.push({ lo: hi, hi: null, p: r4(1 - cdf(hi)) });
 
+  const caveats = i.fromPreviousClose
+    ? [...WIENER_CAVEATS, "projected from the last price before the open: the overnight part of the implied move is spread across the session as if it traded continuously, so an opening gap is not modelled and a level a gap jumps over counts as touched"]
+    : WIENER_CAVEATS;
   return {
-    ...base, state: "ok", reason: null, spot, sigmaToClose: r2(sigma), sigmaSource,
+    ...base, caveats, state: "ok", reason: null, spot, sigmaToClose: r2(sigma), sigmaSource,
     sigmaFromStraddle: sStrad != null ? r2(sStrad) : null,
     bands, levels, expected, closeDist,
   };
@@ -267,8 +286,8 @@ export interface CalibrationBucket {
 
 export interface WienerScorecard {
   days: number;
-  touch: { n: number; buckets: CalibrationBucket[]; brier: number | null };
-  close: { n: number; buckets: CalibrationBucket[]; brier: number | null };
+  touch: { n: number; buckets: CalibrationBucket[]; brier: number | null; brierBaseRate: number | null };
+  close: { n: number; buckets: CalibrationBucket[]; brier: number | null; brierBaseRate: number | null };
   /** Below this many days the card says the odds are untested. */
   minDays: number;
   tested: boolean;
@@ -277,7 +296,7 @@ export interface WienerScorecard {
 export const SCORECARD_MIN_DAYS = 50;
 const EDGES = [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1];
 
-function calibrate(pairs: Array<{ p: number; hit: boolean }>): { n: number; buckets: CalibrationBucket[]; brier: number | null } {
+function calibrate(pairs: Array<{ p: number; hit: boolean }>): { n: number; buckets: CalibrationBucket[]; brier: number | null; brierBaseRate: number | null } {
   const buckets: CalibrationBucket[] = [];
   for (let k = 0; k < EDGES.length - 1; k++) {
     const lo = EDGES[k], hi = EDGES[k + 1];
@@ -289,7 +308,9 @@ function calibrate(pairs: Array<{ p: number; hit: boolean }>): { n: number; buck
     });
   }
   const brier = pairs.length ? r4(pairs.reduce((s, x) => s + (x.p - (x.hit ? 1 : 0)) ** 2, 0) / pairs.length) : null;
-  return { n: pairs.length, buckets, brier };
+  // Reference: the Brier score of always stating the observed base rate (a skill-free forecast).
+  const base = pairs.length ? pairs.filter((x) => x.hit).length / pairs.length : null;
+  return { n: pairs.length, buckets, brier, brierBaseRate: base == null ? null : r4(base * (1 - base)) };
 }
 
 /** Running scorecard over scored days. Counts, not a claim of edge. */
