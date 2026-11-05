@@ -30,7 +30,7 @@
 // Today's still-forming daily bar is never stored, and a bar read within
 // SETTLE_MS of its session's close is re-read once (closing prints settle).
 
-import { resolvePrevClose, dayChange, dailyBarSessionDate, type PrevCloseSource } from "./dayChange";
+import { resolvePrevClose, dayChange, dailyBarSessionDate, sameClose, type PrevCloseSource } from "./dayChange";
 import { etClock, etDate, prevTradingDay, sessionCloseMs, isTradingDay, isRegularSessionOpen, type IsoDate } from "./exchangeCalendar";
 import { lastCompletedSession } from "./breadthMath";
 
@@ -106,12 +106,21 @@ export type MacroQuote = {
   /** "ok" = current price and prior close; "partial" = something missing or substituted (see reason); "unavailable" = no price. */
   dataState: "ok" | "partial" | "unavailable";
   reason: string | null;
-  /** When the price was observed (quote time, or the close of the bar's session), epoch ms. Not the build time. */
+  /**
+   * Time attached to the price, epoch ms, per priceTimeBasis: the trade's own
+   * timestamp, or the scheduled close of the session a daily-bar close
+   * belongs to. Null when no evidence dates the price. Never the quote
+   * update, receipt or build time.
+   */
   priceAsOfMs: number | null;
+  /** "trade" = a recorded trade timestamp; "session_close_reference" = the scheduled close of the bar's session (not a recorded trade time); "unavailable" = time unknown. */
+  priceTimeBasis: "trade" | "session_close_reference" | "unavailable";
   /** ET session the price belongs to. */
   priceSessionDate: IsoDate | null;
-  /** true when the quote was re-served after a failed refresh or is older than its window. */
-  stale: boolean;
+  /** true when that session date is assumed (no timestamp or bar dates the price). */
+  sessionDateAssumed: boolean;
+  /** Quote freshness: true = stale (older than its window or re-served after a failed refresh), false = observed fresh, null = unknown or not from a quote. */
+  stale: boolean | null;
   prevCloseSource: PrevCloseSource | null;
   prevCloseDate: IsoDate | null;
 };
@@ -161,7 +170,8 @@ export function toQuoteIn(q: {
     lastTradeTimeMs: q.lastTradeTimeMs ?? null,
     quoteTimeMs: q.quoteTimeMs ?? null,
     fetchedAtMs: q.fetchedAtMs ?? null,
-    stale: q.stale === true,
+    // null = freshness unknown: kept as unknown, never read as fresh.
+    stale: q.stale ?? null,
   };
 }
 
@@ -365,33 +375,67 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     let price: number | null = null;
     let basis: PriceBasis = "unavailable";
     let priceSessionDate: IsoDate | null = null;
+    let sessionDateAssumed = false;
     let priceAsOfMs: number | null = null;
+    let priceTimeBasis: MacroQuote["priceTimeBasis"] = "unavailable";
+    let fromQuote = false;
 
-    // 1. The last regular-session trade, dated by its own trade time when
-    //    Schwab gives it (REST); the stream gives no time: the last started session.
-    const reg = q?.regularMarketLast != null && Number.isFinite(q.regularMarketLast) && q.regularMarketLast > 0 ? q.regularMarketLast : null;
-    const regTime = q?.regularMarketTradeTimeMs != null && Number.isFinite(q.regularMarketTradeTimeMs) && q.regularMarketTradeTimeMs > 0 ? q.regularMarketTradeTimeMs : null;
-    // A stream record has no regular-session trade time, only the time of its
-    // last trade of any session. While the session is open, a last trade
-    // before today's 09:30 means no regular trade yet: the regular last is
-    // the prior session's. With no trade time at all nothing is inferred.
-    const lastTrade = q?.lastTradeTimeMs != null && Number.isFinite(q.lastTradeTimeMs) && q.lastTradeTimeMs > 0 ? q.lastTradeTimeMs : null;
-    const streamNoTradeYet = reg != null && regTime == null && open && lastTrade != null
-      && (etDate(lastTrade) < todayEt || etClock(lastTrade).minutes < 9 * 60 + 30);
+    const num = (v: number | null | undefined) => (v != null && Number.isFinite(v) && v > 0 ? v : null);
+    const reg = num(q?.regularMarketLast);
+    // REST: regular.regularMarketTradeTime. Stream: only the time of the last
+    // trade of ANY session, which dates a regular price only when it falls
+    // inside today's regular session while it is open.
+    const regTime = num(q?.regularMarketTradeTimeMs);
+    const lastTrade = num(q?.lastTradeTimeMs);
+    const inTodaysSession = (t: number | null) => t != null && open && etDate(t) === todayEt
+      && etClock(t).minutes >= 9 * 60 + 30 && (closeToday == null || t <= closeToday);
+    const tradedBeforeTodaysOpen = lastTrade != null && open && !inTodaysSession(lastTrade) && lastTrade < now;
+
     if (reg != null) {
+      // 1. The last regular-session trade.
       price = reg;
       basis = "regular_session_last";
-      priceSessionDate = regTime != null ? etDate(regTime) : streamNoTradeYet ? prevTradingDay(started) : started;
-      priceAsOfMs = regTime ?? (open ? (q?.quoteTimeMs ?? q?.fetchedAtMs ?? null) : sessionCloseMs(started));
-      if (priceSessionDate < started) {
-        notes.push(open ? `no regular-session trade yet today: last regular trade ${priceSessionDate}` : `last regular trade ${priceSessionDate}`);
+      fromQuote = true;
+      if (regTime != null) {
+        priceSessionDate = etDate(regTime);
+        priceAsOfMs = regTime;
+        priceTimeBasis = "trade";
+      } else if (inTodaysSession(lastTrade)) {
+        priceSessionDate = todayEt;
+        priceAsOfMs = lastTrade;
+        priceTimeBasis = "trade";
+      } else if (tradedBeforeTodaysOpen) {
+        // No trade since today's open: the regular last is an earlier session's.
+        priceSessionDate = prevTradingDay(started);
+        sessionDateAssumed = true;
+        notes.push(`no regular-session trade yet today; trade time unavailable, session ${priceSessionDate} assumed`);
+      } else if (!open && lastBar && lastBar.date === started && sameClose(reg, lastBar.c)) {
+        // Outside the session the regular last equals the last started
+        // session's official daily close: that session's close, referenced to
+        // its scheduled close (not a recorded trade time).
+        priceSessionDate = started;
+        priceAsOfMs = sessionCloseMs(started);
+        priceTimeBasis = "session_close_reference";
+      } else {
+        priceSessionDate = started;
+        sessionDateAssumed = true;
+        notes.push(`regular trade time unavailable; session ${started} assumed`);
       }
-    } else if (open && q?.last != null && Number.isFinite(q.last) && q.last > 0) {
-      // 2. Inside the session the quote's last price is a regular-session trade.
-      price = q.last;
+    } else if (open && num(q?.last) != null) {
+      // 2. Inside the session the quote's last price, dated only by a trade
+      //    time inside today's session.
+      price = q!.last!;
       basis = "regular_session_last";
-      priceSessionDate = started;
-      priceAsOfMs = q.quoteTimeMs ?? q.fetchedAtMs ?? null;
+      fromQuote = true;
+      if (inTodaysSession(lastTrade)) {
+        priceSessionDate = todayEt;
+        priceAsOfMs = lastTrade;
+        priceTimeBasis = "trade";
+      } else {
+        priceSessionDate = started;
+        sessionDateAssumed = true;
+        notes.push(`trade time unavailable; session ${started} assumed`);
+      }
     } else if (!open && lastBar && lastBar.date === started) {
       // 3. Outside the session: the last started session's own daily close
       //    (what the old regular-hours bars ended on).
@@ -399,23 +443,31 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
       basis = "session_close";
       priceSessionDate = lastBar.date;
       priceAsOfMs = sessionCloseMs(lastBar.date);
+      priceTimeBasis = "session_close_reference";
     } else if (lastBar) {
       // 4. An older close: a labelled substitute, never shown as current.
       price = lastBar.c;
       basis = "last_daily_close";
       priceSessionDate = lastBar.date;
       priceAsOfMs = sessionCloseMs(lastBar.date);
+      priceTimeBasis = "session_close_reference";
       notes.push(`${q ? "quote carried no regular-session price" : "quote unavailable"}: showing the ${lastBar.date} close${h.reason ? ` (${h.reason})` : ""}`);
     }
-    const stale = basis === "regular_session_last" && q?.stale === true;
-    if (stale) notes.push("quote is stale (older than its window or re-served after a failed refresh)");
+    if (!sessionDateAssumed && priceSessionDate != null && priceSessionDate < started && basis === "regular_session_last") {
+      notes.push(open ? `no regular-session trade yet today: last regular trade ${priceSessionDate}` : `last regular trade ${priceSessionDate}`);
+    }
+    // Freshness of a quote-sourced price: true stale, false fresh, null unknown.
+    const stale: boolean | null = fromQuote ? (q?.stale ?? null) : null;
+    if (stale === true) notes.push("quote is stale (older than its window or re-served after a failed refresh)");
+    else if (fromQuote && stale == null) notes.push("quote freshness unknown");
 
     if (price == null || priceSessionDate == null) {
       return {
         ...base, price: null, prevClose: null, change: null, changePct: null, spark: [],
         basis: "unavailable", dataState: "unavailable",
         reason: [q ? "quote carried no regular-session price" : "quote unavailable", h.reason].filter(Boolean).join("; "),
-        priceAsOfMs: null, priceSessionDate: null, stale: false, prevCloseSource: null, prevCloseDate: null,
+        priceAsOfMs: null, priceTimeBasis: "unavailable", priceSessionDate: null, sessionDateAssumed: false,
+        stale: null, prevCloseSource: null, prevCloseDate: null,
       };
     }
 
@@ -451,12 +503,16 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     const spark = (!lastBarDate || priceSessionDate > lastBarDate) ? [...closes, price] : closes;
 
     // "partial" = the shown price or prior close is a substitute, stale or missing.
-    const partial = basis === "last_daily_close" || stale || pc.prevClose == null || priceSessionDate < started
+    // "ok" needs an evidenced price: a dated observation, a confirmed fresh
+    // quote when it came from a quote, and a prior close for the right session.
+    const partial = basis === "last_daily_close" || pc.prevClose == null || priceSessionDate < started
+      || sessionDateAssumed || priceTimeBasis === "unavailable"
+      || (fromQuote && stale !== false)
       || (basis === "session_close" && h.state !== "fresh");
     return {
       ...base, price, prevClose: pc.prevClose, change, changePct, spark: spark.slice(-22),
       basis, dataState: partial ? "partial" : "ok", reason: notes.length ? notes.join("; ") : null,
-      priceAsOfMs, priceSessionDate, stale,
+      priceAsOfMs, priceTimeBasis, priceSessionDate, sessionDateAssumed, stale,
       prevCloseSource: pc.source, prevCloseDate: pc.prevCloseDate,
     };
   }
@@ -469,7 +525,8 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
       return {
         ...base, price: null, prevClose: null, change: null, changePct: null, spark: [],
         basis: "unavailable", dataState: "unavailable", reason: "public source unavailable",
-        priceAsOfMs: null, priceSessionDate: null, stale: false, prevCloseSource: null, prevCloseDate: null,
+        priceAsOfMs: null, priceTimeBasis: "unavailable", priceSessionDate: null, sessionDateAssumed: false,
+        stale: null, prevCloseSource: null, prevCloseDate: null,
       };
     }
     const { change, changePct } = dayChange(fb.price, fb.prevClose);
@@ -477,7 +534,8 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
       ...base, price: fb.price, prevClose: fb.prevClose, change, changePct, spark: (fb.spark ?? []).slice(-22),
       basis: "public_fallback", dataState: fb.prevClose == null ? "partial" : "ok",
       reason: fb.prevClose == null ? "prior close unavailable" : null,
-      priceAsOfMs: null, priceSessionDate: null, stale: false, prevCloseSource: null, prevCloseDate: null,
+      priceAsOfMs: null, priceTimeBasis: "unavailable", priceSessionDate: null, sessionDateAssumed: false,
+      stale: null, prevCloseSource: null, prevCloseDate: null,
     };
   }
 

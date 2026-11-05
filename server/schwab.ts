@@ -873,6 +873,7 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           // In Schwab's quotes response the regular-session last trade sits in
           // q.regular, not q.quote (server/schwabQuoteFields.ts).
           ...regularFields(q),
+          lastTradeTimeMs: typeof qd.tradeTime === "number" && qd.tradeTime > 0 ? qd.tradeTime : null,
           quoteTimeMs,
           ageMs: fresh.ageMs,
           // A payload re-served after a failed refresh is stale even if its own

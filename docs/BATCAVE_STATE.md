@@ -1432,3 +1432,15 @@ Third review (same reviewer): no MUST-FIX. Two SHOULD-FIX taken: the open guard 
 with the prior close (misdated a real flat first trade); the stream record's own last trade time now decides
 (a last trade before today's 09:30 = no regular trade yet; no time = nothing inferred; tested incl. a flat
 open). The background runner restarts itself if a symbol was queued as it exited.
+Prophecy review of #49 (E1, diff): HOLD, 2 MUST-FIX taken. (1) toQuoteIn turned stale:null (age unknown) into
+false; unknown freshness is now kept (null) and a quote-sourced row is "ok" only when freshness is
+observed false. (2) Prices without a trade timestamp were stamped with the quote, receipt or scheduled close
+time; now each row carries priceTimeBasis: "trade" (REST regular.regularMarketTradeTime, or a stream/REST
+last-trade time inside today's open session), "session_close_reference" (a daily-bar close, or a regular
+last equal to the last started session's own daily close outside the session; the scheduled close, not a
+trade time) or "unavailable" (priceAsOfMs null, session date marked assumed, row partial). REST quotes now
+carry tradeTime as lastTradeTimeMs. SHOULD-FIX taken: the tape (the only mounted macro view) shows a text
+tag on non-healthy pills and a "Details" button that opens a static, tappable list with each row's basis,
+time or "time unavailable", session (assumed or not), state and reason. Reporting corrections: history is
+also re-read at the 6 h maximum age and on invalidation; a warm rebuild is 1 request instead of 34 (33
+fewer), not a guaranteed saving; actual dispatch counts still need measuring live.

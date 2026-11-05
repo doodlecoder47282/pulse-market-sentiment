@@ -288,9 +288,66 @@ test("macro: a streamed regular last is dated by the stream's last trade time, n
   assert.equal(b.priceSessionDate, "2026-11-05");
   assert.equal(b.change, 0);
   assert.equal(b.dataState, "ok");
-  // No trade time at all: nothing inferred, dated today.
+  assert.equal(b.priceTimeBasis, "trade");
+  assert.equal(b.priceAsOfMs, et("2026-11-05", 9, 30) + 30_000);
+  // No trade time at all: the session date is an assumption, said so; no time is made up.
   const none = harness(et("2026-11-05", 9, 31), stream(null, (s) => closeOf(s, "2026-11-04")));
-  assert.equal(row(await createMacroBuilder(none.deps).build(), "SPY").priceSessionDate, "2026-11-05");
+  const c = row(await createMacroBuilder(none.deps).build(), "SPY");
+  assert.equal(c.sessionDateAssumed, true);
+  assert.equal(c.priceAsOfMs, null);
+  assert.equal(c.priceTimeBasis, "unavailable");
+  assert.equal(c.dataState, "partial");
+  assert.match(c.reason ?? "", /trade time unavailable; session 2026-11-05 assumed/);
+});
+
+test("macro: provenance is never manufactured (unknown freshness, undated prices, quote and receipt times)", async () => {
+  const q = (over: Partial<QuoteIn>) => (syms: string[]) => syms.map((s) => ({
+    symbol: s, last: 200, change: 0, prevClose: closeOf(s, "2026-11-04"), regularMarketLast: 200,
+    regularMarketTradeTimeMs: et("2026-11-05", 10, 0), quoteTimeMs: et("2026-11-05", 10, 0), fetchedAtMs: et("2026-11-05", 10, 0), stale: false, ...over,
+  } as QuoteIn));
+
+  // Unknown freshness: usable price, but never a confirmed-current "ok".
+  const unk = row(await createMacroBuilder(harness(et("2026-11-05", 10, 1), q({ stale: null })).deps).build(), "SPY");
+  assert.equal(unk.stale, null);
+  assert.equal(unk.dataState, "partial");
+  assert.match(unk.reason ?? "", /freshness unknown/);
+  const missing = row(await createMacroBuilder(harness(et("2026-11-05", 10, 1), q({ stale: undefined })).deps).build(), "SPY");
+  assert.equal(missing.dataState, "partial", "absent freshness is unknown too");
+  const fresh = row(await createMacroBuilder(harness(et("2026-11-05", 10, 1), q({})).deps).build(), "SPY");
+  assert.equal(fresh.dataState, "ok", "an explicitly fresh, dated observation stays usable");
+  assert.equal(fresh.priceTimeBasis, "trade");
+
+  // A fresh payload carrying an UNDATED regular price does not manufacture today's trade.
+  const undated = row(await createMacroBuilder(harness(et("2026-11-05", 10, 1), q({ regularMarketTradeTimeMs: null, lastTradeTimeMs: null })).deps).build(), "SPY");
+  assert.equal(undated.priceAsOfMs, null);
+  assert.equal(undated.priceTimeBasis, "unavailable");
+  assert.equal(undated.sessionDateAssumed, true);
+  assert.equal(undated.dataState, "partial");
+
+  // Quote-only updates do not advance the regular price's time.
+  const h = harness(et("2026-11-05", 10, 1), q({}));
+  const b = createMacroBuilder(h.deps);
+  const t1 = row(await b.build(), "SPY").priceAsOfMs;
+  h.clock.t += 60_000;
+  h.quotes = q({ quoteTimeMs: et("2026-11-05", 10, 2), fetchedAtMs: et("2026-11-05", 10, 2) });
+  const t2 = row(await b.build(), "SPY").priceAsOfMs;
+  assert.equal(t1, et("2026-11-05", 10, 0));
+  assert.equal(t2, t1, "the trade time, not the newer quote update");
+
+  // After hours, receipt and quote times never become the regular trade time.
+  const ah = harness(et("2026-11-04", 19, 0), q({ regularMarketTradeTimeMs: null, lastTradeTimeMs: et("2026-11-04", 18, 55), quoteTimeMs: et("2026-11-04", 18, 59), fetchedAtMs: et("2026-11-04", 19, 0) }));
+  ah.barsUpTo.date = "2026-11-03"; // no bar of 11-04 to reference
+  const after = row(await createMacroBuilder(ah.deps).build(), "SPY");
+  assert.equal(after.priceAsOfMs, null);
+  assert.notEqual(after.priceAsOfMs, et("2026-11-04", 19, 0));
+  assert.equal(after.dataState, "partial");
+
+  // A daily-bar close carries a session-close REFERENCE, labelled as such.
+  const sc = harness(et("2026-11-04", 23, 30), () => []);
+  const close = row(await createMacroBuilder(sc.deps).build(), "SPY");
+  assert.equal(close.basis, "session_close");
+  assert.equal(close.priceTimeBasis, "session_close_reference");
+  assert.equal(close.priceAsOfMs, et("2026-11-04", 16));
 });
 
 test("macro: a kept copy answers at once while it refreshes in the background", async () => {
@@ -415,9 +472,11 @@ test("macro: Schwab's REST quote shape: the regular-session last trade is read f
   assert.deepEqual(regularFields(null), { regularMarketLast: null, regularMarketTradeTimeMs: null });
 });
 
-test("macro: the server wrapper's quote mapping keeps the asked symbol and turns a null stale flag into false", () => {
+test("macro: the server wrapper's quote mapping keeps the asked symbol and keeps unknown freshness unknown", () => {
   const q = toQuoteIn({ symbol: "GLD", last: 1, change: null, stale: null, regularMarketLast: 2, regularMarketTradeTimeMs: 3 }, "GLD");
-  assert.equal(q.stale, false);
+  assert.equal(q.stale, null, "null = age unknown, never fresh");
+  assert.equal(toQuoteIn({ symbol: "X", last: null, change: null }, "X").stale, null, "absent = unknown");
+  assert.equal(toQuoteIn({ symbol: "X", last: null, change: null, stale: false }, "X").stale, false);
   assert.equal(q.symbol, "GLD");
   assert.equal(q.regularMarketTradeTimeMs, 3);
   assert.equal(toQuoteIn({ symbol: "X", last: null, change: null, stale: true }, "X").stale, true);

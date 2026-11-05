@@ -28,8 +28,10 @@ type MacroQuote = {
   dataState?: "ok" | "partial" | "unavailable";
   reason?: string | null;
   priceAsOfMs?: number | null;
+  priceTimeBasis?: "trade" | "session_close_reference" | "unavailable";
   priceSessionDate?: string | null;
-  stale?: boolean;
+  sessionDateAssumed?: boolean;
+  stale?: boolean | null;
 };
 
 type MacroResponse = {
@@ -107,14 +109,37 @@ function Sparkline({ data, positive }: { data: number[]; positive: boolean | nul
   );
 }
 
+const BASIS_TEXT: Record<string, string> = {
+  regular_session_last: "last regular-session trade",
+  session_close: "regular-session close (daily bar)",
+  last_daily_close: "older close, substitute",
+  public_fallback: "public source",
+  unavailable: "unavailable",
+};
+
+const etFmt = (ms: number) => new Date(ms).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " ET";
+
+/** The row's time in words: a trade time, a session-close reference, or "time unavailable". */
+function timeText(q: MacroQuote): string {
+  if (q.priceAsOfMs == null || q.priceTimeBasis === "unavailable") return "time unavailable";
+  if (q.priceTimeBasis === "session_close_reference") return `session close ${etFmt(q.priceAsOfMs)} (scheduled close, not a trade time)`;
+  return `traded ${etFmt(q.priceAsOfMs)}`;
+}
+
+/** Short visible tag for a row that is not fully healthy (text, not colour alone). */
+function stateTag(q: MacroQuote): string | null {
+  if (q.dataState === "unavailable") return "n/a";
+  if (q.basis === "last_daily_close") return "old close";
+  if (q.dataState === "partial") return "partial";
+  return null;
+}
+
 /** Tooltip: what the row's price is and what is missing. */
 function rowTitle(q: MacroQuote): string {
   const parts: string[] = [q.symbol];
-  if (q.basis === "last_daily_close") parts.push(`last close of ${q.priceSessionDate ?? "the last completed session"}, not a current price`);
-  else if (q.basis === "regular_session_last") parts.push("last regular-session trade");
-  else if (q.basis === "session_close") parts.push(`regular-session close ${q.priceSessionDate ?? ""}`.trim());
-  else if (q.basis === "public_fallback") parts.push("public source");
-  if (q.stale) parts.push("stale");
+  if (q.basis) parts.push(BASIS_TEXT[q.basis] ?? q.basis);
+  parts.push(timeText(q));
+  if (q.stale === true) parts.push("stale");
   if (q.reason) parts.push(q.reason);
   return parts.join(" · ");
 }
@@ -138,7 +163,7 @@ function QuotePill({ q, compact = false }: { q: MacroQuote; compact?: boolean })
       <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} aria-hidden />
       <span className="font-semibold tracking-tight">{q.label}</span>
       <span className="font-mono tabular-nums">{formatPrice(q)}</span>
-      {q.basis === "last_daily_close" && <span className="text-[10px] uppercase text-muted-foreground">close</span>}
+      {stateTag(q) && <span className="text-[10px] uppercase text-amber-300/90" data-testid={`ticker-state-${q.symbol}`}>{stateTag(q)}</span>}
       <span className={`flex items-center gap-0.5 font-mono tabular-nums ${color}`}>
         <Icon className="h-3 w-3" />
         {q.changePct != null ? `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(2)}%` : "—"}
@@ -152,6 +177,7 @@ function QuotePill({ q, compact = false }: { q: MacroQuote; compact?: boolean })
 export function MacroTicker() {
   const { data, isLoading } = useMacroQuery();
   const isDemo = useIsDemo();
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   if (isLoading || !data) {
     return (
@@ -167,11 +193,24 @@ export function MacroTicker() {
   // the last session's prices and says so. Older servers omit sessionOpen.
   const live = data.sessionOpen !== false;
 
+  const notHealthy = data.tape.filter((q) => q.dataState && q.dataState !== "ok").length;
   return (
+    <div>
     <div
       className="relative overflow-hidden border-y border-border/50 bg-gradient-to-r from-black/40 via-black/20 to-black/40 py-2"
       data-testid="macro-ticker-tape"
     >
+      {/* Tap-accessible row details (tooltips do not work on phones). */}
+      <button
+        type="button"
+        onClick={() => setDetailsOpen((v) => !v)}
+        aria-expanded={detailsOpen}
+        aria-controls="macro-tape-details"
+        data-testid="macro-tape-details-toggle"
+        className="absolute right-2 top-1/2 z-10 flex min-h-[32px] -translate-y-1/2 items-center rounded-full border border-border/60 bg-background/90 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur hover:text-foreground"
+      >
+        {detailsOpen ? "Hide" : "Details"}{notHealthy > 0 ? ` · ${notHealthy} partial` : ""}
+      </button>
       {/* Live pulse indicator (Sample on the demo: those prices are simulated) */}
       {isDemo ? (
         <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-indigo-400/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label">
@@ -209,6 +248,32 @@ export function MacroTicker() {
           to { transform: translateX(-50%); }
         }
       `}</style>
+    </div>
+    {detailsOpen && (
+      <div id="macro-tape-details" className="max-h-72 overflow-y-auto border-b border-border/50 bg-background/95 px-3 py-2 text-xs" data-testid="macro-tape-details">
+        <div className="mb-1 text-[11px] text-muted-foreground">
+          Each row: price basis, its own time, session, and anything missing. Commodity rows are ETF share prices. Snapshot built {new Date(data.asOf * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+        </div>
+        <ul className="divide-y divide-border/40">
+          {data.tape.map((q) => (
+            <li key={q.symbol} className="py-1.5" data-testid={`macro-detail-${q.symbol}`}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-semibold">{q.label}</span>
+                <span className="font-mono tabular-nums">{formatPrice(q)}</span>
+                <span className="font-mono tabular-nums text-muted-foreground">{q.changePct != null ? `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(2)}%` : "change n/a"}</span>
+                <span className={q.dataState === "ok" ? "text-emerald-400" : "text-amber-300"}>{q.dataState ?? "state not reported"}</span>
+              </div>
+              <div className="text-muted-foreground">
+                {BASIS_TEXT[q.basis ?? ""] ?? "basis not reported"} · {timeText(q)}
+                {q.priceSessionDate ? ` · session ${q.priceSessionDate}${q.sessionDateAssumed ? " (assumed)" : ""}` : ""}
+                {q.stale === true ? " · stale" : ""}
+              </div>
+              {q.reason && <div className="text-amber-300/90">{q.reason}</div>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
     </div>
   );
 }
