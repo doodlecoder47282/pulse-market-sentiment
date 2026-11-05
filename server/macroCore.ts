@@ -30,7 +30,7 @@
 // Today's still-forming daily bar is never stored, and a bar read within
 // SETTLE_MS of its session's close is re-read once (closing prints settle).
 
-import { resolvePrevClose, dayChange, dailyBarSessionDate, sameClose, type PrevCloseSource } from "./dayChange";
+import { resolvePrevClose, dayChange, dailyBarSessionDate, type PrevCloseSource } from "./dayChange";
 import { etClock, etDate, prevTradingDay, sessionCloseMs, isTradingDay, isRegularSessionOpen, type IsoDate } from "./exchangeCalendar";
 import { lastCompletedSession } from "./breadthMath";
 
@@ -138,6 +138,8 @@ export interface QuoteIn {
   regularMarketLast?: number | null;
   /** Time of the last regular-session trade, epoch ms (REST quotes; absent from the stream). */
   regularMarketTradeTimeMs?: number | null;
+  /** Time of the last trade of any session, epoch ms (stream records). */
+  lastTradeTimeMs?: number | null;
   quoteTimeMs?: number | null;
   fetchedAtMs?: number | null;
   stale?: boolean | null;
@@ -146,7 +148,7 @@ export interface QuoteIn {
 /** The QuoteIn fields of a schwab.NormalizedQuote, under the symbol the caller asked for. */
 export function toQuoteIn(q: {
   symbol: string; last: number | null; change: number | null; prevClose?: number | null;
-  regularMarketLast?: number | null; regularMarketTradeTimeMs?: number | null;
+  regularMarketLast?: number | null; regularMarketTradeTimeMs?: number | null; lastTradeTimeMs?: number | null;
   quoteTimeMs?: number | null; fetchedAtMs?: number | null; stale?: boolean | null;
 }, askedSymbol: string): QuoteIn {
   return {
@@ -156,6 +158,7 @@ export function toQuoteIn(q: {
     prevClose: q.prevClose ?? null,
     regularMarketLast: q.regularMarketLast ?? null,
     regularMarketTradeTimeMs: q.regularMarketTradeTimeMs ?? null,
+    lastTradeTimeMs: q.lastTradeTimeMs ?? null,
     quoteTimeMs: q.quoteTimeMs ?? null,
     fetchedAtMs: q.fetchedAtMs ?? null,
     stale: q.stale === true,
@@ -329,7 +332,11 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
         const key = lastCompletedSession(now);
         await readAll(batch.filter((s) => needsRead(s, key, now)), key);
       }
-    })().catch(() => { /* readHistory records its own failures */ }).finally(() => { runner = null; });
+    })().catch(() => { /* readHistory records its own failures */ }).finally(() => {
+      runner = null;
+      // A symbol queued between the loop's last check and here starts a new runner.
+      if (queued.size) scheduleBackground([]);
+    });
   }
 
   /**
@@ -364,11 +371,13 @@ export function createMacroBuilder(deps: MacroDeps, universe: TickerDef[] = UNIV
     //    Schwab gives it (REST); the stream gives no time: the last started session.
     const reg = q?.regularMarketLast != null && Number.isFinite(q.regularMarketLast) && q.regularMarketLast > 0 ? q.regularMarketLast : null;
     const regTime = q?.regularMarketTradeTimeMs != null && Number.isFinite(q.regularMarketTradeTimeMs) && q.regularMarketTradeTimeMs > 0 ? q.regularMarketTradeTimeMs : null;
-    // A stream record has no trade time: in the first minutes after the open a
-    // regular last equal to the prior close is most likely yesterday's close.
-    const openMinutes = etClock(now).minutes - (9 * 60 + 30);
-    const streamNoTradeYet = reg != null && regTime == null && open && openMinutes >= 0 && openMinutes < 5
-      && q?.prevClose != null && sameClose(reg, q.prevClose);
+    // A stream record has no regular-session trade time, only the time of its
+    // last trade of any session. While the session is open, a last trade
+    // before today's 09:30 means no regular trade yet: the regular last is
+    // the prior session's. With no trade time at all nothing is inferred.
+    const lastTrade = q?.lastTradeTimeMs != null && Number.isFinite(q.lastTradeTimeMs) && q.lastTradeTimeMs > 0 ? q.lastTradeTimeMs : null;
+    const streamNoTradeYet = reg != null && regTime == null && open && lastTrade != null
+      && (etDate(lastTrade) < todayEt || etClock(lastTrade).minutes < 9 * 60 + 30);
     if (reg != null) {
       price = reg;
       basis = "regular_session_last";

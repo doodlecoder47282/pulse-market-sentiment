@@ -1428,3 +1428,7 @@ unavailable with the reason. SHOULD-FIX taken: a bar posted at the close is re-r
 (2 reads per symbol per close, not 3); a streamed regular last with no trade time that equals the prior
 close in the first 5 minutes after the open is dated to the prior session; a session-close substitute from a
 kept copy is partial with its reason.
+Third review (same reviewer): no MUST-FIX. Two SHOULD-FIX taken: the open guard compared the streamed price
+with the prior close (misdated a real flat first trade); the stream record's own last trade time now decides
+(a last trade before today's 09:30 = no regular trade yet; no time = nothing inferred; tested incl. a flat
+open). The background runner restarts itself if a symbol was queued as it exited.

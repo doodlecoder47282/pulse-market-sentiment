@@ -271,15 +271,26 @@ test("macro: an out-of-date history copy never yields a multi-day change labelle
   assert.ok(r);
 });
 
-test("macro: a streamed regular last with no trade time is not taken as today's trade right after the open", async () => {
-  const h = harness(et("2026-11-05", 9, 31), (syms) => syms.map((s) => ({
-    symbol: s, last: 210, change: 0, prevClose: closeOf(s, "2026-11-04"), regularMarketLast: closeOf(s, "2026-11-04"),
-    regularMarketTradeTimeMs: null, quoteTimeMs: et("2026-11-05", 9, 31), fetchedAtMs: null, stale: false,
-  })));
-  const spy = row(await createMacroBuilder(h.deps).build(), "SPY");
-  assert.equal(spy.priceSessionDate, "2026-11-04", "yesterday's close, not 0.00% today");
-  assert.equal(spy.prevClose, closeOf("SPY", "2026-11-03"));
-  assert.equal(spy.dataState, "partial");
+test("macro: a streamed regular last is dated by the stream's last trade time, never by its price", async () => {
+  const stream = (lastTrade: number | null, reg: (s: string) => number) => (syms: string[]) => syms.map((s) => ({
+    symbol: s, last: 210, change: 0, prevClose: closeOf(s, "2026-11-04"), regularMarketLast: reg(s),
+    regularMarketTradeTimeMs: null, lastTradeTimeMs: lastTrade, quoteTimeMs: et("2026-11-05", 9, 31), fetchedAtMs: null, stale: false,
+  }));
+  // 09:31, last trade was pre-market (09:20): no regular trade yet, the regular last is Wednesday's.
+  const pre = harness(et("2026-11-05", 9, 31), stream(et("2026-11-05", 9, 20), (s) => closeOf(s, "2026-11-04")));
+  const a = row(await createMacroBuilder(pre.deps).build(), "SPY");
+  assert.equal(a.priceSessionDate, "2026-11-04", "yesterday's close, not 0.00% today");
+  assert.equal(a.prevClose, closeOf("SPY", "2026-11-03"));
+  assert.equal(a.dataState, "partial");
+  // 09:31, a real FLAT first trade at 09:30:30 equal to the prior close: today's trade, 0.00%, ok.
+  const flat = harness(et("2026-11-05", 9, 31), stream(et("2026-11-05", 9, 30) + 30_000, (s) => closeOf(s, "2026-11-04")));
+  const b = row(await createMacroBuilder(flat.deps).build(), "SPY");
+  assert.equal(b.priceSessionDate, "2026-11-05");
+  assert.equal(b.change, 0);
+  assert.equal(b.dataState, "ok");
+  // No trade time at all: nothing inferred, dated today.
+  const none = harness(et("2026-11-05", 9, 31), stream(null, (s) => closeOf(s, "2026-11-04")));
+  assert.equal(row(await createMacroBuilder(none.deps).build(), "SPY").priceSessionDate, "2026-11-05");
 });
 
 test("macro: a kept copy answers at once while it refreshes in the background", async () => {

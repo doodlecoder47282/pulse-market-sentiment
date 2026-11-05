@@ -695,6 +695,8 @@ export type NormalizedQuote = {
   regularMarketLast?: number | null;
   /** Schwab regular.regularMarketTradeTime, epoch ms (REST only). */
   regularMarketTradeTimeMs?: number | null;
+  /** Time of the last trade of any session, epoch ms (stream TRADE_TIME; not regular-session specific). */
+  lastTradeTimeMs?: number | null;
   /** When this quote payload was received from Schwab, epoch ms. */
   fetchedAtMs?: number | null;
   /** true when the payload came from the in-memory cache. */
@@ -793,6 +795,7 @@ function _streamedQuote(wireSym: string, origSym: string, nowMs: number): Normal
     source: "schwab",
     prevClose: q.closePrice != null && q.closePrice > 0 ? q.closePrice : null,
     regularMarketLast: q.regularMarketLast != null && q.regularMarketLast > 0 ? q.regularMarketLast : null,
+    lastTradeTimeMs: q.tradeTimeMs ?? null,
     quoteTimeMs,
     ageMs: fresh.ageMs,
     stale: fresh.stale,
