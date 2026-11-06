@@ -28,7 +28,9 @@ export function sanitizeBrief(raw: unknown): DescriptiveBrief | null {
   const levels = Array.isArray(r.levelsToWatch)
     ? (r.levelsToWatch as unknown[]).map((x) => {
         const o = (x ?? {}) as Record<string, unknown>;
-        return { level: str(o.level, 80) ?? undefined, why: str(o.why, 300) ?? undefined };
+        // A level may arrive as a number (6850): keep it as text, never drop it.
+        const lvl = typeof o.level === "number" && Number.isFinite(o.level) ? String(o.level) : str(o.level, 80);
+        return { level: lvl ?? undefined, why: str(o.why, 300) ?? undefined };
       }).filter((x) => x.level).slice(0, 6)
     : [];
   const out: DescriptiveBrief = {
@@ -57,6 +59,12 @@ export function renderBriefMarkdown(b: DescriptiveBrief): string {
   list("What would change this read", b.whatWouldChange);
   list("Counterpoints", b.counterpoints);
   list("Data gaps", b.dataGaps);
-  parts.push("_Descriptive summary of the provided news, tape and positioning. No probabilities, targets or trade ideas; not investment advice._");
+  parts.push("_Descriptive summary of the provided news, tape and positioning. The model was asked not to give probabilities, targets or trade ideas; not investment advice._");
   return parts.join("\n\n");
+}
+
+/** The deterministic brief as model input: its TRADE IMPLICATIONS section removed, so the prompt
+ *  that forbids trade ideas does not feed the model trade ideas. */
+export function briefForPrompt(deterministic: string): string {
+  return String(deterministic ?? "").replace(/## TRADE IMPLICATIONS[\s\S]*?(?=\n## |$)/, "").replace(/\n{3,}/g, "\n\n").trim();
 }

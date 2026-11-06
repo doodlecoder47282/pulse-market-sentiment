@@ -45,3 +45,34 @@ test("email: renders the descriptive brief sections", async () => {
   assert.match(body, /drivers:\n  - Fed speakers/);
   assert.match(body, /data gaps:\n  - no positioning/);
 });
+
+test("provider and mode describe the text on the card: parseable-but-unusable JSON falls through to the next provider, then to deterministic", () => {
+  const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
+  assert.match(r, /const d = sanitizeBrief\(p\.r\.value\.structured\);\s*if \(!d\) continue;/);
+  assert.match(r, /let provider: "claude" \| "gpt" \| "sonar" \| "none" = "none";/);
+  assert.doesNotMatch(r, /if \(claudeResult\.status === "fulfilled" && claudeResult\.value\.structured\)/);
+  // The prompt input carries no trade section.
+  assert.match(r, /\$\{briefForPrompt\(deterministic\)\}/);
+});
+
+test("email: a descriptive brief never prints a verdict or confidence under the model's name, never PENDING", async () => {
+  const { composeAlphaEmail } = await import("../../server/alphaEmailComposer.ts");
+  const withBaseline = composeAlphaEmail({ structured: { summary: "Quiet tape." } as any, fusion: { baseline: { verdict: "lean bull", confidence: 58, oneLiner: "base" }, levels: { spot: 680 } } as any, provider: "claude", mode: "with_search" } as any);
+  assert.equal(withBaseline.subject, "Alpha Brief: descriptive read · SPY 680");
+  assert.doesNotMatch(withBaseline.body, /confidence 58%/);
+  assert.match(withBaseline.body, /EDGE LAB BASELINE \(HEURISTIC, NOT THE MODEL'S READ\)/);
+  const bare = composeAlphaEmail({ structured: { summary: "Quiet tape." } as any, fusion: null, provider: "claude" } as any);
+  assert.doesNotMatch(bare.subject + bare.body, /PENDING/);
+  assert.doesNotMatch(bare.body, /─ VERDICT ─/);
+});
+
+test("brief helpers: numeric levels kept; trade section stripped from the prompt input; footer states the instruction, not a guarantee", async () => {
+  const { sanitizeBrief, briefForPrompt, renderBriefMarkdown } = await import("../../shared/alphaBrief.ts");
+  const b = sanitizeBrief({ summary: "x", levelsToWatch: [{ level: 6850, why: "call wall" }] });
+  assert.deepEqual(b?.levelsToWatch, [{ level: "6850", why: "call wall" }]);
+  const det = "## RANKED IMPACT\n\n- a\n\n## TRADE IMPLICATIONS\n\n- Consider SPY put spreads\n\n## WATCH LIST\n\n- b";
+  const p = briefForPrompt(det);
+  assert.doesNotMatch(p, /put spreads|TRADE IMPLICATIONS/);
+  assert.match(p, /## RANKED IMPACT[\s\S]*## WATCH LIST/);
+  assert.match(renderBriefMarkdown(b!), /The model was asked not to give probabilities/);
+});

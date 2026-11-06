@@ -1,5 +1,5 @@
 import { vixToAtmPct } from "@shared/vol";
-import { sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
+import { briefForPrompt, sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
 import { getCryptoContext } from "./cryptoContext";
 import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
 import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
@@ -2448,8 +2448,8 @@ RULES:
 NEWS FEED (${items.length} items, ranked by deterministic impact):
 ${itemLines || "(empty)"}
 
-DETERMINISTIC BASELINE BRIEF:
-${deterministic}
+DETERMINISTIC BASELINE BRIEF (rules engine; trade section removed):
+${briefForPrompt(deterministic)}
 
 ${fusionBlock}
 
@@ -2549,32 +2549,25 @@ Describe the above in the JSON schema specified in the system prompt: what the n
 
       const [claudeResult, gptResult, sonarResult] = await Promise.allSettled([claudePromise, gptPromise, sonarPromise]);
 
-      // Pick the first provider that returned a parseable JSON object.
+      // Pick the first provider whose answer yields a USABLE descriptive brief (sanitizeBrief non-null),
+      // not merely parseable JSON: provider and mode then always describe the text on the card.
       // Priority: Claude (best reasoning + web search) → Sonar (built-in grounding) → GPT.
-      let structured: any = null;
+      // None usable: the rules-based brief, labelled deterministic with provider "none".
+      const picks: Array<{ provider: "claude" | "sonar" | "gpt"; r: PromiseSettledResult<any>; mode: (v: any) => "with_search" | "knowledge_only" }> = [
+        { provider: "claude", r: claudeResult, mode: (v) => v.mode },
+        { provider: "sonar", r: sonarResult, mode: () => "with_search" }, // Sonar is grounded by default
+        { provider: "gpt", r: gptResult, mode: () => "knowledge_only" },
+      ];
       let provider: "claude" | "gpt" | "sonar" | "none" = "none";
-      let rawText: string = deterministic;
       let mode: "with_search" | "knowledge_only" | "deterministic" = "deterministic";
-      if (claudeResult.status === "fulfilled" && claudeResult.value.structured) {
-        structured = claudeResult.value.structured;
-        provider = "claude";
-        rawText = claudeResult.value.text;
-        mode = claudeResult.value.mode;
-      } else if (sonarResult.status === "fulfilled" && sonarResult.value.structured) {
-        structured = sonarResult.value.structured;
-        provider = "sonar";
-        rawText = sonarResult.value.text;
-        mode = "with_search"; // Sonar is grounded by default
-      } else if (gptResult.status === "fulfilled" && gptResult.value.structured) {
-        structured = gptResult.value.structured;
-        provider = "gpt";
-        rawText = gptResult.value.text;
-        mode = "knowledge_only";
+      let descriptive: ReturnType<typeof sanitizeBrief> = null;
+      for (const p of picks) {
+        if (p.r.status !== "fulfilled") continue;
+        const d = sanitizeBrief(p.r.value.structured);
+        if (!d) continue;
+        descriptive = d; provider = p.provider; mode = p.mode(p.r.value);
+        break;
       }
-
-      // The card renders markdown: the model's descriptive fields rendered here, never its raw JSON
-      // text; without a usable model answer, the deterministic brief.
-      const descriptive = sanitizeBrief(structured);
       res.json({
         brief: descriptive ? renderBriefMarkdown(descriptive) : deterministic,
         mode,

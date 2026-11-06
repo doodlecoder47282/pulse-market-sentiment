@@ -104,36 +104,48 @@ export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string
   const f = payload.fusion ?? null;
   const provider = payload.provider ?? "deterministic";
 
-  // Verdict: LLM structured first, then Edge Lab baseline.
+  // Verdict: only a model that STATED one (legacy schema) is shown as the model's verdict. The
+  // descriptive brief states none; the Edge Lab baseline is then labelled as the baseline, never
+  // printed under the model's name, and with neither there is no verdict line at all.
   const baselineVerdict = f?.baseline?.verdict ?? null; // e.g. "mixed / range", "lean bull"
   const baselineConfidence = f?.baseline?.confidence ?? null;
   const baselineOneLiner = f?.baseline?.oneLiner ?? null;
-  const effectiveVerdict = s?.verdict ?? (baselineVerdict ? baselineVerdict.toUpperCase() : undefined);
-  const verdictLabel = badge(effectiveVerdict);
-  const confidence = s?.confidence ?? baselineConfidence;
-  const oneLiner = s?.oneLiner ?? baselineOneLiner ?? "";
+  const modelVerdict = s?.verdict ?? null;
+  const verdictLabel = badge(modelVerdict ?? (baselineVerdict ? baselineVerdict.toUpperCase() : undefined));
+  const confidence = modelVerdict ? (s?.confidence ?? null) : baselineConfidence;
+  const oneLiner = modelVerdict ? (s?.oneLiner ?? "") : (baselineOneLiner ?? "");
+  const spotTag = f?.levels?.spot ? ` \u00b7 SPY ${f.levels.spot}` : "";
 
   // SUBJECT
-  const subject = s
-    ? `Alpha Brief: ${verdictLabel}${confidence != null ? ` \u00b7 ${confidence}%` : ""}${s.scenarios?.base?.target ? ` \u00b7 base ${s.scenarios.base.target}` : ""}`
-    : baselineVerdict
-      ? `Alpha Brief: ${verdictLabel}${confidence != null ? ` \u00b7 ${confidence}%` : ""}${f?.levels?.spot ? ` \u00b7 SPY ${f.levels.spot}` : ""} (baseline)`
-      : `Alpha Brief: deterministic baseline (no LLM key)`;
+  const subject = modelVerdict
+    ? `Alpha Brief: ${verdictLabel}${confidence != null ? ` \u00b7 ${confidence}%` : ""}${s?.scenarios?.base?.target ? ` \u00b7 base ${s.scenarios.base.target}` : ""}`
+    : s
+      ? `Alpha Brief: descriptive read${spotTag}`
+      : baselineVerdict
+        ? `Alpha Brief: ${verdictLabel}${confidence != null ? ` \u00b7 ${confidence}%` : ""}${spotTag} (baseline)`
+        : `Alpha Brief: deterministic baseline (no LLM key)`;
 
   // HEADER
   lines.push(`ALPHA BRIEF \u2014 ${f?.asOfET ?? new Date().toLocaleString("en-US", { timeZone: "America/New_York" })} ET`);
   lines.push(`engine: ${provider}${payload.mode ? ` (${payload.mode})` : ""}`);
   lines.push("");
 
-  // 1. VERDICT
-  lines.push(bar("verdict"));
-  lines.push(`[ ${verdictLabel} ]  confidence ${confidence != null ? confidence + "%" : "n/a"}`);
-  if (oneLiner) lines.push(oneLiner);
-  if (s?.narrative) {
+  // 1. VERDICT (only when one exists, and named for who produced it)
+  if (modelVerdict) {
+    lines.push(bar("verdict"));
+    lines.push(`[ ${verdictLabel} ]  confidence ${confidence != null ? confidence + "%" : "n/a"}`);
+    if (oneLiner) lines.push(oneLiner);
     lines.push("");
-    lines.push(s.narrative);
+  } else if (baselineVerdict) {
+    lines.push(bar("edge lab baseline (heuristic, not the model's read)"));
+    lines.push(`[ ${verdictLabel} ]  heuristic score ${confidence != null ? confidence + "/100" : "n/a"}`);
+    if (oneLiner) lines.push(oneLiner);
+    lines.push("");
   }
-  lines.push("");
+  if (s?.narrative) {
+    lines.push(s.narrative);
+    lines.push("");
+  }
 
   // 1b. DESCRIPTIVE BRIEF (current model schema: no probabilities, targets or trades)
   if (s?.summary || (s?.drivers?.length ?? 0) > 0) {
