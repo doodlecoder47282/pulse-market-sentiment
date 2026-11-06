@@ -101,8 +101,8 @@ export function staleDataReason(ageMs: number | null): string {
 }
 
 export interface ServableCandidate {
-  verdict: "ENTER" | "WATCH" | "PASS";
-  verdictCode?: VerdictCode | null;
+  verdict: "ENTER" | "WATCH" | "PASS" | null;
+  verdictCode: VerdictCode | null;
   verdictReasons: string[];
   lastRefreshAt: number | null;
 }
