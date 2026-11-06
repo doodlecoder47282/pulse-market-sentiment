@@ -1,4 +1,5 @@
 import { vixToAtmPct } from "@shared/vol";
+import { emptyRetryDelayMs } from "./modelsBackoff";
 import { getCryptoContext } from "./cryptoContext";
 import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
 import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
@@ -755,24 +756,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // options chain (Schwab is rate-limited).
   const MODELS_CACHE_MS = 30 * 60_000;
 
-  const MODELS_EMPTY_RETRY_MS = 20_000;
+  // An empty build (Schwab refused or could not supply the chain) is held for
+  // a growing interval (server/modelsBackoff.ts: 20 s, 40 s, ... 5 min), so
+  // pollers cannot turn a throttled chain into a retry storm.
+  const modelsEmptyStreak = new Map<string, number>();
   const modelsBuildEmpty = (d: ModelsResponse | null | undefined): boolean =>
     !d?.horizons || Object.values(d.horizons as Record<string, unknown>).every((h) => !h);
-  async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
+  /**
+   * Build (or serve) the models snapshot. With `peek`, never start a build:
+   * answer the cached snapshot when it would be served, else null. Readers
+   * that only summarise (tab headlines) peek, so they add no Schwab requests.
+   */
+  async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean, opts: { peek?: boolean } = {}): Promise<ModelsResponse | null> {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     // Cache hit
     const cached = modelsCache.get(cacheKey);
     // The 30-min rebuild cadence never serves chain-derived numbers past the
     // chain max age (3 min in the session): an older build is a miss.
     const cachedChainAsOf = cached ? oldestChainAsOf(cached.data.horizons as any) : null;
-    // A build with no horizon (Schwab refused the chain) is held only
-    // MODELS_EMPTY_RETRY_MS, so the next read retries instead of serving
-    // "not built" for the full 30-minute cadence.
+    // A build with no horizon (Schwab refused the chain) is held for the
+    // backoff interval (20 s doubling to 5 min per consecutive empty build),
+    // not the full 30-minute cadence, and not retried on every poll.
     const cachedEmpty = cached ? modelsBuildEmpty(cached.data) : false;
-    if (cached && Date.now() - cached.at < (cachedEmpty ? MODELS_EMPTY_RETRY_MS : MODELS_CACHE_MS)
+    const hold = cachedEmpty ? emptyRetryDelayMs(modelsEmptyStreak.get(cacheKey) ?? 1) : MODELS_CACHE_MS;
+    if (cached && Date.now() - cached.at < hold
         && (cachedChainAsOf == null || Date.now() - cachedChainAsOf <= maxServeAgeMs("chains"))) {
       return cached.data;
     }
+    if (opts.peek) return null;
     // Existing build in flight
     const pending = modelsInFlight.get(cacheKey);
     if (pending) return pending;
@@ -788,6 +799,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       // Never overwrite the last good session snapshot with an empty build.
       if (!modelsBuildEmpty(data)) await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
+      modelsEmptyStreak.set(cacheKey, modelsBuildEmpty(data) ? (modelsEmptyStreak.get(cacheKey) ?? 0) + 1 : 0);
       modelsCache.set(cacheKey, { at: Date.now(), data });
       return data;
     })().finally(() => {
@@ -805,7 +817,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // entry, upper/lower vomma) are now always on — they're core levels,
       // not experimental. ?experimental=0 can still disable them explicitly.
       const experimental = String(req.query.experimental ?? "1") !== "0";
-      const data = await buildModelsForKey(symbol, experimental);
+      const peek = String(req.query.peek ?? "") === "1";
+      const built = await buildModelsForKey(symbol, experimental, { peek });
+      if (!built) {
+        return res.status(503).json({ dataState: "unavailable", error: "not_built", reason: "no current models build to read (a build is pending, or backing off after Schwab could not supply the chain)" });
+      }
+      const data = built;
       // Post-process pipeline (order matters):
       //   1. Term-structure rescale: 1W/1M/3M EMs from VIX9D/VIX
       //   2. Audit enrichment: vommaPockets, realizedSigma20d, intradayPivot, wickZones
@@ -962,7 +979,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const requested: string[] = Array.isArray(req.body?.horizons) ? req.body.horizons : ["daily", "weekly"];
 
       // Reuse the shared cache + in-flight dedup helper
-      const models = await buildModelsForKey(symbol, true);
+      const models = (await buildModelsForKey(symbol, true)) as ModelsResponse;
 
       const snaps: any[] = [];
       for (const h of requested) {
@@ -4985,7 +5002,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const horizonMinutes = Math.max(5, Math.min(120, Number(req.query.horizonMinutes) || 20));
       // In-process /api/models (internalApi.ts). Body read regardless of
       // status, as before; a missing daily horizon answers 503 below.
-      const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
+      // peek=1 (tab headlines): read the current models build, never start one.
+      const peek = String(req.query.peek ?? "") === "1";
+      const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1${peek ? "&peek=1" : ""}`)).body;
+      if (data?.error === "not_built") return res.status(503).json({ dataState: "unavailable", reason: data.reason, error: "not_built" });
       const daily = data?.horizons?.daily;
       if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "no_daily_horizon" });
 

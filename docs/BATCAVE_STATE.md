@@ -1390,3 +1390,14 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: headlines read, never build (feat/headline-read-only). Evidence: live /api/schwab/diag (2026-11-05
+~01:00 ET) attributed SPY chains x6 and $SPX chains x3 per minute to "api /headline", $SPX x3 to
+"/regime/headline". Cause in code: every tab headline (20 s cache per tab) called /api/regime/predict, which
+calls /api/models; an empty models build (Schwab refused the chain, e.g. the self-throttle) was held only 20 s,
+so headline polling rebuilt the models (chain reads) about every 20 s while the budget stayed exhausted. Now
+the headline calls /api/regime/predict?peek=1 -> /api/models?peek=1, which answers the current build or 503
+not_built and never starts a build (headline says why the regime is unavailable); an empty build backs off
+20 s, 40 s, 80 s ... capped at 5 min (server/modelsBackoff.ts), reset by a good build. Builds still come from
+the Trade Desk predictor panel and the 9:00-16:00 regime ticker (60 s, now bounded by the backoff). Not
+verified live: the request count after deploy.
