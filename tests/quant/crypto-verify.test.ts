@@ -74,6 +74,9 @@ test("sizing and cost: checked against the liquidity the size was computed from,
   const r = byId(candidateChecks([refreshed], { state: "on" }));
   assert.equal(r["crypto.sizing"], "pass");
   assert.equal(r["crypto.cost"], "pass");
+  // ...but the card shows newer liquidity than its size: that is reported as stale, never a pass.
+  assert.equal(r["crypto.sizing.basis"], "stale");
+  assert.equal(byId(candidateChecks([{ ...sized, risk: { ...(sized as any).risk, sizedOnLiquidityUsd: 40_000 } }], { state: "on" }))["crypto.sizing.basis"], "pass");
   // Without the recorded basis the same row reads as a disagreement (the old false FAIL on the live self-test).
   const legacy = byId(candidateChecks([{ ...sized, liquidityUsd: 55_000 }], { state: "on" }));
   assert.equal(legacy["crypto.sizing"], "fail");
@@ -89,4 +92,11 @@ test("cost: a stated cost where none can be computed fails (the old 15% default)
   const eng = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
   assert.doesNotMatch(eng, /roundTripPct \?\? 15/, "no default cost");
   assert.match(eng, /sizedOnLiquidityUsd: liqObs \?\? null/);
+});
+
+test("card states the sizing basis when its liquidity moved more than 1% from it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const p = readFileSync(new URL("../../client/src/components/CryptoPanel.tsx", import.meta.url), "utf8");
+  assert.match(p, /sizingBasisDrift\(c\.liquidityUsd, c\.risk\.sizedOnLiquidityUsd\)/);
+  assert.match(p, /size and round trip from the earlier read at/);
 });

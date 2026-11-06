@@ -101,6 +101,14 @@ export function candidateChecks(cands: CandidateLike[] | null, desk: { state: st
     }
     out.push(mk("crypto.sizing", "position sizing", badSize ? "fail" : "pass", `${withRisk.length - badSize}/${withRisk.length} rows agree`, `floor(min(liq x ${rules.sizing.poolShare}, $${rules.sizing.maxPositionUsd}))`, badSize ? `${badSize} rows disagree` : null));
     out.push(mk("crypto.cost", "round-trip cost", n === 0 ? "skipped" : badCost ? "fail" : "pass", n === 0 ? "no priced row" : `${n - badCost}/${n} rows agree`, "tradeCost(liquidity, size).roundTripPct", badCost ? `${badCost} rows disagree` : null));
+    // The arithmetic above is on the recorded basis. Separately: how many cards show a liquidity that has
+    // moved more than 1% from that basis (the scanner refreshed liq without re-sizing)? Those cards say so;
+    // the count is "stale", never a pass.
+    const based = withRisk.filter((c) => fin(c.risk?.sizedOnLiquidityUsd) && (c.risk!.sizedOnLiquidityUsd as number) > 0 && fin(c.liquidityUsd));
+    if (based.length) {
+      const drift = based.filter((c) => Math.abs((c.liquidityUsd as number) - (c.risk!.sizedOnLiquidityUsd as number)) / (c.risk!.sizedOnLiquidityUsd as number) > 0.01).length;
+      out.push(mk("crypto.sizing.basis", "sizing basis vs served liquidity", drift ? "stale" : "pass", `${based.length - drift}/${based.length} rows sized on the liquidity they show`, "|liq - sizedOnLiq| / sizedOnLiq <= 1%", drift ? `${drift} rows show newer liquidity than their size (re-sized on the next refresh; the card states the basis)` : null));
+    }
   }
   return out;
 }
