@@ -1,6 +1,7 @@
 // Running commit on /api/health, and the Settings request breakdown.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { deployInfo } from "../../server/deployInfo.ts";
 import { requestBreakdown, featureOf } from "../../shared/requestBreakdown.ts";
 
@@ -45,4 +46,27 @@ test("request breakdown: groups the live diag rows by feature and priority, kind
   assert.deepEqual(flow.symbols.sort(), ["$VIX", "AAPL", "GOOGL"]);
   assert.equal(featureOf("async qt (/app/dist/index.cjs:390:8470)"), "background task", "no file paths shown");
   assert.deepEqual(requestBreakdown(null), { lines: [], total: 0, unparsed: 0 });
+});
+
+test("breakdown header: the total is requestsLastMinute; rows that cover less, and unreadable rows, are stated", async () => {
+  const { breakdownHeader, requestBreakdown: rb } = await import("../../shared/requestBreakdown.ts");
+  assert.equal(breakdownHeader(80, 0, 80, 100), "last minute: 80 admitted of 100");
+  assert.equal(breakdownHeader(55, 0, 92, 100), "last minute: 92 admitted of 100 · 37 not itemised (only the busiest 60 caller rows are reported)");
+  // Unparsed rows are part of the row total: stated once, not also as "not itemised".
+  assert.equal(breakdownHeader(53, 3, 53, 100), "last minute: 53 admitted of 100 · 3 in rows this panel could not read");
+  assert.equal(breakdownHeader(10, 0, null, 100), "last minute: 10 in reported rows (total not reported)");
+  // A 24-character symbol list was cut by the server: its last symbol is marked partial.
+  const b = rb([{ n: 2, k: "I quotes AAPL,AMZN,GOOGL,META,MS <- api /mag7" }]);
+  assert.equal("AAPL,AMZN,GOOGL,META,MS".length, 23);
+  assert.deepEqual(b.lines[0].symbols, ["AAPL", "AMZN", "GOOGL", "META", "MS"]);
+  const cut = rb([{ n: 2, k: "I quotes AAPL,AMZN,GOOGL,META,MSF <- api /mag7" }]);
+  assert.deepEqual(cut.lines[0].symbols.slice(-1), ["MSF…"]);
+});
+
+test("Settings breakdown: header from requestsLastMinute, more-not-shown note, degraded window wording, health states", () => {
+  const s = readFileSync(new URL("../../client/src/components/SchwabSettings.tsx", import.meta.url), "utf8");
+  assert.match(s, /breakdownHeader\(breakdown\.total, breakdown\.unparsed, diag\.requestsLastMinute, diag\.maxPerMinute\)/);
+  assert.match(s, /more features not shown/);
+  assert.doesNotMatch(s, /Last 5 min, not fetched/);
+  assert.match(s, /health check did not answer/);
 });

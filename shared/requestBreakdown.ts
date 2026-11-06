@@ -17,12 +17,32 @@ export interface FeatureLine {
   priority: "interactive" | "background";
   /** Request kinds with counts: chains 6, quotes 2, pricehistory 34. */
   kinds: Array<{ kind: string; n: number }>;
-  /** Distinct symbols seen (first 6). */
+  /** Distinct symbols seen (first 6). The server cuts each row's symbol list at
+   *  24 characters, so a symbol ending a 24-character list may be cut short: it carries a trailing "…". */
   symbols: string[];
   total: number;
 }
 
 const ROW = /^([IB]) (\S+)(?: (\S+))? <- (.+)$/;
+/** server/schwab.ts records at most this many characters of a request's symbol list. */
+export const SYMBOL_LIST_CUT = 24;
+/** server/schwab.ts reports at most this many caller rows (busiest first). */
+export const CALLER_ROWS_REPORTED = 60;
+
+/**
+ * Header for the breakdown: the minute's real admitted count comes from
+ * requestsLastMinute; the rows can cover less (only the busiest 60 caller rows
+ * are reported), and the gap is stated, never hidden.
+ */
+export function breakdownHeader(rowsTotal: number, unparsed: number, requestsLastMinute: number | null | undefined, maxPerMinute: number): string {
+  // rowsTotal: every reported row's count (unparsed included); unparsed is a subset of it.
+  const total = Number.isFinite(requestsLastMinute) ? Number(requestsLastMinute) : null;
+  const head = total == null ? `last minute: ${rowsTotal} in reported rows (total not reported)` : `last minute: ${total} admitted of ${maxPerMinute}`;
+  const gaps: string[] = [];
+  if (total != null && rowsTotal < total) gaps.push(`${total - rowsTotal} not itemised (only the busiest ${CALLER_ROWS_REPORTED} caller rows are reported)`);
+  if (unparsed > 0) gaps.push(`${unparsed} in rows this panel could not read`);
+  return gaps.length ? `${head} · ${gaps.join(" · ")}` : head;
+}
 
 /** Normalise the caller: routes stay, stack frames (file paths) become "background task". */
 export function featureOf(who: string): string {
@@ -48,7 +68,12 @@ export function requestBreakdown(rows: CallerRow[] | null | undefined): { lines:
     if (!line) { line = { feature, priority, kinds: [], symbols: [], total: 0, _kinds: new Map(), _syms: new Set() }; map.set(key, line); }
     line.total += n;
     line._kinds.set(kind, (line._kinds.get(kind) ?? 0) + n);
-    if (sym) for (const s of sym.split(",")) if (s) line._syms.add(s);
+    if (sym) {
+      const parts = sym.split(",").filter(Boolean);
+      // A 24-character list was cut by the server (schwab.ts): its last symbol may be partial.
+      if (sym.length >= SYMBOL_LIST_CUT && parts.length) parts[parts.length - 1] += "…";
+      for (const s of parts) line._syms.add(s);
+    }
   }
   const lines = Array.from(map.values()).map(({ _kinds, _syms, ...l }) => ({
     ...l,

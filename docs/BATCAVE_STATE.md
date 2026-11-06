@@ -1399,3 +1399,10 @@ requestsByCaller (shared/requestBreakdown.ts): admitted attempts in the last min
 priority, with kinds and symbols; stack-frame callers shown as "background task" (no file paths); requests
 refused or served from an older copy in the last 5 minutes listed from diag.degraded. Replaces the browser
 console steps. Not verified live.
+Review of feat/health-commit-diag: 1 MUST-FIX taken. The breakdown header summed the reported rows, but the
+server reports only the busiest 60 caller rows, so the header could read lower than the budget line above
+it (a partial read shown as a total). It now reads requestsLastMinute and states "N not itemised" and
+unreadable rows. SHOULD-FIX taken: more-than-12 features say how many are not shown; the degraded line
+says "since degradation began (resets after 5 quiet minutes)" and "not served fresh" (403/429/5xx were
+fetched and failed); the build line shows reading / did not answer apart from "not reported"; a symbol
+ending a 24-character list is marked partial.

@@ -10,7 +10,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
 import PersonalServerHandoff from "./PersonalServerHandoff";
 import LiveVerifyCard from "./LiveVerifyCard";
-import { requestBreakdown, type CallerRow } from "@shared/requestBreakdown";
+import { breakdownHeader, requestBreakdown, type CallerRow } from "@shared/requestBreakdown";
 import { openInAppBrowser, closeInAppBrowser, listenForAppReturn } from "@/lib/nativeAuth";
 import type { MarketDataValidation } from "@shared/marketDataValidation";
 import {
@@ -305,7 +305,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     enabled: open,
   });
 
-  const { data: health } = useQuery<HealthInfo>({
+  const { data: health, isLoading: healthLoading, isError: healthFailed } = useQuery<HealthInfo>({
     queryKey: ["/api/health"],
     queryFn: async () => apiJson<HealthInfo>("GET", "/api/health"),
     staleTime: 60_000,
@@ -981,7 +981,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   data-testid="button-toggle-request-breakdown"
                   className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left text-muted-foreground hover:text-foreground"
                 >
-                  <span><span className="font-semibold text-foreground/80">Requests by feature</span> · last minute: {breakdown.total} admitted of {diag.maxPerMinute}</span>
+                  <span><span className="font-semibold text-foreground/80">Requests by feature</span> · {breakdownHeader(breakdown.total, breakdown.unparsed, diag.requestsLastMinute, diag.maxPerMinute)}</span>
                   <span aria-hidden="true">{showBreakdown ? "Hide" : "Show"}</span>
                 </button>
                 {showBreakdown && (
@@ -1001,9 +1001,12 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                         ))}
                       </ul>
                     )}
+                    {breakdown.lines.length > 12 && (
+                      <div className="text-muted-foreground" data-testid="request-breakdown-more">{breakdown.lines.length - 12} more features not shown (smaller counts).</div>
+                    )}
                     {(diag.degraded ?? []).length > 0 && (
                       <div className="text-amber-200/90">
-                        Last 5 min, not fetched: {(diag.degraded ?? []).map((d) => `${d.kind} ${d.unavailable} unavailable, ${d.staleServed} served from an older copy (${d.lastReason})`).join("; ")}
+                        Not served fresh since degradation began (resets after 5 quiet minutes): {(diag.degraded ?? []).map((d) => `${d.kind} ${d.unavailable} unavailable, ${d.staleServed} served from an older copy (${d.lastReason})`).join("; ")}
                       </div>
                     )}
                     <div className="text-muted-foreground">
@@ -1015,7 +1018,8 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
             )}
 
             <div className="text-[11px] text-muted-foreground" data-testid="running-commit">
-              Running build: {health?.commit ? <span className="font-mono text-foreground/80">{health.commit}</span> : "commit not reported by the host"}
+              Running build: {health?.commit ? <span className="font-mono text-foreground/80">{health.commit}</span>
+                : healthLoading ? "reading..." : healthFailed ? "health check did not answer" : "commit not reported by the host"}
               {health?.branch ? ` (${health.branch})` : ""}
             </div>
           </div>
