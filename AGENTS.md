@@ -9,6 +9,10 @@ User default: conserve Computer credits without skipping necessary correctness o
 3. Follow the newest user request. Verify only the facts needed for that request; a checkpoint is not proof of live health.
 4. Search specific symbols and read bounded file ranges. Load older discussions only to resolve a concrete missing decision.
 
+## Operating framework
+
+`docs/AGENT_FRAMEWORK.md` is the shared contract for every agent: lanes, research protocol, task states (OPEN to FINISHED), evidence tiers, grading and the rule registry. Use its states and handoff block in every report.
+
 ## Work within bounds
 
 - One small, reviewable objective at a time. No full audit, rewrite, model council, background AI loop, or subagent by default.
