@@ -793,9 +793,10 @@ function IntradayChart({
     return [min - pad, max + pad];
   }, [chartData, lines]);
 
-  const chg = quote?.changePct ?? 0;
+  // A missing change is shown as "—" in neutral tone, never as +0.00%.
+  const chg = quote?.changePct != null && Number.isFinite(quote.changePct) ? quote.changePct : null;
   // Flip semantics for VIX (negative changePct is "green" for the market)
-  const chgTone = inverted
+  const chgTone = chg == null ? "text-muted-foreground" : inverted
     ? (chg > 0 ? "text-red-500" : chg < 0 ? "text-emerald-500" : "text-muted-foreground")
     : (chg > 0 ? "text-emerald-500" : chg < 0 ? "text-red-500" : "text-muted-foreground");
 

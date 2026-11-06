@@ -1630,3 +1630,10 @@ parsed `experimental` with a non-experimental default while the live path (and e
 experimental, so requests without the parameter (Models panel, Discord, edge briefing) looked up a key that
 is never written and the saved-session copy was never served. Both now parse the flag the same way. Found
 by the headline-read-only review. Test: tests/quant/models-fallback-key.test.ts.
+
+2026-11-06: Missing day change is not +0.00% (feat/missing-not-zero). The Trade Desk chart header and the
+Models intraday tape coerced a missing changePct/change to 0 and printed "+0.00%" / "+0.00 (+0.00%)" in
+green, a flat day that was never observed. Both now show a dash or "change unavailable" in neutral tone.
+Checked and left (display already guarded; `?? 0` only picks a tone after a null check): ChartPanel OHLC,
+Mag7Panel, LiveQuoteStrip. Next in this lane: regimePredictor reads a missing DFI as 0 (classifies a regime
+from no data), its own PR.
