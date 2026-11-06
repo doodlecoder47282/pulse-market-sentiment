@@ -66,7 +66,7 @@ interface Candidate {
   score: number | null; verdict: Verdict; verdictCode?: string | null; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
-    targetMcap: number; targetMultiple: number | null; estSlippagePct: number;
+    targetMcap: number; targetMultiple: number | null; estSlippagePct: number | null;
     holdHorizonHours: number; notes: string[];
   } | null;
   structure?: { line: LinePosition; category: MemeClass; cost: TradeCost } | null;

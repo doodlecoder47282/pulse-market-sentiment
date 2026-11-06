@@ -1390,3 +1390,5 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: crypto sizing basis and no default cost (feat/crypto-cost-unknown). Live self-test 2026-11-05 failed "position sizing" and "round-trip cost" on 1 row. Cause: the GeckoTerminal scanner refreshes a candidate's liquidityUsd (cryptoEngine.ts ~469) without re-sizing, so the card's size/cost and its liquidity came from two reads. The risk block now records sizedOnLiquidityUsd and the verifier checks against it. A cost that cannot be computed is null, not the old 15% default (risk.estSlippagePct number|null; not displayed in the client today). Not changed: the scanner overwriting DexScreener liquidity with GeckoTerminal reserve (named, separate item).

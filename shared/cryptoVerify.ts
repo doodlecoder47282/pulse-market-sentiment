@@ -44,7 +44,7 @@ export interface CandidateLike {
   sells1h?: number | null;
   chg1h?: number | null;
   priceUsd?: number | null;
-  risk?: { maxPositionUsd?: number | null; estSlippagePct?: number | null } | null;
+  risk?: { maxPositionUsd?: number | null; estSlippagePct?: number | null; sizedOnLiquidityUsd?: number | null } | null;
 }
 
 /** Every ENTER row clears every gate; sizing and cost on the card equal the book's arithmetic. */
@@ -83,16 +83,21 @@ export function candidateChecks(cands: CandidateLike[] | null, desk: { state: st
     out.push(mk("crypto.gates", "ENTER gates", broken.length ? "fail" : "pass", `${enters.length - broken.length}/${enters.length} ENTER rows clear every gate`, `rule book v${CRYPTO_RULES_VERSION}`, broken.length ? broken.slice(0, 5).join(" | ") : null));
   }
   // Sizing and cost on every row that carries risk params.
-  const withRisk = cands.filter((c) => c.risk && fin(c.liquidityUsd));
+  // The size and cost were computed from the liquidity recorded on the risk block (a later feed may refresh
+  // the candidate's liquidity without re-sizing); older payloads without it fall back to the candidate's.
+  const sizedLiq = (c: CandidateLike): number | null => fin(c.risk?.sizedOnLiquidityUsd) ? (c.risk!.sizedOnLiquidityUsd as number) : fin(c.liquidityUsd) ? (c.liquidityUsd as number) : null;
+  const withRisk = cands.filter((c) => c.risk && sizedLiq(c) != null);
   if (!withRisk.length) out.push(mk("crypto.sizing", "position sizing and round-trip cost", "skipped", "no candidate with risk params"));
   else {
     let badSize = 0, badCost = 0, n = 0;
     for (const c of withRisk) {
-      const liq = c.liquidityUsd as number;
+      const liq = sizedLiq(c) as number;
       const expSize = Math.max(0, Math.floor(Math.min(liq * rules.sizing.poolShare, rules.sizing.maxPositionUsd)));
       if (!close(c.risk!.maxPositionUsd, expSize, 0, 1)) badSize++;
       const rt = tradeCost({ liquidityUsd: liq, sizeUsd: Math.max(1, expSize) }).roundTripPct;
+      // A computable cost must match; a stated cost where none can be computed (e.g. an old default) is wrong too.
       if (rt != null) { n++; if (!close(c.risk!.estSlippagePct, rt, 1e-3, 0.011)) badCost++; }
+      else if (c.risk!.estSlippagePct != null) { n++; badCost++; }
     }
     out.push(mk("crypto.sizing", "position sizing", badSize ? "fail" : "pass", `${withRisk.length - badSize}/${withRisk.length} rows agree`, `floor(min(liq x ${rules.sizing.poolShare}, $${rules.sizing.maxPositionUsd}))`, badSize ? `${badSize} rows disagree` : null));
     out.push(mk("crypto.cost", "round-trip cost", n === 0 ? "skipped" : badCost ? "fail" : "pass", n === 0 ? "no priced row" : `${n - badCost}/${n} rows agree`, "tradeCost(liquidity, size).roundTripPct", badCost ? `${badCost} rows disagree` : null));

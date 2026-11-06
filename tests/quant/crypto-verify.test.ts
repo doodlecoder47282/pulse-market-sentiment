@@ -66,3 +66,27 @@ test("expectancy bookkeeping: shares, gate and label agree with the rule book", 
   assert.deepEqual(byId(bad), { "crypto.expectancy.graded": "fail", "crypto.expectancy.hold": "fail", "crypto.expectancy.peak": "fail" });
   assert.equal(expectancyChecks(null)[0].state, "unavailable");
 });
+
+test("sizing and cost: checked against the liquidity the size was computed from, not a later refresh", () => {
+  // The GeckoTerminal scanner refreshes liquidityUsd without re-sizing; the risk block records its own basis.
+  const sized = enter();
+  const refreshed = { ...sized, liquidityUsd: 55_000, risk: { ...(sized as any).risk, sizedOnLiquidityUsd: 40_000 } };
+  const r = byId(candidateChecks([refreshed], { state: "on" }));
+  assert.equal(r["crypto.sizing"], "pass");
+  assert.equal(r["crypto.cost"], "pass");
+  // Without the recorded basis the same row reads as a disagreement (the old false FAIL on the live self-test).
+  const legacy = byId(candidateChecks([{ ...sized, liquidityUsd: 55_000 }], { state: "on" }));
+  assert.equal(legacy["crypto.sizing"], "fail");
+});
+
+test("cost: a stated cost where none can be computed fails (the old 15% default); unknown stays unknown", async () => {
+  const noLiq = enter({ risk: { maxPositionUsd: 0, estSlippagePct: 15, sizedOnLiquidityUsd: 0 }, liquidityUsd: 0 });
+  assert.equal(tradeCost({ liquidityUsd: 0, sizeUsd: 1 }).roundTripPct, null, "no depth: no computable cost");
+  assert.equal(byId(candidateChecks([noLiq], { state: "on" }))["crypto.cost"], "fail");
+  const honest = enter({ risk: { maxPositionUsd: 0, estSlippagePct: null, sizedOnLiquidityUsd: 0 }, liquidityUsd: 0 });
+  assert.notEqual(byId(candidateChecks([honest], { state: "on" }))["crypto.cost"], "fail");
+  const { readFileSync } = await import("node:fs");
+  const eng = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(eng, /roundTripPct \?\? 15/, "no default cost");
+  assert.match(eng, /sizedOnLiquidityUsd: liqObs \?\? null/);
+});
