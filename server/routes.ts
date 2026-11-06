@@ -658,14 +658,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const REGIME_CACHE_MS = 30 * 60_000;
 
   // Macro carousel — cross-asset quotes grouped by category for ticker tape + carousel.
-  // Short cache keeps the Schwab request budget low (~25 symbols per refresh).
+  // A rebuild is one batched Schwab quote request; daily history is re-read
+  // only when a completed session is missing (server/macroCore.ts).
   let macroCache: { at: number; data: MacroResponse } | null = null;
-  // 15 s in the regular session; 5 min otherwise (prices barely move and each
-  // rebuild costs ~2 Schwab reads per symbol).
+  // 15 s in the regular session; 5 min otherwise (regular-session prices do not move).
   const macroCacheMs = () => (isRegularSessionOpen() ? 15_000 : 5 * 60_000);
   app.get("/api/macro", async (_req, res) => {
     try {
-      if (macroCache && Date.now() - macroCache.at < macroCacheMs()) {
+      // A snapshot built on the other side of the open or close is rebuilt:
+      // its session state (and the tape's Live/closed label) would be wrong.
+      if (macroCache && Date.now() - macroCache.at < macroCacheMs()
+          && (macroCache.data.sessionOpen === undefined || macroCache.data.sessionOpen === isRegularSessionOpen())) {
         return res.json(macroCache.data);
       }
       const data = await buildMacroSnapshot();
