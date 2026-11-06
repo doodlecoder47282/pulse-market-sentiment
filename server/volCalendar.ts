@@ -98,8 +98,10 @@ function isQuadWitching(year: number, month: number): boolean {
   return [2, 5, 8, 11].includes(month);
 }
 
-// ---- Hardcoded FOMC 2025-2026 meeting dates (decision day = second day) ----
-// Source: Federal Reserve meeting calendar
+// ---- Hardcoded FOMC 2025-2027 meeting dates (decision day = second day) ----
+// Source: Federal Reserve meeting calendar; 2027 from the Fed's release of
+// 2025-09-05 (federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm),
+// tentative dates, rechecked 2026-11-06.
 const FOMC_DATES: string[] = [
   // 2025
   "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
@@ -107,9 +109,15 @@ const FOMC_DATES: string[] = [
   // 2026
   "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
   "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
+  // 2027
+  "2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09",
+  "2027-07-28", "2027-09-15", "2027-10-27", "2027-12-08",
 ];
 
-// ---- Hardcoded CPI release dates 2025-2026 (BLS scheduled) ----
+// ---- Hardcoded CPI release dates 2025-2027 (BLS scheduled) ----
+// Source: bls.gov/schedule/news_release/cpi.htm, rechecked 2026-11-06. The
+// November and December 2026 dates moved after the 2025 funding lapse
+// (were listed here as 11-12 and 12-09).
 const CPI_DATES: string[] = [
   // 2025
   "2025-01-15", "2025-02-12", "2025-03-12", "2025-04-10",
@@ -118,7 +126,11 @@ const CPI_DATES: string[] = [
   // 2026
   "2026-01-14", "2026-02-11", "2026-03-11", "2026-04-10",
   "2026-05-13", "2026-06-10", "2026-07-15", "2026-08-12",
-  "2026-09-09", "2026-10-14", "2026-11-12", "2026-12-09",
+  "2026-09-09", "2026-10-14", "2026-11-10", "2026-12-10",
+  // 2027
+  "2027-01-13", "2027-02-11", "2027-03-10", "2027-04-13",
+  "2027-05-12", "2027-06-10", "2027-07-14", "2027-08-11",
+  "2027-09-14", "2027-10-14", "2027-11-10", "2027-12-10",
 ];
 
 // ─── Event-day context helper (Papers I+J) ─────────────────────────────────
@@ -170,6 +182,10 @@ export function buildVolCalendar(): VolCalendarResponse {
     warnings.push(msg);
     console.warn(`[volCalendar] ${msg}`);
   }
+  // The 90-day window can reach past the end of a list before today does:
+  // say so, so an empty stretch is not read as "no FOMC/CPI in the window".
+  if (!fomcStale && cutoffStr > lastFomc) warnings.push(`FOMC schedule ends ${lastFomc}: meetings after that date inside the next 90 days are not listed.`);
+  if (!cpiStale && cutoffStr > lastCpi) warnings.push(`CPI schedule ends ${lastCpi}: releases after that date inside the next 90 days are not listed.`);
 
   const events: VolEvent[] = [];
 

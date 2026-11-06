@@ -1539,3 +1539,4 @@ Third review (same reviewer): no MUST-FIX; the calendar rule agreed with the for
 Wiener CI check re-reads the calendar at check time (a run crossing a close) and requires the forward's own
 503 no_expiries answer (a server error on a no-expiry day still fails); the displacement test is named for
 what it proves (mechanism + no rail in the list), not for the forward's ordering.
+2026-11-06: macro event calendar (feat/vol-calendar-2027). The FOMC list ended 2026-12-09 and the CPI list had the wrong late-2026 dates (11-12 and 12-09; BLS moved them to 11-10 and 12-10 after the 2025 lapse). Added the Fed's 2027 FOMC decision days (press release 2025-09-05) and the BLS 2027 CPI dates (bls.gov schedule, read 2026-11-06); the calendar now warns when its 90-day window runs past the end of a list instead of showing an empty stretch. Tests: tests/quant/vol-calendar-dates.test.ts.
