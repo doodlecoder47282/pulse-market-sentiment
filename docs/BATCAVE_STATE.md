@@ -1391,4 +1391,82 @@ First gated run of the method-page check: FAIL, and correctly so as a test defec
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
 
+2026-11-05: macro strip request efficiency (feat/macro-request-efficiency). Evidence (owner-run, live, 2026-11-05
+~01:00 ET): Settings self-test "Rate budget: 109/100 req/min" with quotes, chains and gamma levels failing on
+"self-throttle (100 requests/min)"; /api/schwab/diag in one minute: 75 admitted requests, 34 of them
+"pricehistory <17 symbols> <- api /macro" (2 each). Cause in code: server/macro.ts fetchOne read 5-minute
+intraday bars AND a month of daily bars for every Schwab-covered symbol on every build. Now
+server/macroCore.ts (pure, injected deps): one batched quote request per build for the 17 symbols derived
+from UNIVERSE; daily history only when a completed session is missing (session change, late vendor bar
+retried every 10 min, 6 h max age for corrections, explicit invalidateMacroHistory), failed reads back off
+2 min, history reads bounded to 6 at once, concurrent builds share one in-flight build (cleared on success
+and failure); a kept copy refreshes in the background, only a cold symbol is awaited; a bar read within
+20 min of its session's close is re-read once (closing prints settle). Price: the last regular-session
+trade dated by Schwab's regular-session trade time; outside the session with no quoted regular price, that
+session's own daily close (what the old regular-hours 5-minute bars ended on); an older close only as a
+labelled substitute ("close", partial, its own date). Prior close through dayChange.resolvePrevClose with the
+same quote fields plus completed daily bars; today's forming bar is never stored. Nothing is dropped from
+the strip (unavailable rows stay listed, coverage counts on the payload). The route rebuilds a cached
+snapshot from the other side of the open/close.
+Review of feat/macro-request-efficiency (independent): 2 MUST-FIX fixed. (1) Schwab's REST quote carries the
+regular-session last trade in `regular` (regular.regularMarketLastPrice / regularMarketTradeTime), but the
+quote parser read quote.regularMarketLastPrice, so it was ALWAYS null from REST (pre-existing bug; the first
+draft and its fixtures, and the demo, assumed the wrong shape and would have shown every row as a substitute
+close outside the session). Parser fixed in server/schwabQuoteFields.ts (pure, tested), used by schwab.ts;
+also feeds dayChange's rolled-or-flat check, which fell back to lastPrice before. Demo moved to the real
+shape. (2) a stale flag of null failed the strict type check (toQuoteIn maps it). SHOULD-FIX taken: price
+time from the regular trade time, not the after-hours quote time; settle window after the close; dating by
+trade time fixes the 09:30 boundary for thin ETFs (no 0.00% and no pre-market print as today's price);
+"Stocks closed" instead of "Closed" (crypto/FX keep moving); route cache invalidated across the open/close;
+background refresh of kept history; ok rows carry no warning text; tests for REST shape, 09:30, early-close
+key and holiday prior close. Not verified live: that the Railway REST payload carries `regular` as Schwab's
+published schema says (checked against a published client's typings by the reviewer, not a live response). Commodity labels name the ETF
+("Oil (USO)"). Tape label says "Closed" outside the regular session instead of "Live". Demo quotes carry
+regularMarketLastPrice. Tests: tests/quant/macro-request-efficiency.test.ts (14; request counts cold/warm/
+concurrent, failed shared build, partial batch, quote failure with cached history, forming bar, session
+transition and late bar, backoff, invalidation, rolled close, extended hours, weekend/pre-market/holiday/
+early close, stale quote, crypto/FX untouched). Not verified live: savings on Railway (expected about 34
+fewer requests per overnight build); the headline chain reads and the flow requests are separate next items.
+Second review of feat/macro-request-efficiency (same reviewer, on the fixes): 2 MUST-FIX fixed. (1) The
+background refresh chained one full re-read per build while a slow read was running and skipped the failure
+backoff (5 builds during one slow refresh = 102 reads instead of 17); now one runner drains a queued set and
+re-checks the need with the current clock and session before each read (tested with back-to-back builds).
+(2) An out-of-date history copy produced a prior close from an older bar, i.e. a two-day change labelled
+"ok"; a daily-bar prior close must now be the session right before the price's session, otherwise it is
+unavailable with the reason. SHOULD-FIX taken: a bar posted at the close is re-read once at close + 20 min
+(2 reads per symbol per close, not 3); a streamed regular last with no trade time that equals the prior
+close in the first 5 minutes after the open is dated to the prior session; a session-close substitute from a
+kept copy is partial with its reason.
+Third review (same reviewer): no MUST-FIX. Two SHOULD-FIX taken: the open guard compared the streamed price
+with the prior close (misdated a real flat first trade); the stream record's own last trade time now decides
+(a last trade before today's 09:30 = no regular trade yet; no time = nothing inferred; tested incl. a flat
+open). The background runner restarts itself if a symbol was queued as it exited.
+Prophecy review of #49 (E1, diff): HOLD, 2 MUST-FIX taken. (1) toQuoteIn turned stale:null (age unknown) into
+false; unknown freshness is now kept (null) and a quote-sourced row is "ok" only when freshness is
+observed false. (2) Prices without a trade timestamp were stamped with the quote, receipt or scheduled close
+time; now each row carries priceTimeBasis: "trade" (REST regular.regularMarketTradeTime, or a stream/REST
+last-trade time inside today's open session), "session_close_reference" (a daily-bar close, or a regular
+last equal to the last started session's own daily close outside the session; the scheduled close, not a
+trade time) or "unavailable" (priceAsOfMs null, session date marked assumed, row partial). REST quotes now
+carry tradeTime as lastTradeTimeMs. SHOULD-FIX taken: the tape (the only mounted macro view) shows a text
+tag on non-healthy pills and a "Details" button that opens a static, tappable list with each row's basis,
+time or "time unavailable", session (assumed or not), state and reason. Reporting corrections: history is
+also re-read at the 6 h maximum age and on invalidation; a warm rebuild is 1 request instead of 34 (33
+fewer), not a guaranteed saving; actual dispatch counts still need measuring live.
+Fourth review (independent, on the provenance fixes): no MUST-FIX; Prophecy's two MUST-FIX and its SHOULD-FIX
+verified resolved; live-like probes: REST in/after session, stream in session, demo all stay "ok". Taken: a
+pre-market print is never shown as today's regular price inside the session (falls to the labelled older
+close); Details copy says "N not ok", crypto/FX say "time not provided by the source", build time in ET.
+Left (named): with streaming enabled, SPY/QQQ/IWM/DIA can read partial after the close until the day's
+daily bar is read or when the stream's regular last differs from it (stream records carry no regular trade
+time; streaming is off today: Schwab 401 on the Trader API); the Details toggle is 32 px tall (passes the
+24 px audit floor, under the 44 px guideline). Next: measure live dispatch counts after merge; then the
+headline SPY-chain reads.
+Prophecy review of #49 (E1, 2026-11-05 10:18): HOLD on the Details control: min-h 32 px is under Batcave's
+mandatory 44 px touch rule (the audit's 24 px floor is not the rule). Now the tape is at least 44 px tall and
+the button's hit area fills its height (>= 44 x 44) with the compact pill drawn inside. CI's demo step
+renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is the element under its own
+centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
+and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
+failure in the demo step is the separate #48 defect and still prints until #48 is merged.
 2026-11-06: Heatseeker scenario semantics (feat/scenario-semantics). Recording frame 37: "base" path above "bull" (base = dominant magnet 8,021 > bull target 7,782), "BASE region 8,005-8,037" printed as a +-0.2% band around the target while its probability was the middle region centred on spot, and "touch 100%" from min(1, 2 x close-beyond) with close-beyond 56%. Fix (semantics, no clamping): scenarioOddsFromCdf flags baseOutsideRange; the models paths carry the real region bounds (bull above upper, middle lower-upper, bear below lower); a base path outside the range is named MAGNET (a reference with no probability of its own) and the card says MIDDLE region; touch odds are stated only when close-beyond < 50% (the reflection rule's condition), never capped. Tests: tests/quant/scenario-semantics.test.ts.
