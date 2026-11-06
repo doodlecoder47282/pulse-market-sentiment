@@ -1563,3 +1563,18 @@ cause; a timeout reads "did not answer within 2.5 s"; the empty-build backoff ca
 regimeHistoryTicker's "no new Schwab calls" comment corrected. Behavioural tests on the gate (session,
 closed at 17:00 / 01:00 / Saturday, pre-settle build) and on each reason. Left: /api/models error
 fallback looks up the non-experimental disk key (separate PR).
+2026-11-06: deploy identity and request breakdown (feat/health-commit-diag). /api/health now carries `commit`,
+`commitSource`, `branch` from the host's build variables (server/deployInfo.ts: RAILWAY_GIT_COMMIT_SHA first;
+null when the host did not say, never guessed), so "is commit X deployed" can be proven per domain. Settings
+(Schwab panel) shows the running commit and a "Requests by feature" list built from /api/schwab/diag
+requestsByCaller (shared/requestBreakdown.ts): admitted attempts in the last minute grouped by route and
+priority, with kinds and symbols; stack-frame callers shown as "background task" (no file paths); requests
+refused or served from an older copy in the last 5 minutes listed from diag.degraded. Replaces the browser
+console steps. Not verified live.
+Review of feat/health-commit-diag: 1 MUST-FIX taken. The breakdown header summed the reported rows, but the
+server reports only the busiest 60 caller rows, so the header could read lower than the budget line above
+it (a partial read shown as a total). It now reads requestsLastMinute and states "N not itemised" and
+unreadable rows. SHOULD-FIX taken: more-than-12 features say how many are not shown; the degraded line
+says "since degradation began (resets after 5 quiet minutes)" and "not served fresh" (403/429/5xx were
+fetched and failed); the build line shows reading / did not answer apart from "not reported"; a symbol
+ending a 24-character list is marked partial.
