@@ -25,12 +25,14 @@ interface SchwabStatus {
   demo?: boolean;
 }
 
-type LivenessState = "LIVE" | "CONTEXT" | "STALE" | "OFFLINE";
+type LivenessState = "LIVE" | "CONTEXT" | "STALE" | "CLOSED" | "OFFLINE";
 
 const STATE_STYLE: Record<LivenessState, { dot: string; text: string; label: string; pulse: boolean }> = {
   LIVE:    { dot: "bg-emerald-400", text: "text-emerald-400", label: "live",    pulse: true },
   CONTEXT: { dot: "bg-sky-400",     text: "text-sky-400",     label: "context", pulse: false },
   STALE:   { dot: "bg-amber-400",   text: "text-amber-400",   label: "stale",   pulse: false },
+  // Market closed, settled last-session payload: readable and dated, not live and not stale.
+  CLOSED:  { dot: "bg-sky-400",     text: "text-sky-300",     label: "closed",  pulse: false },
   OFFLINE: { dot: "bg-zinc-500",    text: "text-zinc-400",    label: "offline", pulse: false },
 };
 
@@ -55,6 +57,8 @@ export interface LivenessBadgeProps {
   status?: SchwabStatus;
   /** Server stale flag for this payload (e.g. chainStale): forces STALE. */
   stale?: boolean | null;
+  /** Server last-session flag (market closed; settled copy): shows CLOSED, never LIVE. */
+  lastSession?: boolean | null;
   /** When Schwab produced the data (epoch ms); shown in the tooltip as an age. */
   asOfMs?: number | null;
   className?: string;
@@ -66,6 +70,7 @@ export default function LivenessBadge({
   requiresSchwab = true,
   status: statusProp,
   stale,
+  lastSession,
   asOfMs,
   className,
 }: LivenessBadgeProps) {
@@ -89,9 +94,13 @@ export default function LivenessBadge({
     ? "OFFLINE"
     : !requiresSchwab
       ? "CONTEXT"
-      : schwabLive && !stale
-        ? "LIVE"
-        : "STALE";
+      : stale
+        ? "STALE"
+        : lastSession
+          ? "CLOSED"
+          : schwabLive
+            ? "LIVE"
+            : "STALE";
   const ageSec = asOfMs != null && Number.isFinite(asOfMs) ? Math.max(0, Math.round((Date.now() - asOfMs) / 1000)) : null;
 
   const s = STATE_STYLE[state];

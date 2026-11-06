@@ -280,6 +280,8 @@ export interface ModelHorizon {
   chainSymbol?: string;
   chainAsOfMs?: number;
   chainStale?: boolean;
+  /** Market closed: the settled last-session chain (the latest that exists; not stale). */
+  chainLastSession?: boolean;
   chainMaxAgeMs?: number;
   chainCoverageComplete?: boolean | null;
 }
@@ -1527,6 +1529,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     chainSymbol: chainSymbol === "SPX" ? "$SPX" : "SPY",
     chainAsOfMs: chain.asOfMs,
     chainStale: chain.stale,
+    chainLastSession: chain.lastSession === true,
     chainMaxAgeMs: chain.maxAgeMs,
     chainCoverageComplete: chain.strikeCoverage?.complete ?? null,
   };
