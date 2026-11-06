@@ -1545,6 +1545,12 @@ renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is 
 centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
+
+2026-11-06: Models fallback key (feat/models-fallback-key). When a live /api/models build failed, the fallback
+parsed `experimental` with a non-experimental default while the live path (and every disk write) defaults to
+experimental, so requests without the parameter (Models panel, Discord, edge briefing) looked up a key that
+is never written and the saved-session copy was never served. Both now parse the flag the same way. Found
+by the headline-read-only review. Test: tests/quant/models-fallback-key.test.ts.
 2026-11-06: Heatseeker scenario semantics (feat/scenario-semantics). Recording frame 37: "base" path above "bull" (base = dominant magnet 8,021 > bull target 7,782), "BASE region 8,005-8,037" printed as a +-0.2% band around the target while its probability was the middle region centred on spot, and "touch 100%" from min(1, 2 x close-beyond) with close-beyond 56%. Fix (semantics, no clamping): scenarioOddsFromCdf flags baseOutsideRange; the models paths carry the real region bounds (bull above upper, middle lower-upper, bear below lower); a base path outside the range is named MAGNET (a reference with no probability of its own) and the card says MIDDLE region; touch odds are stated only when close-beyond < 50% (the reflection rule's condition), never capped. Tests: tests/quant/scenario-semantics.test.ts.
 Review of feat/scenario-semantics: the touch-odds condition was necessary, not sufficient. "Close-beyond
 under 1/2" still let the 2x reflection rule state 80-92% touch odds on a drifted distribution where the
