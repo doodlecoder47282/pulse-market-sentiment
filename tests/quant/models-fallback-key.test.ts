@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 test("models fallback: same experimental default and same disk key as the live build", () => {
   const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
   const start = r.indexOf('app.get("/api/models"');
-  const handler = r.slice(start, r.indexOf("}));", start));
+  const handler = r.slice(start, r.indexOf("MM-matrix prediction logger", start));
   const parses = handler.match(/const experimental = [^;]+;/g) ?? [];
   assert.equal(parses.length, 2, "live path and fallback each parse the flag");
   assert.equal(parses[0], parses[1], "both parse it the same way");
