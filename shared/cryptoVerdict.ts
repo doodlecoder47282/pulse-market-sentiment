@@ -92,12 +92,17 @@ export function pairDataStale(lastRefreshAt: number | null | undefined, nowMs: n
   return { stale: ageMs > ENTER_MAX_AGE_MS, ageMs };
 }
 
-/** "pair data last refreshed 10.1 min ago (limit 10 min)". One decimal so a just-over age never reads as the limit. */
+/** Minutes to one decimal, rounded UP, so an age just over a limit never reads as the limit. */
+export function ageMinutesCeil1(ageMs: number): string {
+  return (Math.ceil(Math.max(0, ageMs) / 6_000) / 10).toFixed(1);
+}
+
+/** "pair data last refreshed 10.1 min ago (limit 10 min)". */
 export function staleDataReason(ageMs: number | null): string {
   const lim = CRYPTO_RULES.freshness.enterMaxAgeMinutes;
   return ageMs == null
     ? `pair data not refreshed yet (limit ${lim} min)`
-    : `pair data last refreshed ${(Math.floor(ageMs / 6_000) / 10).toFixed(1)} min ago (limit ${lim} min)`;
+    : `pair data last refreshed ${ageMinutesCeil1(ageMs)} min ago (limit ${lim} min)`;
 }
 
 export interface ServableCandidate {

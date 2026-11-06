@@ -70,7 +70,8 @@ PASS (code hard_kill) whatever the score. Above the entry cap ceiling ->
 retrace WATCH from score 55, else PASS. Then the score and flow floors, then
 the fail-closed gates in this order: flow sustained (accel floor on 2 of the
 last 3 refreshes), security read, Jupiter agree or watch, sells observed in
-the last hour, top-10 share read, desk risk on. Only then ENTER. Every
+the last hour, top-10 share read, pair data fresh (`freshness`), desk risk
+on. Only then ENTER. Every
 rejection carries a verdict code the card shows. The served feed re-applies
 the desk-risk gate at read time, so a desk that went off between refreshes
 never serves a stale ENTER. It also holds at WATCH (code stale_data) any
@@ -79,10 +80,11 @@ ENTER whose pair data was last refreshed more than
 returning used to keep its last ENTER until the 48 h eviction. Normal
 refresh reaches every tracked name in about 4 minutes (220 names, 90 per
 75 s tick), so the limit is about two and a half missed cycles. The
-refresh rotation orders on the last attempt, so a pair DexScreener stopped
-returning does not hold a slot every tick. The scorer applies the same
+refresh rotation orders on the last answered attempt (a chunk is stamped
+only after its call returns), so a pair DexScreener stopped returning does
+not hold a slot every tick and a failed call does not push its names back. The scorer applies the same
 limit (a re-score on the security or social tick without a pair refresh is
-WATCH stale_data and is not recorded as an ENTER), and the feed, the
+WATCH stale_data and records no row at all), and the feed, the
 autopsy's "tracked" line and the AI prompt read one served verdict
 (shared/cryptoVerdict.ts servedVerdict: stale first, hold reasons first).
 Version 2026.11.06-1.

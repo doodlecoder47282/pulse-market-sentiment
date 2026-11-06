@@ -197,7 +197,8 @@ function cryptoChecks(now: number): Check[] {
   try { feed = getCryptoFeed(); } catch (e: any) { out.push({ id: "crypto.feed", panel: "Crypto", name: "feed", state: "unavailable", observed: "threw", expected: null, detail: String(e?.message ?? e).slice(0, 120) }); }
   try { sig = getCryptoSignals(); } catch (e: any) { out.push({ id: "crypto.signals", panel: "Crypto", name: "signals", state: "unavailable", observed: "threw", expected: null, detail: String(e?.message ?? e).slice(0, 120) }); }
   const desk = sig?.desk ?? null;
-  out.push(...candidateChecks(feed ? (feed.candidates as any) : null, desk));
+  // Freshness is judged at the feed's own instant (when its served verdicts were computed), not later.
+  out.push(...candidateChecks(feed ? (feed.candidates as any) : null, desk, undefined, feed?.asOf ?? now));
   out.push(deskRiskCheck(desk, feed?.majors ? (feed.majors as any) : null, now));
   out.push(...derivsChecks(feed ? (feed.derivs ?? null) : null, now));
   out.push(...expectancyChecks(sig ? (sig.expectancy as any) : null));

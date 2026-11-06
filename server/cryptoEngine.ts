@@ -565,11 +565,10 @@ async function momentumTick(): Promise<void> {
   const list = [...tracked.values()]
     .sort((a, b) => (a.lastAttemptAt ?? a.lastRefreshAt ?? 0) - (b.lastAttemptAt ?? b.lastRefreshAt ?? 0));
   const batch = list.slice(0, MOMENTUM_BATCH); // 3 calls/tick max — far under budget
-  const attemptAt = Date.now();
-  for (const c of batch) c.lastAttemptAt = attemptAt;
   const byToken = new Map<string, Candidate[]>();
   for (const c of batch) {
-    if (!c.tokenAddress) continue;
+    // No token address: it can never be asked; stamp it so it does not hold the queue head.
+    if (!c.tokenAddress) { c.lastAttemptAt = Date.now(); continue; }
     const arr = byToken.get(c.tokenAddress) ?? [];
     arr.push(c);
     byToken.set(c.tokenAddress, arr);
@@ -599,8 +598,12 @@ async function momentumTick(): Promise<void> {
     try {
       resp = await getJson(`${DS_BASE}/latest/dex/tokens/${chunk.join(",")}`);
     } catch (e: any) {
+      // Not stamped: names in a failed (or skipped) chunk stay at the head of the queue for the next tick.
       throw new Error(`dexscreener batch failed: ${String(e?.message ?? e).slice(0, 120)}`);
     }
+    // Asked and answered: stamped whether or not DexScreener returned each pair (a dead pair rotates back).
+    const answeredAt = Date.now();
+    for (const a of chunk) for (const c of byToken.get(a) ?? []) c.lastAttemptAt = answeredAt;
     const pairs: any[] = resp?.pairs ?? [];
     // Every pool of each token (tracked or not), with its base-token reserve:
     // the security check uses these to identify pool vaults among holders.
@@ -739,7 +742,9 @@ async function securityTick(): Promise<void> {
       c.securityCheckedAt = Date.now();
       okCount++;
       scoreCandidate(c); // re-verdict with security facts
-      persistSignal(c);
+      // A re-score without a pair refresh on stale data records nothing: the row's entry cap
+      // would be from the old read under a new detected_at.
+      if (!pairDataStale(c.lastRefreshAt, Date.now()).stale) persistSignal(c);
       await sleep(700);
     } catch (e: any) {
       lastErr = e;
@@ -880,7 +885,7 @@ async function socialTick(): Promise<void> {
       if (pump === "failed" && bsky !== "ok") throw new Error("pump.fun fetch failed");
       okCount++;
       scoreCandidate(c);
-      persistSignal(c);
+      if (!pairDataStale(c.lastRefreshAt, Date.now()).stale) persistSignal(c); // stale pair data: record nothing
     } catch (e: any) {
       lastErr = e;
       // still rescore so FOMO drops a score that just expired or failed
@@ -1408,7 +1413,8 @@ export function getCryptoFeed(): {
     })
     .slice(0, 80);
   return {
-    asOf: Date.now(),
+    // The instant the served verdicts (freshness, desk risk) were computed; the verifier checks against it.
+    asOf: nowRead,
     trackedCount: tracked.size,
     candidates: list,
     narrativeHeat: narrativeHeat.slice(0, 14),

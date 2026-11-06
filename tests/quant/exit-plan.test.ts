@@ -114,10 +114,13 @@ test("prompt dates the market data from the pair read and flags data older than 
   };
   const now = Date.parse("2026-11-06T15:00:00Z");
   const stale = buildTradePrompt({ ...base, lastRefreshAt: now - 3 * 3600_000 }, "$1", CRYPTO_RULES, now);
-  assert.match(stale, /Data as of: 2026-11-06T12:00:00\.000Z \(pair read 180 min before this prompt was copied; OLDER than the desk's 10-min freshness limit, treat as stale\)/);
+  assert.match(stale, /Data as of: 2026-11-06T12:00:00\.000Z \(pair read 180\.0 min before this prompt was copied; OLDER than the desk's 10-min freshness limit, treat as stale\)/);
   assert.match(stale, /DESK READ [^\n]*WATCH[^\n]*held at WATCH: pair data last refreshed 180\.0 min ago/, "the hold reason survives the 4-reason cut");
   const fresh = buildTradePrompt({ ...base, lastRefreshAt: now - 2 * 60_000 }, "$1", CRYPTO_RULES, now);
-  assert.match(fresh, /\(pair read 2 min before this prompt was copied\)/);
+  assert.match(fresh, /\(pair read 2\.0 min before this prompt was copied\)/);
+  // 9.6 min: under the limit, no flag; 10.3 min: flagged, and never printed as "10 min".
+  assert.match(buildTradePrompt({ ...base, lastRefreshAt: now - 576_000 }, "$1", CRYPTO_RULES, now), /\(pair read 9\.6 min before this prompt was copied\)/);
+  assert.match(buildTradePrompt({ ...base, lastRefreshAt: now - 618_000 }, "$1", CRYPTO_RULES, now), /pair read 10\.3 min before this prompt was copied; OLDER than/);
 });
 
 test("Railway: callback defaults from the public domain; an explicit value wins", () => {

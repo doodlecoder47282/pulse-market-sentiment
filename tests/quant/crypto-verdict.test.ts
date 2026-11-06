@@ -55,7 +55,7 @@ test("served verdict: an ENTER on pair data older than the freshness limit is WA
   const held = servedVerdict(enter(ENTER_MAX_AGE_MS + 1), on, now);
   assert.equal(held.verdict, "WATCH");
   assert.equal(held.verdictCode, "stale_data");
-  assert.match(held.verdictReasons[0], /^held at WATCH: pair data last refreshed 10\.0 min ago \(limit 10 min\)/);
+  assert.match(held.verdictReasons[0], /^held at WATCH: pair data last refreshed 10\.1 min ago \(limit 10 min\)/);
   assert.equal(held.verdictReasons.length, 5, "the hold reason is prepended, the ENTER reasons kept after it");
   // A just-over age never reads as under the limit.
   assert.match(staleDataReason(10 * 60_000 + 6_000), /10\.1 min ago/);

@@ -17,6 +17,7 @@
  */
 import { type Check, close } from "./liveVerify";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, type CryptoRules } from "./cryptoRules";
+import { ageMinutesCeil1 } from "./cryptoVerdict";
 import { tradeCost } from "./memeStructure";
 import { DERIVS_STALE_MS, fundingDirection, type DerivsSnapshot } from "./cryptoFunding";
 
@@ -82,7 +83,7 @@ export function candidateChecks(cands: CandidateLike[] | null, desk: { state: st
       if (rules.enter.requireDeskRiskOn && desk?.state !== "on") why.push(`desk risk ${desk?.state ?? "unknown"}`);
       // Fail closed: an unread pair-read time is as blocking as an old one.
       if (!fin(c.lastRefreshAt)) why.push("pair read time missing");
-      else if (nowMs - c.lastRefreshAt > rules.freshness.enterMaxAgeMinutes * 60_000) why.push(`pair data ${Math.floor((nowMs - c.lastRefreshAt) / 6_000) / 10} min old, over the ${rules.freshness.enterMaxAgeMinutes}-min freshness limit`);
+      else if (nowMs - c.lastRefreshAt > rules.freshness.enterMaxAgeMinutes * 60_000) why.push(`pair data ${ageMinutesCeil1(nowMs - c.lastRefreshAt)} min old, over the ${rules.freshness.enterMaxAgeMinutes}-min freshness limit`);
       if (why.length) broken.push(`${c.symbol ?? "?"}: ${why.join(", ")}`);
     }
     out.push(mk("crypto.gates", "ENTER gates", broken.length ? "fail" : "pass", `${enters.length - broken.length}/${enters.length} ENTER rows clear every gate`, `rule book v${CRYPTO_RULES_VERSION}`, broken.length ? broken.slice(0, 5).join(" | ") : null));

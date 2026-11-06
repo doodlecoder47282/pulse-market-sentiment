@@ -101,11 +101,17 @@ test("card states the sizing basis when its liquidity moved more than 1% from it
   assert.match(p, /size and round trip from the earlier read at/);
 });
 
-test("ENTER gates: an ENTER on pair data older than the freshness limit, or with no read time, fails", () => {
+test("ENTER gates: an ENTER on pair data older than the freshness limit, or with no read time, fails", async () => {
+  const { readFileSync } = await import("node:fs");
   const now = Date.now();
   const stale = candidateChecks([enter({ lastRefreshAt: now - 11 * 60_000 })], { state: "on" }, CRYPTO_RULES, now)[0];
   assert.equal(stale.state, "fail");
-  assert.match(JSON.stringify(stale), /11 min old, over the 10-min freshness limit/);
+  assert.match(JSON.stringify(stale), /11\.0 min old, over the 10-min freshness limit/);
   assert.equal(candidateChecks([enter({ lastRefreshAt: null })], { state: "on" }, CRYPTO_RULES, now)[0].state, "fail");
   assert.equal(candidateChecks([enter({ lastRefreshAt: now - 9 * 60_000 })], { state: "on" }, CRYPTO_RULES, now)[0].state, "pass");
+  // Just over the limit never reads as the limit.
+  assert.match(JSON.stringify(candidateChecks([enter({ lastRefreshAt: now - 600_050 })], { state: "on" }, CRYPTO_RULES, now)[0]), /10\.1 min old/);
+  // The live check judges at the feed's own instant.
+  const lv = readFileSync(new URL("../../server/liveVerify.ts", import.meta.url), "utf8");
+  assert.match(lv, /candidateChecks\(feed \? \(feed\.candidates as any\) : null, desk, undefined, feed\?\.asOf \?\? now\)/);
 });
