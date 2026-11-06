@@ -1346,7 +1346,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             }
           : null,
         warnings: pos.warnings ?? [],
-        asOf: new Date().toISOString(),
+        // Epoch seconds, like the SPY branch above (the banner read an ISO string here as "Invalid Date").
+        asOf: Math.floor(Date.now() / 1000),
       });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;

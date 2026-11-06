@@ -1390,3 +1390,5 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: chart null guards (feat/chart-null-guards). /api/gamma-levels per-ticker branch sent asOf as an ISO string while the SPY branch sent epoch seconds; GammaContextBanner multiplied by 1000 -> "updated Invalid Date" on ticker charts. Server now sends seconds on both branches; the banner reads seconds, ms or ISO (shared/asOfTime.ts) and hides an unreadable stamp. A missing call or put wall (null) crashed LightweightCandlestick (.toFixed on null) and drew NaN lines in CandlestickChart; both now skip the missing wall. Tests: tests/quant/chart-null-guards.test.ts.
