@@ -1390,3 +1390,5 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: News AI brief (feat/news-brief-render). The card rendered the model's raw JSON (brief = rawText) and the prompt asked for bull/base/bear probabilities, a confidence score, R:R and trade structures. Now the prompt asks for a descriptive brief (summary, drivers, tape check, positioning, levels from the inputs, what would change the read, counterpoints, data gaps) with explicit rules against probabilities, confidence, targets and trades; the server keeps only those fields (shared/alphaBrief.ts sanitizeBrief) and returns rendered markdown as `brief` (deterministic brief when no model answered); the email composer renders the same sections. Not changed (named): the deterministic Edge Lab baseline verdict/confidence/path odds still shown in the email header.

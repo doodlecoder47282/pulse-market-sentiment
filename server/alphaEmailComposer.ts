@@ -4,8 +4,10 @@
 // Used by the Saturday alpha-brief cron and any future weekday alpha cron.
 
 import type { FusionContext } from "./alphaFusion";
+import type { DescriptiveBrief } from "../shared/alphaBrief";
 
-export interface StructuredBrief {
+/** Model output: the descriptive brief (current prompt); the older verdict/scenario fields are still read if present. */
+export interface StructuredBrief extends DescriptiveBrief {
   verdict?: "STRONG_BULL" | "LEAN_BULL" | "MIXED" | "LEAN_BEAR" | "STRONG_BEAR" | string;
   confidence?: number;
   oneLiner?: string;
@@ -132,6 +134,21 @@ export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string
     lines.push(s.narrative);
   }
   lines.push("");
+
+  // 1b. DESCRIPTIVE BRIEF (current model schema: no probabilities, targets or trades)
+  if (s?.summary || (s?.drivers?.length ?? 0) > 0) {
+    lines.push(bar("brief"));
+    if (s?.summary) lines.push(s.summary);
+    const sect = (title: string, xs?: string[]) => { if (xs && xs.length) { lines.push(""); lines.push(`${title}:`); xs.forEach((x) => lines.push(`  - ${x}`)); } };
+    sect("drivers", s?.drivers);
+    sect("tape check", s?.tapeCheck);
+    sect("positioning", s?.positioning);
+    sect("levels to watch", s?.levelsToWatch?.map((l) => (l.why ? `${l.level}: ${l.why}` : String(l.level))));
+    sect("what would change this read", s?.whatWouldChange);
+    sect("counterpoints", s?.counterpoints);
+    sect("data gaps", s?.dataGaps);
+    lines.push("");
+  }
 
   // 2. KEY LEVELS (from fusion context)
   if (f?.levels) {

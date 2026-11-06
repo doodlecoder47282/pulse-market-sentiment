@@ -1,4 +1,5 @@
 import { vixToAtmPct } from "@shared/vol";
+import { sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
 import { getCryptoContext } from "./cryptoContext";
 import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
 import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
@@ -2380,51 +2381,39 @@ Be precise. No hedging language. No filler. If news feed is empty or stale, say 
   // FUSION prompt — demands STRUCTURED JSON output the cron email composer
   // and the UI can both parse. Includes Batcave internal state + cross-asset +
   // positioning + ML state + historical analogs as fused context.
-  const ALPHA_FUSION_SYSTEM = `You are ALPHA — a senior quant analyst writing peer-to-peer for an institutional trader. Voice: direct, sharp, no filler, no tutorials. Think in probabilities, expected value, asymmetric payoffs.
+  // Descriptive brief (shared/alphaBrief.ts): the model describes what the provided inputs say.
+  // No probabilities, confidence scores, targets or trades: the desk states none it cannot compute.
+  const ALPHA_FUSION_SYSTEM = `You are a markets analyst writing a short, descriptive brief for an experienced reader. Voice: direct and plain, no filler.
 
 You are given:
 1. A ranked news feed (deterministic baseline already scored by impact)
 2. Live Batcave internal state (regime, gamma posture, key levels)
-3. Cross-asset tape (does the tape confirm the news lean?)
-4. Options positioning (GEX, DEX, IV vs RV, skew — does flow corroborate?)
-5. ML model recent calls + 30d accuracy
-6. Historical analogs (jaccard-matched precedents with realized SPY 1d/5d/20d)
+3. Cross-asset tape
+4. Options positioning (GEX, DEX, IV vs RV, skew)
+5. ML model recent calls and their tracked accuracy
+6. Historical analogs (matched precedents with realized SPY 1d/5d/20d)
 
-Your job: fuse all of it into a probability-weighted scenario thesis. Use the analog returns as base rates. Use the cross-asset tape as confirmation/contradiction signal. Use positioning to detect crowded vs. uncrowded trades. Use the ML state as a sanity check on direction.
+Your job: describe what these inputs say together, where they agree and where they conflict. Do not forecast.
 
-OUTPUT FORMAT — RETURN ONLY VALID JSON (no markdown fences, no prose preamble). Schema:
+OUTPUT FORMAT: RETURN ONLY VALID JSON (no markdown fences, no prose preamble). Schema:
 
 {
-  "verdict": "STRONG_BULL" | "LEAN_BULL" | "MIXED" | "LEAN_BEAR" | "STRONG_BEAR",
-  "confidence": <integer 0..100>,
-  "oneLiner": "<≤1 sentence: the trade in one line>",
-  "narrative": "<3-4 sentences: the regime, the catalyst stack, the cleanest expression, what flips it>",
-  "scenarios": {
-    "bull": { "probability": <int 0..100>, "target": "<SPY price or move>", "horizon": "<intraday|days|weeks>", "rr": "<e.g. 3:1>", "invalidation": "<specific price/condition>", "evidence": ["<chip 1>", "<chip 2>", "<chip 3>"] },
-    "base": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] },
-    "bear": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] }
-  },
-  "trades": [
-    { "structure": "<concrete: e.g. 'long TLT 91/94 call spread 30DTE'>", "sizingKelly": "n/a", "rr": "<R:R>", "invalidation": "<level>", "maxLoss": "<max loss of the structure in $ per 1 contract or 1 spread>", "thesis": "<1 sentence>" }
-  ],
-  "counterarguments": ["<strongest counterargument 1>", "<2>", "<3>"],
-  "evidence": {
-    "news": ["<top 3 news drivers, one line each>"],
-    "positioning": ["<2-3 chips: e.g. 'IV>RV by 4 vol pts = priced for shock', 'dealer long gamma below 745'>"],
-    "crossAsset": ["<2-3 chips: e.g. 'TLT +0.8% confirms duration bid', 'gold +1.4% w1 risk-off bid'>"],
-    "analogs": ["<1-2 references: e.g. 'Iran-Israel 10/2024: SPY -0.9% 1d, +0.2% 5d — mean reversion'>"]
-  }
+  "summary": "<2-3 sentences: what the news and the tape say right now, and the main tension between them>",
+  "drivers": ["<the 2-4 news items doing the most work, one line each>"],
+  "tapeCheck": ["<2-3 lines: where the cross-asset tape agrees or disagrees with the news, with the provided numbers>"],
+  "positioning": ["<2-3 lines from the provided positioning numbers only>"],
+  "levelsToWatch": [{ "level": "<a level that appears in the provided levels, with its name>", "why": "<what it marks, from the inputs>" }],
+  "whatWouldChange": ["<observable developments that would change this read>"],
+  "counterpoints": ["<the strongest opposing reading of the same inputs>"],
+  "dataGaps": ["<inputs that were missing, stale or partial, from the warnings>"]
 }
 
 RULES:
-- Probabilities across bull+base+bear must sum to 100.
-- Every scenario MUST include a specific invalidation level (“if SPY trades below 738.50 by 11am ET”).
-- R:R ≥ 2:1 for any trade you propose; otherwise return an empty trades array.
-- If no edge exists, set verdict="MIXED", confidence ≤ 30, return empty trades array, write “No edge — pass” in oneLiner.
-- Do NOT size positions or use Kelly language: no fitted win probability exists for these ideas. Always write "n/a" in sizingKelly.
-- counterarguments must contain the STRONGEST opposing view, not throwaway hedges.
-- If the fusion context has data warnings (missing panels, stale feed), reflect that in confidence — do NOT pretend you have complete information.
-- NEVER hallucinate prices or specific moves not anchored in the provided levels/tape.
+- Do not state probabilities, percentages of likelihood, confidence scores, odds or expected values.
+- Do not propose trades, structures, position sizes, entries, exits or price targets; do not say buy, sell, long or short as advice.
+- Use only levels and numbers that appear in the inputs; never invent prices or moves.
+- Analog returns are history, not base rates for today: describe them as what happened then.
+- List every missing, stale or partial input in dataGaps; do not write around a gap.
 - JSON ONLY. No \`\`\`json fences. No commentary.`;
 
   app.post("/api/alpha-brief", internalRoute("/api/alpha-brief", async (req, res) => {
@@ -2465,7 +2454,7 @@ ${deterministic}
 ${fusionBlock}
 
 TASK
-Fuse all of the above into the JSON schema specified in the system prompt. Use the analog returns as base rates for scenario probabilities. Use the cross-asset tape to confirm or contradict the news lean. Use positioning to detect crowded vs uncrowded edge. Return JSON ONLY — no markdown, no preamble.`;
+Describe the above in the JSON schema specified in the system prompt: what the news says, where the tape and positioning agree or conflict, the levels from the inputs worth watching, and what is missing. No probabilities, targets or trades. Return JSON ONLY: no markdown, no preamble.`;
 
       // Strip ```json fences if a model adds them, then attempt parse.
       const tryParseJson = (raw: string): any | null => {
@@ -2583,14 +2572,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         mode = "knowledge_only";
       }
 
+      // The card renders markdown: the model's descriptive fields rendered here, never its raw JSON
+      // text; without a usable model answer, the deterministic brief.
+      const descriptive = sanitizeBrief(structured);
       res.json({
-        // Legacy fields — kept for back-compat with anything still parsing the old shape
-        brief: rawText,
+        brief: descriptive ? renderBriefMarkdown(descriptive) : deterministic,
         mode,
         deterministic,
         // NEW fields — the upgraded fusion engine output
         provider,
-        structured,                      // null when no LLM returned parseable JSON
+        structured: descriptive,         // descriptive fields only (shared/alphaBrief.ts); null when no LLM returned usable JSON
         fusion: fusionCtx,               // raw fusion context (for the email composer + UI)
         llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey, sonar: hasPerplexityKey },
         // Diagnostics
