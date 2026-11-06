@@ -1602,3 +1602,15 @@ reason (spot's quantile, or median past the target). Also: the MAGNET legend no 
 percentage; "centred on spot" says the bull/bear midpoint when spot is outside the range. Left (named):
 MAGNET naming in heuristic mode, the leftover target bands in the scenario legend, and the recording's 56%
 close-beyond for a +1.2% target suggests a spot/distribution timing mismatch, to check on a live payload.
+2026-11-06: News AI brief (feat/news-brief-render). The card rendered the model's raw JSON (brief = rawText) and the prompt asked for bull/base/bear probabilities, a confidence score, R:R and trade structures. Now the prompt asks for a descriptive brief (summary, drivers, tape check, positioning, levels from the inputs, what would change the read, counterpoints, data gaps) with explicit rules against probabilities, confidence, targets and trades; the server keeps only those fields (shared/alphaBrief.ts sanitizeBrief) and returns rendered markdown as `brief` (deterministic brief when no model answered); the email composer renders the same sections. Not changed (named): the deterministic Edge Lab baseline verdict/confidence/path odds still shown in the email header.
+Review of feat/news-brief-render: 2 MUST-FIX taken. (1) The provider was chosen on "JSON parsed", so a
+parseable answer with no descriptive fields showed the rules-engine text under an AI badge ("+ web search",
+"engine: claude"), and a usable Sonar/GPT answer was skipped: the first provider whose answer sanitizes to a
+usable brief now wins, else mode "deterministic", provider "none". (2) The email fell back to the Edge Lab
+baseline verdict and confidence without the baseline tag ("Alpha Brief: LEAN BULL · 58%" under
+"engine: claude"), or printed PENDING: a descriptive brief's subject is "descriptive read", the baseline
+appears only under its own heading as a heuristic score, and with neither there is no verdict line.
+SHOULD-FIX taken: the deterministic brief fed to the model has its TRADE IMPLICATIONS section removed;
+numeric levels are kept; the footer says the model was asked not to give probabilities, targets or trade
+ideas (nothing enforces it in text). Left: the deterministic brief's own trade wording (alphaEngine.ts),
+its own copy PR.
