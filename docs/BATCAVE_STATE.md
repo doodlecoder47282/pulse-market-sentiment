@@ -1676,3 +1676,9 @@ age; LivenessBadge shows "closed" (steady, not pulsing) instead of "live"; the 0
 maps to the same label. A real failed refresh after hours still reads stale (the stale flag wins). Tests:
 tests/quant/last-session-state.test.ts; schwab-budget updated. Next in step 6: skeleton timeouts and the
 spacing items from the recording.
+2026-11-06: Skeleton slow note (feat/skeleton-timeouts, step 6b). Every query already has a 25 s deadline
+(no skeleton is endless), but 25 s of grey bars said nothing. PanelSkeleton and the Trade Desk, Heatseeker
+and Chain Audit skeletons now say after 6 s what they are waiting on ("waiting on the Schwab option chain
+... a cold read can take up to 25 s; after that the panel says what failed"). Display only. Test:
+tests/quant/skeleton-slow-note.test.ts. Step 6 remaining: the spacing items from the recording (the list
+was lost with the transcript; needs the owner's frames to redo).

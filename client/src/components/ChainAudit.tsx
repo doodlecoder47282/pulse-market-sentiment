@@ -4,6 +4,7 @@
  * Renders all 10 institutional metrics from /api/chain-audit.
  */
 
+import { SlowNote } from "@/components/ui/panel-skeleton";
 import { useState } from "react";
 import DataAgeChip from "./DataAgeChip";
 import { useQuery } from "@tanstack/react-query";
@@ -337,6 +338,7 @@ function AuditError({ message, isSchwabRequired }: { message: string; isSchwabRe
 function AuditSkeleton() {
   return (
     <div className="space-y-4" data-testid="chain-audit-skeleton">
+      <SlowNote waitingOn="the Schwab option chain" />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-16 bg-muted/20" />)}
       </div>
