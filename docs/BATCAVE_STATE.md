@@ -1665,6 +1665,17 @@ order now say the gate sits in the scorer between top-10 and desk risk. Left, na
 re-check freshness (rows store no pair age); the 60 s autopsy cache can show a "tracked" line up to 60 s old;
 pre-existing: new pools are evicted at the 220 cap in the tick they arrive (unscored ranks -1), separate PR.
 
+2026-11-06: After-hours states (feat/after-hours-states, step 6a). The policy served a settled last-session
+chain or daily-bar copy with stale: true, and the chips also judged age against the 30-min closed cap, so
+from the close until the next open every chain-backed panel read "stale 5h" in warning colour and the
+liveness badge pulsed "live" on a chain that could not move. New shared state `last_session` (neutral,
+"last session", readable, no max-age in the tooltip): the policy marks the settled copy lastSession: true
+and stale: false; chain and price-history payloads carry it; routes/models/exposures forward
+chainLastSession beside chainStale; DataStateChip / DataAgeChip take lastSession and never downgrade it by
+age; LivenessBadge shows "closed" (steady, not pulsing) instead of "live"; the 0DTE map's stale_session
+maps to the same label. A real failed refresh after hours still reads stale (the stale flag wins). Tests:
+tests/quant/last-session-state.test.ts; schwab-budget updated. Next in step 6: skeleton timeouts and the
+spacing items from the recording.
 2026-11-06: Skeleton slow note (feat/skeleton-timeouts, step 6b). Every query already has a 25 s deadline
 (no skeleton is endless), but 25 s of grey bars said nothing. PanelSkeleton and the Trade Desk, Heatseeker
 and Chain Audit skeletons now say after 6 s what they are waiting on ("waiting on the Schwab option chain

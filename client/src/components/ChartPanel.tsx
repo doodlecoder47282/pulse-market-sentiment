@@ -70,6 +70,7 @@ type OHLCResponse = {
   dataAsOfMs?: number | null;
   servedFromCache?: boolean;
   stale?: boolean;
+  lastSession?: boolean;
   dataState?: "ok" | "empty" | "unavailable";
   dataReason?: string | null;
 };
@@ -501,6 +502,7 @@ export default function ChartPanel() {
                   reason={ohlc.dataReason}
                   asOf={ohlc.dataAsOfMs ?? null}
                   stale={ohlc.stale}
+                  lastSession={ohlc.lastSession}
                   source="Schwab bars"
                   showAge
                 />

@@ -18,6 +18,8 @@
 //   no_spot      chain present but no underlying price, so nothing S-scaled
 //   empty        (alias of no_data) candles answered with no bars
 //   delayed      (alias of stale) Schwab chain flagged isDelayed, refused
+//   last_session market closed; the settled last-session copy (the latest
+//                data that exists; readable, dated, not stale)
 // Client-side extras:
 //   observed_zero a real reading of 0 (not missing)
 //   loading       request in flight, nothing to show yet
@@ -27,6 +29,7 @@ export type DataState =
   | "ok"
   | "partial"
   | "stale"
+  | "last_session"
   | "unavailable"
   | "no_data"
   | "no_spot"
@@ -52,6 +55,7 @@ const KNOWN: Record<DataState, { label: string; tone: DataStateTone; blocksSigna
   ok:            { label: "ok",            tone: "ok",      blocksSignal: false, title: "Complete data from the stated source." },
   partial:       { label: "partial",       tone: "warn",    blocksSignal: false, title: "Some inputs are missing; the missing parts are shown as gaps, not zeros." },
   stale:         { label: "stale",         tone: "warn",    blocksSignal: true,  title: "Data is older than its maximum age; do not read it as current." },
+  last_session:  { label: "last session",  tone: "neutral", blocksSignal: false, title: "Market closed: this is the settled data from the last session, the latest that exists. It will not move until the next open." },
   unavailable:   { label: "unavailable",   tone: "bad",     blocksSignal: true,  title: "The source could not answer. Nothing is shown in place of the data." },
   no_data:       { label: "no data",       tone: "bad",     blocksSignal: true,  title: "The source answered with no data for this window." },
   no_spot:       { label: "no spot",       tone: "bad",     blocksSignal: true,  title: "No underlying price, so price-scaled values cannot be computed." },
@@ -73,6 +77,8 @@ const ALIASES: Record<string, DataState> = {
   empty: "no_data",
   // Schwab chain flagged isDelayed (server/schwab.ts): refused as not current.
   delayed: "stale",
+  // 0DTE map after the close (shared/odteMap.ts): the last map of the day.
+  stale_session: "last_session",
 };
 
 function recognize(raw: string | null | undefined): DataState | null {
@@ -151,8 +157,11 @@ export function effectiveDataState(
   raw: string | null | undefined,
   ageMs: number | null | undefined,
   maxAgeMs: number | null | undefined,
+  /** The payload is the settled last-session copy: its age does not make it stale. */
+  lastSession?: boolean | null,
 ): DataState {
   const s = normalizeDataState(raw);
+  if (lastSession === true && (s === "ok" || s === "partial" || s === "stale")) return "last_session";
   if ((s === "ok" || s === "partial") && classifyAge(ageMs, maxAgeMs) === "stale") return "stale";
   return s;
 }

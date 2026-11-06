@@ -42,6 +42,8 @@ export type OHLCResponse = {
   dataAsOfMs?: number | null;
   servedFromCache?: boolean;
   stale?: boolean;
+  /** Market closed: the settled last-session bars (daily timeframes only), the latest that exist. */
+  lastSession?: boolean;
   dataState?: "ok" | "empty" | "unavailable";
   dataReason?: string | null;
 };
@@ -118,8 +120,8 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
   const params = tfToSchwab(tf, intervalOverride);
 
   let candles: Candle[] = [];
-  let prov: Pick<OHLCResponse, "dataAsOfMs" | "servedFromCache" | "stale" | "dataState" | "dataReason"> =
-    { dataAsOfMs: null, servedFromCache: false, stale: false, dataState: "unavailable", dataReason: null };
+  let prov: Pick<OHLCResponse, "dataAsOfMs" | "servedFromCache" | "stale" | "lastSession" | "dataState" | "dataReason"> =
+    { dataAsOfMs: null, servedFromCache: false, stale: false, lastSession: false, dataState: "unavailable", dataReason: null };
   try {
     const resp = await getPriceHistory(
       schwabSym,
@@ -130,7 +132,7 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
     );
     prov = {
       dataAsOfMs: resp.asOfMs ?? null, servedFromCache: resp.servedFromCache ?? false,
-      stale: resp.stale ?? false, dataState: resp.dataState ?? (resp.candles.length ? "ok" : "unavailable"),
+      stale: resp.stale ?? false, lastSession: resp.lastSession === true, dataState: resp.dataState ?? (resp.candles.length ? "ok" : "unavailable"),
       dataReason: resp.reason ?? null,
     };
     // Schwab candles: { datetime (ms), open, high, low, close, volume }

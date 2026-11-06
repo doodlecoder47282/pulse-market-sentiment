@@ -52,6 +52,8 @@ export interface DataStateChipProps {
   maxAgeMs?: number | null;
   /** Server stale flag (payload re-served after a failed refresh, within its max age). Downgrades ok/partial to stale. */
   stale?: boolean | null;
+  /** Server last-session flag (market closed; the settled copy). Shown as "last session", never as stale by age. */
+  lastSession?: boolean | null;
   /** Data source name shown in the tooltip and before the age, e.g. "Schwab". */
   source?: string | null;
   /** Show the age even when asOf is missing ("age unknown"). Default: only when asOf given. */
@@ -67,6 +69,7 @@ export default function DataStateChip({
   asOf,
   maxAgeMs,
   stale,
+  lastSession,
   source,
   showAge,
   hideWhenOk = false,
@@ -79,19 +82,19 @@ export default function DataStateChip({
   const hasAsOf = asOf != null && asOf !== "";
   const now = useNow(15_000, hasAsOf);
   const ageMs = hasAsOf ? ageFromAsOf(asOf ?? null, now) : null;
-  const eff = effectiveDataState(state, ageMs, maxAgeMs);
+  const eff = effectiveDataState(state, ageMs, maxAgeMs, lastSession);
   // The server stale flag downgrades an ok/partial payload, never upgrades a bad one.
   const flagged = stale === true && (eff === "ok" || eff === "partial");
   // Keep the caller's original string for "unknown state" labelling unless
-  // age (or the stale flag) downgraded it to stale.
-  const view = describeDataState(eff === "stale" || flagged ? "stale" : state, reason);
+  // age (or the stale flag) downgraded it to stale, or it is the last-session copy.
+  const view = describeDataState(eff === "last_session" ? "last_session" : eff === "stale" || flagged ? "stale" : state, reason);
   if (hideWhenOk && view.state === "ok") return null;
 
   const ageText = hasAsOf || showAge ? formatAge(ageMs) : null;
   const title = [
     source ? `Source: ${source}.` : null,
     view.title,
-    ageText ? `Age: ${ageText}${maxAgeMs ? ` (max ${formatAge(maxAgeMs)})` : ""}.` : null,
+    ageText ? `Age: ${ageText}${maxAgeMs && view.state !== "last_session" ? ` (max ${formatAge(maxAgeMs)})` : ""}.` : null,
   ].filter(Boolean).join(" ");
 
   return (

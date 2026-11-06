@@ -446,7 +446,7 @@ jobs:
             const tagOk = tags.length === 3 && tags.every((t) => /landmark|OI confluence|weak|chart only|unavailable/.test(t));
             // Without a map every level is "unavailable", never "chart only" (a missing map is not evidence of absence).
             const stateTxt = await p.locator('[data-testid="chart-levels-state"]').innerText().catch(() => "");
-            const consistent = /ok|stale|no data/i.test(stateTxt) ? !tags.includes("unavailable") : tags.every((t) => t === "unavailable");
+            const consistent = /ok|stale|last session|no data/i.test(stateTxt) ? !tags.includes("unavailable") : tags.every((t) => t === "unavailable");
             console.log(((rows === 3 && tagOk && consistent) ? "PASS" : "FAIL") + " chart levels: " + rows + " rows, tags " + tags.join("/") + ", map state " + stateTxt.replace(/\s+/g, " ").slice(0, 40));
             await p.locator('[data-testid="chart-levels-card"]').screenshot({ path: "rep/demo/16-chart-levels.png" });
             await p.locator('[data-testid="tab-signals"]').first().click({ timeout: 5000 });
