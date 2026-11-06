@@ -13,7 +13,7 @@ function etMinutes(ms: number): number {
 }
 
 /** Settle, high and low from today's regular-session candles. */
-export function settleFromCandles(candles: any[], nowMs: number): { settle: number; sessionHigh: number; sessionLow: number } | null {
+export function settleFromCandles(candles: any[], nowMs: number, afterMs?: number | null): { settle: number; sessionHigh: number; sessionLow: number; highAfter?: number | null; lowAfter?: number | null } | null {
   const date = etDate(nowMs);
   const close = sessionCloseMinutes(date) ?? 960;
   const today = (candles || []).filter((c) => typeof c?.datetime === "number" && etDate(c.datetime) === date && etMinutes(c.datetime) >= REGULAR_OPEN_MIN && etMinutes(c.datetime) < close);
@@ -25,6 +25,18 @@ export function settleFromCandles(candles: any[], nowMs: number): { settle: numb
   // A tape that stops short of the close is partial, not a settle: the last bar
   // must start within the final five minutes of the session.
   if (etMinutes(last.datetime) < close - 5) return null;
-  return { settle: last.close, sessionHigh: hi, sessionLow: lo };
+  // Extremes from the minute bar that contains `afterMs` to the close (the
+  // morning map's Wiener odds are scored on these); null when none.
+  let highAfter: number | null = null, lowAfter: number | null = null;
+  if (typeof afterMs === "number" && Number.isFinite(afterMs)) {
+    const from = Math.floor(afterMs / 60_000) * 60_000;
+    for (const c of today) {
+      if (c.datetime < from) continue;
+      if (highAfter == null || c.high > highAfter) highAfter = c.high;
+      if (lowAfter == null || c.low < lowAfter) lowAfter = c.low;
+    }
+  }
+  const base = { settle: last.close, sessionHigh: hi, sessionLow: lo };
+  return typeof afterMs === "number" && Number.isFinite(afterMs) ? { ...base, highAfter, lowAfter } : base;
 }
 
