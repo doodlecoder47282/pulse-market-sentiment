@@ -21,6 +21,26 @@ test("touch odds: stated only when the target is beyond the distribution's media
   assert.ok(Math.abs((o2.pTouchBull as number) - 2 * o2.pCloseBeyondBull) < 1e-12);
   // Already reached: touched.
   assert.equal(scenarioOddsFromCdf(centred, 7689, { bull: 7680, base: 7650, bear: 7600 })!.pTouchBull, 1);
+  assert.equal(o2.touchWithheld, null);
+});
+
+test("touch odds: withheld when the implied distribution is not centred on spot, even with close-beyond under 1/2", () => {
+  // Review case: drift 0.75 sd toward a +1 sd target. Close-beyond 0.40, the 2x rule says 80%, the true
+  // touch odds are about 58%: the rule must not be used.
+  const spot = 7700, sd = 60;
+  const drift = scenarioOddsFromCdf(normal(spot + 0.75 * sd, sd), spot, { bull: spot + sd, base: spot + 10, bear: spot - sd })!;
+  assert.ok(drift.pCloseBeyondBull > 0.39 && drift.pCloseBeyondBull < 0.41);
+  assert.ok(drift.spotQuantile < 0.25);
+  assert.equal(drift.pTouchBull, null, "no 80% touch on a drifted distribution");
+  assert.equal(drift.pTouchBear, null);
+  assert.match(String(drift.touchWithheld), /not centred on spot \(spot sits at its 23% quantile/);
+  // A small offset (spot near the 42nd percentile) keeps the rule.
+  const mild = scenarioOddsFromCdf(normal(spot + 0.2 * sd, sd), spot, { bull: spot + sd, base: spot + 10, bear: spot - sd })!;
+  assert.ok(Math.abs(mild.spotQuantile - 0.5) <= 0.1);
+  assert.ok(mild.pTouchBull != null && Math.abs(mild.pTouchBull - 2 * mild.pCloseBeyondBull) < 1e-12);
+  // The card shows the reason, not a guessed number.
+  const card = readFileSync(new URL("../../client/src/components/ModelsPanel.tsx", import.meta.url), "utf8");
+  assert.match(card, /touch not stated: \$\{p\.touchWithheld\}/);
 });
 
 test("magnet outside the bull/bear range: flagged, middle region centred on spot", () => {
@@ -42,6 +62,6 @@ test("models and card: regions sent and shown; the magnet path is named, not cal
   assert.match(m, /if \(odds\.baseOutsideRange\) \{[\s\S]{0,300}baseP\.name = "MAGNET";/);
   const c = readFileSync(new URL("../../client/src/components/ModelsPanel.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(c, /const bullRange = `\$\{fmtK\(bullTgt \* 0\.998\)\}/, "no +-0.2% band presented as the region");
-  assert.match(c, /touch not stated \(target inside the median\)/);
+  assert.match(c, /touch not stated: \$\{p\.touchWithheld\}/);
   assert.match(c, /MIDDLE" : "BASE"\} region/);
 });

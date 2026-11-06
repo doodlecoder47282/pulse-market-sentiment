@@ -145,6 +145,7 @@ export interface ModelPath {
   probabilityEvent?: string;
   pCloseBeyond?: number | null;            // Q: P(S_T beyond target) (bull/bear only)
   pTouch?: number | null;                  // ~ 2 x pCloseBeyond (reflection), null when that does not apply
+  touchWithheld?: string | null;           // why pTouch is null (implied odds only)
   /** Price region the path's probability refers to (null bound = open-ended); set with implied odds. */
   region?: { lo: number | null; hi: number | null } | null;
   target: number;                          // end-of-horizon price
@@ -1310,8 +1311,10 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
       bearP.probability = odds.bear;
       bullP.pCloseBeyond = odds.pCloseBeyondBull;
       bullP.pTouch = odds.pTouchBull;
+      bullP.touchWithheld = odds.pTouchBull == null ? odds.touchWithheld : null;
       bearP.pCloseBeyond = odds.pCloseBeyondBear;
       bearP.pTouch = odds.pTouchBear;
+      bearP.touchWithheld = odds.pTouchBear == null ? odds.touchWithheld : null;
       // The regions the odds refer to, sent so the card shows these and not a band around each target.
       bullP.region = { lo: odds.upper, hi: null };
       baseP.region = { lo: odds.lower, hi: odds.upper };
@@ -1321,9 +1324,10 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
       }
       if (odds.baseOutsideRange) {
         // The base path heads to the dominant magnet, which sits outside the bull/bear range: it is a
-        // magnet reference, and the middle region is centred on spot.
+        // magnet reference; the middle region is centred on spot when spot is inside (bear, bull),
+        // else on the bull/bear midpoint (impliedScenario.ts).
         baseP.name = "MAGNET";
-        baseP.probabilityEvent = `risk-neutral P(close in the middle region ${odds.lower.toFixed(2)}-${odds.upper.toFixed(2)}, centred on spot); the MAGNET path heads to ${baseP.target.toFixed(2)}, outside the bull/bear range, and has no probability of its own`;
+        baseP.probabilityEvent = `risk-neutral P(close in the middle region ${odds.lower.toFixed(2)}-${odds.upper.toFixed(2)}, centred on ${displaySpot > bearP.target && displaySpot < bullP.target ? "spot" : "the bull/bear midpoint"}); the MAGNET path heads to ${baseP.target.toFixed(2)}, outside the bull/bear range, and has no probability of its own`;
       }
       impliedCdf = (K) => cdfAt(dist, K);
       scenarioProbSource = "risk-neutral-implied";

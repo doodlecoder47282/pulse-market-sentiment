@@ -1470,3 +1470,11 @@ centre (not covered by a sticky layer), sits inside the tape (not clipped), open
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
 2026-11-06: Heatseeker scenario semantics (feat/scenario-semantics). Recording frame 37: "base" path above "bull" (base = dominant magnet 8,021 > bull target 7,782), "BASE region 8,005-8,037" printed as a +-0.2% band around the target while its probability was the middle region centred on spot, and "touch 100%" from min(1, 2 x close-beyond) with close-beyond 56%. Fix (semantics, no clamping): scenarioOddsFromCdf flags baseOutsideRange; the models paths carry the real region bounds (bull above upper, middle lower-upper, bear below lower); a base path outside the range is named MAGNET (a reference with no probability of its own) and the card says MIDDLE region; touch odds are stated only when close-beyond < 50% (the reflection rule's condition), never capped. Tests: tests/quant/scenario-semantics.test.ts.
+Review of feat/scenario-semantics: the touch-odds condition was necessary, not sufficient. "Close-beyond
+under 1/2" still let the 2x reflection rule state 80-92% touch odds on a drifted distribution where the
+true odds are 58-63%. Touch odds are now stated only when the implied distribution is centred on spot
+(spot between its 40% and 60% quantile, TOUCH_CENTRE_TOLERANCE 0.1), otherwise "touch not stated:" with the
+reason (spot's quantile, or median past the target). Also: the MAGNET legend no longer carries a
+percentage; "centred on spot" says the bull/bear midpoint when spot is outside the range. Left (named):
+MAGNET naming in heuristic mode, the leftover target bands in the scenario legend, and the recording's 56%
+close-beyond for a +1.2% target suggests a spot/distribution timing mismatch, to check on a live payload.

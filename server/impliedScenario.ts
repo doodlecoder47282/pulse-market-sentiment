@@ -116,11 +116,15 @@ export function straddleExpectedMove(
 //
 // Touch odds use the reflection principle for driftless Brownian motion,
 // P(max_{t<=T} W_t >= b) = 2 P(W_T >= b) (Shreve, Stochastic Calculus for
-// Finance II, sec. 3.7): pTouch ~= min(1, 2 * P(S_T beyond target)). It is an
+// Finance II, sec. 3.7): pTouch ~= 2 * P(S_T beyond target), used only when the
+// implied distribution is centred on spot (see scenarioOddsFromCdf). It is an
 // approximation (it ignores the small risk-neutral drift and the smile).
 //
 // Every number here is RISK-NEUTRAL (options-implied), not a real-world
 // forecast: it embeds the variance and skew risk premia.
+
+/** Spot may sit this far from the implied median (in quantile) for the 2x touch rule to be used. */
+export const TOUCH_CENTRE_TOLERANCE = 0.1;
 
 export interface ScenarioOdds {
   measure: "risk-neutral";
@@ -132,10 +136,14 @@ export interface ScenarioOdds {
   pCloseBeyondBull: number;  // P(S_T > bull target)
   pCloseBeyondBear: number;  // P(S_T < bear target)
   /** ~ 2 * pCloseBeyondBull; 1 if the target is already at or below spot; null when the reflection
-   *  approximation does not apply (pCloseBeyondBull >= 0.5: the target is not beyond the distribution's
-   *  median, so 2x would exceed or reach 1 and say nothing). Never capped to 100%. */
+   *  approximation does not apply: the implied distribution is not centred on spot (|spotQuantile - 0.5| >
+   *  TOUCH_CENTRE_TOLERANCE), or pCloseBeyondBull >= 0.5. Never capped to 100%. */
   pTouchBull: number | null;
   pTouchBear: number | null;
+  /** P(S_T <= spot) under the implied distribution: 0.5 for a distribution centred on spot. */
+  spotQuantile: number;
+  /** Why touch odds are not stated, or null when they are. */
+  touchWithheld: string | null;
   /** The base path target sits outside (bear, bull): it is a magnet reference, not a middle scenario,
    *  and the middle region is centred on spot instead. */
   baseOutsideRange: boolean;
@@ -166,6 +174,21 @@ export function scenarioOddsFromCdf(
   const pBase = clamp01(1 - pBull - pBear);
   const beyondBull = clamp01(1 - cdf(bull));
   const beyondBear = clamp01(cdf(bear));
+  // The reflection rule (touch = 2 x close-beyond) holds for a driftless walk
+  // CENTRED ON SPOT. Close-beyond < 1/2 is necessary but not sufficient: with
+  // drift toward a +1 sd target the rule says 80-92% where the true touch odds
+  // are 58-63%. So the rule is used only when the implied distribution is
+  // centred on spot (spot between its 40th and 60th percentile); otherwise no
+  // touch odds are stated, with the reason.
+  const spotQuantile = clamp01(cdf(spot));
+  const centred = Math.abs(spotQuantile - 0.5) <= TOUCH_CENTRE_TOLERANCE;
+  const touch = (target: number, beyond: number, reached: boolean): number | null =>
+    reached ? 1 : centred && beyond < 0.5 ? 2 * beyond : null;
+  const pTouchBull = touch(bull, beyondBull, bull <= spot);
+  const pTouchBear = touch(bear, beyondBear, bear >= spot);
+  const touchWithheld = (pTouchBull != null && pTouchBear != null) ? null
+    : !centred ? `implied distribution not centred on spot (spot sits at its ${Math.round(spotQuantile * 100)}% quantile; the 2x reflection rule needs about 50%)`
+    : "implied median is past the target; the 2x reflection rule does not apply";
   return {
     measure: "risk-neutral",
     bull: pBull,
@@ -175,13 +198,11 @@ export function scenarioOddsFromCdf(
     lower,
     pCloseBeyondBull: beyondBull,
     pCloseBeyondBear: beyondBear,
-    // The reflection rule (touch = 2 x close-beyond) assumes a driftless walk
-    // from spot, whose median is spot: a target beyond spot then has
-    // close-beyond odds under 1/2. When the implied odds of closing beyond are
-    // 1/2 or more the rule does not apply and no touch odds are stated. A
-    // target already reached has been touched (probability 1).
-    pTouchBull: bull <= spot ? 1 : beyondBull < 0.5 ? 2 * beyondBull : null,
-    pTouchBear: bear >= spot ? 1 : beyondBear < 0.5 ? 2 * beyondBear : null,
+    // A target already reached has been touched (probability 1).
+    pTouchBull,
+    pTouchBear,
+    spotQuantile,
+    touchWithheld,
     baseOutsideRange,
   };
 }

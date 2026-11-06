@@ -78,6 +78,7 @@ interface ModelPath {
   pCloseBeyond?: number | null;
   /** ~ 2 x pCloseBeyond (reflection); 1 if already crossed; null when the rule does not apply. */
   pTouch?: number | null;
+  touchWithheld?: string | null;
   /** The price region the probability refers to (null bound = open-ended), when odds are implied. */
   region?: { lo: number | null; hi: number | null } | null;
   target: number;
@@ -726,7 +727,7 @@ function targetOddsText(h: ModelHorizon, kind: "bull" | "bear"): string | undefi
   if (!p || p.probabilitySource !== "risk-neutral-implied" || p.pCloseBeyond == null) return undefined;
   const cmp = kind === "bull" ? ">=" : "<=";
   // Touch odds only where the reflection rule applies (close-beyond under 50%); otherwise say so.
-  const touch = p.pTouch != null ? ` · touch ${Math.round(p.pTouch * 100)}%` : p.pCloseBeyond >= 0.5 ? " · touch not stated (target inside the median)" : "";
+  const touch = p.pTouch != null ? ` · touch ${Math.round(p.pTouch * 100)}%` : p.touchWithheld ? ` · touch not stated: ${p.touchWithheld}` : "";
   return `close ${cmp} tgt ${Math.round(p.pCloseBeyond * 100)}%${touch}`;
 }
 
@@ -1167,7 +1168,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   dot={{ r: 4, fill: stroke, strokeWidth: 0 }}
                   activeDot={{ r: 6, fill: stroke, strokeWidth: 2, stroke: "#fff" }}
                   isAnimationActive={false}
-                  name={p.name === "MAGNET" ? `MAGNET path (middle region ${prob}%)` : `${p.name} region ${prob}%`}
+                  name={p.name === "MAGNET" ? "MAGNET path (no probability of its own)" : `${p.name} region ${prob}%`}
                 >
                   {showPrints && (
                     <LabelList
