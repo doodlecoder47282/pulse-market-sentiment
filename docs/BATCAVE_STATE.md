@@ -1391,6 +1391,16 @@ First gated run of the method-page check: FAIL, and correctly so as a test defec
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
 
+2026-11-06: Crypto target label (feat/crypto-target-label). The record line and How-to said "hit the
+5-minute target" and the outcome chip showed raw `HIT_5M`; the grade means the sampled peak reached the
+$5M market-cap target (CRYPTO_RULES.universe.targetMcapUsd), not a time. Copy now reads "reached the $5M
+market-cap target", the chip "HIT $5M CAP", and the How-to reads the horizon, target and sample gate from
+the rule book instead of carrying its own numbers. Display only; no rule or grade changed.
+Crypto review of feat/crypto-target-label: no MUST-FIX. SHOULD-FIX taken: How-to said "graded within 72 hours"
+(DOUBLED / DEAD / NO_DATA are decided at 72 h, only HIT and RUGGED close early) and omitted no data and the
+20% no-data condition: now stated. The stats row and the first-ENTER line still said "hit 5M" next to "5m"
+volume labels: built from the rule book. The chip is "$5M CAP" (7 characters, was 6) instead of 11, so the
+non-wrapping signal row does not widen at 402 px. Test: tests/quant/crypto-target-label.test.ts.
 2026-11-06: News AI brief (feat/news-brief-render). The card rendered the model's raw JSON (brief = rawText) and the prompt asked for bull/base/bear probabilities, a confidence score, R:R and trade structures. Now the prompt asks for a descriptive brief (summary, drivers, tape check, positioning, levels from the inputs, what would change the read, counterpoints, data gaps) with explicit rules against probabilities, confidence, targets and trades; the server keeps only those fields (shared/alphaBrief.ts sanitizeBrief) and returns rendered markdown as `brief` (deterministic brief when no model answered); the email composer renders the same sections. Not changed (named): the deterministic Edge Lab baseline verdict/confidence/path odds still shown in the email header.
 Review of feat/news-brief-render: 2 MUST-FIX taken. (1) The provider was chosen on "JSON parsed", so a
 parseable answer with no descriptive fields showed the rules-engine text under an AI badge ("+ web search",
