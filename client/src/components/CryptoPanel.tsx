@@ -11,6 +11,9 @@
 
 import CoinLinks from "./CoinLinks";
 import CryptoHowTo from "./CryptoHowTo";
+import { CRYPTO_RULES } from "@shared/cryptoRules";
+/** The grade HIT_5M means the sampled peak reached this market cap (rule book), not a time. */
+const TARGET_CAP = `$${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M`;
 import BundleRow from "./BundleRow";
 import CoinDesk from "./CoinDesk";
 import type { CardBundle } from "@shared/cryptoBundle";
@@ -506,7 +509,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
       )}
       <div className="mt-3 border-t border-border/40 pt-2 text-[11px] text-muted-foreground" data-testid="crypto-brief-record">
         {rec
-          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} hit the 5-minute target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
+          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} reached the $${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M market-cap target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
           : "Record so far: loading. Heuristic scores, not calibrated odds. The desk never places orders."}
       </div>
     </div>
@@ -967,7 +970,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         {[
           ["coins", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],
-          ["hit 5M", stats.hit5m, "text-lime-300"],
+          [`hit ${TARGET_CAP} cap`, stats.hit5m, "text-lime-300"],
           ["doubled", stats.doubled, "text-emerald-300"],
           ["rugged", stats.rugged, "text-rose-300"],
           ["dead", stats.dead, "text-muted-foreground"],
@@ -981,7 +984,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       </div>
       <p className="text-[11px] text-muted-foreground" data-testid="crypto-stats-basis">
         counts are distinct coins (first signal per coin){stats.rows ? `; ${stats.rows.total} logged rows` : ""}
-        {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} hit 5M or doubled)` : ""}
+        {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} reached the ${TARGET_CAP} cap or doubled)` : ""}
         {stats.noDataShare != null ? ` · no-data share ${Math.round(stats.noDataShare * 100)}% of resolved coins (missing outcomes, not losses)` : ""}
       </p>
       {stats.survivorship && (
@@ -1028,7 +1031,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
               s.outcome === "HIT_5M" ? "text-lime-300" : s.outcome === "DOUBLED" ? "text-emerald-300"
               : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground"
               : s.outcome === "NO_DATA" ? "text-amber-300/80" : "text-sky-300"
-            }`}>{s.outcome}</span>
+            }`} title={s.outcome === "HIT_5M" ? `reached the ${TARGET_CAP} market-cap target (not a time)` : undefined}>{s.outcome === "HIT_5M" ? `${TARGET_CAP} CAP` : s.outcome}</span>
             <span className="hidden text-[11px] text-muted-foreground sm:block">
               {new Date(Number(s.detected_at)).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
             </span>
