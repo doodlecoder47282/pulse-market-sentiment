@@ -29,3 +29,10 @@ test("charts: a missing call or put wall is skipped, never formatted", () => {
   assert.match(svg, /\{gamma\.callWall != null && Number\.isFinite\(gamma\.callWall\) && \(/);
   assert.match(svg, /\{gamma\.putWall != null && Number\.isFinite\(gamma\.putWall\) && \(/);
 });
+
+test("Gamma context banner accepts a missing wall (pill hidden), matching the chart's nullable walls", () => {
+  const b = readFileSync(new URL("../../client/src/components/GammaContextBanner.tsx", import.meta.url), "utf8");
+  assert.match(b, /callWall: number \| null;/);
+  assert.match(b, /putWall: number \| null;/);
+  assert.match(b, /if \(value == null\) return null;/);
+});

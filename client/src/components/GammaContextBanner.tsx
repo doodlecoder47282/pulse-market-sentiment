@@ -12,9 +12,10 @@ import { Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 export type GammaLevels = {
-  callWall: number;
+  /** null when the chain had no positive (negative) strike: the pill is not shown. */
+  callWall: number | null;
   callWallGex?: number;
-  putWall: number;
+  putWall: number | null;
   putWallGex?: number;
   zeroGamma: number | null;
   maxPain?: number | null;
