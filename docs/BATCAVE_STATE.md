@@ -1664,3 +1664,10 @@ carry the old read's entry cap under a new detected_at); the pin comment, this l
 order now say the gate sits in the scorer between top-10 and desk risk. Left, named: the replay does not
 re-check freshness (rows store no pair age); the 60 s autopsy cache can show a "tracked" line up to 60 s old;
 pre-existing: new pools are evicted at the 220 cap in the tick they arrive (unscored ranks -1), separate PR.
+
+2026-11-06: Skeleton slow note (feat/skeleton-timeouts, step 6b). Every query already has a 25 s deadline
+(no skeleton is endless), but 25 s of grey bars said nothing. PanelSkeleton and the Trade Desk, Heatseeker
+and Chain Audit skeletons now say after 6 s what they are waiting on ("waiting on the Schwab option chain
+... a cold read can take up to 25 s; after that the panel says what failed"). Display only. Test:
+tests/quant/skeleton-slow-note.test.ts. Step 6 remaining: the spacing items from the recording (the list
+was lost with the transcript; needs the owner's frames to redo).

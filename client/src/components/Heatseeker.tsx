@@ -1,3 +1,4 @@
+import { SlowNote } from "@/components/ui/panel-skeleton";
 import EdgeInfo from "@/components/EdgeInfo";
 /**
  * Heatseeker.tsx — 0DTE live Greeks heatseeker view.
@@ -428,6 +429,7 @@ export default function Heatseeker() {
     return (
       <div className="space-y-4">
         {header}
+        <SlowNote waitingOn="the Schwab option chain" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-96 w-full" />
         <Skeleton className="h-64 w-full" />

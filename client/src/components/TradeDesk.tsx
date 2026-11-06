@@ -1,3 +1,4 @@
+import { SlowNote } from "@/components/ui/panel-skeleton";
 import EdgeInfo from "@/components/EdgeInfo";
 // Trade Desk — SPX/SPY/VIX intraday charts + pivots + gamma map + squeeze + playbook
 // Bloomberg dark aesthetic: near-black background, amber accents, monospace data,
@@ -2022,6 +2023,7 @@ function TradeDeskSkeleton() {
         </div>
         <Skeleton className="h-5 w-32" />
       </div>
+      <SlowNote waitingOn="the Schwab SPY chain and quotes (a cold models build)" />
       {/* Playbook + squeeze */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Skeleton className="h-64 lg:col-span-8" />
