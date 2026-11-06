@@ -12,6 +12,8 @@
 // clock. Nothing here is tuned to any published map; the comparison helper
 // at the bottom only reports agreement, it never adjusts.
 
+import type { WienerMap } from "./odteWiener";
+
 export interface ForwardStrike { strike: number; gex: number; callOI: number; putOI: number }
 
 /** The fields of the /api/odte/forward payload the composer reads. */
@@ -39,6 +41,8 @@ export interface ForwardLike {
   chainAsOfMs?: number | null;
   chainStale?: boolean;
   chainStaleReason?: string | null;
+  /** The Wiener baseline (shared/odteWiener.ts), when the forward computed one. */
+  wiener?: WienerMap | null;
 }
 
 export type MapLabel = "pin" | "wall above" | "magnet below" | "pocket above" | "pocket below" | "shelf" | "pocket";
@@ -119,7 +123,11 @@ export interface OdteMap {
   /** When Schwab produced the chain behind this map (epoch ms); null when the forward did not say. The cards show this age, not asOf (compute time). */
   chainAsOfMs: number | null;
   chainStale: boolean;
+  /** The Wiener level odds at the time of this map (kept with the morning plan and scored after the close). */
+  wiener: WienerSnapshot | null;
 }
+
+export type WienerSnapshot = Pick<WienerMap, "state" | "spot" | "sigmaToClose" | "minutesLeft" | "levels">;
 
 export interface ComposeOptions {
   edition: "personal" | "investor" | "demo";
@@ -327,6 +335,9 @@ export function composeOdteMap(f: ForwardLike, opts: ComposeOptions): OdteMap {
     method,
     chainAsOfMs: Number.isFinite(Number(f.chainAsOfMs)) ? Number(f.chainAsOfMs) : null,
     chainStale,
+    wiener: f.wiener && f.wiener.state === "ok"
+      ? { state: f.wiener.state, spot: f.wiener.spot, sigmaToClose: f.wiener.sigmaToClose, minutesLeft: f.wiener.minutesLeft, levels: f.wiener.levels }
+      : null,
   };
 }
 

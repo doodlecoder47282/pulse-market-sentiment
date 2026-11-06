@@ -1,4 +1,7 @@
 import { vixToAtmPct } from "@shared/vol";
+import { levelsSourceFor, INDEX_NOT_WIRED_REASON } from "../shared/chartLevels";
+import { EMPTY_RETRY_CAP_MS, EMPTY_RETRY_SESSION_CAP_MS, emptyRetryDelayMs, modelsCacheGate, modelsPeekReason } from "./modelsBackoff";
+import { briefForPrompt, sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
 import { getCryptoContext } from "./cryptoContext";
 import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
 import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
@@ -86,7 +89,7 @@ import { buildEconWeek, type EconWeek } from "./econWeek";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
 import type { Snapshot_Public } from "@shared/schema";
 import { readCacheEntry, writeCache, rthSessionKey } from "./sessionCache";
-import { maxServeAgeMs, modelsFallbackDecision, oldestChainAsOf } from "./schwabDataPolicy";
+import { lastSettledCloseMs, maxServeAgeMs, modelsFallbackDecision, oldestChainAsOf } from "./schwabDataPolicy";
 import { buildSeasonalitySnapshot, fetchBars, computeSeasonality, generateAnalysisText } from "./seasonality";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
@@ -758,24 +761,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // options chain (Schwab is rate-limited).
   const MODELS_CACHE_MS = 30 * 60_000;
 
-  const MODELS_EMPTY_RETRY_MS = 20_000;
+  // An empty build (Schwab refused or could not supply the chain) is held for
+  // a growing interval (server/modelsBackoff.ts: 20 s, 40 s, ... 5 min), so
+  // pollers cannot turn a throttled chain into a retry storm.
+  const modelsEmptyStreak = new Map<string, number>();
   const modelsBuildEmpty = (d: ModelsResponse | null | undefined): boolean =>
     !d?.horizons || Object.values(d.horizons as Record<string, unknown>).every((h) => !h);
+  /**
+   * One cache rule for the building read and the peek read
+   * (server/modelsBackoff.ts modelsCacheGate). The 30-min cadence never
+   * serves chain-derived numbers past the chain max age (3 min in the
+   * session); with the market closed, a build made after the last session
+   * settled is current. An empty build (Schwab refused the chain) is held for
+   * the backoff interval (20 s doubling, capped at 2 min in the session and
+   * 5 min outside it), not the full cadence, and not retried on every poll.
+   */
+  function modelsGateFor(cacheKey: string) {
+    const nowMs = Date.now();
+    const cached = modelsCache.get(cacheKey);
+    const entry = cached ? { at: cached.at, empty: modelsBuildEmpty(cached.data), chainAsOfMs: oldestChainAsOf(cached.data.horizons as any) } : null;
+    const marketOpen = isRegularSessionOpen(nowMs);
+    const args = {
+      nowMs,
+      holdMs: entry?.empty ? emptyRetryDelayMs(modelsEmptyStreak.get(cacheKey) ?? 1, marketOpen ? EMPTY_RETRY_SESSION_CAP_MS : EMPTY_RETRY_CAP_MS) : MODELS_CACHE_MS,
+      chainMaxAgeMs: maxServeAgeMs("chains", nowMs),
+      marketOpen,
+      settledCloseMs: lastSettledCloseMs(nowMs),
+    };
+    return { cached, entry, args, gate: modelsCacheGate(entry, args) };
+  }
+  /**
+   * Read-only: the cached build when it would be served, else the reason
+   * there is none. Never starts or joins a build, and makes no Schwab
+   * request (tab headlines read the regime this way).
+   */
+  function peekModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): { data: ModelsResponse; reason: null } | { data: null; reason: string } {
+    const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
+    const { cached, entry, args, gate } = modelsGateFor(cacheKey);
+    if (gate.serve && cached) return { data: cached.data, reason: null };
+    return { data: null, reason: modelsPeekReason({ inFlight: modelsInFlight.has(cacheKey), entry, miss: gate.serve ? null : gate.miss }, args) };
+  }
+  /** Build (or serve) the models snapshot. */
   async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
-    // Cache hit
-    const cached = modelsCache.get(cacheKey);
-    // The 30-min rebuild cadence never serves chain-derived numbers past the
-    // chain max age (3 min in the session): an older build is a miss.
-    const cachedChainAsOf = cached ? oldestChainAsOf(cached.data.horizons as any) : null;
-    // A build with no horizon (Schwab refused the chain) is held only
-    // MODELS_EMPTY_RETRY_MS, so the next read retries instead of serving
-    // "not built" for the full 30-minute cadence.
-    const cachedEmpty = cached ? modelsBuildEmpty(cached.data) : false;
-    if (cached && Date.now() - cached.at < (cachedEmpty ? MODELS_EMPTY_RETRY_MS : MODELS_CACHE_MS)
-        && (cachedChainAsOf == null || Date.now() - cachedChainAsOf <= maxServeAgeMs("chains"))) {
-      return cached.data;
-    }
+    const { cached, gate } = modelsGateFor(cacheKey);
+    if (gate.serve && cached) return cached.data;
     // Existing build in flight
     const pending = modelsInFlight.get(cacheKey);
     if (pending) return pending;
@@ -791,6 +821,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       // Never overwrite the last good session snapshot with an empty build.
       if (!modelsBuildEmpty(data)) await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
+      modelsEmptyStreak.set(cacheKey, modelsBuildEmpty(data) ? (modelsEmptyStreak.get(cacheKey) ?? 0) + 1 : 0);
       modelsCache.set(cacheKey, { at: Date.now(), data });
       return data;
     })().finally(() => {
@@ -808,6 +839,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // entry, upper/lower vomma) are now always on — they're core levels,
       // not experimental. ?experimental=0 can still disable them explicitly.
       const experimental = String(req.query.experimental ?? "1") !== "0";
+      // peek=1: read-only (no build started, no post-processing reads).
+      if (String(req.query.peek ?? "") === "1") {
+        const p = peekModelsForKey(symbol, experimental);
+        if (!p.data) return res.status(503).json({ dataState: "unavailable", error: "not_built", reason: p.reason });
+        return res.json(p.data);
+      }
       const data = await buildModelsForKey(symbol, experimental);
       // Post-process pipeline (order matters):
       //   1. Term-structure rescale: 1W/1M/3M EMs from VIX9D/VIX
@@ -1306,8 +1343,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/gamma-levels", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
-      const isSpy = symbol === "SPY" || symbol === "^GSPC" || symbol === "SPX";
-      if (isSpy) {
+      // shared/chartLevels.ts: the S&P 500 index is not answered with SPY-scale
+      // levels (they would be drawn at about a tenth of the index price).
+      const source = levelsSourceFor(symbol);
+      if (source === "index_not_wired") {
+        return res.json({ symbol, supported: false, spot: null, levels: null, reason: INDEX_NOT_WIRED_REASON, asOf: null });
+      }
+      if (source === "spy_snapshot") {
         const snap = await getOrBuild(false);
         const g = snap.gamma;
         return res.json({
@@ -1351,7 +1393,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             }
           : null,
         warnings: pos.warnings ?? [],
-        asOf: new Date().toISOString(),
+        // Epoch seconds, like the SPY branch above: the chain's own data time, never the response time
+        // (the positioning snapshot is cached up to 5 min). No chain read: null, and the banner shows no time.
+        asOf: pos.chainAsOfMs != null ? Math.floor(pos.chainAsOfMs / 1000) : null,
       });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;
@@ -2385,51 +2429,39 @@ Be precise. No hedging language. No filler. If news feed is empty or stale, say 
   // FUSION prompt — demands STRUCTURED JSON output the cron email composer
   // and the UI can both parse. Includes Batcave internal state + cross-asset +
   // positioning + ML state + historical analogs as fused context.
-  const ALPHA_FUSION_SYSTEM = `You are ALPHA — a senior quant analyst writing peer-to-peer for an institutional trader. Voice: direct, sharp, no filler, no tutorials. Think in probabilities, expected value, asymmetric payoffs.
+  // Descriptive brief (shared/alphaBrief.ts): the model describes what the provided inputs say.
+  // No probabilities, confidence scores, targets or trades: the desk states none it cannot compute.
+  const ALPHA_FUSION_SYSTEM = `You are a markets analyst writing a short, descriptive brief for an experienced reader. Voice: direct and plain, no filler.
 
 You are given:
 1. A ranked news feed (deterministic baseline already scored by impact)
 2. Live Batcave internal state (regime, gamma posture, key levels)
-3. Cross-asset tape (does the tape confirm the news lean?)
-4. Options positioning (GEX, DEX, IV vs RV, skew — does flow corroborate?)
-5. ML model recent calls + 30d accuracy
-6. Historical analogs (jaccard-matched precedents with realized SPY 1d/5d/20d)
+3. Cross-asset tape
+4. Options positioning (GEX, DEX, IV vs RV, skew)
+5. ML model recent calls and their tracked accuracy
+6. Historical analogs (matched precedents with realized SPY 1d/5d/20d)
 
-Your job: fuse all of it into a probability-weighted scenario thesis. Use the analog returns as base rates. Use the cross-asset tape as confirmation/contradiction signal. Use positioning to detect crowded vs. uncrowded trades. Use the ML state as a sanity check on direction.
+Your job: describe what these inputs say together, where they agree and where they conflict. Do not forecast.
 
-OUTPUT FORMAT — RETURN ONLY VALID JSON (no markdown fences, no prose preamble). Schema:
+OUTPUT FORMAT: RETURN ONLY VALID JSON (no markdown fences, no prose preamble). Schema:
 
 {
-  "verdict": "STRONG_BULL" | "LEAN_BULL" | "MIXED" | "LEAN_BEAR" | "STRONG_BEAR",
-  "confidence": <integer 0..100>,
-  "oneLiner": "<≤1 sentence: the trade in one line>",
-  "narrative": "<3-4 sentences: the regime, the catalyst stack, the cleanest expression, what flips it>",
-  "scenarios": {
-    "bull": { "probability": <int 0..100>, "target": "<SPY price or move>", "horizon": "<intraday|days|weeks>", "rr": "<e.g. 3:1>", "invalidation": "<specific price/condition>", "evidence": ["<chip 1>", "<chip 2>", "<chip 3>"] },
-    "base": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] },
-    "bear": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] }
-  },
-  "trades": [
-    { "structure": "<concrete: e.g. 'long TLT 91/94 call spread 30DTE'>", "sizingKelly": "n/a", "rr": "<R:R>", "invalidation": "<level>", "maxLoss": "<max loss of the structure in $ per 1 contract or 1 spread>", "thesis": "<1 sentence>" }
-  ],
-  "counterarguments": ["<strongest counterargument 1>", "<2>", "<3>"],
-  "evidence": {
-    "news": ["<top 3 news drivers, one line each>"],
-    "positioning": ["<2-3 chips: e.g. 'IV>RV by 4 vol pts = priced for shock', 'dealer long gamma below 745'>"],
-    "crossAsset": ["<2-3 chips: e.g. 'TLT +0.8% confirms duration bid', 'gold +1.4% w1 risk-off bid'>"],
-    "analogs": ["<1-2 references: e.g. 'Iran-Israel 10/2024: SPY -0.9% 1d, +0.2% 5d — mean reversion'>"]
-  }
+  "summary": "<2-3 sentences: what the news and the tape say right now, and the main tension between them>",
+  "drivers": ["<the 2-4 news items doing the most work, one line each>"],
+  "tapeCheck": ["<2-3 lines: where the cross-asset tape agrees or disagrees with the news, with the provided numbers>"],
+  "positioning": ["<2-3 lines from the provided positioning numbers only>"],
+  "levelsToWatch": [{ "level": "<a level that appears in the provided levels, with its name>", "why": "<what it marks, from the inputs>" }],
+  "whatWouldChange": ["<observable developments that would change this read>"],
+  "counterpoints": ["<the strongest opposing reading of the same inputs>"],
+  "dataGaps": ["<inputs that were missing, stale or partial, from the warnings>"]
 }
 
 RULES:
-- Probabilities across bull+base+bear must sum to 100.
-- Every scenario MUST include a specific invalidation level (“if SPY trades below 738.50 by 11am ET”).
-- R:R ≥ 2:1 for any trade you propose; otherwise return an empty trades array.
-- If no edge exists, set verdict="MIXED", confidence ≤ 30, return empty trades array, write “No edge — pass” in oneLiner.
-- Do NOT size positions or use Kelly language: no fitted win probability exists for these ideas. Always write "n/a" in sizingKelly.
-- counterarguments must contain the STRONGEST opposing view, not throwaway hedges.
-- If the fusion context has data warnings (missing panels, stale feed), reflect that in confidence — do NOT pretend you have complete information.
-- NEVER hallucinate prices or specific moves not anchored in the provided levels/tape.
+- Do not state probabilities, percentages of likelihood, confidence scores, odds or expected values.
+- Do not propose trades, structures, position sizes, entries, exits or price targets; do not say buy, sell, long or short as advice.
+- Use only levels and numbers that appear in the inputs; never invent prices or moves.
+- Analog returns are history, not base rates for today: describe them as what happened then.
+- List every missing, stale or partial input in dataGaps; do not write around a gap.
 - JSON ONLY. No \`\`\`json fences. No commentary.`;
 
   app.post("/api/alpha-brief", internalRoute("/api/alpha-brief", async (req, res) => {
@@ -2464,13 +2496,13 @@ RULES:
 NEWS FEED (${items.length} items, ranked by deterministic impact):
 ${itemLines || "(empty)"}
 
-DETERMINISTIC BASELINE BRIEF:
-${deterministic}
+DETERMINISTIC BASELINE BRIEF (rules engine; trade section removed):
+${briefForPrompt(deterministic)}
 
 ${fusionBlock}
 
 TASK
-Fuse all of the above into the JSON schema specified in the system prompt. Use the analog returns as base rates for scenario probabilities. Use the cross-asset tape to confirm or contradict the news lean. Use positioning to detect crowded vs uncrowded edge. Return JSON ONLY — no markdown, no preamble.`;
+Describe the above in the JSON schema specified in the system prompt: what the news says, where the tape and positioning agree or conflict, the levels from the inputs worth watching, and what is missing. No probabilities, targets or trades. Return JSON ONLY: no markdown, no preamble.`;
 
       // Strip ```json fences if a model adds them, then attempt parse.
       const tryParseJson = (raw: string): any | null => {
@@ -2565,37 +2597,32 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       const [claudeResult, gptResult, sonarResult] = await Promise.allSettled([claudePromise, gptPromise, sonarPromise]);
 
-      // Pick the first provider that returned a parseable JSON object.
+      // Pick the first provider whose answer yields a USABLE descriptive brief (sanitizeBrief non-null),
+      // not merely parseable JSON: provider and mode then always describe the text on the card.
       // Priority: Claude (best reasoning + web search) → Sonar (built-in grounding) → GPT.
-      let structured: any = null;
+      // None usable: the rules-based brief, labelled deterministic with provider "none".
+      const picks: Array<{ provider: "claude" | "sonar" | "gpt"; r: PromiseSettledResult<any>; mode: (v: any) => "with_search" | "knowledge_only" }> = [
+        { provider: "claude", r: claudeResult, mode: (v) => v.mode },
+        { provider: "sonar", r: sonarResult, mode: () => "with_search" }, // Sonar is grounded by default
+        { provider: "gpt", r: gptResult, mode: () => "knowledge_only" },
+      ];
       let provider: "claude" | "gpt" | "sonar" | "none" = "none";
-      let rawText: string = deterministic;
       let mode: "with_search" | "knowledge_only" | "deterministic" = "deterministic";
-      if (claudeResult.status === "fulfilled" && claudeResult.value.structured) {
-        structured = claudeResult.value.structured;
-        provider = "claude";
-        rawText = claudeResult.value.text;
-        mode = claudeResult.value.mode;
-      } else if (sonarResult.status === "fulfilled" && sonarResult.value.structured) {
-        structured = sonarResult.value.structured;
-        provider = "sonar";
-        rawText = sonarResult.value.text;
-        mode = "with_search"; // Sonar is grounded by default
-      } else if (gptResult.status === "fulfilled" && gptResult.value.structured) {
-        structured = gptResult.value.structured;
-        provider = "gpt";
-        rawText = gptResult.value.text;
-        mode = "knowledge_only";
+      let descriptive: ReturnType<typeof sanitizeBrief> = null;
+      for (const p of picks) {
+        if (p.r.status !== "fulfilled") continue;
+        const d = sanitizeBrief(p.r.value.structured);
+        if (!d) continue;
+        descriptive = d; provider = p.provider; mode = p.mode(p.r.value);
+        break;
       }
-
       res.json({
-        // Legacy fields — kept for back-compat with anything still parsing the old shape
-        brief: rawText,
+        brief: descriptive ? renderBriefMarkdown(descriptive) : deterministic,
         mode,
         deterministic,
         // NEW fields — the upgraded fusion engine output
         provider,
-        structured,                      // null when no LLM returned parseable JSON
+        structured: descriptive,         // descriptive fields only (shared/alphaBrief.ts); null when no LLM returned usable JSON
         fusion: fusionCtx,               // raw fusion context (for the email composer + UI)
         llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey, sonar: hasPerplexityKey },
         // Diagnostics
@@ -4990,7 +5017,19 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const horizonMinutes = Math.max(5, Math.min(120, Number(req.query.horizonMinutes) || 20));
       // In-process /api/models (internalApi.ts). Body read regardless of
       // status, as before; a missing daily horizon answers 503 below.
-      const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
+      // peek=1 (tab headlines): read the current models build, never start one.
+      const peek = String(req.query.peek ?? "") === "1";
+      // A peek reads the raw cached build: predictTransition uses only build
+      // fields (dfi, gamma zone, slope, term DoD, spot, pivot, EM, vanna,
+      // charm zero), none of /api/models' post-processing, so no Schwab read.
+      let data: any;
+      if (peek) {
+        const p = peekModelsForKey(String(symbol).toUpperCase() === "SPY" ? "SPY" : "^GSPC", true);
+        if (!p.data) return res.status(503).json({ dataState: "unavailable", reason: p.reason, error: "not_built" });
+        data = p.data;
+      } else {
+        data = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
+      }
       const daily = data?.horizons?.daily;
       if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "no_daily_horizon" });
 

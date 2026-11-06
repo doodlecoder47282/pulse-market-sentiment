@@ -3,6 +3,7 @@
 // overlay + intraday granularity + P/C flow strip.
 // Engines: "svg" (our custom), "lightweight" (TV open-source), "tv" (full TV widget).
 
+import { levelsMatchChart } from "@shared/chartLevels";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -78,7 +79,10 @@ type GammaResponse = {
   supported: boolean;
   spot?: number;
   levels: (GammaLevels & { totalGex: number; callWallGex: number; putWallGex: number }) | null;
-  asOf?: number;
+  /** The chain's data time in epoch seconds; null when unknown (the banner shows no time). */
+  asOf?: number | null;
+  /** Why levels are not supplied for this symbol (e.g. the S&P 500 index). */
+  reason?: string | null;
 };
 
 export default function ChartPanel() {
@@ -163,7 +167,9 @@ export default function ChartPanel() {
 
   const ohlc = ohlcQuery.data;
   const gamma = gammaQuery.data;
-  const gammaSupported = gamma?.supported && gamma.levels;
+  // Draw levels only when they were computed for this chart's own underlying
+  // (shared/chartLevels.ts): never SPY strikes on S&P 500 index candles.
+  const gammaSupported = gamma?.supported && gamma.levels && levelsMatchChart(gamma.symbol, activeChart);
 
   // B: Auto-flip to Flow view when this ticker has no gamma walls but
   // does have flagged unusual contracts — and the user hasn't manually
@@ -398,7 +404,10 @@ export default function ChartPanel() {
           {viewMode === "price" && showGamma && gammaQuery.isError && (
             <UnavailablePanel compact title={`Gamma walls (${activeChart})`} error={gammaQuery.error} testId="gamma-banner-unavailable" />
           )}
-          {viewMode === "price" && showGamma && !gammaQuery.isError && (
+          {/* Wait for this symbol's levels reply: while it is in flight there is no
+              answer yet, so nothing is said (the CI acceptance test caught a
+              "no levels were returned" note flashing before the reply). */}
+          {viewMode === "price" && showGamma && !gammaQuery.isError && gamma != null && (
             <GammaContextBanner
               spot={
                 engine === "tv"
@@ -408,6 +417,7 @@ export default function ChartPanel() {
               levels={gamma?.levels ?? null}
               symbol={activeChart}
               supported={!!gammaSupported}
+              unsupportedReason={gamma?.reason ?? (gamma?.supported && gamma.levels && !gammaSupported ? `levels were computed for ${gamma.symbol}, not ${activeChart}` : null)}
               asOf={gamma?.asOf}
               timeframe={tf}
               engine={engine}
