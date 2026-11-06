@@ -79,7 +79,8 @@ type GammaResponse = {
   supported: boolean;
   spot?: number;
   levels: (GammaLevels & { totalGex: number; callWallGex: number; putWallGex: number }) | null;
-  asOf?: number;
+  /** The chain's data time in epoch seconds; null when unknown (the banner shows no time). */
+  asOf?: number | null;
   /** Why levels are not supplied for this symbol (e.g. the S&P 500 index). */
   reason?: string | null;
 };

@@ -1391,6 +1391,13 @@ First gated run of the method-page check: FAIL, and correctly so as a test defec
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
 
+2026-11-06: chart null guards (feat/chart-null-guards). /api/gamma-levels per-ticker branch sent asOf as an ISO string while the SPY branch sent epoch seconds; GammaContextBanner multiplied by 1000 -> "updated Invalid Date" on ticker charts. Server now sends seconds on both branches; the banner reads seconds, ms or ISO (shared/asOfTime.ts) and hides an unreadable stamp. A missing call or put wall (null) crashed LightweightCandlestick (.toFixed on null) and drew NaN lines in CandlestickChart; both now skip the missing wall. Tests: tests/quant/chart-null-guards.test.ts.
+Review of feat/chart-null-guards: the CI type gate failure (banner walls typed non-null) fixed in cae94a6.
+MUST-FIX taken: the per-ticker /api/gamma-levels branch sent the response time as asOf, and the banner
+newly showed it as "updated HH:MM:SS" while the positioning snapshot is cached up to 5 min (a made-up
+fresh time). The snapshot now carries the chain's own data time (chainAsOfMs: Schwab's underlying quote
+time, else receive time) and the route sends that, or null so the banner shows no time; the banner says
+"chain as of".
 2026-11-06: crypto sizing basis and no default cost (feat/crypto-cost-unknown). Live self-test 2026-11-05 failed "position sizing" and "round-trip cost" on 1 row. Cause: the GeckoTerminal scanner refreshes a candidate's liquidityUsd (cryptoEngine.ts ~469) without re-sizing, so the card's size/cost and its liquidity came from two reads. The risk block now records sizedOnLiquidityUsd and the verifier checks against it. A cost that cannot be computed is null, not the old 15% default (risk.estSlippagePct number|null; not displayed in the client today). Not changed: the scanner overwriting DexScreener liquidity with GeckoTerminal reserve (named, separate item).
 Review of feat/crypto-cost-unknown: 1 MUST-FIX taken. Checking size and cost against the recorded basis
 alone made the check a formula self-test, and the card could still show liq $25k beside a size computed

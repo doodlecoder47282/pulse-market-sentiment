@@ -7,13 +7,15 @@
 // Critical for the TradingView engine, where our custom gamma overlay is
 // stripped away. This component preserves the GEX context regardless of engine.
 
+import { asOfToMs } from "@shared/asOfTime";
 import { Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 export type GammaLevels = {
-  callWall: number;
+  /** null when the chain had no positive (negative) strike: the pill is not shown. */
+  callWall: number | null;
   callWallGex?: number;
-  putWall: number;
+  putWall: number | null;
   putWallGex?: number;
   zeroGamma: number | null;
   maxPain?: number | null;
@@ -28,7 +30,8 @@ type Props = {
   supported: boolean;
   /** Why no levels are drawn, from the server or the chart's own underlying check. */
   unsupportedReason?: string | null;
-  asOf?: number;
+  /** Epoch seconds (older payloads: ISO string or ms); unreadable stamps are not shown. */
+  asOf?: number | string | null;
   timeframe: string;
   engine: "svg" | "lightweight" | "tv";
 };
@@ -158,8 +161,8 @@ export default function GammaContextBanner({
         <span className="ml-auto font-mono text-[11px] text-muted-foreground">
           Spot{" "}
           <span className="text-foreground">{spot.toFixed(2)}</span>
-          {asOf && (
-            <> · updated {new Date(asOf * 1000).toLocaleTimeString()}</>
+          {asOfToMs(asOf) != null && (
+            <> · chain as of {new Date(asOfToMs(asOf)!).toLocaleTimeString()}</>
           )}
         </span>
       </div>

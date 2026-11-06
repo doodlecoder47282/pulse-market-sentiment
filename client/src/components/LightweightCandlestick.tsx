@@ -32,8 +32,8 @@ export type NewsMarker = {
 
 type Candle = { t: number; o: number; h: number; l: number; c: number; v: number | null };
 type GammaLevels = {
-  callWall: number;
-  putWall: number;
+  callWall: number | null;
+  putWall: number | null;
   zeroGamma: number | null;
   maxPain: number | null;
   regime: "positive" | "negative";
@@ -244,8 +244,9 @@ export default function LightweightCandlestick({
       });
       gammaLinesRef.current.push(line);
     };
-    add(gamma.callWall, "#f43f5e", `Call Wall ${gamma.callWall.toFixed(0)}`);
-    add(gamma.putWall, "#10b981", `Put Wall ${gamma.putWall.toFixed(0)}`);
+    // A wall can be missing (no positive/negative strike): skip it, never call .toFixed on null.
+    if (gamma.callWall != null && Number.isFinite(gamma.callWall)) add(gamma.callWall, "#f43f5e", `Call Wall ${gamma.callWall.toFixed(0)}`);
+    if (gamma.putWall != null && Number.isFinite(gamma.putWall)) add(gamma.putWall, "#10b981", `Put Wall ${gamma.putWall.toFixed(0)}`);
     if (gamma.zeroGamma != null) add(gamma.zeroGamma, "#f59e0b", `0γ ${gamma.zeroGamma.toFixed(0)}`);
     if (gamma.maxPain != null) add(gamma.maxPain, "#8b5cf6", `Max Pain ${gamma.maxPain.toFixed(0)}`, 1);
   }, [gamma, showGamma]);
