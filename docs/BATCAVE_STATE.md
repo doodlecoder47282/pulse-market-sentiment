@@ -1578,3 +1578,4 @@ unreadable rows. SHOULD-FIX taken: more-than-12 features say how many are not sh
 says "since degradation began (resets after 5 quiet minutes)" and "not served fresh" (403/429/5xx were
 fetched and failed); the build line shows reading / did not answer apart from "not reported"; a symbol
 ending a 24-character list is marked partial.
+2026-11-06: chain-audit DEX extremes (fix/dex-extrema). Recording frame 43 showed "Max positive DEX 2,000 $0" and "Max negative DEX 2,000 $0": computeDEX picked the first strike when every strike netted to zero (0 > -Infinity). A strike is now reported only when its net DEX is actually positive (negative); otherwise null, which the panel already hides. Tests: tests/quant/dex-extrema.test.ts.
