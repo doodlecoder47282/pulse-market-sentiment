@@ -9,7 +9,7 @@
  * orders. See docs/CRYPTO_DESK.md for the charter and the method.
  */
 
-export const CRYPTO_RULES_VERSION = "2026.11.03-1";
+export const CRYPTO_RULES_VERSION = "2026.11.06-1";
 
 export const CRYPTO_RULES = {
   universe: {
@@ -90,6 +90,11 @@ export const CRYPTO_RULES = {
   security: {
     /** Re-read authorities while one is active, and retry an unread top-10 share, every this many minutes. */
     retryMinutes: 30,
+  },
+  freshness: {
+    /** An ENTER whose pair data was last refreshed longer ago than this is served as WATCH at read time
+     *  (stale critical data blocks new exposure; the momentum tick re-scores each name within ~4 min). */
+    enterMaxAgeMinutes: 10,
   },
   deskRisk: {
     /** BTC this far under its Kraken 24 h VWAP turns the desk off. */
@@ -174,6 +179,7 @@ export function describeCryptoRules(r: CryptoRules = CRYPTO_RULES): CryptoRuleIt
     { path: "enter.requireSellsObserved", value: "yes", text: "at least one sell observed in the last hour; missing sell counts block (honeypot check)" },
     { path: "enter.requireTop10Read", value: "yes", text: "top-10 holder share read on-chain; unread blocks (retried every 30 min)" },
     { path: "enter.requireDeskRiskOn", value: "yes", text: "desk risk on; off or unknown blocks" },
+    { path: "freshness.enterMaxAgeMinutes", value: `${r.freshness.enterMaxAgeMinutes} min`, text: "an ENTER with pair data older than this is held at WATCH when read (no new exposure on stale data)" },
     { path: "deskRisk.offBelowPct", value: `${r.deskRisk.offBelowPct}%`, text: "BTC vs its Kraken 24 h VWAP; stale or unread majors are unknown (fails closed)" },
     { path: "watch.minScore", value: String(r.watch.minScore), text: "score floor to list a forming setup" },
     { path: "mcapCeiling.watchMinScore", value: String(r.mcapCeiling.watchMinScore), text: "above the entry ceiling: retrace WATCH from this score, else PASS" },

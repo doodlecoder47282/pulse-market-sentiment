@@ -73,7 +73,13 @@ last 3 refreshes), security read, Jupiter agree or watch, sells observed in
 the last hour, top-10 share read, desk risk on. Only then ENTER. Every
 rejection carries a verdict code the card shows. The served feed re-applies
 the desk-risk gate at read time, so a desk that went off between refreshes
-never serves a stale ENTER.
+never serves a stale ENTER. It also holds at WATCH (code stale_data) any
+ENTER whose pair data was last refreshed more than
+`freshness.enterMaxAgeMinutes` (10) ago: a pair DexScreener stopped
+returning used to keep its last ENTER until the 48 h eviction. Normal
+refresh reaches every tracked name in about 4 minutes (220 names, 90 per
+75 s tick), so the limit is about two and a half missed cycles. Version
+2026.11.06-1; recorded signals and grades are unchanged (read-time only).
 
 Funding and open interest are a recorded, descriptive regime readout, not a
 rule. Funding is the exchange's decimal rate per funding interval (positive:

@@ -1469,3 +1469,10 @@ renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is 
 centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
+
+2026-11-06: Crypto stale ENTER held (feat/crypto-stale-enter, rule book 2026.11.06-1). A candidate kept its
+last verdict until the 48 h eviction even when DexScreener stopped returning its pair, so the feed could
+serve an ENTER computed on hours-old data. The served feed now holds an ENTER whose pair data is older than
+`freshness.enterMaxAgeMinutes` (10 min, about 2.5 missed refresh cycles) at WATCH with verdict code
+`stale_data` and the age in its reasons. Read-time only: recorded signals and grades are unchanged. New
+version pinned; reason in docs/CRYPTO_DESK.md section 3. Needs the standing crypto review before merge.

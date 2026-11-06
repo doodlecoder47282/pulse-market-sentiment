@@ -20,7 +20,8 @@ export type VerdictCode =
   | "sells_missing"
   | "top10_unread"
   | "risk_off"
-  | "risk_unknown";
+  | "risk_unknown"
+  | "stale_data";
 
 export const VERDICT_CODE_TEXT: Record<VerdictCode, string> = {
   enter: "every gate met",
@@ -36,6 +37,7 @@ export const VERDICT_CODE_TEXT: Record<VerdictCode, string> = {
   top10_unread: "top-10 holder share not read",
   risk_off: "desk risk off: BTC 5% or more under its 24 h VWAP",
   risk_unknown: "desk risk unknown: majors not readable",
+  stale_data: "pair data not refreshed recently: held at WATCH",
 };
 
 export interface DeskRisk {

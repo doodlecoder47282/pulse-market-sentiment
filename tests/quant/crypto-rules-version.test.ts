@@ -22,6 +22,10 @@ const PINNED: Record<string, string> = {
   // 2026.11.03-1: owner-approved exit plan (exitPlan: trims 50% at 2x, 25% at 4x, rest at the target; stop to entry
   // after the first trim; 1% bankroll risk sizing). No ENTER/WATCH/PASS threshold changed.
   "2026.11.03-1": "06c63f87224619a93a1b8d3769b62f9e82e234d69c8c1e0fa45a32e409e669f7",
+  // 2026.11.06-1: freshness.enterMaxAgeMinutes = 10. A pair whose data stopped refreshing kept its last ENTER
+  // until the 48 h eviction; the served feed now holds such an ENTER at WATCH (stale_data). No score or
+  // ENTER/WATCH/PASS threshold changed; recorded signals are unaffected (the hold is read-time only).
+  "2026.11.06-1": "5aaf5185dfc1258433f954604eb4c593ab698c4633be47660f0cdaccea04bf63",
 };
 
 test("crypto rule book content is pinned to its version", () => {
@@ -71,4 +75,9 @@ test("the engine, stats and verdict read the book instead of carrying their own 
   assert.doesNotMatch(src("shared/cryptoRules.ts"), /minScoreWithKill/);
   // Served feed re-applies the desk gate at read time.
   assert.match(eng, /c\.verdict === "ENTER" && risk\.state !== "on"/);
+  // ...and holds an ENTER on pair data older than the freshness limit (read from the book).
+  assert.match(eng, /maxAgeMs = CRYPTO_RULES\.freshness\.enterMaxAgeMinutes \* 60_000/);
+  assert.match(eng, /c\.verdict === "ENTER" && nowRead - \(c\.lastRefreshAt as number\) > maxAgeMs/);
+  assert.match(eng, /verdictCode: "stale_data"/);
+  assert.match(vd, /stale_data: "/);
 });

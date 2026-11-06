@@ -1377,11 +1377,17 @@ export function getCryptoFeed(): {
   // The verdict is re-scored on the momentum tick (up to ~4 min per name); a
   // desk that went off or unknown since then must not serve a stale ENTER.
   const risk = currentDeskRisk();
+  const nowRead = Date.now();
+  const maxAgeMs = CRYPTO_RULES.freshness.enterMaxAgeMinutes * 60_000;
   const list = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null)
     .map((c) => c.verdict === "ENTER" && risk.state !== "on"
       ? { ...c, verdict: "WATCH" as const, verdictCode: (risk.state === "off" ? "risk_off" : "risk_unknown") as Candidate["verdictCode"], verdictReasons: [...c.verdictReasons, `held at WATCH at read time: desk risk ${risk.state} (${risk.reason})`] }
-      : c)
+      // A pair whose data stopped refreshing keeps its last verdict until eviction (48 h): an ENTER on
+      // data older than the freshness limit is held at WATCH when read (rule book: freshness).
+      : c.verdict === "ENTER" && nowRead - (c.lastRefreshAt as number) > maxAgeMs
+        ? { ...c, verdict: "WATCH" as const, verdictCode: "stale_data" as Candidate["verdictCode"], verdictReasons: [...c.verdictReasons, `held at WATCH at read time: pair data last refreshed ${Math.round((nowRead - (c.lastRefreshAt as number)) / 60_000)} min ago (limit ${CRYPTO_RULES.freshness.enterMaxAgeMinutes} min)`] }
+        : c)
     .sort((a, b) => {
       const rank = (v: Candidate["verdict"]) => (v === "ENTER" ? 0 : v === "WATCH" ? 1 : 2);
       return rank(a.verdict) - rank(b.verdict) || (b.score ?? 0) - (a.score ?? 0);
