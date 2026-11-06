@@ -1390,3 +1390,9 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: Crypto target label (feat/crypto-target-label). The record line and How-to said "hit the
+5-minute target" and the outcome chip showed raw `HIT_5M`; the grade means the sampled peak reached the
+$5M market-cap target (CRYPTO_RULES.universe.targetMcapUsd), not a time. Copy now reads "reached the $5M
+market-cap target", the chip "HIT $5M CAP", and the How-to reads the horizon, target and sample gate from
+the rule book instead of carrying its own numbers. Display only; no rule or grade changed.

@@ -11,6 +11,7 @@
 
 import CoinLinks from "./CoinLinks";
 import CryptoHowTo from "./CryptoHowTo";
+import { CRYPTO_RULES } from "@shared/cryptoRules";
 import BundleRow from "./BundleRow";
 import CoinDesk from "./CoinDesk";
 import type { CardBundle } from "@shared/cryptoBundle";
@@ -504,7 +505,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
       )}
       <div className="mt-3 border-t border-border/40 pt-2 text-[11px] text-muted-foreground" data-testid="crypto-brief-record">
         {rec
-          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} hit the 5-minute target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
+          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} reached the $${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M market-cap target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
           : "Record so far: loading. Heuristic scores, not calibrated odds. The desk never places orders."}
       </div>
     </div>
@@ -1015,7 +1016,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
               s.outcome === "HIT_5M" ? "text-lime-300" : s.outcome === "DOUBLED" ? "text-emerald-300"
               : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground"
               : s.outcome === "NO_DATA" ? "text-amber-300/80" : "text-sky-300"
-            }`}>{s.outcome}</span>
+            }`} title={s.outcome === "HIT_5M" ? `reached the $${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M market-cap target (not a time)` : undefined}>{s.outcome === "HIT_5M" ? `HIT $${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M CAP` : s.outcome}</span>
             <span className="hidden text-[11px] text-muted-foreground sm:block">
               {new Date(Number(s.detected_at)).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
             </span>

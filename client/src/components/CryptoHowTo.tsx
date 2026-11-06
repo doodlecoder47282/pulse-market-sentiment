@@ -3,6 +3,9 @@
 // Describes only; no predictions, no advice.
 import { useState } from "react";
 import { ChevronDown, ChevronRight, BookOpen } from "lucide-react";
+import { CRYPTO_RULES } from "@shared/cryptoRules";
+
+const TARGET = `$${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M`;
 
 const STEPS: Array<[string, string]> = [
   ["What this tab does", "It watches brand-new Solana coins and checks each one against a fixed list of safety and buying-activity rules, about every minute. It only reads and grades. It never buys or sells."],
@@ -10,7 +13,7 @@ const STEPS: Array<[string, string]> = [
   ["Look at a coin", "Tap a coin to open its details: why it got its label, safety checks, and who is buying. Under the details: fomo opens the coin in the fomo app or fomo.family; pump.fun opens its pump.fun page; Address copies the contract address."],
   ["Get the coin in fomo", "Tap fomo. If the page opens in the browser instead of the app, tap Address, open the fomo app, and paste the address into Search. Searching by contract address always finds the token; searching by name may not."],
   ["Check any coin yourself", "Paste a contract address into Contract autopsy. You get every desk rule with the value it read, and anything it could not read is marked as not read, never as a pass."],
-  ["The record", "Every first Enter is graded after 5 minutes: hit the target, doubled, rugged or dead. Until 50 are graded the desk is in tracking mode, so the labels have no proven track record yet."],
+  ["The record", `Every first Enter is graded within ${CRYPTO_RULES.grading.horizonHours} hours: it reached the ${TARGET} market-cap target, doubled, rugged or died (closed early when it reaches the target or rugs). Until ${CRYPTO_RULES.grading.minSample} are graded the desk is in tracking mode, so the labels have no proven track record yet.`],
 ];
 
 const WORDS: Array<[string, string]> = [
