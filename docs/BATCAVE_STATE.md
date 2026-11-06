@@ -1476,3 +1476,14 @@ serve an ENTER computed on hours-old data. The served feed now holds an ENTER wh
 `freshness.enterMaxAgeMinutes` (10 min, about 2.5 missed refresh cycles) at WATCH with verdict code
 `stale_data` and the age in its reasons. Read-time only: recorded signals and grades are unchanged. New
 version pinned; reason in docs/CRYPTO_DESK.md section 3. Needs the standing crypto review before merge.
+Crypto review of feat/crypto-stale-enter: 4 MUST-FIX taken. (1) crypto-verdict test pinned 13 codes; now 14
+with stale_data. (2) The security and social ticks re-score without a pair refresh and call persistSignal,
+so an ENTER on stale data could still be RECORDED (signals, first-ENTER counts, expectancy, exit-plan book):
+the scorer now applies the freshness gate before desk risk. (3) The autopsy's "tracked" line read the raw
+verdict ("currently ENTER" for a coin served as WATCH): it reads the served verdict. (4) The AI prompt said
+"Data as of <now>" and cut reasons at 4, dropping the hold: it now dates the pair read with its age and
+flags data over the limit; hold reasons are prepended. SHOULD-FIX taken: refresh rotation orders on the
+last attempt (dead pairs no longer starve live ones: the review's simulation held 43% of healthy reads with
+80 dead pairs); stale before risk with both reasons first; one-decimal age so 10.0+ never reads as the
+limit; live verify fails an ENTER with pair data over the limit or no read time (CRYPTO_DESK.md section 6);
+pure servedVerdict with behaviour tests. Not done: evicting pairs after N missed answers.

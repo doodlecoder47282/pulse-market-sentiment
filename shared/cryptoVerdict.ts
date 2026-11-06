@@ -76,3 +76,50 @@ export function deskRiskFromMajors(snap: MajorsLike | null, now: number): DeskRi
   if (pct <= DESK_RISK_OFF_PCT) return { state: "off", reason: `BTC ${pct.toFixed(2)}% vs its Kraken 24 h VWAP (${venue})`, asOf: now, btcVsVwap24hPct: pct };
   return { state: "on", reason: `BTC ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% vs its Kraken 24 h VWAP (${venue})`, asOf: now, btcVsVwap24hPct: pct };
 }
+
+// ---- Freshness and the served verdict (pure) -------------------------------
+// A verdict is computed when the pair is refreshed. A pair whose data stopped
+// refreshing (DexScreener no longer returns it, or its calls fail) would keep
+// its last ENTER until the 48 h eviction; an ENTER is only served, recorded or
+// reported while the pair data is younger than freshness.enterMaxAgeMinutes.
+
+export const ENTER_MAX_AGE_MS = CRYPTO_RULES.freshness.enterMaxAgeMinutes * 60_000;
+
+/** Is the pair data too old to stand behind an ENTER? Never refreshed counts as stale (fails closed). */
+export function pairDataStale(lastRefreshAt: number | null | undefined, nowMs: number): { stale: boolean; ageMs: number | null } {
+  if (lastRefreshAt == null || !Number.isFinite(lastRefreshAt)) return { stale: true, ageMs: null };
+  const ageMs = Math.max(0, nowMs - lastRefreshAt);
+  return { stale: ageMs > ENTER_MAX_AGE_MS, ageMs };
+}
+
+/** "pair data last refreshed 10.1 min ago (limit 10 min)". One decimal so a just-over age never reads as the limit. */
+export function staleDataReason(ageMs: number | null): string {
+  const lim = CRYPTO_RULES.freshness.enterMaxAgeMinutes;
+  return ageMs == null
+    ? `pair data not refreshed yet (limit ${lim} min)`
+    : `pair data last refreshed ${(Math.floor(ageMs / 6_000) / 10).toFixed(1)} min ago (limit ${lim} min)`;
+}
+
+export interface ServableCandidate {
+  verdict: "ENTER" | "WATCH" | "PASS";
+  verdictCode?: VerdictCode | null;
+  verdictReasons: string[];
+  lastRefreshAt: number | null;
+}
+
+/**
+ * The verdict as served now: an ENTER on stale pair data, or with the desk
+ * not on, is held at WATCH. Stale is checked first (the ENTER reasons
+ * describe data that is no longer current); every hold reason is put FIRST,
+ * so a list row showing the first reason shows why it is held.
+ */
+export function servedVerdict<C extends ServableCandidate>(c: C, risk: Pick<DeskRisk, "state" | "reason">, nowMs: number): C {
+  if (c.verdict !== "ENTER") return c;
+  const fr = pairDataStale(c.lastRefreshAt, nowMs);
+  const holds: string[] = [];
+  if (fr.stale) holds.push(`held at WATCH: ${staleDataReason(fr.ageMs)}; the reasons below describe that older read`);
+  if (risk.state !== "on") holds.push(`held at WATCH: desk risk ${risk.state} (${risk.reason})`);
+  if (!holds.length) return c;
+  const code: VerdictCode = fr.stale ? "stale_data" : risk.state === "off" ? "risk_off" : "risk_unknown";
+  return { ...c, verdict: "WATCH", verdictCode: code, verdictReasons: [...holds, ...c.verdictReasons] };
+}

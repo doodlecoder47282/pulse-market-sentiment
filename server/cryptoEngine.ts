@@ -64,7 +64,7 @@ import { bundleEvidence, BUNDLE_MAX_TX, BUNDLE_WINDOW_SLOTS, type BundleEvidence
 import { startPumpListener, pumpListenerCheck, pumpListenerStatus, launchBundle } from "./pumpListener";
 import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
-import { deskRiskFromMajors, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
+import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -99,6 +99,9 @@ export interface Candidate {
   chg24h: number | null;
   boosted: boolean;
   lastRefreshAt: number | null;
+  /** Last momentum tick that asked DexScreener for this pair (answered or not). The refresh
+   *  rotation orders on it, so a pair DexScreener stopped returning does not take a slot every tick. */
+  lastAttemptAt?: number | null;
 
   // Jupiter Price v3 cross-check of the DexScreener pool price
   jupPriceUsd: number | null;
@@ -551,10 +554,15 @@ async function momentumTick(): Promise<void> {
     } catch { /* boosts are enhancement, not critical path */ }
   }
 
-  // Refresh oldest-first in batches of 30 token addresses (1 DS call each).
+  // Refresh least-recently-ASKED first in batches of 30 token addresses (1 DS
+  // call each). Ordering on the last attempt, not the last answer, keeps a pair
+  // DexScreener no longer returns from holding a slot every tick and starving
+  // live pairs (its own data then ages past the ENTER freshness limit).
   const list = [...tracked.values()]
-    .sort((a, b) => (a.lastRefreshAt ?? 0) - (b.lastRefreshAt ?? 0));
+    .sort((a, b) => (a.lastAttemptAt ?? a.lastRefreshAt ?? 0) - (b.lastAttemptAt ?? b.lastRefreshAt ?? 0));
   const batch = list.slice(0, MOMENTUM_BATCH); // 3 calls/tick max — far under budget
+  const attemptAt = Date.now();
+  for (const c of batch) c.lastAttemptAt = attemptAt;
   const byToken = new Map<string, Candidate[]>();
   for (const c of batch) {
     if (!c.tokenAddress) continue;
@@ -1038,6 +1046,11 @@ function scoreCandidate(c: Candidate): void {
       // (owners unreadable, RPC cooldown, not yet checked) is not a pass.
       verdict = "WATCH"; code = "top10_unread";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: top-10 holder concentration unavailable${c.top10Method ? ` (${c.top10Method})` : " (not read yet)"}`);
+    } else if (pairDataStale(c.lastRefreshAt, Date.now()).stale) {
+      // Re-scored without a pair refresh (security / social ticks) on data
+      // older than the freshness limit: not an ENTER, and not recorded as one.
+      verdict = "WATCH"; code = "stale_data";
+      reasons.push(`score ${c.score}, flow sustained, security checked — held at WATCH: ${staleDataReason(pairDataStale(c.lastRefreshAt, Date.now()).ageMs)}`);
     } else if (currentDeskRisk().state !== "on") {
       const risk = currentDeskRisk();
       // RISK-OFF (persistent desk state from the majors read): the scanner keeps
@@ -1376,18 +1389,14 @@ export function getCryptoFeed(): {
 } {
   // The verdict is re-scored on the momentum tick (up to ~4 min per name); a
   // desk that went off or unknown since then must not serve a stale ENTER.
+  // A pair whose data stopped refreshing keeps its last verdict until eviction
+  // (48 h): an ENTER on data older than freshness.enterMaxAgeMinutes is held
+  // at WATCH too (shared/cryptoVerdict.ts servedVerdict, stale first).
   const risk = currentDeskRisk();
   const nowRead = Date.now();
-  const maxAgeMs = CRYPTO_RULES.freshness.enterMaxAgeMinutes * 60_000;
   const list = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null)
-    .map((c) => c.verdict === "ENTER" && risk.state !== "on"
-      ? { ...c, verdict: "WATCH" as const, verdictCode: (risk.state === "off" ? "risk_off" : "risk_unknown") as Candidate["verdictCode"], verdictReasons: [...c.verdictReasons, `held at WATCH at read time: desk risk ${risk.state} (${risk.reason})`] }
-      // A pair whose data stopped refreshing keeps its last verdict until eviction (48 h): an ENTER on
-      // data older than the freshness limit is held at WATCH when read (rule book: freshness).
-      : c.verdict === "ENTER" && nowRead - (c.lastRefreshAt as number) > maxAgeMs
-        ? { ...c, verdict: "WATCH" as const, verdictCode: "stale_data" as Candidate["verdictCode"], verdictReasons: [...c.verdictReasons, `held at WATCH at read time: pair data last refreshed ${Math.round((nowRead - (c.lastRefreshAt as number)) / 60_000)} min ago (limit ${CRYPTO_RULES.freshness.enterMaxAgeMinutes} min)`] }
-        : c)
+    .map((c) => servedVerdict(c, risk, nowRead))
     .sort((a, b) => {
       const rank = (v: Candidate["verdict"]) => (v === "ENTER" ? 0 : v === "WATCH" ? 1 : 2);
       return rank(a.verdict) - rank(b.verdict) || (b.score ?? 0) - (a.score ?? 0);
@@ -1859,7 +1868,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       gates, summary,
       desk: { verdict: c.verdict, verdictCode: c.verdictCode, verdictText: c.verdictCode ? VERDICT_CODE_TEXT[c.verdictCode] ?? null : null, score: c.score, hardKill: c.hardKill, reasons: c.verdictReasons, flags: c.rugFlags },
       parity: { agrees, detail: agrees ? null : `gate table says killed=${summary.killed}, desk says hardKill=${c.hardKill}` },
-      tracked: trackedHit ? { verdict: trackedHit.verdict, verdictCode: trackedHit.verdictCode, firstSeenAt: trackedHit.firstSeenAt } : null,
+      tracked: trackedHit ? (() => { const s = servedVerdict(trackedHit, currentDeskRisk(), Date.now()); return { verdict: s.verdict, verdictCode: s.verdictCode, firstSeenAt: trackedHit.firstSeenAt }; })() : null,
       stress: holderDumpStress({ top10Pct: c.top10Pct, top10Method: c.top10Method, fdv: c.fdv, marketCap: c.marketCap, liquidityUsd: c.liquidityUsd }),
       bundle,
       launch,

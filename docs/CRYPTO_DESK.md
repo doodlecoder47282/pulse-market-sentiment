@@ -78,8 +78,14 @@ ENTER whose pair data was last refreshed more than
 `freshness.enterMaxAgeMinutes` (10) ago: a pair DexScreener stopped
 returning used to keep its last ENTER until the 48 h eviction. Normal
 refresh reaches every tracked name in about 4 minutes (220 names, 90 per
-75 s tick), so the limit is about two and a half missed cycles. Version
-2026.11.06-1; recorded signals and grades are unchanged (read-time only).
+75 s tick), so the limit is about two and a half missed cycles. The
+refresh rotation orders on the last attempt, so a pair DexScreener stopped
+returning does not hold a slot every tick. The scorer applies the same
+limit (a re-score on the security or social tick without a pair refresh is
+WATCH stale_data and is not recorded as an ENTER), and the feed, the
+autopsy's "tracked" line and the AI prompt read one served verdict
+(shared/cryptoVerdict.ts servedVerdict: stale first, hold reasons first).
+Version 2026.11.06-1.
 
 Funding and open interest are a recorded, descriptive regime readout, not a
 rule. Funding is the exchange's decimal rate per funding interval (positive:
@@ -138,7 +144,8 @@ Settings -> Verify live data runs `/api/verify/live`. The crypto section
   arithmetic checks below read the states that matter);
 - gates: no ENTER row with an active authority, an unread top-10, a missing
   Jupiter check, a desk that is off or unknown, liquidity under the floor,
-  a cap above the ceiling, or flow under the floors;
+  a cap above the ceiling, flow under the floors, or pair data older than
+  the freshness limit (or with no read time);
 - sizing and round-trip cost on every row equal the book's arithmetic;
 - desk risk on the signals payload equals the arithmetic on the majors
   payload of the same run;

@@ -73,11 +73,11 @@ test("the engine, stats and verdict read the book instead of carrying their own 
   // Hard kill is PASS, never WATCH; the 55 floor is the retrace watch above the cap ceiling.
   assert.match(eng, /CRYPTO_RULES\.mcapCeiling\.watchMinScore \? "WATCH" : "PASS"/);
   assert.doesNotMatch(src("shared/cryptoRules.ts"), /minScoreWithKill/);
-  // Served feed re-applies the desk gate at read time.
-  assert.match(eng, /c\.verdict === "ENTER" && risk\.state !== "on"/);
-  // ...and holds an ENTER on pair data older than the freshness limit (read from the book).
-  assert.match(eng, /maxAgeMs = CRYPTO_RULES\.freshness\.enterMaxAgeMinutes \* 60_000/);
-  assert.match(eng, /c\.verdict === "ENTER" && nowRead - \(c\.lastRefreshAt as number\) > maxAgeMs/);
-  assert.match(eng, /verdictCode: "stale_data"/);
+  // Served feed re-applies the desk gate and the freshness gate at read time
+  // (shared/cryptoVerdict.ts servedVerdict); the scorer applies freshness too,
+  // so a re-score without a pair refresh never records an ENTER.
+  assert.match(eng, /\.map\(\(c\) => servedVerdict\(c, risk, nowRead\)\)/);
+  assert.match(eng, /pairDataStale\(c\.lastRefreshAt, Date\.now\(\)\)\.stale\) \{\s*\/\/[^\n]*\n[^\n]*\n\s*verdict = "WATCH"; code = "stale_data";/);
+  assert.match(vd, /ENTER_MAX_AGE_MS = CRYPTO_RULES\.freshness\.enterMaxAgeMinutes \* 60_000/);
   assert.match(vd, /stale_data: "/);
 });

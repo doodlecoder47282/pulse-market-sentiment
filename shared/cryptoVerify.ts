@@ -44,11 +44,13 @@ export interface CandidateLike {
   sells1h?: number | null;
   chg1h?: number | null;
   priceUsd?: number | null;
+  /** Last DexScreener read of the pair (ms); an ENTER on older data than the freshness limit is a false state. */
+  lastRefreshAt?: number | null;
   risk?: { maxPositionUsd?: number | null; estSlippagePct?: number | null } | null;
 }
 
 /** Every ENTER row clears every gate; sizing and cost on the card equal the book's arithmetic. */
-export function candidateChecks(cands: CandidateLike[] | null, desk: { state: string } | null, rules: CryptoRules = CRYPTO_RULES): Check[] {
+export function candidateChecks(cands: CandidateLike[] | null, desk: { state: string } | null, rules: CryptoRules = CRYPTO_RULES, nowMs: number = Date.now()): Check[] {
   if (!cands) return [mk("crypto.gates", "ENTER gates", "unavailable", "feed unavailable")];
   const enters = cands.filter((c) => c.verdict === "ENTER");
   const out: Check[] = [];
@@ -78,6 +80,9 @@ export function candidateChecks(cands: CandidateLike[] | null, desk: { state: st
       if (!fin(c.volAccel) || c.volAccel < rules.enter.minVolAccel) why.push("vol accel under floor");
       if (!fin(c.netBuyRatio5m) || c.netBuyRatio5m < rules.enter.minNetBuyRatio5m) why.push("net buy ratio under floor");
       if (rules.enter.requireDeskRiskOn && desk?.state !== "on") why.push(`desk risk ${desk?.state ?? "unknown"}`);
+      // Fail closed: an unread pair-read time is as blocking as an old one.
+      if (!fin(c.lastRefreshAt)) why.push("pair read time missing");
+      else if (nowMs - c.lastRefreshAt > rules.freshness.enterMaxAgeMinutes * 60_000) why.push(`pair data ${Math.floor((nowMs - c.lastRefreshAt) / 6_000) / 10} min old, over the ${rules.freshness.enterMaxAgeMinutes}-min freshness limit`);
       if (why.length) broken.push(`${c.symbol ?? "?"}: ${why.join(", ")}`);
     }
     out.push(mk("crypto.gates", "ENTER gates", broken.length ? "fail" : "pass", `${enters.length - broken.length}/${enters.length} ENTER rows clear every gate`, `rule book v${CRYPTO_RULES_VERSION}`, broken.length ? broken.slice(0, 5).join(" | ") : null));

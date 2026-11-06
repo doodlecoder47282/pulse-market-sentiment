@@ -15,7 +15,7 @@ const enter = (over: Record<string, unknown> = {}) => {
   return {
     symbol: "TEST", verdict: "ENTER", liquidityUsd: liq, marketCap: 400_000, mintAuthorityActive: false, freezeAuthorityActive: false,
     securityCheckedAt: 1, buys1h: 40, sells1h: 12, chg1h: 8, priceUsd: 0.001,
-    top10Pct: 22, jupState: "agree", score: 80, volAccel: 2.1, netBuyRatio5m: 0.66,
+    top10Pct: 22, jupState: "agree", score: 80, volAccel: 2.1, netBuyRatio5m: 0.66, lastRefreshAt: Date.now() - 60_000,
     risk: { maxPositionUsd: size, estSlippagePct: tradeCost({ liquidityUsd: liq, sizeUsd: size }).roundTripPct },
     ...over,
   };
@@ -65,4 +65,13 @@ test("expectancy bookkeeping: shares, gate and label agree with the rule book", 
   const bad = expectancyChecks({ graded: s(60, 40, "PASSES PREDEFINED TESTS"), hold: s(10, 0, "MIXED RESULTS"), peak: s(60, 5, "MIXED RESULTS", { noDataShare: 0.5 }) });
   assert.deepEqual(byId(bad), { "crypto.expectancy.graded": "fail", "crypto.expectancy.hold": "fail", "crypto.expectancy.peak": "fail" });
   assert.equal(expectancyChecks(null)[0].state, "unavailable");
+});
+
+test("ENTER gates: an ENTER on pair data older than the freshness limit, or with no read time, fails", () => {
+  const now = Date.now();
+  const stale = candidateChecks([enter({ lastRefreshAt: now - 11 * 60_000 })], { state: "on" }, CRYPTO_RULES, now)[0];
+  assert.equal(stale.state, "fail");
+  assert.match(JSON.stringify(stale), /11 min old, over the 10-min freshness limit/);
+  assert.equal(candidateChecks([enter({ lastRefreshAt: null })], { state: "on" }, CRYPTO_RULES, now)[0].state, "fail");
+  assert.equal(candidateChecks([enter({ lastRefreshAt: now - 9 * 60_000 })], { state: "on" }, CRYPTO_RULES, now)[0].state, "pass");
 });

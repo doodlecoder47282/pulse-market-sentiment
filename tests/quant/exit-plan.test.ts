@@ -100,6 +100,24 @@ test("prompt carries the data, the plan and unread states, never a fake zero", (
   assert.match(txt, /top-10 holders unread/);
   assert.match(txt, /Size: \$142/);
   assert.doesNotMatch(txt, /top-10 holders 0/);
+  assert.match(txt, /Data as of: pair read time unknown/);
+});
+
+test("prompt dates the market data from the pair read and flags data older than the freshness limit", () => {
+  const base = {
+    symbol: "TST", name: "Test", chain: "solana", tokenAddress: "Mint111", pairAddress: "Pair111", dexId: "pumpswap",
+    priceUsd: 0.0001, marketCap: 100_000, liquidityUsd: 20_000, vol5m: null, vol1h: 5000, vol24h: null,
+    buys5m: 10, sells5m: null, chg5m: 1, chg1h: null, chg24h: null, ageMinutes: 30,
+    mintAuthorityActive: false, freezeAuthorityActive: null, top10Pct: null, rcLpLockedPct: null, rcRisks: [], rugFlags: [],
+    boosted: false, pumpfunGraduate: true, pumpLive: false, narrativeHits: ["trump"], verdict: "WATCH", score: 72,
+    verdictReasons: ["held at WATCH: pair data last refreshed 180.0 min ago (limit 10 min)", "a", "b", "c", "narrative confirm: trump"],
+  };
+  const now = Date.parse("2026-11-06T15:00:00Z");
+  const stale = buildTradePrompt({ ...base, lastRefreshAt: now - 3 * 3600_000 }, "$1", CRYPTO_RULES, now);
+  assert.match(stale, /Data as of: 2026-11-06T12:00:00\.000Z \(pair read 180 min before this prompt was copied; OLDER than the desk's 10-min freshness limit, treat as stale\)/);
+  assert.match(stale, /DESK READ [^\n]*WATCH[^\n]*held at WATCH: pair data last refreshed 180\.0 min ago/, "the hold reason survives the 4-reason cut");
+  const fresh = buildTradePrompt({ ...base, lastRefreshAt: now - 2 * 60_000 }, "$1", CRYPTO_RULES, now);
+  assert.match(fresh, /\(pair read 2 min before this prompt was copied\)/);
 });
 
 test("Railway: callback defaults from the public domain; an explicit value wins", () => {
