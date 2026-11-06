@@ -1469,3 +1469,27 @@ renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is 
 centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
+2026-11-04: chart levels on the wrong scale (feat/chart-level-scale). Owner pick, Prophecy-scoped: trace
+first, fix only a confirmed mismatch. Trace: ChartPanel loads candles from /api/ohlc?symbol=<chart> and
+levels from /api/gamma-levels?symbol=<chart> (client/src/components/ChartPanel.tsx). For "^GSPC" the
+candles are $SPX (server/schwabSymbols.ts maps ^GSPC -> $SPX) while /api/gamma-levels sent SPX/^GSPC down
+the SPY-snapshot branch (server/routes.ts, isSpy) and returned SPY strikes: SPY levels were drawn as price
+lines on index candles (LightweightCandlestick createPriceLine on the candle series; CandlestickChart did
+the same) and the banner computed distances from the index price to SPY levels (about -90%). Confirmed in
+code; not observed live. Fix: shared/chartLevels.ts (one underlying per index spelling; levels source per
+symbol; levels drawn only when computed for the chart's own underlying). The index now returns
+supported:false with the reason (levels exist only on SPY's scale here) and the banner shows it; no
+conversion ratio anywhere, no threshold changed, SPY and single names unchanged. Left separate: bare "SPX"
+candles (toSchwabSymbol does not map "SPX"), the null call/put wall crash, the Invalid Date banner time.
+#47 browser check (owner-approved option 1): Railway serves main only and the Vercel preview serves the
+screens with every /api call sent to "unavailable", so no hosted build of the PR revision can show levels.
+CI now runs tests/ux/chart-levels-acceptance.mjs against the exact build under test: both chart engines,
+desktop 1280 px and phone 402 px; SPY levels and banner distances from SPY's own price; the S&P 500 index
+through the REAL server route (unsupported, no levels, reason readable, inside the screen at 402 px, no
+sideways scroll); rapid SPY -> index -> NVDA with the SPY levels reply delayed, sampled every 40 ms, a level
+must never show on another symbol. SPY/NVDA candles and levels are fixed fixtures (exact expected numbers);
+not live Schwab. Evidence (screenshots, level replies, report.json with the commit) is uploaded as the run's
+"chart-levels-<sha>" artifact. Test hooks: data-gamma-callwall and data-last-close on both chart engines.
+First CI run of the chart acceptance: 34/35 pass. The one failure was real: on the first switch to the
+index, the banner briefly said "no option-chain levels were returned" while the levels reply was still in
+flight (no answer yet is not "none returned"). The banner now waits for this symbol's reply.

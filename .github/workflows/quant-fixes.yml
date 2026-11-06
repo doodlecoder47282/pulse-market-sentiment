@@ -588,10 +588,20 @@ jobs:
           for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5071/api/health >/dev/null 2>&1 && break; sleep 1; done
           rc=0
           BASE_URL=http://127.0.0.1:5071 UX_OUT=rep/ux timeout 1500 node tests/ux/ux-audit.mjs 2>&1 | tail -40 | tee rep/ux-run.log || rc=$?
+          # Chart levels drawn only on their own underlying (PR #47): both engines,
+          # desktop and 402 px, rapid symbol switching; screenshots + replies in rep/ux/chart-levels.
+          BASE_URL=http://127.0.0.1:5071 CHART_OUT=rep/ux/chart-levels timeout 600 node tests/ux/chart-levels-acceptance.mjs 2>&1 | tee rep/ux/chart-levels-run.log || rc=1
           pkill -f "dist/index.cjs" || true
           # The UX scorecard (tests/ux/budget.json) gates the build: a screen that
           # got worse on any device fails this step.
           exit $rc
+      - name: Upload chart-levels evidence (screenshots, level replies, report)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-levels-${{ github.sha }}
+          path: rep/ux/chart-levels
+          if-no-files-found: warn
       - name: Publish report to ci-reports-quant branch
         if: always()
         run: |
