@@ -1391,6 +1391,7 @@ First gated run of the method-page check: FAIL, and correctly so as a test defec
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
 
+2026-11-06: chain-audit DEX extremes (fix/dex-extrema). Recording frame 43 showed "Max positive DEX 2,000 $0" and "Max negative DEX 2,000 $0": computeDEX picked the first strike when every strike netted to zero (0 > -Infinity). A strike is now reported only when its net DEX is actually positive (negative); otherwise null, which the panel already hides. Tests: tests/quant/dex-extrema.test.ts.
 2026-11-06: deploy identity and request breakdown (feat/health-commit-diag). /api/health now carries `commit`,
 `commitSource`, `branch` from the host's build variables (server/deployInfo.ts: RAILWAY_GIT_COMMIT_SHA first;
 null when the host did not say, never guessed), so "is commit X deployed" can be proven per domain. Settings
