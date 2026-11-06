@@ -12,12 +12,16 @@ test("asOf: seconds, milliseconds and ISO all read; junk is null (no 'Invalid Da
   for (const bad of [null, undefined, "", "not a date", NaN, 0, -5, {}]) assert.equal(asOfToMs(bad as any), null, String(bad));
 });
 
-test("gamma-levels: the per-ticker branch sends epoch seconds like the SPY branch", () => {
+test("gamma-levels: the per-ticker branch sends the chain's data time in epoch seconds, or null; never the response time", () => {
   const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
   const i = r.indexOf("// Per-ticker path — builds gamma from Schwab callExpDateMap/putExpDateMap");
   assert.ok(i > 0);
   const block = r.slice(i, i + 2500);
-  assert.match(block, /asOf: Math\.floor\(Date\.now\(\) \/ 1000\)/);
+  assert.match(block, /asOf: pos\.chainAsOfMs != null \? Math\.floor\(pos\.chainAsOfMs \/ 1000\) : null,/);
+  assert.doesNotMatch(block, /asOf: Math\.floor\(Date\.now\(\) \/ 1000\)/);
+  const t = readFileSync(new URL("../../server/tickerAlpha.ts", import.meta.url), "utf8");
+  assert.match(t, /chainAsOfMs = Number\.isFinite\(chain\.asOfMs\) \? chain\.asOfMs : null;/);
+  assert.match(t, /chainAsOfMs: gamma \? chainAsOfMs : null,/);
   assert.doesNotMatch(block, /asOf: new Date\(\)\.toISOString\(\)/);
 });
 

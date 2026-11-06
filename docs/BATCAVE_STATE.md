@@ -1392,3 +1392,9 @@ reads "Nothing on this site is investment advice"; the check looked only for "no
 check now accepts either wording and prints each condition it tested.
 
 2026-11-06: chart null guards (feat/chart-null-guards). /api/gamma-levels per-ticker branch sent asOf as an ISO string while the SPY branch sent epoch seconds; GammaContextBanner multiplied by 1000 -> "updated Invalid Date" on ticker charts. Server now sends seconds on both branches; the banner reads seconds, ms or ISO (shared/asOfTime.ts) and hides an unreadable stamp. A missing call or put wall (null) crashed LightweightCandlestick (.toFixed on null) and drew NaN lines in CandlestickChart; both now skip the missing wall. Tests: tests/quant/chart-null-guards.test.ts.
+Review of feat/chart-null-guards: the CI type gate failure (banner walls typed non-null) fixed in cae94a6.
+MUST-FIX taken: the per-ticker /api/gamma-levels branch sent the response time as asOf, and the banner
+newly showed it as "updated HH:MM:SS" while the positioning snapshot is cached up to 5 min (a made-up
+fresh time). The snapshot now carries the chain's own data time (chainAsOfMs: Schwab's underlying quote
+time, else receive time) and the route sends that, or null so the banner shows no time; the banner says
+"chain as of".

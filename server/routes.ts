@@ -1346,8 +1346,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             }
           : null,
         warnings: pos.warnings ?? [],
-        // Epoch seconds, like the SPY branch above (the banner read an ISO string here as "Invalid Date").
-        asOf: Math.floor(Date.now() / 1000),
+        // Epoch seconds, like the SPY branch above: the chain's own data time, never the response time
+        // (the positioning snapshot is cached up to 5 min). No chain read: null, and the banner shows no time.
+        asOf: pos.chainAsOfMs != null ? Math.floor(pos.chainAsOfMs / 1000) : null,
       });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;

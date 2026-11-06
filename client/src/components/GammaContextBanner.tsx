@@ -159,7 +159,7 @@ export default function GammaContextBanner({
           Spot{" "}
           <span className="text-foreground">{spot.toFixed(2)}</span>
           {asOfToMs(asOf) != null && (
-            <> · updated {new Date(asOfToMs(asOf)!).toLocaleTimeString()}</>
+            <> · chain as of {new Date(asOfToMs(asOf)!).toLocaleTimeString()}</>
           )}
         </span>
       </div>
