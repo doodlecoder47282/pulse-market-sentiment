@@ -1469,3 +1469,9 @@ renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is 
 centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
+
+2026-11-06: Models fallback key (feat/models-fallback-key). When a live /api/models build failed, the fallback
+parsed `experimental` with a non-experimental default while the live path (and every disk write) defaults to
+experimental, so requests without the parameter (Models panel, Discord, edge briefing) looked up a key that
+is never written and the saved-session copy was never served. Both now parse the flag the same way. Found
+by the headline-read-only review. Test: tests/quant/models-fallback-key.test.ts.
