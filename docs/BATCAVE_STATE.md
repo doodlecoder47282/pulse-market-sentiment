@@ -1469,6 +1469,167 @@ renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is 
 centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
+2026-11-04: chart levels on the wrong scale (feat/chart-level-scale). Owner pick, Prophecy-scoped: trace
+first, fix only a confirmed mismatch. Trace: ChartPanel loads candles from /api/ohlc?symbol=<chart> and
+levels from /api/gamma-levels?symbol=<chart> (client/src/components/ChartPanel.tsx). For "^GSPC" the
+candles are $SPX (server/schwabSymbols.ts maps ^GSPC -> $SPX) while /api/gamma-levels sent SPX/^GSPC down
+the SPY-snapshot branch (server/routes.ts, isSpy) and returned SPY strikes: SPY levels were drawn as price
+lines on index candles (LightweightCandlestick createPriceLine on the candle series; CandlestickChart did
+the same) and the banner computed distances from the index price to SPY levels (about -90%). Confirmed in
+code; not observed live. Fix: shared/chartLevels.ts (one underlying per index spelling; levels source per
+symbol; levels drawn only when computed for the chart's own underlying). The index now returns
+supported:false with the reason (levels exist only on SPY's scale here) and the banner shows it; no
+conversion ratio anywhere, no threshold changed, SPY and single names unchanged. Left separate: bare "SPX"
+candles (toSchwabSymbol does not map "SPX"), the null call/put wall crash, the Invalid Date banner time.
+#47 browser check (owner-approved option 1): Railway serves main only and the Vercel preview serves the
+screens with every /api call sent to "unavailable", so no hosted build of the PR revision can show levels.
+CI now runs tests/ux/chart-levels-acceptance.mjs against the exact build under test: both chart engines,
+desktop 1280 px and phone 402 px; SPY levels and banner distances from SPY's own price; the S&P 500 index
+through the REAL server route (unsupported, no levels, reason readable, inside the screen at 402 px, no
+sideways scroll); rapid SPY -> index -> NVDA with the SPY levels reply delayed, sampled every 40 ms, a level
+must never show on another symbol. SPY/NVDA candles and levels are fixed fixtures (exact expected numbers);
+not live Schwab. Evidence (screenshots, level replies, report.json with the commit) is uploaded as the run's
+"chart-levels-<sha>" artifact. Test hooks: data-gamma-callwall and data-last-close on both chart engines.
+First CI run of the chart acceptance: 34/35 pass. The one failure was real: on the first switch to the
+index, the banner briefly said "no option-chain levels were returned" while the levels reply was still in
+flight (no answer yet is not "none returned"). The banner now waits for this symbol's reply.
+2026-11-05: 0DTE Wiener map, core (feat/odte-wiener; owner request: "a more defined 0DTE map with a chart using
+the Wiener model ... for the day only"; owner chose: replace the current cone, core scope first). Found: the
+old 0DTE forward cone mixed unlabelled rules of thumb into its median (pin pull up to 60%, charm tilt, 15%
+wider cone in short gamma) and drew seeded synthetic candles, while its touch odds were driftless. Now
+shared/odteWiener.ts (pure): arithmetic Brownian motion, zero drift, sigma to the close = the 0DTE chain's
+ATM IV (straddle/sqrt(2/pi) as fallback and cross-check); percentile bands (2.5-97.5) every 5 min to the
+close; per level the exact first-passage touch odds and the close-above/below odds; expected remaining
+high/low/range (sigma*sqrt(2/pi)); close distribution in strike-width buckets; drift-aware first passage
+(hitProbability) available and tested against a simulation, unused (mu = 0). server/odteForward.ts adds
+`wiener`, `todayPath` and `pathBasis` (the old path is now labelled a heuristic overlay); no extra Schwab
+request (test counts 1 chain + 1 history read). Card (Heatseeker tab): today's path, bands, levels with touch
+odds, close distribution beside the chart on wide screens, level odds table, dealer overlay off by default
+and labelled, 44 px toggles. Scorecard: the 09:35 morning map carries the Wiener odds; after the close the
+settle scores them on the extremes from the map's minute onward (levels already traded or at the price are
+left out); /api/odte/map/ledger returns wienerScorecard (calibration buckets, Brier, untested below 50
+days). CI demo step renders it at 402 px (FAIL gate). Not in this PR: time-of-day variance weighting; the
+options-implied close distribution comparison. Not verified live.
+Review of feat/odte-wiener (independent): 3 MUST-FIX fixed. (1) A straddle-derived sigma (straddle/0.8) went in
+as "ATM IV" with a circular straddle cross-check; now only chain IV is passed as IV, else the model's own
+straddle conversion is used and labelled (test forces the fallback: no IV, no bid/ask). (2) The next-session
+projection was always 390 min to 16:00; projMinutes for the closed state now comes from the next trading
+day's calendar (210 min to 13:00 before a half day; tested on Thanksgiving). (3) The CI rendered check passed
+on any "unavailable" text; unavailable now passes only in the Friday-close-to-Monday-open gap, as the map
+smoke does. SHOULD-FIX taken: intraday with no same-day expiry -> unavailable with the reason; today's
+touches no longer flagged on the next-session map; pre-open/next-session maps state that the overnight part
+of the implied move is spread across the session (gap not modelled) and the header says "next session";
+Wiener levels built without the sigma rails (which could displace a real level in the dedupe), nearest 14;
+scoring window starts at the chain's own time (the odds' spot), bar containing it included (documented);
+hitProbability keeps the crossing term in log space and handles sigma = 0 (the reviewer's "about 1" for
+a = mu = 30 was wrong: the true value is 0.5 + 1/(60 sqrt(2 pi)) = 0.5066, now pinned); scorecard shows the
+base-rate Brier as its reference instead of "0.25 = coin flip"; copy: "morning map (first map after the
+open)", 5-minute closes plotted and read at the bar's end, model close ranges in text on every screen,
+tag stack clamped, readout clears on touch end, role="group"; tests assert their branches run.
+Re-review (same reviewer): first-round MUST-FIX 1-2 verified; reviewer agreed hitProbability(30,30,1,1) = 0.5066.
+New MUST-FIX fixed: the weekday-only "weekend gap" rule would FAIL CI on market holidays and evenings before
+them (one-day chain window empty). server/exchangeCalendar.ts noExpiryInOneDayWindow(ms) now decides (tested
+on Friday/weekend, the evening before Thanksgiving, after the half-day close, Christmas); CI computes it once
+(NO_EXPIRY_EXPECTED) and both the /api/odte/map smoke and the Wiener rendered check use it. SHOULD-FIX taken:
+next-session map unavailable unless the chain's expiry is the next trading day; scoring start is a tested
+pure helper (wienerScoringStartMs); the vacuous rails test replaced by one that shows the displacement;
+logNormCdf seam reduced (-15/x^6 term); the forming 5-minute bar is left out of today's path.
+Third review (same reviewer): no MUST-FIX; the calendar rule agreed with the forward's 503 no_expiries in all
+360 probe cases (24 dates x 15 times incl. holidays, half days, MLK, Good Friday). SHOULD-FIX taken: the
+Wiener CI check re-reads the calendar at check time (a run crossing a close) and requires the forward's own
+503 no_expiries answer (a server error on a no-expiry day still fails); the displacement test is named for
+what it proves (mechanism + no rail in the list), not for the forward's ordering.
+2026-11-06: macro event calendar (feat/vol-calendar-2027). The FOMC list ended 2026-12-09 and the CPI list had the wrong late-2026 dates (11-12 and 12-09; BLS moved them to 11-10 and 12-10 after the 2025 lapse). Added the Fed's 2027 FOMC decision days (press release 2025-09-05) and the BLS 2027 CPI dates (bls.gov schedule, read 2026-11-06); the calendar now warns when its 90-day window runs past the end of a list instead of showing an empty stretch. Tests: tests/quant/vol-calendar-dates.test.ts.
+2026-11-06: headlines read, never build (feat/headline-read-only). Evidence: live /api/schwab/diag (2026-11-05
+~01:00 ET) attributed SPY chains x6 and $SPX chains x3 per minute to "api /headline", $SPX x3 to
+"/regime/headline". Cause in code: every tab headline (20 s cache per tab) called /api/regime/predict, which
+calls /api/models; an empty models build (Schwab refused the chain, e.g. the self-throttle) was held only 20 s,
+so headline polling rebuilt the models (chain reads) about every 20 s while the budget stayed exhausted. Now
+the headline calls /api/regime/predict?peek=1 -> /api/models?peek=1, which answers the current build or 503
+not_built and never starts a build (headline says why the regime is unavailable); an empty build backs off
+20 s, 40 s, 80 s ... capped at 5 min (server/modelsBackoff.ts), reset by a good build. Builds still come from
+the Trade Desk predictor panel and the 9:00-16:00 regime ticker (60 s, now bounded by the backoff). Not
+verified live: the request count after deploy.
+Review of feat/headline-read-only: 2 MUST-FIX taken. (1) Outside the session the chain quote time stops at
+the last print, so every build failed the 30-min closed chain-age limit at birth: peek could never serve
+from the evening to the pre-market or all weekend, and every non-peek reader rebuilt on each poll (the
+01:00 ET diag's one-rebuild-a-minute). One pure gate now serves both reads (server/modelsBackoff.ts
+modelsCacheGate): with the market closed, a build made after the last settled close is current within its
+30-min cadence, the rule staleServeDecision already applies to cached chains. (2) The not_built reason said
+"pending, or backing off" for every miss; the peek now names its state (build running, none since start,
+past cadence, chain too old, empty build due a rebuild). SHOULD-FIX taken: a predictor peek reads the raw
+cached build (no /api/models post-processing, so no Schwab read); Signals and Heatseeker name the real
+cause; a timeout reads "did not answer within 2.5 s"; the empty-build backoff caps at 2 min in the session;
+regimeHistoryTicker's "no new Schwab calls" comment corrected. Behavioural tests on the gate (session,
+closed at 17:00 / 01:00 / Saturday, pre-settle build) and on each reason. Left: /api/models error
+fallback looks up the non-experimental disk key (separate PR).
+2026-11-06: deploy identity and request breakdown (feat/health-commit-diag). /api/health now carries `commit`,
+`commitSource`, `branch` from the host's build variables (server/deployInfo.ts: RAILWAY_GIT_COMMIT_SHA first;
+null when the host did not say, never guessed), so "is commit X deployed" can be proven per domain. Settings
+(Schwab panel) shows the running commit and a "Requests by feature" list built from /api/schwab/diag
+requestsByCaller (shared/requestBreakdown.ts): admitted attempts in the last minute grouped by route and
+priority, with kinds and symbols; stack-frame callers shown as "background task" (no file paths); requests
+refused or served from an older copy in the last 5 minutes listed from diag.degraded. Replaces the browser
+console steps. Not verified live.
+Review of feat/health-commit-diag: 1 MUST-FIX taken. The breakdown header summed the reported rows, but the
+server reports only the busiest 60 caller rows, so the header could read lower than the budget line above
+it (a partial read shown as a total). It now reads requestsLastMinute and states "N not itemised" and
+unreadable rows. SHOULD-FIX taken: more-than-12 features say how many are not shown; the degraded line
+says "since degradation began (resets after 5 quiet minutes)" and "not served fresh" (403/429/5xx were
+fetched and failed); the build line shows reading / did not answer apart from "not reported"; a symbol
+ending a 24-character list is marked partial.
+2026-11-06: chain-audit DEX extremes (fix/dex-extrema). Recording frame 43 showed "Max positive DEX 2,000 $0" and "Max negative DEX 2,000 $0": computeDEX picked the first strike when every strike netted to zero (0 > -Infinity). A strike is now reported only when its net DEX is actually positive (negative); otherwise null, which the panel already hides. Tests: tests/quant/dex-extrema.test.ts.
+2026-11-06: crypto sizing basis and no default cost (feat/crypto-cost-unknown). Live self-test 2026-11-05 failed "position sizing" and "round-trip cost" on 1 row. Cause: the GeckoTerminal scanner refreshes a candidate's liquidityUsd (cryptoEngine.ts ~469) without re-sizing, so the card's size/cost and its liquidity came from two reads. The risk block now records sizedOnLiquidityUsd and the verifier checks against it. A cost that cannot be computed is null, not the old 15% default (risk.estSlippagePct number|null; not displayed in the client today). Not changed: the scanner overwriting DexScreener liquidity with GeckoTerminal reserve (named, separate item).
+Review of feat/crypto-cost-unknown: 1 MUST-FIX taken. Checking size and cost against the recorded basis
+alone made the check a formula self-test, and the card could still show liq $25k beside a size computed
+on $40k. The arithmetic check stays on the basis; a new crypto.sizing.basis check reports cards whose
+served liquidity moved more than 1% from it as "stale" (never pass), and the card says "size and round
+trip from the earlier read at $X liquidity". CRYPTO_DESK.md section 6 updated. Not done: re-scoring on the
+GeckoTerminal refresh (the next momentum tick re-sizes within about 4 min).
+2026-11-06: chart null guards (feat/chart-null-guards). /api/gamma-levels per-ticker branch sent asOf as an ISO string while the SPY branch sent epoch seconds; GammaContextBanner multiplied by 1000 -> "updated Invalid Date" on ticker charts. Server now sends seconds on both branches; the banner reads seconds, ms or ISO (shared/asOfTime.ts) and hides an unreadable stamp. A missing call or put wall (null) crashed LightweightCandlestick (.toFixed on null) and drew NaN lines in CandlestickChart; both now skip the missing wall. Tests: tests/quant/chart-null-guards.test.ts.
+Review of feat/chart-null-guards: the CI type gate failure (banner walls typed non-null) fixed in cae94a6.
+MUST-FIX taken: the per-ticker /api/gamma-levels branch sent the response time as asOf, and the banner
+newly showed it as "updated HH:MM:SS" while the positioning snapshot is cached up to 5 min (a made-up
+fresh time). The snapshot now carries the chain's own data time (chainAsOfMs: Schwab's underlying quote
+time, else receive time) and the route sends that, or null so the banner shows no time; the banner says
+"chain as of".
+2026-11-06: Heatseeker scenario semantics (feat/scenario-semantics). Recording frame 37: "base" path above "bull" (base = dominant magnet 8,021 > bull target 7,782), "BASE region 8,005-8,037" printed as a +-0.2% band around the target while its probability was the middle region centred on spot, and "touch 100%" from min(1, 2 x close-beyond) with close-beyond 56%. Fix (semantics, no clamping): scenarioOddsFromCdf flags baseOutsideRange; the models paths carry the real region bounds (bull above upper, middle lower-upper, bear below lower); a base path outside the range is named MAGNET (a reference with no probability of its own) and the card says MIDDLE region; touch odds are stated only when close-beyond < 50% (the reflection rule's condition), never capped. Tests: tests/quant/scenario-semantics.test.ts.
+Review of feat/scenario-semantics: the touch-odds condition was necessary, not sufficient. "Close-beyond
+under 1/2" still let the 2x reflection rule state 80-92% touch odds on a drifted distribution where the
+true odds are 58-63%. Touch odds are now stated only when the implied distribution is centred on spot
+(spot between its 40% and 60% quantile, TOUCH_CENTRE_TOLERANCE 0.1), otherwise "touch not stated:" with the
+reason (spot's quantile, or median past the target). Also: the MAGNET legend no longer carries a
+percentage; "centred on spot" says the bull/bear midpoint when spot is outside the range. Left (named):
+MAGNET naming in heuristic mode, the leftover target bands in the scenario legend, and the recording's 56%
+close-beyond for a +1.2% target suggests a spot/distribution timing mismatch, to check on a live payload.
+2026-11-06: News AI brief (feat/news-brief-render). The card rendered the model's raw JSON (brief = rawText) and the prompt asked for bull/base/bear probabilities, a confidence score, R:R and trade structures. Now the prompt asks for a descriptive brief (summary, drivers, tape check, positioning, levels from the inputs, what would change the read, counterpoints, data gaps) with explicit rules against probabilities, confidence, targets and trades; the server keeps only those fields (shared/alphaBrief.ts sanitizeBrief) and returns rendered markdown as `brief` (deterministic brief when no model answered); the email composer renders the same sections. Not changed (named): the deterministic Edge Lab baseline verdict/confidence/path odds still shown in the email header.
+Review of feat/news-brief-render: 2 MUST-FIX taken. (1) The provider was chosen on "JSON parsed", so a
+parseable answer with no descriptive fields showed the rules-engine text under an AI badge ("+ web search",
+"engine: claude"), and a usable Sonar/GPT answer was skipped: the first provider whose answer sanitizes to a
+usable brief now wins, else mode "deterministic", provider "none". (2) The email fell back to the Edge Lab
+baseline verdict and confidence without the baseline tag ("Alpha Brief: LEAN BULL · 58%" under
+"engine: claude"), or printed PENDING: a descriptive brief's subject is "descriptive read", the baseline
+appears only under its own heading as a heuristic score, and with neither there is no verdict line.
+SHOULD-FIX taken: the deterministic brief fed to the model has its TRADE IMPLICATIONS section removed;
+numeric levels are kept; the footer says the model was asked not to give probabilities, targets or trade
+ideas (nothing enforces it in text). Left: the deterministic brief's own trade wording (alphaEngine.ts),
+its own copy PR.
+2026-11-06: Crypto target label (feat/crypto-target-label). The record line and How-to said "hit the
+5-minute target" and the outcome chip showed raw `HIT_5M`; the grade means the sampled peak reached the
+$5M market-cap target (CRYPTO_RULES.universe.targetMcapUsd), not a time. Copy now reads "reached the $5M
+market-cap target", the chip "HIT $5M CAP", and the How-to reads the horizon, target and sample gate from
+the rule book instead of carrying its own numbers. Display only; no rule or grade changed.
+Crypto review of feat/crypto-target-label: no MUST-FIX. SHOULD-FIX taken: How-to said "graded within 72 hours"
+(DOUBLED / DEAD / NO_DATA are decided at 72 h, only HIT and RUGGED close early) and omitted no data and the
+20% no-data condition: now stated. The stats row and the first-ENTER line still said "hit 5M" next to "5m"
+volume labels: built from the rule book. The chip is "$5M CAP" (7 characters, was 6) instead of 11, so the
+non-wrapping signal row does not widen at 402 px. Test: tests/quant/crypto-target-label.test.ts.
+
+2026-11-06: Models fallback key (feat/models-fallback-key). When a live /api/models build failed, the fallback
+parsed `experimental` with a non-experimental default while the live path (and every disk write) defaults to
+experimental, so requests without the parameter (Models panel, Discord, edge briefing) looked up a key that
+is never written and the saved-session copy was never served. Both now parse the flag the same way. Found
+by the headline-read-only review. Test: tests/quant/models-fallback-key.test.ts.
 
 2026-11-06: Missing day change is not +0.00% (feat/missing-not-zero). The Trade Desk chart header and the
 Models intraday tape coerced a missing changePct/change to 0 and printed "+0.00%" / "+0.00 (+0.00%)" in
