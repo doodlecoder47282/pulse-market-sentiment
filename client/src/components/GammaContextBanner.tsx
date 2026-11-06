@@ -28,6 +28,8 @@ type Props = {
   levels: GammaLevels | null | undefined;
   symbol: string;
   supported: boolean;
+  /** Why no levels are drawn, from the server or the chart's own underlying check. */
+  unsupportedReason?: string | null;
   /** Epoch seconds (older payloads: ISO string or ms); unreadable stamps are not shown. */
   asOf?: number | string | null;
   timeframe: string;
@@ -87,6 +89,7 @@ export default function GammaContextBanner({
   levels,
   symbol,
   supported,
+  unsupportedReason,
   asOf,
   timeframe,
   engine,
@@ -102,10 +105,10 @@ export default function GammaContextBanner({
         <span className="font-semibold uppercase tracking-wider text-muted-foreground">
           Gamma walls
         </span>
-        <span className="text-muted-foreground">
-          not available for {symbol} — options chain wired for SPX/SPY only.
-          Switch the watchlist to SPY for live walls, or use TradingView's
-          native drawing tools for manual levels on this ticker.
+        <span className="text-muted-foreground" data-testid="gamma-banner-unsupported-reason">
+          {unsupportedReason
+            ? `not drawn for ${symbol}: ${unsupportedReason}`
+            : `not available for ${symbol}: no option-chain levels were returned for this ticker.`}
         </span>
       </div>
     );

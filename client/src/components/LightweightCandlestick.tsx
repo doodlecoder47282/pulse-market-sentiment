@@ -341,7 +341,13 @@ export default function LightweightCandlestick({
   }, [newsMarkers, candles]);
 
   return (
-    <div className="relative rounded-lg border border-border/40 bg-black/20 p-2" data-testid={`lightweight-${symbol}`}>
+    <div
+      className="relative rounded-lg border border-border/40 bg-black/20 p-2"
+      data-testid={`lightweight-${symbol}`}
+      data-chart-engine="lightweight"
+      data-gamma-callwall={showGamma && gamma && gamma.callWall != null ? String(gamma.callWall) : ""}
+      data-last-close={candles.length ? String(candles[candles.length - 1].c) : ""}
+    >
       <div ref={containerRef} style={{ height, width: "100%" }} />
       <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
         <span>Lightweight Charts · TradingView open-source</span>

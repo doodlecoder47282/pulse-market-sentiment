@@ -8,11 +8,15 @@
 // stayed inside the market's own expected move, which is not a claim of edge.
 
 import type { OdteMap } from "./odteMap";
+import { scoreWienerDay, type WienerLevelOutcome } from "./odteWiener";
 
 export interface SettleInputs {
   settle: number;
   sessionHigh: number;
   sessionLow: number;
+  /** Extremes from the morning map's minute to the close (for scoring its Wiener odds); absent = not scored. */
+  highAfter?: number | null;
+  lowAfter?: number | null;
 }
 
 export interface ZoneOutcome {
@@ -45,6 +49,8 @@ export interface SettleEvaluation {
   lesson: string;
   /** The same line without the zone outcomes (every edition). */
   lessonLevels: string;
+  /** The morning map's Wiener level odds against what happened after it was taken; null when not scored. */
+  wiener?: WienerLevelOutcome[] | null;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -95,7 +101,22 @@ export function evaluateSettle(m: OdteMap, s: SettleInputs): SettleEvaluation {
     if (z.kind === "fade") parts.push(`fade zone ${z.touched ? "touched" : "not touched"}${z.heldOrCrossed === false ? ", top broken" : ""}, settle ${z.settleRelation ? "below" : "at or above"} it`);
     if (z.kind === "no-trade") parts.push(`no-trade pocket ${z.heldOrCrossed ? "crossed" : z.touched ? "touched" : "not touched"}`);
   }
-  return { settle: s.settle, sessionHigh: s.sessionHigh, sessionLow: s.sessionLow, settleInStraddle, sessionInStraddle, settleInSigma, sessionInSigma, pinDistance, nearestLandmark: nearest, bandHeld, zones, lesson: parts.join("; "), lessonLevels };
+  // The morning map's Wiener level odds, scored on the extremes after it was taken.
+  const wiener = m.wiener && s.highAfter != null && s.lowAfter != null
+    ? scoreWienerDay(m.wiener, { settle: s.settle, highAfter: s.highAfter, lowAfter: s.lowAfter })
+    : null;
+  return { settle: s.settle, sessionHigh: s.sessionHigh, sessionLow: s.sessionLow, settleInStraddle, sessionInStraddle, settleInSigma, sessionInSigma, pinDistance, nearestLandmark: nearest, bandHeld, zones, lesson: parts.join("; "), lessonLevels, wiener };
+}
+
+/**
+ * Where scoring of the morning map's Wiener odds starts: the chain's own time
+ * (the spot the odds were computed from), else when the map was kept. The
+ * caller includes the minute bar containing it (up to 59 s early).
+ */
+export function wienerScoringStartMs(first: Pick<OdteMap, "chainAsOfMs"> | null | undefined, firstAt: number | null | undefined): number | null {
+  const c = first?.chainAsOfMs;
+  if (typeof c === "number" && Number.isFinite(c) && c > 0) return c;
+  return typeof firstAt === "number" && Number.isFinite(firstAt) ? firstAt : null;
 }
 
 export interface SettleTally {
