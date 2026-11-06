@@ -1391,6 +1391,18 @@ First gated run of the method-page check: FAIL, and correctly so as a test defec
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
 
+2026-11-06: News AI brief (feat/news-brief-render). The card rendered the model's raw JSON (brief = rawText) and the prompt asked for bull/base/bear probabilities, a confidence score, R:R and trade structures. Now the prompt asks for a descriptive brief (summary, drivers, tape check, positioning, levels from the inputs, what would change the read, counterpoints, data gaps) with explicit rules against probabilities, confidence, targets and trades; the server keeps only those fields (shared/alphaBrief.ts sanitizeBrief) and returns rendered markdown as `brief` (deterministic brief when no model answered); the email composer renders the same sections. Not changed (named): the deterministic Edge Lab baseline verdict/confidence/path odds still shown in the email header.
+Review of feat/news-brief-render: 2 MUST-FIX taken. (1) The provider was chosen on "JSON parsed", so a
+parseable answer with no descriptive fields showed the rules-engine text under an AI badge ("+ web search",
+"engine: claude"), and a usable Sonar/GPT answer was skipped: the first provider whose answer sanitizes to a
+usable brief now wins, else mode "deterministic", provider "none". (2) The email fell back to the Edge Lab
+baseline verdict and confidence without the baseline tag ("Alpha Brief: LEAN BULL · 58%" under
+"engine: claude"), or printed PENDING: a descriptive brief's subject is "descriptive read", the baseline
+appears only under its own heading as a heuristic score, and with neither there is no verdict line.
+SHOULD-FIX taken: the deterministic brief fed to the model has its TRADE IMPLICATIONS section removed;
+numeric levels are kept; the footer says the model was asked not to give probabilities, targets or trade
+ideas (nothing enforces it in text). Left: the deterministic brief's own trade wording (alphaEngine.ts),
+its own copy PR.
 2026-11-06: chart null guards (feat/chart-null-guards). /api/gamma-levels per-ticker branch sent asOf as an ISO string while the SPY branch sent epoch seconds; GammaContextBanner multiplied by 1000 -> "updated Invalid Date" on ticker charts. Server now sends seconds on both branches; the banner reads seconds, ms or ISO (shared/asOfTime.ts) and hides an unreadable stamp. A missing call or put wall (null) crashed LightweightCandlestick (.toFixed on null) and drew NaN lines in CandlestickChart; both now skip the missing wall. Tests: tests/quant/chart-null-guards.test.ts.
 Review of feat/chart-null-guards: the CI type gate failure (banner walls typed non-null) fixed in cae94a6.
 MUST-FIX taken: the per-ticker /api/gamma-levels branch sent the response time as asOf, and the banner
