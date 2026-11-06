@@ -131,8 +131,14 @@ export interface ScenarioOdds {
   lower: number;             // region boundary (price)
   pCloseBeyondBull: number;  // P(S_T > bull target)
   pCloseBeyondBear: number;  // P(S_T < bear target)
-  pTouchBull: number;        // ~ min(1, 2 * pCloseBeyondBull); 1 if the target is already at or below spot
-  pTouchBear: number;        // ~ min(1, 2 * pCloseBeyondBear); 1 if the target is already at or above spot
+  /** ~ 2 * pCloseBeyondBull; 1 if the target is already at or below spot; null when the reflection
+   *  approximation does not apply (pCloseBeyondBull >= 0.5: the target is not beyond the distribution's
+   *  median, so 2x would exceed or reach 1 and say nothing). Never capped to 100%. */
+  pTouchBull: number | null;
+  pTouchBear: number | null;
+  /** The base path target sits outside (bear, bull): it is a magnet reference, not a middle scenario,
+   *  and the middle region is centred on spot instead. */
+  baseOutsideRange: boolean;
 }
 
 /**
@@ -148,7 +154,8 @@ export function scenarioOddsFromCdf(
   const { bull, base, bear } = targets;
   if (![bull, base, bear, spot].every((x) => Number.isFinite(x))) return null;
   if (!(bull > bear)) return null;
-  const center = base > bear && base < bull ? base
+  const baseOutsideRange = !(base > bear && base < bull);
+  const center = !baseOutsideRange ? base
     : spot > bear && spot < bull ? spot
     : 0.5 * (bull + bear);
   const upper = 0.5 * (center + bull);
@@ -168,10 +175,14 @@ export function scenarioOddsFromCdf(
     lower,
     pCloseBeyondBull: beyondBull,
     pCloseBeyondBear: beyondBear,
-    // The reflection rule holds for a barrier on the far side of spot; a
+    // The reflection rule (touch = 2 x close-beyond) assumes a driftless walk
+    // from spot, whose median is spot: a target beyond spot then has
+    // close-beyond odds under 1/2. When the implied odds of closing beyond are
+    // 1/2 or more the rule does not apply and no touch odds are stated. A
     // target already reached has been touched (probability 1).
-    pTouchBull: bull <= spot ? 1 : Math.min(1, 2 * beyondBull),
-    pTouchBear: bear >= spot ? 1 : Math.min(1, 2 * beyondBear),
+    pTouchBull: bull <= spot ? 1 : beyondBull < 0.5 ? 2 * beyondBull : null,
+    pTouchBear: bear >= spot ? 1 : beyondBear < 0.5 ? 2 * beyondBear : null,
+    baseOutsideRange,
   };
 }
 

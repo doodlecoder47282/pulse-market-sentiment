@@ -1390,3 +1390,5 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: Heatseeker scenario semantics (feat/scenario-semantics). Recording frame 37: "base" path above "bull" (base = dominant magnet 8,021 > bull target 7,782), "BASE region 8,005-8,037" printed as a +-0.2% band around the target while its probability was the middle region centred on spot, and "touch 100%" from min(1, 2 x close-beyond) with close-beyond 56%. Fix (semantics, no clamping): scenarioOddsFromCdf flags baseOutsideRange; the models paths carry the real region bounds (bull above upper, middle lower-upper, bear below lower); a base path outside the range is named MAGNET (a reference with no probability of its own) and the card says MIDDLE region; touch odds are stated only when close-beyond < 50% (the reflection rule's condition), never capped. Tests: tests/quant/scenario-semantics.test.ts.
