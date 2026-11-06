@@ -1527,6 +1527,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     chainSymbol: chainSymbol === "SPX" ? "$SPX" : "SPY",
     chainAsOfMs: chain.asOfMs,
     chainStale: chain.stale,
+    chainLastSession: chain.lastSession === true,
     chainMaxAgeMs: chain.maxAgeMs,
     chainCoverageComplete: chain.strikeCoverage?.complete ?? null,
   };

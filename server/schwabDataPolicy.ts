@@ -122,6 +122,13 @@ export interface SchwabFreshness {
    * within maxAgeMs) is being served. A normal TTL cache hit is not stale.
    */
   stale: boolean;
+  /**
+   * true when the market is closed and this chain / daily-bar payload was
+   * read after the last session settled: it is the latest data Schwab has,
+   * not a failed refresh, so it is NOT stale (nothing newer exists until
+   * the next open). Its real age still travels with it.
+   */
+  lastSession?: boolean;
   /** Max age this kind may be served at right now. */
   maxAgeMs: number;
   /** Why the payload is stale or unavailable (e.g. "403 cooldown"); null when fresh. */
@@ -150,12 +157,14 @@ export function staleServeDecision(
   const ageMs = Math.max(0, nowMs - fetchedAtMs);
   // Market closed: a chain or daily bar read after the last session settled
   // is still the latest Schwab data (nothing trades until the next open), so
-  // it is served, labelled stale with its real age, whatever that age is.
-  // Quotes and minute bars move after hours and keep the age cap.
+  // it is served as the last-session copy with its real age, whatever that
+  // age is: a distinct state, not "stale" (stale means a failed refresh of
+  // data that could have moved). Quotes and minute bars move after hours
+  // and keep the age cap.
   const settled = lastSettledCloseMs(nowMs);
   if ((kind === "chains" || kind === "daily_bars") && !isRegularSessionOpen(nowMs) && settled != null && fetchedAtMs >= settled) {
     const why = `${reason}; market closed, last-session copy`;
-    return { serve: true, freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: true, maxAgeMs, reason: why } };
+    return { serve: true, freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: false, lastSession: true, maxAgeMs, reason: why } };
   }
   if (maxAgeMs <= 0 || ageMs > maxAgeMs) {
     return {

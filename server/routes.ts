@@ -3431,6 +3431,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         asOf: chain.asOfMs,
         chainAsOfMs: chain.asOfMs,
         chainStale: chain.stale,
+        chainLastSession: chain.lastSession === true,
         chainMaxAgeMs: chain.maxAgeMs,
         chainSource: "schwab" as const,
         audit,
@@ -4036,6 +4037,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         // When Schwab produced the chain (asOf above is the computation time).
         chainAsOfMs: chain.asOfMs,
         chainStale: chain.stale,
+        chainLastSession: chain.lastSession === true,
         chainMaxAgeMs: chain.maxAgeMs,
         chainSource: "schwab",
         spot,
@@ -5880,6 +5882,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         chainSymbol: "$SPX",
         chainAsOfMs: chain.asOfMs,
         chainStale: chain.stale,
+        chainLastSession: chain.lastSession === true,
         ...out,
       });
     } catch (e: any) {

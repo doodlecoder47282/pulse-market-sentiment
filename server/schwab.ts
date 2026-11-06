@@ -904,6 +904,8 @@ export type PriceHistoryResponse = {
   servedFromCache?: boolean;
   /** true = a refresh failed and an older payload (within maxAgeMs) is served. */
   stale?: boolean;
+  /** Market closed: settled last-session daily bars (the latest that exist; not stale). */
+  lastSession?: boolean;
   maxAgeMs?: number | null;
   reason?: string | null;
 };
@@ -972,7 +974,7 @@ export async function getPriceHistory(
     return {
       symbol, candles, source: "schwab",
       dataState: candles.length ? "ok" : "empty",
-      asOfMs: f.asOfMs, ageMs: f.ageMs, servedFromCache: f.servedFromCache, stale: f.stale, maxAgeMs: f.maxAgeMs,
+      asOfMs: f.asOfMs, ageMs: f.ageMs, servedFromCache: f.servedFromCache, stale: f.stale, lastSession: f.lastSession === true, maxAgeMs: f.maxAgeMs,
       reason,
     };
   } catch (e: any) {
@@ -1015,6 +1017,8 @@ export type OptionChainOk = {
   servedFromCache: boolean;
   /** true = a refresh failed and an older chain (within maxAgeMs) is served. */
   stale: boolean;
+  /** true = market closed and this is the settled last-session chain (the latest that exists; not stale). */
+  lastSession?: boolean;
   maxAgeMs: number;
   staleReason: string | null;
   /** strikeCount sent to Schwab, and the coverage the response actually delivered. */
@@ -1148,6 +1152,7 @@ export async function getOptionChain(
       receivedAtMs: f.asOfMs,
       servedFromCache: f.servedFromCache,
       stale: f.stale,
+      lastSession: f.lastSession === true,
       maxAgeMs: f.maxAgeMs,
       staleReason: f.reason,
       strikeCount: plan.strikeCount,

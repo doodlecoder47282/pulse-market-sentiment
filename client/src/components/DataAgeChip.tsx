@@ -12,6 +12,8 @@ export interface DataAgeChipProps {
   asOfMs: number | null | undefined;
   /** Server stale flag. */
   stale?: boolean | null;
+  /** Server last-session flag (market closed, settled copy): shown as "last session", not stale by age. */
+  lastSession?: boolean | null;
   /** Max age (ms) the server allows for this data right now; past it the chip reads "stale". */
   maxAgeMs?: number | null;
   /** Short label, e.g. "chain" (shown as the source before the age). */
@@ -19,13 +21,14 @@ export interface DataAgeChipProps {
   className?: string;
 }
 
-export default function DataAgeChip({ asOfMs, stale, maxAgeMs, label = "Schwab", className }: DataAgeChipProps) {
+export default function DataAgeChip({ asOfMs, stale, lastSession, maxAgeMs, label = "Schwab", className }: DataAgeChipProps) {
   const has = asOfMs != null && Number.isFinite(asOfMs);
   return (
     <DataStateChip
       state={has ? "ok" : "unavailable"}
       asOf={has ? asOfMs : null}
       stale={stale}
+      lastSession={lastSession}
       maxAgeMs={maxAgeMs}
       source={label}
       showAge

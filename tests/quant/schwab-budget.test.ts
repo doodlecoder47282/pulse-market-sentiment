@@ -65,7 +65,7 @@ test("Models: an empty build backs off (20 s doubling, 2 min cap in the session,
   assert.match(c, /export const NOT_READY_RETRY_MS = 30_000;/);
 });
 
-test("market closed: a chain read after the last settled close is served (labelled stale), an older one is not", async () => {
+test("market closed: a chain read after the last settled close is served as the last-session copy (not stale), an older one is not", async () => {
   const { staleServeDecision, lastSettledCloseMs } = await import("../../server/schwabDataPolicy");
   const night = Date.parse("2026-10-28T03:28:00Z"); // Tue 23:28 ET
   const settled = lastSettledCloseMs(night)!;
@@ -73,7 +73,8 @@ test("market closed: a chain read after the last settled close is served (labell
   const afterClose = Date.parse("2026-10-27T21:00:00Z");
   const ok = staleServeDecision(afterClose, "chains", "self-throttle", night);
   assert.equal(ok.serve, true);
-  assert.equal((ok as any).freshness.stale, true);
+  assert.equal((ok as any).freshness.stale, false, "the latest data that exists is not a failed refresh");
+  assert.equal((ok as any).freshness.lastSession, true);
   assert.match((ok as any).freshness.reason, /market closed, last-session copy/);
   const midSession = Date.parse("2026-10-27T17:00:00Z");
   assert.equal(staleServeDecision(midSession, "chains", "self-throttle", night).serve, false, "a mid-session copy is not the close");
