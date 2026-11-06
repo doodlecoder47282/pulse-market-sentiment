@@ -15,7 +15,7 @@ const enter = (over: Record<string, unknown> = {}) => {
   return {
     symbol: "TEST", verdict: "ENTER", liquidityUsd: liq, marketCap: 400_000, mintAuthorityActive: false, freezeAuthorityActive: false,
     securityCheckedAt: 1, buys1h: 40, sells1h: 12, chg1h: 8, priceUsd: 0.001,
-    top10Pct: 22, jupState: "agree", score: 80, volAccel: 2.1, netBuyRatio5m: 0.66,
+    top10Pct: 22, jupState: "agree", score: 80, volAccel: 2.1, netBuyRatio5m: 0.66, lastRefreshAt: Date.now() - 60_000,
     risk: { maxPositionUsd: size, estSlippagePct: tradeCost({ liquidityUsd: liq, sizeUsd: size }).roundTripPct },
     ...over,
   };
@@ -99,4 +99,19 @@ test("card states the sizing basis when its liquidity moved more than 1% from it
   const p = readFileSync(new URL("../../client/src/components/CryptoPanel.tsx", import.meta.url), "utf8");
   assert.match(p, /sizingBasisDrift\(c\.liquidityUsd, c\.risk\.sizedOnLiquidityUsd\)/);
   assert.match(p, /size and round trip from the earlier read at/);
+});
+
+test("ENTER gates: an ENTER on pair data older than the freshness limit, or with no read time, fails", async () => {
+  const { readFileSync } = await import("node:fs");
+  const now = Date.now();
+  const stale = candidateChecks([enter({ lastRefreshAt: now - 11 * 60_000 })], { state: "on" }, CRYPTO_RULES, now)[0];
+  assert.equal(stale.state, "fail");
+  assert.match(JSON.stringify(stale), /11\.0 min old, over the 10-min freshness limit/);
+  assert.equal(candidateChecks([enter({ lastRefreshAt: null })], { state: "on" }, CRYPTO_RULES, now)[0].state, "fail");
+  assert.equal(candidateChecks([enter({ lastRefreshAt: now - 9 * 60_000 })], { state: "on" }, CRYPTO_RULES, now)[0].state, "pass");
+  // Just over the limit never reads as the limit.
+  assert.match(JSON.stringify(candidateChecks([enter({ lastRefreshAt: now - 600_050 })], { state: "on" }, CRYPTO_RULES, now)[0]), /10\.1 min old/);
+  // The live check judges at the feed's own instant.
+  const lv = readFileSync(new URL("../../server/liveVerify.ts", import.meta.url), "utf8");
+  assert.match(lv, /candidateChecks\(feed \? \(feed\.candidates as any\) : null, desk, undefined, feed\?\.asOf \?\? now\)/);
 });

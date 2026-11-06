@@ -17,6 +17,7 @@
 // multiples stand in for price multiples (supply growth overstates the move).
 
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION } from "./cryptoRules";
+import { ageMinutesCeil1 } from "./cryptoVerdict";
 
 type Rules = typeof CRYPTO_RULES;
 
@@ -223,6 +224,8 @@ export interface PromptCoin {
   jupState?: string; jupGapPct?: number | null;
   bundleLine?: string | null;
   socialLine?: string | null;
+  /** When the desk last read this pair from DexScreener (ms). The market fields above are from that read. */
+  lastRefreshAt?: number | null;
 }
 
 const v = (x: number | null | undefined, f: (n: number) => string) => (x == null || !Number.isFinite(x) ? "unread" : f(x));
@@ -238,7 +241,10 @@ export function buildTradePrompt(c: PromptCoin, sizeText: string, rules: Rules =
     `COIN: ${c.symbol} (${c.name}) on ${c.chain}, ${c.dexId}${c.pumpfunGraduate ? ", graduated pump.fun" : ""}`,
     `Mint: ${c.tokenAddress}`,
     `Pair: ${c.pairAddress}`,
-    `Data as of: ${new Date(now).toISOString()}`,
+    // The market fields are from the desk's last pair read, not from now.
+    `Data as of: ${c.lastRefreshAt != null && Number.isFinite(c.lastRefreshAt)
+      ? `${new Date(c.lastRefreshAt).toISOString()} (pair read ${ageMinutesCeil1(now - c.lastRefreshAt)} min before this prompt was copied${now - c.lastRefreshAt > rules.freshness.enterMaxAgeMinutes * 60_000 ? `; OLDER than the desk's ${rules.freshness.enterMaxAgeMinutes}-min freshness limit, treat as stale` : ""})`
+      : `pair read time unknown (prompt copied ${new Date(now).toISOString()})`}`,
     ``,
     `MARKET: price ${v(c.priceUsd, usd)}, market cap ${v(c.marketCap, usd)}, liquidity ${v(c.liquidityUsd, usd)}, age ${v(c.ageMinutes, (m) => (m >= 60 ? `${(m / 60).toFixed(1)} h` : `${Math.round(m)} min`))}`,
     `Volume: 5m ${v(c.vol5m, usd)}, 1h ${v(c.vol1h, usd)}, 24h ${v(c.vol24h, usd)}. Last 5m: ${c.buys5m ?? "unread"} buys / ${c.sells5m ?? "unread"} sells`,

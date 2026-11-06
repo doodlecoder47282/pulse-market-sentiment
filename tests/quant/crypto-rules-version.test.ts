@@ -22,6 +22,11 @@ const PINNED: Record<string, string> = {
   // 2026.11.03-1: owner-approved exit plan (exitPlan: trims 50% at 2x, 25% at 4x, rest at the target; stop to entry
   // after the first trim; 1% bankroll risk sizing). No ENTER/WATCH/PASS threshold changed.
   "2026.11.03-1": "06c63f87224619a93a1b8d3769b62f9e82e234d69c8c1e0fa45a32e409e669f7",
+  // 2026.11.06-1: freshness.enterMaxAgeMinutes = 10. A pair whose data stopped refreshing kept its last ENTER
+  // until the 48 h eviction. Now an ENTER needs pair data younger than the limit: the scorer gives WATCH
+  // (stale_data) between the top-10 and desk-risk gates, the served feed re-applies it, and a re-score on
+  // stale data (security / social ticks) records no row. No score or other threshold changed.
+  "2026.11.06-1": "5aaf5185dfc1258433f954604eb4c593ab698c4633be47660f0cdaccea04bf63",
 };
 
 test("crypto rule book content is pinned to its version", () => {
@@ -69,6 +74,16 @@ test("the engine, stats and verdict read the book instead of carrying their own 
   // Hard kill is PASS, never WATCH; the 55 floor is the retrace watch above the cap ceiling.
   assert.match(eng, /CRYPTO_RULES\.mcapCeiling\.watchMinScore \? "WATCH" : "PASS"/);
   assert.doesNotMatch(src("shared/cryptoRules.ts"), /minScoreWithKill/);
-  // Served feed re-applies the desk gate at read time.
-  assert.match(eng, /c\.verdict === "ENTER" && risk\.state !== "on"/);
+  // Served feed re-applies the desk gate and the freshness gate at read time
+  // (shared/cryptoVerdict.ts servedVerdict); the scorer applies freshness too,
+  // so a re-score without a pair refresh never records an ENTER.
+  assert.match(eng, /\.map\(\(c\) => servedVerdict\(c, risk, nowRead\)\)/);
+  assert.match(eng, /pairDataStale\(c\.lastRefreshAt, Date\.now\(\)\)\.stale\) \{\s*\/\/[^\n]*\n[^\n]*\n\s*verdict = "WATCH"; code = "stale_data";/);
+  assert.match(vd, /ENTER_MAX_AGE_MS = CRYPTO_RULES\.freshness\.enterMaxAgeMinutes \* 60_000/);
+  assert.match(vd, /stale_data: "/);
+  // Security and social re-scores record nothing on stale pair data.
+  assert.equal((eng.match(/if \(!pairDataStale\(c\.lastRefreshAt, Date\.now\(\)\)\.stale\) persistSignal\(c\);/g) ?? []).length, 2);
+  // The rotation stamps a chunk only after its DexScreener call returns.
+  assert.match(eng, /const answeredAt = Date\.now\(\);\s*for \(const a of chunk\) for \(const c of byToken\.get\(a\) \?\? \[\]\) c\.lastAttemptAt = answeredAt;/);
+  assert.doesNotMatch(eng, /for \(const c of batch\) c\.lastAttemptAt = attemptAt;/);
 });
