@@ -1390,3 +1390,5 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: chain-audit DEX extremes (fix/dex-extrema). Recording frame 43 showed "Max positive DEX 2,000 $0" and "Max negative DEX 2,000 $0": computeDEX picked the first strike when every strike netted to zero (0 > -Infinity). A strike is now reported only when its net DEX is actually positive (negative); otherwise null, which the panel already hides. Tests: tests/quant/dex-extrema.test.ts.
