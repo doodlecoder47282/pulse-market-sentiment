@@ -1586,3 +1586,10 @@ on $40k. The arithmetic check stays on the basis; a new crypto.sizing.basis chec
 served liquidity moved more than 1% from it as "stale" (never pass), and the card says "size and round
 trip from the earlier read at $X liquidity". CRYPTO_DESK.md section 6 updated. Not done: re-scoring on the
 GeckoTerminal refresh (the next momentum tick re-sizes within about 4 min).
+2026-11-06: chart null guards (feat/chart-null-guards). /api/gamma-levels per-ticker branch sent asOf as an ISO string while the SPY branch sent epoch seconds; GammaContextBanner multiplied by 1000 -> "updated Invalid Date" on ticker charts. Server now sends seconds on both branches; the banner reads seconds, ms or ISO (shared/asOfTime.ts) and hides an unreadable stamp. A missing call or put wall (null) crashed LightweightCandlestick (.toFixed on null) and drew NaN lines in CandlestickChart; both now skip the missing wall. Tests: tests/quant/chart-null-guards.test.ts.
+Review of feat/chart-null-guards: the CI type gate failure (banner walls typed non-null) fixed in cae94a6.
+MUST-FIX taken: the per-ticker /api/gamma-levels branch sent the response time as asOf, and the banner
+newly showed it as "updated HH:MM:SS" while the positioning snapshot is cached up to 5 min (a made-up
+fresh time). The snapshot now carries the chain's own data time (chainAsOfMs: Schwab's underlying quote
+time, else receive time) and the route sends that, or null so the banner shows no time; the banner says
+"chain as of".
