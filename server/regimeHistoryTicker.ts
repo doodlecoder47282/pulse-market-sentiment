@@ -6,7 +6,10 @@
  * to be open. Without this, the panel sits at "0/5 samples needed" forever when no
  * one's looking at it.
  *
- * Cheap: predict route reads from the snapshot cache, no new Schwab calls.
+ * Not free: this read is non-peek, so it rebuilds the models snapshot when the
+ * cached build is past its cadence or chain age (Schwab chain reads), and
+ * /api/models post-processing reads $SPX chains and bars. It is one of the
+ * session's models builders (with the Trade Desk panel and the Discord polls).
  */
 
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
