@@ -1,4 +1,5 @@
 import { vixToAtmPct } from "@shared/vol";
+import { levelsSourceFor, INDEX_NOT_WIRED_REASON } from "../shared/chartLevels";
 import { getCryptoContext } from "./cryptoContext";
 import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
 import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
@@ -658,14 +659,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const REGIME_CACHE_MS = 30 * 60_000;
 
   // Macro carousel — cross-asset quotes grouped by category for ticker tape + carousel.
-  // Short cache keeps the Schwab request budget low (~25 symbols per refresh).
+  // A rebuild is one batched Schwab quote request; daily history is re-read
+  // only when a completed session is missing (server/macroCore.ts).
   let macroCache: { at: number; data: MacroResponse } | null = null;
-  // 15 s in the regular session; 5 min otherwise (prices barely move and each
-  // rebuild costs ~2 Schwab reads per symbol).
+  // 15 s in the regular session; 5 min otherwise (regular-session prices do not move).
   const macroCacheMs = () => (isRegularSessionOpen() ? 15_000 : 5 * 60_000);
   app.get("/api/macro", async (_req, res) => {
     try {
-      if (macroCache && Date.now() - macroCache.at < macroCacheMs()) {
+      // A snapshot built on the other side of the open or close is rebuilt:
+      // its session state (and the tape's Live/closed label) would be wrong.
+      if (macroCache && Date.now() - macroCache.at < macroCacheMs()
+          && (macroCache.data.sessionOpen === undefined || macroCache.data.sessionOpen === isRegularSessionOpen())) {
         return res.json(macroCache.data);
       }
       const data = await buildMacroSnapshot();
@@ -1301,8 +1305,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/gamma-levels", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
-      const isSpy = symbol === "SPY" || symbol === "^GSPC" || symbol === "SPX";
-      if (isSpy) {
+      // shared/chartLevels.ts: the S&P 500 index is not answered with SPY-scale
+      // levels (they would be drawn at about a tenth of the index price).
+      const source = levelsSourceFor(symbol);
+      if (source === "index_not_wired") {
+        return res.json({ symbol, supported: false, spot: null, levels: null, reason: INDEX_NOT_WIRED_REASON, asOf: null });
+      }
+      if (source === "spy_snapshot") {
         const snap = await getOrBuild(false);
         const g = snap.gamma;
         return res.json({
