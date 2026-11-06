@@ -1391,6 +1391,7 @@ First gated run of the method-page check: FAIL, and correctly so as a test defec
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
 
+2026-11-06: macro event calendar (feat/vol-calendar-2027). The FOMC list ended 2026-12-09 and the CPI list had the wrong late-2026 dates (11-12 and 12-09; BLS moved them to 11-10 and 12-10 after the 2025 lapse). Added the Fed's 2027 FOMC decision days (press release 2025-09-05) and the BLS 2027 CPI dates (bls.gov schedule, read 2026-11-06); the calendar now warns when its 90-day window runs past the end of a list instead of showing an empty stretch. Tests: tests/quant/vol-calendar-dates.test.ts.
 2026-11-05: macro strip request efficiency (feat/macro-request-efficiency). Evidence (owner-run, live, 2026-11-05
 ~01:00 ET): Settings self-test "Rate budget: 109/100 req/min" with quotes, chains and gamma levels failing on
 "self-throttle (100 requests/min)"; /api/schwab/diag in one minute: 75 admitted requests, 34 of them
