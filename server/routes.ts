@@ -962,7 +962,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // On failure — serve last persisted session snapshot for today, tagged.
       try {
         const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
-        const experimental = String(req.query.experimental ?? "") === "1";
+        // Same default as the live path above (experimental unless ?experimental=0),
+        // so the fallback reads the disk key the build actually wrote.
+        const experimental = String(req.query.experimental ?? "1") !== "0";
         const entry = await readCacheEntry<ModelsResponse>(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`);
         if (entry) {
           // "last-close" only for a copy built at or after its session close,

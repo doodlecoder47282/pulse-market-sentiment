@@ -1624,3 +1624,9 @@ Crypto review of feat/crypto-target-label: no MUST-FIX. SHOULD-FIX taken: How-to
 20% no-data condition: now stated. The stats row and the first-ENTER line still said "hit 5M" next to "5m"
 volume labels: built from the rule book. The chip is "$5M CAP" (7 characters, was 6) instead of 11, so the
 non-wrapping signal row does not widen at 402 px. Test: tests/quant/crypto-target-label.test.ts.
+
+2026-11-06: Models fallback key (feat/models-fallback-key). When a live /api/models build failed, the fallback
+parsed `experimental` with a non-experimental default while the live path (and every disk write) defaults to
+experimental, so requests without the parameter (Models panel, Discord, edge briefing) looked up a key that
+is never written and the saved-session copy was never served. Both now parse the flag the same way. Found
+by the headline-read-only review. Test: tests/quant/models-fallback-key.test.ts.
