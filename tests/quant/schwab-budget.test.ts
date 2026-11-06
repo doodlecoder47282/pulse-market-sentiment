@@ -56,9 +56,9 @@ test("flow preview: one scan per 30 s serves every poller", () => {
   assert.match(f, /if \(_previewMemo && now - _previewMemo\.at < PREVIEW_TTL_MS\) return _previewMemo\.p;/);
 });
 
-test("Models: an empty build backs off (20 s doubling to 5 min) and never overwrites the saved session snapshot", () => {
+test("Models: an empty build backs off (20 s doubling, 2 min cap in the session, 5 min outside) and never overwrites the saved session snapshot", () => {
   const r = src("server/routes.ts");
-  assert.match(r, /const hold = cachedEmpty \? emptyRetryDelayMs\(modelsEmptyStreak\.get\(cacheKey\) \?\? 1\) : MODELS_CACHE_MS;/);
+  assert.match(r, /holdMs: entry\?\.empty \? emptyRetryDelayMs\(modelsEmptyStreak\.get\(cacheKey\) \?\? 1, marketOpen \? EMPTY_RETRY_SESSION_CAP_MS : EMPTY_RETRY_CAP_MS\) : MODELS_CACHE_MS,/);
   assert.match(r, /modelsEmptyStreak\.set\(cacheKey, modelsBuildEmpty\(data\) \? \(modelsEmptyStreak\.get\(cacheKey\) \?\? 0\) \+ 1 : 0\);/);
   assert.match(r, /if \(!modelsBuildEmpty\(data\)\) await writeCache\(`models-/);
   const c = src("client/src/lib/retryUntilReady.ts");

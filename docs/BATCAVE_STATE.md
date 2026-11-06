@@ -1401,3 +1401,16 @@ not_built and never starts a build (headline says why the regime is unavailable)
 20 s, 40 s, 80 s ... capped at 5 min (server/modelsBackoff.ts), reset by a good build. Builds still come from
 the Trade Desk predictor panel and the 9:00-16:00 regime ticker (60 s, now bounded by the backoff). Not
 verified live: the request count after deploy.
+Review of feat/headline-read-only: 2 MUST-FIX taken. (1) Outside the session the chain quote time stops at
+the last print, so every build failed the 30-min closed chain-age limit at birth: peek could never serve
+from the evening to the pre-market or all weekend, and every non-peek reader rebuilt on each poll (the
+01:00 ET diag's one-rebuild-a-minute). One pure gate now serves both reads (server/modelsBackoff.ts
+modelsCacheGate): with the market closed, a build made after the last settled close is current within its
+30-min cadence, the rule staleServeDecision already applies to cached chains. (2) The not_built reason said
+"pending, or backing off" for every miss; the peek now names its state (build running, none since start,
+past cadence, chain too old, empty build due a rebuild). SHOULD-FIX taken: a predictor peek reads the raw
+cached build (no /api/models post-processing, so no Schwab read); Signals and Heatseeker name the real
+cause; a timeout reads "did not answer within 2.5 s"; the empty-build backoff caps at 2 min in the session;
+regimeHistoryTicker's "no new Schwab calls" comment corrected. Behavioural tests on the gate (session,
+closed at 17:00 / 01:00 / Saturday, pre-settle build) and on each reason. Left: /api/models error
+fallback looks up the non-experimental disk key (separate PR).
