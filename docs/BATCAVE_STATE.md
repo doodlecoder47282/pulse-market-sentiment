@@ -1390,3 +1390,12 @@ merges, a green CI does not include a working method-page check.
 First gated run of the method-page check: FAIL, and correctly so as a test defect. The page's disclaimer
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
+
+2026-11-06: deploy identity and request breakdown (feat/health-commit-diag). /api/health now carries `commit`,
+`commitSource`, `branch` from the host's build variables (server/deployInfo.ts: RAILWAY_GIT_COMMIT_SHA first;
+null when the host did not say, never guessed), so "is commit X deployed" can be proven per domain. Settings
+(Schwab panel) shows the running commit and a "Requests by feature" list built from /api/schwab/diag
+requestsByCaller (shared/requestBreakdown.ts): admitted attempts in the last minute grouped by route and
+priority, with kinds and symbols; stack-frame callers shown as "background task" (no file paths); requests
+refused or served from an older copy in the last 5 minutes listed from diag.degraded. Replaces the browser
+console steps. Not verified live.

@@ -2,6 +2,8 @@ import dotenv from "dotenv";
 // Load .env.local first (takes precedence), then fall back to .env.
 dotenv.config({ path: ".env.local" });
 dotenv.config();
+import { deployInfo } from "./deployInfo";
+const DEPLOY = deployInfo(process.env);
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import { registerRoutes } from "./routes";
@@ -128,7 +130,7 @@ if (SELF_CALL_KEY) {
 
 app.get("/api/health", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.json(healthPayload(!!ACCESS_KEY, new Date(), GATE_MODE === "closed", editionFromEnv()));
+  res.json(healthPayload(!!ACCESS_KEY, new Date(), GATE_MODE === "closed", editionFromEnv(), DEPLOY));
 });
 // Schwab sign-in return (automatic flow). Schwab's redirect cannot carry the
 // access-key header, so this route sits before the gate; the one-time `state`

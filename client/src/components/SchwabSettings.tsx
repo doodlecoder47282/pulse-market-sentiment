@@ -10,6 +10,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
 import PersonalServerHandoff from "./PersonalServerHandoff";
 import LiveVerifyCard from "./LiveVerifyCard";
+import { requestBreakdown, type CallerRow } from "@shared/requestBreakdown";
 import { openInAppBrowser, closeInAppBrowser, listenForAppReturn } from "@/lib/nativeAuth";
 import type { MarketDataValidation } from "@shared/marketDataValidation";
 import {
@@ -63,8 +64,12 @@ interface SchwabDiag {
   degraded?: { kind: string; staleServed: number; unavailable: number; secondsAgo: number; lastReason: string }[];
   /** Max age (ms) per kind at which a cached Schwab payload may still be served. */
   maxServeAgeMs?: Record<string, number>;
+  /** Admitted request attempts in the last minute, by priority, kind, symbol and caller. */
+  requestsByCaller?: CallerRow[];
   asOf: number;
 }
+
+interface HealthInfo { commit?: string | null; commitSource?: string | null; branch?: string | null }
 
 /** /api/schwab/stream/status (subset read here). */
 interface StreamStatus {
@@ -299,6 +304,15 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     refetchInterval: open ? 5_000 : false,
     enabled: open,
   });
+
+  const { data: health } = useQuery<HealthInfo>({
+    queryKey: ["/api/health"],
+    queryFn: async () => apiJson<HealthInfo>("GET", "/api/health"),
+    staleTime: 60_000,
+    enabled: open,
+  });
+  const breakdown = useMemo(() => requestBreakdown(diag?.requestsByCaller), [diag?.requestsByCaller]);
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
   const { data: streamStatus } = useQuery<StreamStatus>({
     queryKey: ["/api/schwab/stream/status"],
@@ -956,6 +970,54 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 Cache: {diag.cacheEntries} entries · Budget: {diag.requestsLastMinute}/{diag.maxPerMinute} req/min
               </div>
             )}
+
+            {/* Who is using the request budget: no browser console needed. */}
+            {diag && (
+              <div className="rounded-md border border-border/30 bg-muted/10 px-3 py-1.5 text-[11px]" data-testid="schwab-request-breakdown">
+                <button
+                  type="button"
+                  onClick={() => setShowBreakdown((v) => !v)}
+                  aria-expanded={showBreakdown}
+                  data-testid="button-toggle-request-breakdown"
+                  className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left text-muted-foreground hover:text-foreground"
+                >
+                  <span><span className="font-semibold text-foreground/80">Requests by feature</span> · last minute: {breakdown.total} admitted of {diag.maxPerMinute}</span>
+                  <span aria-hidden="true">{showBreakdown ? "Hide" : "Show"}</span>
+                </button>
+                {showBreakdown && (
+                  <div className="space-y-1 pb-1">
+                    {breakdown.lines.length === 0 ? (
+                      <div className="text-muted-foreground">No Schwab request was sent in the last minute (cache hits are not counted).</div>
+                    ) : (
+                      <ul className="divide-y divide-border/30">
+                        {breakdown.lines.slice(0, 12).map((l) => (
+                          <li key={`${l.priority}-${l.feature}`} className="flex flex-wrap items-baseline gap-x-2 py-1" data-testid="request-breakdown-row">
+                            <span className="font-mono tabular-nums text-foreground">{l.total}</span>
+                            <span className="text-foreground/90">{l.feature}</span>
+                            <span className="text-muted-foreground">{l.priority}</span>
+                            <span className="text-muted-foreground">{l.kinds.map((k) => `${k.kind} ${k.n}`).join(", ")}</span>
+                            {l.symbols.length > 0 && <span className="font-mono text-muted-foreground">{l.symbols.join(" ")}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(diag.degraded ?? []).length > 0 && (
+                      <div className="text-amber-200/90">
+                        Last 5 min, not fetched: {(diag.degraded ?? []).map((d) => `${d.kind} ${d.unavailable} unavailable, ${d.staleServed} served from an older copy (${d.lastReason})`).join("; ")}
+                      </div>
+                    )}
+                    <div className="text-muted-foreground">
+                      Counts are request attempts that took a slot under the {diag.maxPerMinute}/min cap (a retry counts again). Cache hits are not counted. The self-test's own reads show under its route.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="text-[11px] text-muted-foreground" data-testid="running-commit">
+              Running build: {health?.commit ? <span className="font-mono text-foreground/80">{health.commit}</span> : "commit not reported by the host"}
+              {health?.branch ? ` (${health.branch})` : ""}
+            </div>
           </div>
 
           <PremarketToggle />
