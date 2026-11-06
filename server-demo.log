@@ -1,0 +1,400 @@
+5:10:48 PM [express] GET /api/decision-support 200 in 21ms
+5:10:48 PM [express] GET /api/flow/preview 200 in 56ms
+5:10:49 PM [express] GET /api/scan 200 in 677ms
+[discord:whale] Discord webhook disabled: set PULSE_DISCORD_WHALE_WEBHOOK to enable this card.
+5:10:49 PM [express] GET /api/scan 200 in 66ms
+5:10:49 PM [express] GET /api/scan 400 in 0ms
+5:10:49 PM [express] GET /api/research/events 200 in 8ms
+5:10:49 PM [express] GET /api/research/events 400 in 0ms
+5:10:49 PM [express] GET /api/research/snapshots 200 in 0ms
+5:10:49 PM [express] GET /api/setups 200 in 2ms
+5:10:49 PM [express] POST /api/crypto/community 403 in 0ms
+5:10:49 PM [express] GET /api/health 200 in 1ms
+5:10:49 PM [express] GET /api/scan 400 in 0ms
+5:10:49 PM [express] GET /api/scan 400 in 0ms
+5:10:49 PM [express] GET /api/scan 400 in 1ms
+5:10:49 PM [express] GET /api/scan 400 in 1ms
+5:10:49 PM [express] GET /api/scan 400 in 1ms
+5:10:49 PM [express] GET /api/scan 400 in 0ms
+5:10:49 PM [express] GET /api/scan 400 in 1ms
+5:10:49 PM [express] GET /api/scan 429 in 1ms
+5:10:49 PM [express] GET /api/scan 429 in 0ms
+5:10:49 PM [express] GET /api/scan 429 in 1ms
+5:10:49 PM [express] GET /api/scan 429 in 0ms
+5:10:49 PM [express] GET /api/scan 429 in 0ms
+5:10:49 PM [express] GET /api/scan 429 in 1ms
+5:10:49 PM [express] GET /api/scan 429 in 1ms
+5:10:49 PM [express] GET /api/scan 429 in 1ms
+5:10:50 PM [express] GET /api/health 200 in 1ms
+5:10:50 PM [express] GET /api/health 200 in 1ms
+5:10:50 PM [express] GET /api/quotes 200 in 1ms
+5:10:50 PM [express] GET /api/schwab/status 200 in 1ms
+5:10:50 PM [express] GET /api/regime/headline 200 in 443ms
+5:10:50 PM [express] GET /api/snapshot 200 in 1ms
+5:10:50 PM [express] GET /api/trade-environment 200 in 0ms
+5:10:50 PM [express] GET /api/odte/map 200 in 82ms
+5:10:50 PM [express] GET /api/regime 200 in 1ms
+5:10:50 PM [express] GET /api/layout/signals 200 in 1ms
+5:10:50 PM [express] GET /api/health 200 in 1ms
+5:10:50 PM [express] GET /api/schwab/status 304 in 1ms
+5:10:50 PM [express] GET /api/quotes 304 in 1ms
+5:10:50 PM [express] GET /api/headline 200 in 5ms
+5:10:50 PM [express] GET /api/whales/performance 200 in 2ms
+5:10:50 PM [express] GET /api/flow/preview 200 in 1ms
+5:10:50 PM [express] GET /api/flow/followups 200 in 2ms
+5:10:50 PM [express] GET /api/flow/followups 200 in 1ms
+5:10:50 PM [express] GET /api/uoa/preview 200 in 2ms
+5:10:51 PM [express] GET /api/signals/tracked 200 in 2ms
+5:10:51 PM [express] GET /api/breadth 200 in 96ms
+5:10:51 PM [express] GET /api/flow 200 in 248ms
+5:10:51 PM [express] GET /api/macro 200 in 513ms
+5:10:51 PM [express] GET /api/signals/tracked 200 in 1ms
+5:10:51 PM [express] GET /api/flow-intraday 200 in 119ms
+5:10:51 PM [express] GET /api/market/option-chain/SPX 200 in 485ms
+5:10:56 PM [express] GET /api/quotes 200 in 1ms
+5:11:01 PM [express] GET /api/quotes 200 in 1ms
+5:11:01 PM [express] GET /api/macro 304 in 1ms
+5:11:01 PM [express] GET /api/flow 200 in 99ms
+5:11:06 PM [express] GET /api/quotes 200 in 1ms
+5:11:11 PM [express] GET /api/quotes 200 in 1ms
+5:11:11 PM [express] GET /api/macro 200 in 11ms
+5:11:11 PM [express] GET /api/flow 200 in 85ms
+5:11:16 PM [express] GET /api/quotes 200 in 1ms
+5:11:21 PM [express] GET /api/flow/preview 200 in 39ms
+5:11:21 PM [express] GET /api/flow/followups 200 in 1ms
+5:11:21 PM [express] GET /api/flow/followups 200 in 1ms
+5:11:21 PM [express] GET /api/uoa/preview 200 in 2ms
+5:11:21 PM [express] GET /api/signals/tracked 200 in 2ms
+5:11:21 PM [express] GET /api/quotes 200 in 3ms
+5:11:21 PM [express] GET /api/schwab/status 304 in 0ms
+5:11:21 PM [express] GET /api/signals/tracked 200 in 1ms
+5:11:21 PM [express] GET /api/macro 304 in 1ms
+5:11:21 PM [express] GET /api/flow 200 in 103ms
+5:11:22 PM [express] GET /api/market/option-chain/SPX 200 in 231ms
+5:11:23 PM [express] GET /api/headline 200 in 103ms
+[signedTickVolume] computeOfiTrend: bars=160 cum=6492656 slope15m=-426071 slope5m=-681433 trend=NEUTRAL accel=ACCELERATING method=tick-rule-1m
+5:11:23 PM [express] GET /api/ofi 200 in 2ms
+5:11:23 PM [express] GET /api/ticker-calendar 200 in 1ms
+5:11:24 PM [express] GET /api/ticker-projection 200 in 272ms
+5:11:24 PM [express] GET /api/mag7 200 in 442ms
+5:11:24 PM [express] GET /api/flow/unusual 200 in 109ms
+5:11:24 PM [express] GET /api/alpha-news 200 in 77ms
+5:11:24 PM [express] GET /api/ohlc 200 in 297ms
+5:11:24 PM [express] GET /api/ticker-outlook 200 in 822ms
+5:11:25 PM [express] GET /api/gamma-levels 200 in 1468ms
+5:11:26 PM [express] GET /api/quotes 200 in 1ms
+5:11:31 PM [express] GET /api/quotes 200 in 2ms
+5:11:31 PM [express] GET /api/headline 200 in 3ms
+5:11:31 PM [express] GET /api/backtest/levels 200 in 4ms
+5:11:31 PM [express] GET /api/projection/multiday 200 in 607ms
+5:11:31 PM [express] GET /api/pivot-projection 200 in 8ms
+5:11:31 PM [express] GET /api/playbook/daily 200 in 1ms
+5:11:34 PM [express] GET /api/chain-audit 200 in 2166ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[schwab] fetchVixSpot: 14.18
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.18 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7282.9 spxPct=-0.038% breakdown=false dir=null
+[sdZones] detectSDZones: 4 live zones (161 candles)
+[wickTiming] computeWickTiming: bars=161 last3=BEARISH strongCount15m=14 strongDir=BEARISH
+5:11:34 PM [express] GET /api/models 200 in 49ms
+[ml:bridge:miss] mlHealth timeout
+5:11:34 PM [express] GET /api/ml/health 503 in 2602ms
+5:11:37 PM [express] GET /api/quotes 200 in 2ms
+5:11:37 PM [express] GET /api/playbook/daily/drift 200 in 2ms
+5:11:37 PM [express] GET /api/macro 200 in 16ms
+[ml:bridge:miss] mlQuantileOverlay fetch failed
+5:11:37 PM [express] GET /api/ohlc 200 in 44ms
+5:11:37 PM [express] GET /api/ml/accuracy-history 200 in 5771ms
+[ml:bridge:miss] mlQuantileMorning fetch failed
+5:11:37 PM [express] GET /api/ml/projection-spy 200 in 2991ms
+[ml:bridge:miss] mlHealth fetch failed
+5:11:37 PM [express] GET /api/ml/health 503 in 3ms
+5:11:37 PM [express] GET /api/ml/coverage 200 in 2ms
+5:11:40 PM [express] GET /api/headline 200 in 119ms
+5:11:40 PM [express] GET /api/odte/forward 200 in 78ms
+5:11:40 PM [express] GET /api/odte/map/ledger 200 in 2ms
+5:11:40 PM [express] GET /api/heatseeker 200 in 94ms
+5:11:40 PM [express] GET /api/odte-tracker 200 in 1ms
+5:11:40 PM [express] GET /api/heatseeker/levels 200 in 2ms
+5:11:42 PM [express] GET /api/quotes 200 in 1ms
+5:11:43 PM [express] GET /api/odte-tracker 304 in 1ms
+5:11:45 PM [express] GET /api/heatseeker 200 in 78ms
+5:11:46 PM [express] GET /api/odte-tracker 304 in 2ms
+5:11:47 PM [express] GET /api/quotes 200 in 3ms
+5:11:47 PM [express] GET /api/macro 304 in 2ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.18 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7282.9 spxPct=-0.038% breakdown=false dir=null
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.18 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7282.9 spxPct=-0.038% breakdown=false dir=null
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.18 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7282.9 spxPct=-0.038% breakdown=false dir=null
+5:11:49 PM [express] GET /api/headline 200 in 3ms
+5:11:49 PM [express] GET /api/trade-desk 200 in 115ms
+5:11:49 PM [express] GET /api/odte/map 200 in 91ms
+5:11:49 PM [express] GET /api/setups 200 in 2ms
+5:11:49 PM [express] GET /api/ofi 200 in 0ms
+5:11:49 PM [express] GET /api/research/events 200 in 1ms
+5:11:49 PM [express] GET /api/research/snapshots 200 in 1ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.18 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7282.9 spxPct=-0.038% breakdown=false dir=null
+5:11:49 PM [express] GET /api/regime/predict 200 in 50ms
+5:11:49 PM [express] GET /api/edge/stats 200 in 4ms
+5:11:51 PM [express] GET /api/regime/headline 200 in 386ms
+5:11:51 PM [express] GET /api/snapshot 200 in 1ms
+5:11:51 PM [express] GET /api/trade-environment 200 in 1ms
+5:11:52 PM [express] GET /api/quotes 200 in 2ms
+5:11:57 PM [express] GET /api/quotes 200 in 2ms
+5:11:57 PM [express] GET /api/headline 200 in 3ms
+5:11:57 PM [express] GET /api/layout/regime 200 in 0ms
+5:11:57 PM [express] GET /api/canary 200 in 1ms
+5:11:58 PM [express] GET /api/heatmap/thermal 200 in 785ms
+5:11:59 PM [express] GET /api/sector-web 200 in 823ms
+5:11:59 PM [express] GET /api/underperformers 200 in 6ms
+5:11:59 PM [express] GET /api/macro 200 in 152ms
+5:12:02 PM [express] GET /api/quotes 200 in 2ms
+5:12:06 PM [express] GET /api/headline 200 in 3ms
+5:12:06 PM [express] GET /api/cosmos 200 in 135ms
+5:12:06 PM [express] GET /api/cosmos/outlook 200 in 126ms
+5:12:07 PM [express] GET /api/quotes 200 in 1ms
+5:12:09 PM [express] GET /api/macro 304 in 0ms
+5:12:12 PM [express] GET /api/quotes 200 in 1ms
+5:12:13 PM [express] GET /api/headline 200 in 3ms
+5:12:14 PM [express] GET /api/news 200 in 518ms
+5:12:17 PM [express] GET /api/quotes 200 in 2ms
+5:12:19 PM [express] GET /api/macro 200 in 13ms
+5:12:21 PM [express] GET /api/schwab/status 304 in 1ms
+5:12:21 PM [express] GET /api/headline 200 in 2ms
+5:12:22 PM [express] GET /api/quotes 200 in 1ms
+5:12:27 PM [express] GET /api/quotes 200 in 1ms
+5:12:30 PM [express] GET /api/iv-rv 200 in 57ms
+5:12:30 PM [express] GET /api/macro 304 in 0ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[schwab] fetchVixSpot: 14.13
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.13 vix5mAgo=null vixPct=null% spxNow=725.7 spx5mAgo=7280.7 spxPct=-90.032% breakdown=false dir=null
+[signedTickVolume] computeOfiTrend: bars=161 cum=6609917 slope15m=-121793 slope5m=-414392 trend=NEUTRAL accel=ACCELERATING method=tick-rule-1m
+[wickTiming] computeWickTiming: bars=162 last3=MIXED strongCount15m=14 strongDir=BEARISH
+5:12:31 PM [express] GET /api/edgelab/briefing 200 in 1704ms
+5:12:32 PM [express] GET /api/quotes 200 in 1ms
+5:12:37 PM [express] GET /api/crypto/community 200 in 1ms
+5:12:37 PM [express] GET /api/crypto/feed 200 in 10ms
+5:12:37 PM [express] GET /api/crypto/health 200 in 1ms
+5:12:37 PM [express] GET /api/crypto/signals 200 in 2ms
+5:12:37 PM [express] GET /api/quotes 200 in 2ms
+5:12:40 PM [express] GET /api/macro 200 in 8ms
+5:12:42 PM [express] GET /api/quotes 200 in 2ms
+5:12:44 PM [express] GET /api/headline 200 in 5ms
+5:12:44 PM [express] GET /api/odte/map 200 in 100ms
+5:12:44 PM [express] GET /api/whales/performance 200 in 1ms
+5:12:44 PM [express] GET /api/flow/preview 200 in 95ms
+5:12:44 PM [express] GET /api/flow/followups 200 in 1ms
+5:12:44 PM [express] GET /api/flow/followups 200 in 1ms
+5:12:44 PM [express] GET /api/uoa/preview 200 in 1ms
+5:12:44 PM [express] GET /api/signals/tracked 200 in 1ms
+5:12:45 PM [express] GET /api/signals/tracked 200 in 1ms
+5:12:45 PM [express] GET /api/flow-intraday 200 in 68ms
+5:12:45 PM [express] GET /api/layout/signals 304 in 1ms
+5:12:45 PM [express] GET /api/market/option-chain/SPX 200 in 498ms
+5:12:45 PM [express] GET /api/flow 200 in 64ms
+5:12:45 PM [express] GET /api/headline 200 in 3ms
+5:12:45 PM [express] GET /api/odte/map/ledger 304 in 1ms
+5:12:45 PM [express] GET /api/setups 200 in 1ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.13 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7280.7 spxPct=-0.008% breakdown=false dir=null
+[sdZones] detectSDZones: 4 live zones (162 candles)
+5:12:45 PM [express] GET /api/regime/predict 200 in 97ms
+5:12:45 PM [express] GET /api/ofi 200 in 1ms
+5:12:45 PM [express] GET /api/trade-desk 200 in 138ms
+5:12:46 PM [express] GET /api/schwab/status 304 in 1ms
+5:12:47 PM [express] GET /api/scan 200 in 984ms
+5:12:47 PM [express] GET /api/quotes 200 in 2ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.13 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7280.7 spxPct=-0.008% breakdown=false dir=null
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.13 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7280.7 spxPct=-0.008% breakdown=false dir=null
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.13 vix5mAgo=null vixPct=null% spxNow=7280.1 spx5mAgo=7280.7 spxPct=-0.008% breakdown=false dir=null
+5:12:49 PM [express] GET /api/health 200 in 1ms
+5:12:49 PM [express] GET /api/health 200 in 1ms
+5:12:49 PM [express] GET /api/quotes 200 in 5ms
+5:12:49 PM [express] GET /api/schwab/status 200 in 1ms
+5:12:50 PM [express] GET /api/regime/headline 200 in 972ms
+5:12:50 PM [express] GET /api/odte/map 200 in 130ms
+5:12:50 PM [express] GET /api/trade-environment 200 in 1ms
+5:12:50 PM [express] GET /api/macro 200 in 1ms
+5:12:50 PM [express] GET /api/macro 304 in 1ms
+5:12:50 PM [express] GET /api/layout/signals 200 in 1ms
+5:12:50 PM [express] GET /api/snapshot 200 in 4ms
+5:12:50 PM [express] GET /api/schwab/status 304 in 1ms
+5:12:50 PM [express] GET /api/regime 200 in 1ms
+5:12:50 PM [express] GET /api/health 200 in 3ms
+5:12:50 PM [express] GET /api/headline 200 in 0ms
+5:12:50 PM [express] GET /api/whales/performance 200 in 1ms
+5:12:50 PM [express] GET /api/flow/preview 200 in 0ms
+5:12:50 PM [express] GET /api/quotes 304 in 0ms
+5:12:50 PM [express] GET /api/flow/followups 200 in 6ms
+5:12:50 PM [express] GET /api/flow/followups 200 in 1ms
+5:12:50 PM [express] GET /api/uoa/preview 200 in 2ms
+5:12:50 PM [express] GET /api/signals/tracked 200 in 1ms
+5:12:50 PM [express] GET /api/breadth 200 in 9ms
+5:12:50 PM [express] GET /api/flow 200 in 5ms
+5:12:51 PM [express] GET /api/regime/headline 200 in 709ms
+5:12:51 PM [express] GET /api/snapshot 200 in 1ms
+5:12:51 PM [express] GET /api/signals/tracked 200 in 5ms
+5:12:52 PM [express] GET /api/flow-intraday 200 in 4ms
+5:12:52 PM [express] GET /api/market/option-chain/SPX 200 in 858ms
+5:12:52 PM [express] GET /api/trade-environment 200 in 1ms
+5:12:52 PM [express] GET /api/quotes 200 in 3ms
+5:12:55 PM [express] GET /api/quotes 200 in 1ms
+5:12:57 PM [express] GET /api/quotes 200 in 1ms
+5:13:00 PM [express] GET /api/quotes 200 in 1ms
+5:13:00 PM [express] GET /api/macro 200 in 258ms
+5:13:00 PM [express] GET /api/macro 200 in 219ms
+[oiCapture] ok=$SPX,SPY,QQQ,IWM failed=-
+5:13:01 PM [express] GET /api/flow 200 in 165ms
+5:13:01 PM [express] GET /api/headline 200 in 8ms
+5:13:01 PM [express] GET /api/layout/regime 200 in 2ms
+5:13:02 PM [express] GET /api/canary 200 in 1ms
+5:13:04 PM [express] GET /api/heatmap/thermal 200 in 1846ms
+[signedTickVolume] computeOfiTrend: bars=162 cum=6727986 slope15m=-164941 slope5m=-152676 trend=NEUTRAL accel=ACCELERATING method=tick-rule-1m
+5:13:04 PM [express] GET /api/ofi 200 in 6ms
+5:13:04 PM [express] GET /api/sector-web 200 in 8ms
+5:13:04 PM [express] GET /api/quotes 200 in 3ms
+5:13:04 PM [express] GET /api/underperformers 200 in 4ms
+5:13:05 PM [express] GET /api/quotes 200 in 0ms
+5:13:09 PM [express] GET /api/quotes 200 in 1ms
+5:13:10 PM [express] GET /api/macro 304 in 1ms
+5:13:10 PM [express] GET /api/macro 304 in 2ms
+5:13:14 PM [express] GET /api/quotes 200 in 4ms
+5:13:14 PM [express] GET /api/quotes 200 in 1ms
+5:13:28 PM [express] GET /api/ofi 200 in 6ms
+5:13:28 PM [express] GET /api/quotes 200 in 6ms
+5:13:28 PM [express] GET /api/trade-desk 200 in 206ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[schwab] fetchVixSpot: 14.09
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.09 vix5mAgo=null vixPct=null% spxNow=7282.7 spx5mAgo=7280.7 spxPct=0.027% breakdown=false dir=null
+[wickTiming] computeWickTiming: bars=163 last3=MIXED strongCount15m=14 strongDir=BEARISH
+5:13:28 PM [express] GET /api/regime/predict 200 in 10009ms
+5:13:28 PM [express] GET /api/macro 200 in 13ms
+5:13:28 PM [express] GET /api/macro 200 in 1ms
+5:13:28 PM [express] GET /api/quotes 200 in 1ms
+5:13:33 PM [express] GET /api/quotes 200 in 1ms
+5:13:33 PM [express] GET /api/quotes 200 in 1ms
+[signedTickVolume] computeOfiTrend: bars=162 cum=6727986 slope15m=-164941 slope5m=-152676 trend=NEUTRAL accel=ACCELERATING method=tick-rule-1m
+5:13:34 PM [express] GET /api/ofi 200 in 8ms
+5:13:38 PM [express] GET /api/quotes 200 in 2ms
+5:13:38 PM [express] GET /api/macro 304 in 2ms
+5:13:38 PM [express] GET /api/quotes 200 in 1ms
+5:13:38 PM [express] GET /api/macro 304 in 1ms
+5:13:39 PM [express] GET /api/health 200 in 1ms
+5:13:39 PM [express] GET /api/health 200 in 1ms
+5:13:39 PM [express] GET /api/quotes 200 in 1ms
+5:13:39 PM [express] GET /api/schwab/status 200 in 1ms
+5:13:39 PM [express] GET /api/regime/headline 200 in 393ms
+5:13:39 PM [express] GET /api/trade-environment 200 in 0ms
+5:13:39 PM [express] GET /api/macro 200 in 0ms
+5:13:39 PM [express] GET /api/odte/map 200 in 84ms
+5:13:40 PM [express] GET /api/schwab/status 304 in 1ms
+5:13:40 PM [express] GET /api/regime 200 in 1ms
+5:13:40 PM [express] GET /api/layout/signals 200 in 0ms
+5:13:40 PM [express] GET /api/quotes 304 in 1ms
+5:13:40 PM [express] GET /api/headline 200 in 3ms
+5:13:40 PM [express] GET /api/whales/performance 200 in 1ms
+5:13:40 PM [express] GET /api/flow/preview 200 in 72ms
+5:13:40 PM [express] GET /api/health 200 in 0ms
+5:13:40 PM [express] GET /api/flow/followups 200 in 1ms
+5:13:40 PM [express] GET /api/flow/followups 200 in 0ms
+5:13:40 PM [express] GET /api/uoa/preview 200 in 0ms
+5:13:40 PM [express] GET /api/signals/tracked 200 in 0ms
+5:13:40 PM [express] GET /api/flow 200 in 115ms
+5:13:40 PM [express] GET /api/signals/tracked 200 in 1ms
+5:13:40 PM [express] GET /api/flow-intraday 200 in 1ms
+5:13:40 PM [express] GET /api/market/option-chain/SPX 200 in 246ms
+5:13:41 PM [express] GET /api/snapshot 200 in 1430ms
+5:13:45 PM [express] GET /api/quotes 200 in 1ms
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.09 vix5mAgo=null vixPct=null% spxNow=7282.7 spx5mAgo=7280.7 spxPct=0.027% breakdown=false dir=null
+[sdZones] detectSDZones: 4 live zones (163 candles)
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.09 vix5mAgo=null vixPct=null% spxNow=7282.7 spx5mAgo=7280.7 spxPct=0.027% breakdown=false dir=null
+[wire16:score] FAILED_BREAK/call rejected: SCORE_BELOW_B_MINUS score=11 < 72
+[discordScheduler] 0DTE rejects: {"SCORE_BELOW_B_MINUS 11 < 72":1}
+[auditEnrich] vwapProfile: no intraday bars available, will be null
+[auditEnrich] Wire 11 correlationBreakdown: vixNow=14.09 vix5mAgo=null vixPct=null% spxNow=7282.7 spx5mAgo=7280.7 spxPct=0.027% breakdown=false dir=null
+5:13:49 PM [express] GET /api/macro 200 in 9ms
+5:13:50 PM [express] GET /api/headline 200 in 91ms
+5:13:50 PM [express] GET /api/odte/forward 200 in 74ms
+5:13:50 PM [express] GET /api/odte/map/ledger 200 in 1ms
+5:13:50 PM [express] GET /api/heatseeker 200 in 84ms
+5:13:50 PM [express] GET /api/quotes 200 in 2ms
+5:13:50 PM [express] GET /api/odte-tracker 200 in 1ms
+5:13:50 PM [express] GET /api/heatseeker/levels 200 in 1ms
+5:13:52 PM [express] GET /api/health 200 in 2ms
+5:13:52 PM [express] GET /api/health 200 in 1ms
+5:13:52 PM [express] GET /api/quotes 200 in 1ms
+5:13:52 PM [express] GET /api/schwab/status 200 in 1ms
+5:13:53 PM [express] GET /api/regime/headline 200 in 399ms
+5:13:53 PM [express] GET /api/trade-environment 200 in 16ms
+5:13:53 PM [express] GET /api/layout/signals 200 in 1ms
+5:13:53 PM [express] GET /api/regime 200 in 1ms
+5:13:53 PM [express] GET /api/snapshot 200 in 1ms
+5:13:53 PM [express] GET /api/macro 200 in 1ms
+5:13:53 PM [express] GET /api/odte/map 200 in 86ms
+5:13:53 PM [express] GET /api/health 200 in 0ms
+5:13:53 PM [express] GET /api/quotes 304 in 0ms
+5:13:53 PM [express] GET /api/headline 200 in 0ms
+5:13:53 PM [express] GET /api/whales/performance 200 in 1ms
+5:13:53 PM [express] GET /api/flow/preview 200 in 1ms
+5:13:53 PM [express] GET /api/schwab/status 304 in 0ms
+5:13:53 PM [express] GET /api/flow/followups 200 in 0ms
+5:13:53 PM [express] GET /api/flow/followups 200 in 1ms
+5:13:53 PM [express] GET /api/uoa/preview 200 in 1ms
+5:13:53 PM [express] GET /api/signals/tracked 200 in 1ms
+5:13:53 PM [express] GET /api/flow 200 in 107ms
+5:13:53 PM [express] GET /api/signals/tracked 200 in 1ms
+5:13:53 PM [express] GET /api/flow-intraday 200 in 61ms
+5:13:53 PM [express] GET /api/market/option-chain/SPX 200 in 306ms
+5:13:58 PM [express] GET /api/quotes 200 in 2ms
+5:14:03 PM [express] GET /api/macro 304 in 1ms
+5:14:03 PM [express] GET /api/quotes 200 in 2ms
+5:14:03 PM [express] GET /api/flow 200 in 90ms
+5:14:08 PM [express] GET /api/quotes 200 in 1ms
+5:14:13 PM [express] GET /api/quotes 200 in 1ms
+5:14:13 PM [express] GET /api/macro 200 in 147ms
+5:14:13 PM [express] GET /api/flow 200 in 88ms
+5:14:17 PM [express] GET /api/health 200 in 1ms
+5:14:17 PM [express] GET /api/health 200 in 1ms
+5:14:17 PM [express] GET /api/quotes 200 in 2ms
+5:14:17 PM [express] GET /api/schwab/status 200 in 0ms
+5:14:17 PM [express] GET /api/regime/headline 200 in 397ms
+5:14:17 PM [express] GET /api/trade-environment 200 in 0ms
+5:14:17 PM [express] GET /api/snapshot 200 in 1ms
+5:14:17 PM [express] GET /api/macro 200 in 1ms
+5:14:18 PM [express] GET /api/odte/map 200 in 81ms
+5:14:18 PM [express] GET /api/regime 200 in 1ms
+5:14:18 PM [express] GET /api/layout/signals 200 in 0ms
+5:14:18 PM [express] GET /api/health 200 in 0ms
+5:14:18 PM [express] GET /api/quotes 304 in 0ms
+5:14:18 PM [express] GET /api/headline 200 in 2ms
+5:14:18 PM [express] GET /api/whales/performance 200 in 0ms
+5:14:18 PM [express] GET /api/flow/preview 200 in 78ms
+5:14:18 PM [express] GET /api/schwab/status 304 in 1ms
+5:14:18 PM [express] GET /api/flow/followups 200 in 1ms
+5:14:18 PM [express] GET /api/flow/followups 200 in 0ms
+5:14:18 PM [express] GET /api/uoa/preview 200 in 0ms
+5:14:18 PM [express] GET /api/signals/tracked 200 in 0ms
+5:14:18 PM [express] GET /api/flow 200 in 0ms
+5:14:18 PM [express] GET /api/signals/tracked 200 in 1ms
+5:14:18 PM [express] GET /api/flow-intraday 200 in 0ms
+5:14:18 PM [express] GET /api/quotes 200 in 1ms
+5:14:18 PM [express] GET /api/market/option-chain/SPX 200 in 245ms
+5:14:23 PM [express] GET /api/quotes 200 in 2ms
+5:14:23 PM [express] GET /api/flow/preview 200 in 1ms
+5:14:23 PM [express] GET /api/flow/followups 200 in 1ms
+5:14:23 PM [express] GET /api/flow/followups 200 in 1ms
+5:14:23 PM [express] GET /api/uoa/preview 200 in 1ms
+5:14:23 PM [express] GET /api/signals/tracked 200 in 0ms
+5:14:23 PM [express] GET /api/macro 304 in 1ms
+5:14:23 PM [express] GET /api/quotes 200 in 0ms
+5:14:23 PM [express] GET /api/schwab/status 304 in 1ms
+5:14:23 PM [express] GET /api/signals/tracked 200 in 1ms
+5:14:23 PM [express] GET /api/flow 200 in 88ms
+5:14:24 PM [express] GET /api/market/option-chain/SPX 200 in 231ms

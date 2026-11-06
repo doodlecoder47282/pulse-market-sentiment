@@ -1,0 +1,15 @@
+demo strip visible: true
+desktop page errors: 0 []
+PASS today card: rendered, 2 of 3 levels named, cells ["7,325","7,319","n/a"]
+PASS chart levels: 3 rows, tags chart only/chart only/chart only, map state OK · 0DTE map 15s
+PASS ticker scan card: 4 section states for QQQ
+PASS event replay card: 14 past sessions shown
+PASS setup log card: counts 1, method panel 1, ranked list 1
+PASS 3D surface: 1 canvas, sign labels true, readout after a blind centre tap true (informational: the tap can miss the mesh), page errors 0
+PASS 3D rotated desktop: 31 labels, 0 touching, canvas aspect 1.92, overflow false
+PASS 3D rotated ultrawide: 32 labels, 0 touching, canvas aspect 1.92, overflow false
+PASS 3D rotated phone: 21 labels, 0 touching, canvas aspect 0.97, overflow false
+PASS method page: demo note 1, back link 1, disclaimer true, observed zero true, 6749 chars
+PASS 0DTE Wiener map at 402px: chart 352x360, 11 level rows, sigma ±24.44, toggles 44/44px, overlay note 1, overflowX false
+mobile page errors: 0 []
+PASS macro tape Details at 402px: hit area 89x44, on top true, inside tape true, overflowX false, panel true (23 rows)
