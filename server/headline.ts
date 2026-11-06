@@ -4,7 +4,7 @@
 // Goal: one human sentence + 2-3 bullets the user can read in 3 seconds.
 
 import { predictTransition } from "./regimePredictor";
-import { internalJson, callInternal } from "./internalApi";
+import { callInternal } from "./internalApi";
 import { getWhaleAlertHistoryOrNull } from "./whalePersistence";
 import { levelsLine } from "../shared/headlineLines";
 import { coverage, whaleCoverageLine } from "../shared/scanCoverage";
@@ -38,14 +38,7 @@ interface BuildArgs {
   port: number;
 }
 
-async function safeFetch<T = any>(path: string, ms = 1500): Promise<T | null> {
-  // In-process route call (internalApi.ts), no local HTTP.
-  try {
-    return await internalJson<T>(path, { timeoutMs: ms });
-  } catch {
-    return null;
-  }
-}
+
 
 function regimeWord(r: string): string {
   switch (r) {
@@ -75,12 +68,20 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   // symbol, and (Chart, Heatseeker) today's dealer levels from the same map
   // the Today card reads.
   const needsMap = tab === "chart" || tab === "heatseeker";
-  const [models, whaleHist, mapRes, flowSnap] = await Promise.all([
-    safeFetch<any>(`${base}/api/regime/predict?symbol=^GSPC&horizonMinutes=20`, 2500),
+  // The predictor is PEEKED: headlines read the current models build and never
+  // start or wait for one; a peek reads the raw cached build, so the regime
+  // part of a headline makes no Schwab request (the Chart/Heatseeker level map
+  // below still reads its own cached 1-DTE chain).
+  const [predictRes, whaleHist, mapRes, flowSnap] = await Promise.all([
+    callInternal<any>(`${base}/api/regime/predict?symbol=^GSPC&horizonMinutes=20&peek=1`, { timeoutMs: 2500 }).catch((e: any) => ({ ok: false, status: 0, body: null, error: String(e?.message ?? e) })),
     Promise.resolve(getWhaleAlertHistoryOrNull({ days: 1, limit: 200 })).catch(() => null),
     needsMap ? callInternal<any>(`${base}/api/odte/map?symbol=${encodeURIComponent("$SPX")}`, { timeoutMs: 3000 }).catch((e: any) => ({ ok: false, status: 0, body: null, error: String(e?.message ?? e) })) : Promise.resolve(null),
     import("./flowAlertEngine").then((m) => m.getFlowSnapshot()).catch(() => null),
   ]);
+  const models = predictRes && predictRes.ok ? predictRes.body : null;
+  const predictWhy = !predictRes || predictRes.ok ? null
+    : (predictRes as any).error === "timeout" ? "the predictor did not answer within 2.5 s"
+    : String((predictRes.body as any)?.reason ?? (predictRes.body as any)?.message ?? (predictRes as any).error ?? `status ${predictRes.status}`);
   const odteMap = mapRes && mapRes.ok ? mapRes.body : null;
   const mapWhy = !mapRes || mapRes.ok ? null
     : String((mapRes.body as any)?.reason ?? (mapRes.body as any)?.message ?? (mapRes.body as any)?.error ?? (mapRes as any).error ?? `status ${mapRes.status}`);
@@ -98,7 +99,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const withRegime = (base: string) => (known ? `${base} — ${regimeWord(currentRegime)} regime.` : `${base}.`);
   // Two different "unknown" causes, named apart: the predictor did not answer, or it answered without gamma data.
   const regimeMissing = models == null
-    ? "Regime reading unavailable: the predictor did not answer."
+    ? `Regime reading unavailable: ${predictWhy ?? "the predictor did not answer"}.`
     : "Regime unknown until Schwab gamma and VIX term data arrive.";
 
   // Whale flow last hour: quick directional count (shared/headlineLines.ts)
@@ -118,7 +119,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
             ? (tone === "bull" ? "Trend regime: one-sided whale flow has tended to line up with the move (descriptive)." :
                tone === "warning" ? "Chop regime: whale flow is noisier; closing-line value is the better yardstick than P&L." :
                "Neutral regime: no dominant dealer-hedging pressure.")
-            : "Regime unknown until Schwab gamma and VIX term data arrive.",
+            : regimeMissing,
         ],
         asOf: Date.now(),
         whatThisIs: "Whale flow — heavy contracts ($2.5M+ cumulative day premium on one contract, 1–3DTE; can be many small trades, not block prints) plus a separate UOA scanner with cap-tiered clustering for any-ticker, any-date alerts.",
@@ -165,7 +166,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
           ? "Trend regime: estimated dealer hedging tends to add to moves (descriptive, no edge claimed)."
           : currentRegime === "NEUTRAL"
           ? "Neutral regime: no dominant estimated hedging pressure."
-          : "No hedging-pressure reading until Schwab chain data arrives.",
+          : regimeMissing,
         bullets: [
           "Live Greeks across ATM ±20 strikes, refreshed every 4s.",
           "Hot zones = strike clusters with rising volume + Greek velocity.",

@@ -20,8 +20,9 @@ export type Candle = {
 };
 
 export type GammaLevels = {
-  callWall: number;
-  putWall: number;
+  /** null when the chain had no positive (negative) strike: the line is not drawn. */
+  callWall: number | null;
+  putWall: number | null;
   zeroGamma: number | null;
   flip: number | null;
   maxPain: number | null;
@@ -61,7 +62,8 @@ export function CandlestickChart({
   const chartRight = width - PADDING.right;
   const chartWidth = chartRight - chartLeft;
 
-  const gammaApplies = showGamma && gamma && (symbol === "SPY" || symbol === "^GSPC" || symbol === "SPX");
+  // The parent passes levels only when they belong to this chart's underlying (shared/chartLevels.ts).
+  const gammaApplies = showGamma && !!gamma;
 
   const { yMin, yMax, xStep, candleW } = useMemo(() => {
     if (!candles.length) return { yMin: 0, yMax: 1, xStep: 0, candleW: 0 };
@@ -166,7 +168,13 @@ export function CandlestickChart({
     // On phones the 1200-unit viewBox stretched to ~360px crushes candles/labels
     // (preserveAspectRatio="none"). Let it scroll horizontally at a readable
     // min-width on small screens; fill the container normally from sm: up.
-    <div className="w-full hscroll-contain" data-testid="candlestick-chart">
+    <div
+      className="w-full hscroll-contain"
+      data-testid="candlestick-chart"
+      data-chart-engine="svg"
+      data-gamma-callwall={gammaApplies && gamma && gamma.callWall != null ? String(gamma.callWall) : ""}
+      data-last-close={candles.length ? String(candles[candles.length - 1].c) : ""}
+    >
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="w-full min-w-[640px] sm:min-w-0"
@@ -283,50 +291,58 @@ export function CandlestickChart({
         {gammaApplies && gamma && (
           <g>
             {/* Call wall — red resistance */}
-            <line
-              x1={chartLeft}
-              x2={chartRight}
-              y1={priceToY(gamma.callWall)}
-              y2={priceToY(gamma.callWall)}
-              stroke="#ef4444"
-              strokeWidth={1.25}
-              strokeDasharray="6 3"
-              opacity={0.75}
-            />
-            <text
-              x={chartLeft + 6}
-              y={priceToY(gamma.callWall) - 3}
-              fontSize={9.5}
-              fill="#ef4444"
-              fontWeight={600}
-              fontFamily="var(--font-mono)"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >
-              CALL WALL {formatPriceAxis(gamma.callWall)}
-            </text>
+            {gamma.callWall != null && Number.isFinite(gamma.callWall) && (
+              <>
+              <line
+                x1={chartLeft}
+                x2={chartRight}
+                y1={priceToY(gamma.callWall)}
+                y2={priceToY(gamma.callWall)}
+                stroke="#ef4444"
+                strokeWidth={1.25}
+                strokeDasharray="6 3"
+                opacity={0.75}
+              />
+              <text
+                x={chartLeft + 6}
+                y={priceToY(gamma.callWall) - 3}
+                fontSize={9.5}
+                fill="#ef4444"
+                fontWeight={600}
+                fontFamily="var(--font-mono)"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                CALL WALL {formatPriceAxis(gamma.callWall)}
+              </text>
+              </>
+            )}
 
             {/* Put wall — green support */}
-            <line
-              x1={chartLeft}
-              x2={chartRight}
-              y1={priceToY(gamma.putWall)}
-              y2={priceToY(gamma.putWall)}
-              stroke="#22c55e"
-              strokeWidth={1.25}
-              strokeDasharray="6 3"
-              opacity={0.75}
-            />
-            <text
-              x={chartLeft + 6}
-              y={priceToY(gamma.putWall) + 11}
-              fontSize={9.5}
-              fill="#22c55e"
-              fontWeight={600}
-              fontFamily="var(--font-mono)"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >
-              PUT WALL {formatPriceAxis(gamma.putWall)}
-            </text>
+            {gamma.putWall != null && Number.isFinite(gamma.putWall) && (
+              <>
+              <line
+                x1={chartLeft}
+                x2={chartRight}
+                y1={priceToY(gamma.putWall)}
+                y2={priceToY(gamma.putWall)}
+                stroke="#22c55e"
+                strokeWidth={1.25}
+                strokeDasharray="6 3"
+                opacity={0.75}
+              />
+              <text
+                x={chartLeft + 6}
+                y={priceToY(gamma.putWall) + 11}
+                fontSize={9.5}
+                fill="#22c55e"
+                fontWeight={600}
+                fontFamily="var(--font-mono)"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                PUT WALL {formatPriceAxis(gamma.putWall)}
+              </text>
+              </>
+            )}
 
             {/* Zero gamma flip — yellow line */}
             {gamma.zeroGamma != null && (

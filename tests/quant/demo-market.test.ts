@@ -92,10 +92,10 @@ test("quotes: deterministic, Schwab-shaped, change = last - close", () => {
 });
 
 test("quotes: every plain-ticker macro tape symbol has a named sample level, not a hashed price", () => {
-  // server/macro.ts cannot be imported here (it pulls the quote store), so
-  // its UNIVERSE is read from the source. Yahoo-style FX/crypto symbols are
+  // The tape's UNIVERSE lives in server/macroCore.ts; read from the source so
+  // this test stays independent of it. Yahoo-style FX/crypto symbols are
   // not Schwab symbols and stay absent (null), like any unsupported symbol.
-  const src = readFileSync(new URL("../../server/macro.ts", import.meta.url), "utf8");
+  const src = readFileSync(new URL("../../server/macroCore.ts", import.meta.url), "utf8");
   const syms = Array.from(src.matchAll(/\{ symbol: "([^"]+)", label: "([^"]+)"/g)).map((m) => ({ symbol: m[1], label: m[2] }));
   assert.ok(syms.length >= 20, `found ${syms.length} tape symbols`);
   for (const { symbol, label } of syms) {

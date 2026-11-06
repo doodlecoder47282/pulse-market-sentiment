@@ -11,9 +11,11 @@ import { schwabNum } from "./schwabChainRows";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
-import { etDate, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
+import { etDate, nextTradingDay, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionMinutes } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
+import { wienerMap } from "../shared/odteWiener";
+import { strikeSpacing } from "../shared/odteMap";
 
 export interface OdteForwardResult { status: number; body: any }
 
@@ -68,7 +70,9 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   if (todayClose != null && nowMin < OPEN) { sessionState = "preopen"; startMin = 0; }
   else if (todayClose != null && nowMin < CLOSE) { sessionState = "intraday"; startMin = nowMin - OPEN; }
   else { sessionState = "closed"; startMin = 0; }
-  const projMinutes = (sessionState === "closed" ? 390 : sessionLen) - startMin; // projection window length
+  // Projection window: the rest of today, or the whole NEXT session when closed
+  // (its own length from the calendar: 210 minutes before a half day).
+  const projMinutes = (sessionState === "closed" ? (sessionMinutes(nextTradingDay(todayEt)) || 390) : sessionLen) - startMin;
   const minutesToClose = sessionState === "intraday" ? CLOSE - nowMin : projMinutes;
 
   // ── aggregate 0DTE-only per-strike GEX + charm ──
@@ -262,6 +266,50 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     pinPullMax, charmNorm, seed: proj.sessionSeed(),
   });
 
+  // ── Wiener baseline (shared/odteWiener.ts): the plain random walk with the
+  // market's own implied sigma to the close, no dealer overlay. Same chain
+  // and bars as above: no extra Schwab request.
+  const startAbsMin = sessionState === "intraday" ? nowMin : OPEN;
+  const horizon = sessionState === "closed" ? "next_session" as const : "rest_of_today" as const;
+  // Levels for the Wiener odds: the level map built WITHOUT the sigma rails
+  // (rails are the model's own output and, in the deduplication, could
+  // displace a nearby real level), nearest first.
+  const wienerLevels = proj.buildLevelMap({ spot, sigmaToClose: 0, levels: levelObj, gexPeaks: rows.map(r => ({ strike: r.strike, gex: r.gex })), bars, totalAbsGex })
+    .sort((a: any, b: any) => Math.abs(a.distance) - Math.abs(b.distance)).slice(0, 14);
+  // Today's 0DTE chain must be today's expiry while the session runs; before
+  // the next session, the next session's expiry.
+  const expiryMismatch = horizon === "rest_of_today" ? nearestDte !== 0 : expiryDate !== nextTradingDay(todayEt);
+  const wiener = wienerMap({
+    spot,
+    // emSigma is the chain's IV only when the chain had IV; a straddle-derived
+    // sigma goes in as the straddle (the model's own fallback, labelled).
+    sigmaFromIv: atmIVSource === "chain" ? emSigma : null,
+    straddle: straddle > 0 ? straddle : null,
+    minutesLeft: projMinutes,
+    startAbsMin,
+    horizon,
+    fromPreviousClose: sessionState !== "intraday",
+    unavailableReason: !expiryMismatch ? null : horizon === "rest_of_today"
+      ? `the nearest unsettled expiry is ${expiryDate}, not today: no 0DTE chain to take today's volatility from`
+      : `the nearest unsettled expiry is ${expiryDate}, not the next session (${nextTradingDay(todayEt)}): its volatility covers more than one session`,
+    levels: wienerLevels.map((L: any) => ({
+      price: L.price, kind: L.kind, label: L.label,
+      // "Traded earlier today" only describes today's session.
+      touchedToday: horizon === "rest_of_today" && L.touched === true,
+    })),
+    bucket: strikeSpacing(rows.map((r) => r.strike)) ?? 5,
+  });
+  // Today's regular-session path so far (5-minute closes), for the left side of the chart.
+  const todayPath = sessionState === "closed" && todayClose == null ? [] : ((hist as any)?.candles ?? [])
+    .filter((c: any) => Number.isFinite(c?.datetime) && Number.isFinite(c?.close) && etDate(c.datetime) === todayEt)
+    .map((c: any) => {
+      const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(c.datetime));
+      const m = (parseInt(p.find((x) => x.type === "hour")?.value || "0", 10) % 24) * 60 + parseInt(p.find((x) => x.type === "minute")?.value || "0", 10);
+      return { min: m, close: +Number(c.close).toFixed(2) };
+    })
+    // Completed bars only: a bar still forming (its end after now) is left out.
+    .filter((x: { min: number }) => x.min >= OPEN && (todayClose == null || x.min < todayClose) && (sessionState !== "intraday" || x.min + 5 <= nowMin));
+
   // The chain's own provenance travels with the forward so every card shows
   // the data's age, not this computation's time (asOf). A chain re-served from
   // cache after a failed refresh is stale here and on the map.
@@ -286,6 +334,11 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     flipInputs: flipInputs({ weight: "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
     weightTotals: { oi: totalOI, volume: totalVol },
     path,
+    // The path above is the dealer-positioning overlay (pin pull, charm tilt,
+    // 15% wider in short gamma): rules of thumb, not part of the Wiener baseline.
+    pathBasis: "dealer overlay (heuristic, untested): pin pull up to 60% toward the pin, charm tilt, cone 15% wider in short gamma",
+    wiener,
+    todayPath,
     strikes: rows.map(r => ({ strike: r.strike, gex: +r.gex.toFixed(0), callOI: r.callOI, putOI: r.putOI })),
     // Additive (0DTE map): every re-priced zero crossing of this expiry's
     // net gamma within +-5% (the long-gamma band is read off these), the

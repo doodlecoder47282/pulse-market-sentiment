@@ -69,8 +69,10 @@ interface Candidate {
   score: number | null; verdict: Verdict; verdictCode?: string | null; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
-    targetMcap: number; targetMultiple: number | null; estSlippagePct: number;
+    targetMcap: number; targetMultiple: number | null; estSlippagePct: number | null;
     holdHorizonHours: number; notes: string[];
+    /** Liquidity the size and cost were computed from (a later scan may refresh liq without re-sizing). */
+    sizedOnLiquidityUsd?: number | null;
   } | null;
   structure?: { line: LinePosition; category: MemeClass; cost: TradeCost } | null;
 }
@@ -830,6 +832,12 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <Stat label="target" value={fmtUsd(c.risk.targetMcap, 0)} />
               <Stat label="multiple" value={c.risk.targetMultiple ? `${c.risk.targetMultiple}x` : "—"} />
               <Stat label="round trip" value={c.structure?.cost.roundTripPct != null ? `${c.structure.cost.roundTripPct}%` : "not reported"} />
+              {sizingBasisDrift(c.liquidityUsd, c.risk.sizedOnLiquidityUsd) && (
+                // The card's liq is newer than the read the size was computed from: say so, so the size can be recomputed.
+                <div className="col-span-2 text-[11px] text-amber-200/90 sm:col-span-3" data-testid="crypto-sizing-basis">
+                  size and round trip from the earlier read at {fmtUsd(c.risk.sizedOnLiquidityUsd as number, 0)} liquidity; re-sized on the next refresh
+                </div>
+              )}
             </div>
           )}
           {c.structure && (
@@ -915,6 +923,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     {isOpen && <CoinLinks chain={c.chain} mint={c.tokenAddress} symbol={c.symbol} />}
     </div>
   );
+}
+
+/** True when the card's liquidity differs from the sizing basis by more than 1%. */
+function sizingBasisDrift(liq: number | null | undefined, basis: number | null | undefined): boolean {
+  return liq != null && basis != null && Number.isFinite(liq) && Number.isFinite(basis) && basis > 0 && Math.abs(liq - basis) / basis > 0.01;
 }
 
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {

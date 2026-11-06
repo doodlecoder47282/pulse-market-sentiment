@@ -409,10 +409,13 @@ export function computeDEX(contracts: Contract[], spot: number): DEXResult {
 
   const profile = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
 
+  // A strike is the largest positive (negative) only if its net DEX IS positive
+  // (negative). When every strike nets to zero, or no contract carried a delta,
+  // there is no such strike: null, never "strike 2,000, $0".
   const maxPositive = profile.reduce<DEXStrike | null>((best, p) =>
-    p.netDex > (best?.netDex ?? -Infinity) ? p : best, null);
+    p.netDex > 0 && p.netDex > (best?.netDex ?? 0) ? p : best, null);
   const maxNegative = profile.reduce<DEXStrike | null>((best, p) =>
-    p.netDex < (best?.netDex ?? Infinity) ? p : best, null);
+    p.netDex < 0 && p.netDex < (best?.netDex ?? 0) ? p : best, null);
 
   // Flip strike: walking up from spot, first strike where cumulative net DEX changes sign.
   // Seed with total net DEX below spot so the cumulative reflects full dealer inventory, not just
