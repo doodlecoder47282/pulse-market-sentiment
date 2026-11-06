@@ -203,17 +203,6 @@ jobs:
             console.log("shot", t);
           }
           console.log("desktop page errors:", errors.length, errors.slice(0, 5));
-          // Method & disclosures page (#/method): reachable, carries the public-preview note in the demo, and the back link.
-          try {
-            await p.goto(`${base}/#/method`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-            await p.locator('[data-testid="method-page"]').waitFor({ timeout: 30000 });
-            const note = await p.locator('[data-testid="method-demo-note"]').count();
-            const back = await p.locator('[data-testid="method-back"]').count();
-            const txt = await p.locator('[data-testid="method-page"]').innerText();
-            const ok = note === 1 && back === 1 && /not investment advice/i.test(txt) && /observed zero/i.test(txt) && !/dark pool detected/i.test(txt);
-            await p.screenshot({ path: "rep/demo/18-method.png", fullPage: true });
-            console.log((ok ? "PASS" : "FAIL") + " method page: demo note " + note + ", back link " + back + ", " + txt.length + " chars");
-          } catch (e) { console.log("FAIL method page: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/shots/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
@@ -539,9 +528,49 @@ jobs:
             }
           } catch (e) { console.log("FAIL 3D surface: " + String(e && e.message || e).split("\n")[0]); }
           finally { if (g) await g.close().catch(() => {}); }
+          // Method & disclosures page (#/method): reachable, carries the public-preview note in the demo, and the back link.
+          try {
+            await p.goto(`${base}/#/method`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.locator('[data-testid="method-page"]').waitFor({ timeout: 30000 });
+            const note = await p.locator('[data-testid="method-demo-note"]').count();
+            const back = await p.locator('[data-testid="method-back"]').count();
+            const txt = await p.locator('[data-testid="method-page"]').innerText();
+            const ok = note === 1 && back === 1 && /(not|nothing on this site is) investment advice/i.test(txt) && /observed zero/i.test(txt) && !/dark pool detected/i.test(txt);
+            await p.screenshot({ path: "rep/demo/18-method.png", fullPage: true });
+            console.log((ok ? "PASS" : "FAIL") + " method page: demo note " + note + ", back link " + back + ", disclaimer " + /(not|nothing on this site is) investment advice/i.test(txt) + ", observed zero " + /observed zero/i.test(txt) + ", " + txt.length + " chars");
+          } catch (e) { console.log("FAIL method page: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
+          // Macro tape Details control at 402 px: a hit area of at least 44 x 44 CSS px that is the
+          // element under its own centre (not clipped by the tape, not covered by a sticky layer),
+          // opens the details list, and adds no sideways page scroll.
+          try {
+            const tp = await b.newPage({ viewport: { width: 402, height: 874 } });
+            await tp.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await tp.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
+            const tg = tp.locator('[data-testid="macro-tape-details-toggle"]');
+            await tg.waitFor({ timeout: 30000 });
+            // The tape sits under the header at the top of every tab: measure it there, where a reader meets it.
+            await tp.evaluate(() => window.scrollTo(0, 0));
+            await tp.waitForTimeout(500);
+            const geo = await tp.evaluate(() => {
+              const el = document.querySelector('[data-testid="macro-tape-details-toggle"]');
+              const tape = document.querySelector('[data-testid="macro-ticker-tape"]');
+              const r = el.getBoundingClientRect(), t = tape.getBoundingClientRect();
+              const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+              return { w: r.width, h: r.height, onTop: !!top && (top === el || el.contains(top)),
+                inTape: r.top >= t.top - 1 && r.bottom <= t.bottom + 1 && r.right <= t.right + 1 && r.left >= t.left - 1,
+                overflowX: document.documentElement.scrollWidth > innerWidth };
+            });
+            await tg.click({ timeout: 5000 });
+            const opened = await tp.locator('[data-testid="macro-tape-details"]').isVisible({ timeout: 5000 }).catch(() => false);
+            const rows = await tp.locator('[data-testid^="macro-detail-"]').count();
+            await tp.screenshot({ path: "rep/demo/18-macro-details-402.png", fullPage: false });
+            const okT = geo.w >= 44 && geo.h >= 44 && geo.onTop && geo.inTape && !geo.overflowX && opened && rows > 0;
+            console.log((okT ? "PASS" : "FAIL") + " macro tape Details at 402px: hit area " + Math.round(geo.w) + "x" + Math.round(geo.h) + ", on top " + geo.onTop + ", inside tape " + geo.inTape + ", overflowX " + geo.overflowX + ", panel " + opened + " (" + rows + " rows)");
+            await tp.close();
+          } catch (e) { console.log("FAIL macro tape Details at 402px: " + String(e && e.message || e).split("\n")[0]); }
           await b.close();
           JS
           DEMO_BASE="$B" node demo-shot.mjs 2>&1 | tee rep/demo/shot.log
