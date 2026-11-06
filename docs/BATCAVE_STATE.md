@@ -1391,6 +1391,178 @@ First gated run of the method-page check: FAIL, and correctly so as a test defec
 reads "Nothing on this site is investment advice"; the check looked only for "not investment advice". The
 check now accepts either wording and prints each condition it tested.
 
+2026-11-05: macro strip request efficiency (feat/macro-request-efficiency). Evidence (owner-run, live, 2026-11-05
+~01:00 ET): Settings self-test "Rate budget: 109/100 req/min" with quotes, chains and gamma levels failing on
+"self-throttle (100 requests/min)"; /api/schwab/diag in one minute: 75 admitted requests, 34 of them
+"pricehistory <17 symbols> <- api /macro" (2 each). Cause in code: server/macro.ts fetchOne read 5-minute
+intraday bars AND a month of daily bars for every Schwab-covered symbol on every build. Now
+server/macroCore.ts (pure, injected deps): one batched quote request per build for the 17 symbols derived
+from UNIVERSE; daily history only when a completed session is missing (session change, late vendor bar
+retried every 10 min, 6 h max age for corrections, explicit invalidateMacroHistory), failed reads back off
+2 min, history reads bounded to 6 at once, concurrent builds share one in-flight build (cleared on success
+and failure); a kept copy refreshes in the background, only a cold symbol is awaited; a bar read within
+20 min of its session's close is re-read once (closing prints settle). Price: the last regular-session
+trade dated by Schwab's regular-session trade time; outside the session with no quoted regular price, that
+session's own daily close (what the old regular-hours 5-minute bars ended on); an older close only as a
+labelled substitute ("close", partial, its own date). Prior close through dayChange.resolvePrevClose with the
+same quote fields plus completed daily bars; today's forming bar is never stored. Nothing is dropped from
+the strip (unavailable rows stay listed, coverage counts on the payload). The route rebuilds a cached
+snapshot from the other side of the open/close.
+Review of feat/macro-request-efficiency (independent): 2 MUST-FIX fixed. (1) Schwab's REST quote carries the
+regular-session last trade in `regular` (regular.regularMarketLastPrice / regularMarketTradeTime), but the
+quote parser read quote.regularMarketLastPrice, so it was ALWAYS null from REST (pre-existing bug; the first
+draft and its fixtures, and the demo, assumed the wrong shape and would have shown every row as a substitute
+close outside the session). Parser fixed in server/schwabQuoteFields.ts (pure, tested), used by schwab.ts;
+also feeds dayChange's rolled-or-flat check, which fell back to lastPrice before. Demo moved to the real
+shape. (2) a stale flag of null failed the strict type check (toQuoteIn maps it). SHOULD-FIX taken: price
+time from the regular trade time, not the after-hours quote time; settle window after the close; dating by
+trade time fixes the 09:30 boundary for thin ETFs (no 0.00% and no pre-market print as today's price);
+"Stocks closed" instead of "Closed" (crypto/FX keep moving); route cache invalidated across the open/close;
+background refresh of kept history; ok rows carry no warning text; tests for REST shape, 09:30, early-close
+key and holiday prior close. Not verified live: that the Railway REST payload carries `regular` as Schwab's
+published schema says (checked against a published client's typings by the reviewer, not a live response). Commodity labels name the ETF
+("Oil (USO)"). Tape label says "Closed" outside the regular session instead of "Live". Demo quotes carry
+regularMarketLastPrice. Tests: tests/quant/macro-request-efficiency.test.ts (14; request counts cold/warm/
+concurrent, failed shared build, partial batch, quote failure with cached history, forming bar, session
+transition and late bar, backoff, invalidation, rolled close, extended hours, weekend/pre-market/holiday/
+early close, stale quote, crypto/FX untouched). Not verified live: savings on Railway (expected about 34
+fewer requests per overnight build); the headline chain reads and the flow requests are separate next items.
+Second review of feat/macro-request-efficiency (same reviewer, on the fixes): 2 MUST-FIX fixed. (1) The
+background refresh chained one full re-read per build while a slow read was running and skipped the failure
+backoff (5 builds during one slow refresh = 102 reads instead of 17); now one runner drains a queued set and
+re-checks the need with the current clock and session before each read (tested with back-to-back builds).
+(2) An out-of-date history copy produced a prior close from an older bar, i.e. a two-day change labelled
+"ok"; a daily-bar prior close must now be the session right before the price's session, otherwise it is
+unavailable with the reason. SHOULD-FIX taken: a bar posted at the close is re-read once at close + 20 min
+(2 reads per symbol per close, not 3); a streamed regular last with no trade time that equals the prior
+close in the first 5 minutes after the open is dated to the prior session; a session-close substitute from a
+kept copy is partial with its reason.
+Third review (same reviewer): no MUST-FIX. Two SHOULD-FIX taken: the open guard compared the streamed price
+with the prior close (misdated a real flat first trade); the stream record's own last trade time now decides
+(a last trade before today's 09:30 = no regular trade yet; no time = nothing inferred; tested incl. a flat
+open). The background runner restarts itself if a symbol was queued as it exited.
+Prophecy review of #49 (E1, diff): HOLD, 2 MUST-FIX taken. (1) toQuoteIn turned stale:null (age unknown) into
+false; unknown freshness is now kept (null) and a quote-sourced row is "ok" only when freshness is
+observed false. (2) Prices without a trade timestamp were stamped with the quote, receipt or scheduled close
+time; now each row carries priceTimeBasis: "trade" (REST regular.regularMarketTradeTime, or a stream/REST
+last-trade time inside today's open session), "session_close_reference" (a daily-bar close, or a regular
+last equal to the last started session's own daily close outside the session; the scheduled close, not a
+trade time) or "unavailable" (priceAsOfMs null, session date marked assumed, row partial). REST quotes now
+carry tradeTime as lastTradeTimeMs. SHOULD-FIX taken: the tape (the only mounted macro view) shows a text
+tag on non-healthy pills and a "Details" button that opens a static, tappable list with each row's basis,
+time or "time unavailable", session (assumed or not), state and reason. Reporting corrections: history is
+also re-read at the 6 h maximum age and on invalidation; a warm rebuild is 1 request instead of 34 (33
+fewer), not a guaranteed saving; actual dispatch counts still need measuring live.
+Fourth review (independent, on the provenance fixes): no MUST-FIX; Prophecy's two MUST-FIX and its SHOULD-FIX
+verified resolved; live-like probes: REST in/after session, stream in session, demo all stay "ok". Taken: a
+pre-market print is never shown as today's regular price inside the session (falls to the labelled older
+close); Details copy says "N not ok", crypto/FX say "time not provided by the source", build time in ET.
+Left (named): with streaming enabled, SPY/QQQ/IWM/DIA can read partial after the close until the day's
+daily bar is read or when the stream's regular last differs from it (stream records carry no regular trade
+time; streaming is off today: Schwab 401 on the Trader API); the Details toggle is 32 px tall (passes the
+24 px audit floor, under the 44 px guideline). Next: measure live dispatch counts after merge; then the
+headline SPY-chain reads.
+Prophecy review of #49 (E1, 2026-11-05 10:18): HOLD on the Details control: min-h 32 px is under Batcave's
+mandatory 44 px touch rule (the audit's 24 px floor is not the rule). Now the tape is at least 44 px tall and
+the button's hit area fills its height (>= 44 x 44) with the compact pill drawn inside. CI's demo step
+renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is the element under its own
+centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
+and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
+failure in the demo step is the separate #48 defect and still prints until #48 is merged.
+2026-11-04: chart levels on the wrong scale (feat/chart-level-scale). Owner pick, Prophecy-scoped: trace
+first, fix only a confirmed mismatch. Trace: ChartPanel loads candles from /api/ohlc?symbol=<chart> and
+levels from /api/gamma-levels?symbol=<chart> (client/src/components/ChartPanel.tsx). For "^GSPC" the
+candles are $SPX (server/schwabSymbols.ts maps ^GSPC -> $SPX) while /api/gamma-levels sent SPX/^GSPC down
+the SPY-snapshot branch (server/routes.ts, isSpy) and returned SPY strikes: SPY levels were drawn as price
+lines on index candles (LightweightCandlestick createPriceLine on the candle series; CandlestickChart did
+the same) and the banner computed distances from the index price to SPY levels (about -90%). Confirmed in
+code; not observed live. Fix: shared/chartLevels.ts (one underlying per index spelling; levels source per
+symbol; levels drawn only when computed for the chart's own underlying). The index now returns
+supported:false with the reason (levels exist only on SPY's scale here) and the banner shows it; no
+conversion ratio anywhere, no threshold changed, SPY and single names unchanged. Left separate: bare "SPX"
+candles (toSchwabSymbol does not map "SPX"), the null call/put wall crash, the Invalid Date banner time.
+#47 browser check (owner-approved option 1): Railway serves main only and the Vercel preview serves the
+screens with every /api call sent to "unavailable", so no hosted build of the PR revision can show levels.
+CI now runs tests/ux/chart-levels-acceptance.mjs against the exact build under test: both chart engines,
+desktop 1280 px and phone 402 px; SPY levels and banner distances from SPY's own price; the S&P 500 index
+through the REAL server route (unsupported, no levels, reason readable, inside the screen at 402 px, no
+sideways scroll); rapid SPY -> index -> NVDA with the SPY levels reply delayed, sampled every 40 ms, a level
+must never show on another symbol. SPY/NVDA candles and levels are fixed fixtures (exact expected numbers);
+not live Schwab. Evidence (screenshots, level replies, report.json with the commit) is uploaded as the run's
+"chart-levels-<sha>" artifact. Test hooks: data-gamma-callwall and data-last-close on both chart engines.
+First CI run of the chart acceptance: 34/35 pass. The one failure was real: on the first switch to the
+index, the banner briefly said "no option-chain levels were returned" while the levels reply was still in
+flight (no answer yet is not "none returned"). The banner now waits for this symbol's reply.
+2026-11-05: 0DTE Wiener map, core (feat/odte-wiener; owner request: "a more defined 0DTE map with a chart using
+the Wiener model ... for the day only"; owner chose: replace the current cone, core scope first). Found: the
+old 0DTE forward cone mixed unlabelled rules of thumb into its median (pin pull up to 60%, charm tilt, 15%
+wider cone in short gamma) and drew seeded synthetic candles, while its touch odds were driftless. Now
+shared/odteWiener.ts (pure): arithmetic Brownian motion, zero drift, sigma to the close = the 0DTE chain's
+ATM IV (straddle/sqrt(2/pi) as fallback and cross-check); percentile bands (2.5-97.5) every 5 min to the
+close; per level the exact first-passage touch odds and the close-above/below odds; expected remaining
+high/low/range (sigma*sqrt(2/pi)); close distribution in strike-width buckets; drift-aware first passage
+(hitProbability) available and tested against a simulation, unused (mu = 0). server/odteForward.ts adds
+`wiener`, `todayPath` and `pathBasis` (the old path is now labelled a heuristic overlay); no extra Schwab
+request (test counts 1 chain + 1 history read). Card (Heatseeker tab): today's path, bands, levels with touch
+odds, close distribution beside the chart on wide screens, level odds table, dealer overlay off by default
+and labelled, 44 px toggles. Scorecard: the 09:35 morning map carries the Wiener odds; after the close the
+settle scores them on the extremes from the map's minute onward (levels already traded or at the price are
+left out); /api/odte/map/ledger returns wienerScorecard (calibration buckets, Brier, untested below 50
+days). CI demo step renders it at 402 px (FAIL gate). Not in this PR: time-of-day variance weighting; the
+options-implied close distribution comparison. Not verified live.
+Review of feat/odte-wiener (independent): 3 MUST-FIX fixed. (1) A straddle-derived sigma (straddle/0.8) went in
+as "ATM IV" with a circular straddle cross-check; now only chain IV is passed as IV, else the model's own
+straddle conversion is used and labelled (test forces the fallback: no IV, no bid/ask). (2) The next-session
+projection was always 390 min to 16:00; projMinutes for the closed state now comes from the next trading
+day's calendar (210 min to 13:00 before a half day; tested on Thanksgiving). (3) The CI rendered check passed
+on any "unavailable" text; unavailable now passes only in the Friday-close-to-Monday-open gap, as the map
+smoke does. SHOULD-FIX taken: intraday with no same-day expiry -> unavailable with the reason; today's
+touches no longer flagged on the next-session map; pre-open/next-session maps state that the overnight part
+of the implied move is spread across the session (gap not modelled) and the header says "next session";
+Wiener levels built without the sigma rails (which could displace a real level in the dedupe), nearest 14;
+scoring window starts at the chain's own time (the odds' spot), bar containing it included (documented);
+hitProbability keeps the crossing term in log space and handles sigma = 0 (the reviewer's "about 1" for
+a = mu = 30 was wrong: the true value is 0.5 + 1/(60 sqrt(2 pi)) = 0.5066, now pinned); scorecard shows the
+base-rate Brier as its reference instead of "0.25 = coin flip"; copy: "morning map (first map after the
+open)", 5-minute closes plotted and read at the bar's end, model close ranges in text on every screen,
+tag stack clamped, readout clears on touch end, role="group"; tests assert their branches run.
+Re-review (same reviewer): first-round MUST-FIX 1-2 verified; reviewer agreed hitProbability(30,30,1,1) = 0.5066.
+New MUST-FIX fixed: the weekday-only "weekend gap" rule would FAIL CI on market holidays and evenings before
+them (one-day chain window empty). server/exchangeCalendar.ts noExpiryInOneDayWindow(ms) now decides (tested
+on Friday/weekend, the evening before Thanksgiving, after the half-day close, Christmas); CI computes it once
+(NO_EXPIRY_EXPECTED) and both the /api/odte/map smoke and the Wiener rendered check use it. SHOULD-FIX taken:
+next-session map unavailable unless the chain's expiry is the next trading day; scoring start is a tested
+pure helper (wienerScoringStartMs); the vacuous rails test replaced by one that shows the displacement;
+logNormCdf seam reduced (-15/x^6 term); the forming 5-minute bar is left out of today's path.
+Third review (same reviewer): no MUST-FIX; the calendar rule agreed with the forward's 503 no_expiries in all
+360 probe cases (24 dates x 15 times incl. holidays, half days, MLK, Good Friday). SHOULD-FIX taken: the
+Wiener CI check re-reads the calendar at check time (a run crossing a close) and requires the forward's own
+503 no_expiries answer (a server error on a no-expiry day still fails); the displacement test is named for
+what it proves (mechanism + no rail in the list), not for the forward's ordering.
+2026-11-06: macro event calendar (feat/vol-calendar-2027). The FOMC list ended 2026-12-09 and the CPI list had the wrong late-2026 dates (11-12 and 12-09; BLS moved them to 11-10 and 12-10 after the 2025 lapse). Added the Fed's 2027 FOMC decision days (press release 2025-09-05) and the BLS 2027 CPI dates (bls.gov schedule, read 2026-11-06); the calendar now warns when its 90-day window runs past the end of a list instead of showing an empty stretch. Tests: tests/quant/vol-calendar-dates.test.ts.
+2026-11-06: headlines read, never build (feat/headline-read-only). Evidence: live /api/schwab/diag (2026-11-05
+~01:00 ET) attributed SPY chains x6 and $SPX chains x3 per minute to "api /headline", $SPX x3 to
+"/regime/headline". Cause in code: every tab headline (20 s cache per tab) called /api/regime/predict, which
+calls /api/models; an empty models build (Schwab refused the chain, e.g. the self-throttle) was held only 20 s,
+so headline polling rebuilt the models (chain reads) about every 20 s while the budget stayed exhausted. Now
+the headline calls /api/regime/predict?peek=1 -> /api/models?peek=1, which answers the current build or 503
+not_built and never starts a build (headline says why the regime is unavailable); an empty build backs off
+20 s, 40 s, 80 s ... capped at 5 min (server/modelsBackoff.ts), reset by a good build. Builds still come from
+the Trade Desk predictor panel and the 9:00-16:00 regime ticker (60 s, now bounded by the backoff). Not
+verified live: the request count after deploy.
+Review of feat/headline-read-only: 2 MUST-FIX taken. (1) Outside the session the chain quote time stops at
+the last print, so every build failed the 30-min closed chain-age limit at birth: peek could never serve
+from the evening to the pre-market or all weekend, and every non-peek reader rebuilt on each poll (the
+01:00 ET diag's one-rebuild-a-minute). One pure gate now serves both reads (server/modelsBackoff.ts
+modelsCacheGate): with the market closed, a build made after the last settled close is current within its
+30-min cadence, the rule staleServeDecision already applies to cached chains. (2) The not_built reason said
+"pending, or backing off" for every miss; the peek now names its state (build running, none since start,
+past cadence, chain too old, empty build due a rebuild). SHOULD-FIX taken: a predictor peek reads the raw
+cached build (no /api/models post-processing, so no Schwab read); Signals and Heatseeker name the real
+cause; a timeout reads "did not answer within 2.5 s"; the empty-build backoff caps at 2 min in the session;
+regimeHistoryTicker's "no new Schwab calls" comment corrected. Behavioural tests on the gate (session,
+closed at 17:00 / 01:00 / Saturday, pre-settle build) and on each reason. Left: /api/models error
+fallback looks up the non-experimental disk key (separate PR).
 2026-11-06: deploy identity and request breakdown (feat/health-commit-diag). /api/health now carries `commit`,
 `commitSource`, `branch` from the host's build variables (server/deployInfo.ts: RAILWAY_GIT_COMMIT_SHA first;
 null when the host did not say, never guessed), so "is commit X deployed" can be proven per domain. Settings
