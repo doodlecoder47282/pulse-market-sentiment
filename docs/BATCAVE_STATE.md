@@ -1396,3 +1396,8 @@ check now accepts either wording and prints each condition it tested.
 $5M market-cap target (CRYPTO_RULES.universe.targetMcapUsd), not a time. Copy now reads "reached the $5M
 market-cap target", the chip "HIT $5M CAP", and the How-to reads the horizon, target and sample gate from
 the rule book instead of carrying its own numbers. Display only; no rule or grade changed.
+Crypto review of feat/crypto-target-label: no MUST-FIX. SHOULD-FIX taken: How-to said "graded within 72 hours"
+(DOUBLED / DEAD / NO_DATA are decided at 72 h, only HIT and RUGGED close early) and omitted no data and the
+20% no-data condition: now stated. The stats row and the first-ENTER line still said "hit 5M" next to "5m"
+volume labels: built from the rule book. The chip is "$5M CAP" (7 characters, was 6) instead of 11, so the
+non-wrapping signal row does not widen at 402 px. Test: tests/quant/crypto-target-label.test.ts.

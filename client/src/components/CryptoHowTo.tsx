@@ -13,7 +13,7 @@ const STEPS: Array<[string, string]> = [
   ["Look at a coin", "Tap a coin to open its details: why it got its label, safety checks, and who is buying. Under the details: fomo opens the coin in the fomo app or fomo.family; pump.fun opens its pump.fun page; Address copies the contract address."],
   ["Get the coin in fomo", "Tap fomo. If the page opens in the browser instead of the app, tap Address, open the fomo app, and paste the address into Search. Searching by contract address always finds the token; searching by name may not."],
   ["Check any coin yourself", "Paste a contract address into Contract autopsy. You get every desk rule with the value it read, and anything it could not read is marked as not read, never as a pass."],
-  ["The record", `Every first Enter is graded within ${CRYPTO_RULES.grading.horizonHours} hours: it reached the ${TARGET} market-cap target, doubled, rugged or died (closed early when it reaches the target or rugs). Until ${CRYPTO_RULES.grading.minSample} are graded the desk is in tracking mode, so the labels have no proven track record yet.`],
+  ["The record", `Every first Enter is graded over ${CRYPTO_RULES.grading.horizonHours} hours: it reached the ${TARGET} market-cap target or rugged (both close the grade early), or at ${CRYPTO_RULES.grading.horizonHours} hours it had doubled or died. One that cannot be priced is no data, its own outcome, never a loss or a win. Until ${CRYPTO_RULES.grading.minSample} are graded with no data at ${Math.round(CRYPTO_RULES.grading.maxNoDataShare * 100)}% or less, the desk is in tracking mode, so the labels have no proven track record yet.`],
 ];
 
 const WORDS: Array<[string, string]> = [
