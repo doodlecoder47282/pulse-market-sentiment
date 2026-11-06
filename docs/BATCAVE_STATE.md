@@ -1540,3 +1540,26 @@ Wiener CI check re-reads the calendar at check time (a run crossing a close) and
 503 no_expiries answer (a server error on a no-expiry day still fails); the displacement test is named for
 what it proves (mechanism + no rail in the list), not for the forward's ordering.
 2026-11-06: macro event calendar (feat/vol-calendar-2027). The FOMC list ended 2026-12-09 and the CPI list had the wrong late-2026 dates (11-12 and 12-09; BLS moved them to 11-10 and 12-10 after the 2025 lapse). Added the Fed's 2027 FOMC decision days (press release 2025-09-05) and the BLS 2027 CPI dates (bls.gov schedule, read 2026-11-06); the calendar now warns when its 90-day window runs past the end of a list instead of showing an empty stretch. Tests: tests/quant/vol-calendar-dates.test.ts.
+2026-11-06: headlines read, never build (feat/headline-read-only). Evidence: live /api/schwab/diag (2026-11-05
+~01:00 ET) attributed SPY chains x6 and $SPX chains x3 per minute to "api /headline", $SPX x3 to
+"/regime/headline". Cause in code: every tab headline (20 s cache per tab) called /api/regime/predict, which
+calls /api/models; an empty models build (Schwab refused the chain, e.g. the self-throttle) was held only 20 s,
+so headline polling rebuilt the models (chain reads) about every 20 s while the budget stayed exhausted. Now
+the headline calls /api/regime/predict?peek=1 -> /api/models?peek=1, which answers the current build or 503
+not_built and never starts a build (headline says why the regime is unavailable); an empty build backs off
+20 s, 40 s, 80 s ... capped at 5 min (server/modelsBackoff.ts), reset by a good build. Builds still come from
+the Trade Desk predictor panel and the 9:00-16:00 regime ticker (60 s, now bounded by the backoff). Not
+verified live: the request count after deploy.
+Review of feat/headline-read-only: 2 MUST-FIX taken. (1) Outside the session the chain quote time stops at
+the last print, so every build failed the 30-min closed chain-age limit at birth: peek could never serve
+from the evening to the pre-market or all weekend, and every non-peek reader rebuilt on each poll (the
+01:00 ET diag's one-rebuild-a-minute). One pure gate now serves both reads (server/modelsBackoff.ts
+modelsCacheGate): with the market closed, a build made after the last settled close is current within its
+30-min cadence, the rule staleServeDecision already applies to cached chains. (2) The not_built reason said
+"pending, or backing off" for every miss; the peek now names its state (build running, none since start,
+past cadence, chain too old, empty build due a rebuild). SHOULD-FIX taken: a predictor peek reads the raw
+cached build (no /api/models post-processing, so no Schwab read); Signals and Heatseeker name the real
+cause; a timeout reads "did not answer within 2.5 s"; the empty-build backoff caps at 2 min in the session;
+regimeHistoryTicker's "no new Schwab calls" comment corrected. Behavioural tests on the gate (session,
+closed at 17:00 / 01:00 / Saturday, pre-settle build) and on each reason. Left: /api/models error
+fallback looks up the non-experimental disk key (separate PR).
