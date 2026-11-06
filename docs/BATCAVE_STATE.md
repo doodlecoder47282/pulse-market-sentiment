@@ -1579,3 +1579,10 @@ says "since degradation began (resets after 5 quiet minutes)" and "not served fr
 fetched and failed); the build line shows reading / did not answer apart from "not reported"; a symbol
 ending a 24-character list is marked partial.
 2026-11-06: chain-audit DEX extremes (fix/dex-extrema). Recording frame 43 showed "Max positive DEX 2,000 $0" and "Max negative DEX 2,000 $0": computeDEX picked the first strike when every strike netted to zero (0 > -Infinity). A strike is now reported only when its net DEX is actually positive (negative); otherwise null, which the panel already hides. Tests: tests/quant/dex-extrema.test.ts.
+2026-11-06: crypto sizing basis and no default cost (feat/crypto-cost-unknown). Live self-test 2026-11-05 failed "position sizing" and "round-trip cost" on 1 row. Cause: the GeckoTerminal scanner refreshes a candidate's liquidityUsd (cryptoEngine.ts ~469) without re-sizing, so the card's size/cost and its liquidity came from two reads. The risk block now records sizedOnLiquidityUsd and the verifier checks against it. A cost that cannot be computed is null, not the old 15% default (risk.estSlippagePct number|null; not displayed in the client today). Not changed: the scanner overwriting DexScreener liquidity with GeckoTerminal reserve (named, separate item).
+Review of feat/crypto-cost-unknown: 1 MUST-FIX taken. Checking size and cost against the recorded basis
+alone made the check a formula self-test, and the card could still show liq $25k beside a size computed
+on $40k. The arithmetic check stays on the basis; a new crypto.sizing.basis check reports cards whose
+served liquidity moved more than 1% from it as "stale" (never pass), and the card says "size and round
+trip from the earlier read at $X liquidity". CRYPTO_DESK.md section 6 updated. Not done: re-scoring on the
+GeckoTerminal refresh (the next momentum tick re-sizes within about 4 min).
