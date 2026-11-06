@@ -1573,8 +1573,9 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
     );
   }
 
-  const change = data?.change ?? 0;
-  const changePct = data?.changePct ?? 0;
+  // Missing change is "change unavailable", never +0.00 (0.00%).
+  const change = data?.change != null && Number.isFinite(data.change) ? data.change : null;
+  const changePct = data?.changePct != null && Number.isFinite(data.changePct) ? data.changePct : null;
 
   return (
     <div className="border-b border-border/30 bg-black/60 p-2">
@@ -1584,9 +1585,13 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
         {prevClose != null && <span>· PREV {fmtK(prevClose)}</span>}
         <span>· HI {fmtK(sessionHigh)}</span>
         <span>· LO {fmtK(sessionLow)}</span>
-        <span className={change >= 0 ? "text-green-400" : "text-red-400"}>
-          · {change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
-        </span>
+        {change != null ? (
+          <span className={change >= 0 ? "text-green-400" : "text-red-400"} data-testid="tape-change">
+            · {change >= 0 ? "+" : ""}{change.toFixed(2)}{changePct != null ? ` (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)` : ""}
+          </span>
+        ) : (
+          <span data-testid="tape-change">· change unavailable</span>
+        )}
         <span className="text-muted-foreground">· dashed lines = dealer levels from model</span>
       </div>
       <div className="h-[180px] w-full">

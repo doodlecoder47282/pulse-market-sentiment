@@ -1546,6 +1546,12 @@ centre (not covered by a sticky layer), sits inside the tape (not clipped), open
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
 
+2026-11-06: Missing day change is not +0.00% (feat/missing-not-zero). The Trade Desk chart header and the
+Models intraday tape coerced a missing changePct/change to 0 and printed "+0.00%" / "+0.00 (+0.00%)" in
+green, a flat day that was never observed. Both now show a dash or "change unavailable" in neutral tone.
+Checked and left (display already guarded; `?? 0` only picks a tone after a null check): ChartPanel OHLC,
+Mag7Panel, LiveQuoteStrip. Next in this lane: regimePredictor reads a missing DFI as 0 (classifies a regime
+from no data), its own PR.
 2026-11-06: Models fallback key (feat/models-fallback-key). When a live /api/models build failed, the fallback
 parsed `experimental` with a non-experimental default while the live path (and every disk write) defaults to
 experimental, so requests without the parameter (Models panel, Discord, edge briefing) looked up a key that
