@@ -1539,6 +1539,104 @@ Third review (same reviewer): no MUST-FIX; the calendar rule agreed with the for
 Wiener CI check re-reads the calendar at check time (a run crossing a close) and requires the forward's own
 503 no_expiries answer (a server error on a no-expiry day still fails); the displacement test is named for
 what it proves (mechanism + no rail in the list), not for the forward's ordering.
+2026-11-06: macro event calendar (feat/vol-calendar-2027). The FOMC list ended 2026-12-09 and the CPI list had the wrong late-2026 dates (11-12 and 12-09; BLS moved them to 11-10 and 12-10 after the 2025 lapse). Added the Fed's 2027 FOMC decision days (press release 2025-09-05) and the BLS 2027 CPI dates (bls.gov schedule, read 2026-11-06); the calendar now warns when its 90-day window runs past the end of a list instead of showing an empty stretch. Tests: tests/quant/vol-calendar-dates.test.ts.
+2026-11-06: headlines read, never build (feat/headline-read-only). Evidence: live /api/schwab/diag (2026-11-05
+~01:00 ET) attributed SPY chains x6 and $SPX chains x3 per minute to "api /headline", $SPX x3 to
+"/regime/headline". Cause in code: every tab headline (20 s cache per tab) called /api/regime/predict, which
+calls /api/models; an empty models build (Schwab refused the chain, e.g. the self-throttle) was held only 20 s,
+so headline polling rebuilt the models (chain reads) about every 20 s while the budget stayed exhausted. Now
+the headline calls /api/regime/predict?peek=1 -> /api/models?peek=1, which answers the current build or 503
+not_built and never starts a build (headline says why the regime is unavailable); an empty build backs off
+20 s, 40 s, 80 s ... capped at 5 min (server/modelsBackoff.ts), reset by a good build. Builds still come from
+the Trade Desk predictor panel and the 9:00-16:00 regime ticker (60 s, now bounded by the backoff). Not
+verified live: the request count after deploy.
+Review of feat/headline-read-only: 2 MUST-FIX taken. (1) Outside the session the chain quote time stops at
+the last print, so every build failed the 30-min closed chain-age limit at birth: peek could never serve
+from the evening to the pre-market or all weekend, and every non-peek reader rebuilt on each poll (the
+01:00 ET diag's one-rebuild-a-minute). One pure gate now serves both reads (server/modelsBackoff.ts
+modelsCacheGate): with the market closed, a build made after the last settled close is current within its
+30-min cadence, the rule staleServeDecision already applies to cached chains. (2) The not_built reason said
+"pending, or backing off" for every miss; the peek now names its state (build running, none since start,
+past cadence, chain too old, empty build due a rebuild). SHOULD-FIX taken: a predictor peek reads the raw
+cached build (no /api/models post-processing, so no Schwab read); Signals and Heatseeker name the real
+cause; a timeout reads "did not answer within 2.5 s"; the empty-build backoff caps at 2 min in the session;
+regimeHistoryTicker's "no new Schwab calls" comment corrected. Behavioural tests on the gate (session,
+closed at 17:00 / 01:00 / Saturday, pre-settle build) and on each reason. Left: /api/models error
+fallback looks up the non-experimental disk key (separate PR).
+2026-11-06: deploy identity and request breakdown (feat/health-commit-diag). /api/health now carries `commit`,
+`commitSource`, `branch` from the host's build variables (server/deployInfo.ts: RAILWAY_GIT_COMMIT_SHA first;
+null when the host did not say, never guessed), so "is commit X deployed" can be proven per domain. Settings
+(Schwab panel) shows the running commit and a "Requests by feature" list built from /api/schwab/diag
+requestsByCaller (shared/requestBreakdown.ts): admitted attempts in the last minute grouped by route and
+priority, with kinds and symbols; stack-frame callers shown as "background task" (no file paths); requests
+refused or served from an older copy in the last 5 minutes listed from diag.degraded. Replaces the browser
+console steps. Not verified live.
+Review of feat/health-commit-diag: 1 MUST-FIX taken. The breakdown header summed the reported rows, but the
+server reports only the busiest 60 caller rows, so the header could read lower than the budget line above
+it (a partial read shown as a total). It now reads requestsLastMinute and states "N not itemised" and
+unreadable rows. SHOULD-FIX taken: more-than-12 features say how many are not shown; the degraded line
+says "since degradation began (resets after 5 quiet minutes)" and "not served fresh" (403/429/5xx were
+fetched and failed); the build line shows reading / did not answer apart from "not reported"; a symbol
+ending a 24-character list is marked partial.
+2026-11-06: chain-audit DEX extremes (fix/dex-extrema). Recording frame 43 showed "Max positive DEX 2,000 $0" and "Max negative DEX 2,000 $0": computeDEX picked the first strike when every strike netted to zero (0 > -Infinity). A strike is now reported only when its net DEX is actually positive (negative); otherwise null, which the panel already hides. Tests: tests/quant/dex-extrema.test.ts.
+2026-11-06: crypto sizing basis and no default cost (feat/crypto-cost-unknown). Live self-test 2026-11-05 failed "position sizing" and "round-trip cost" on 1 row. Cause: the GeckoTerminal scanner refreshes a candidate's liquidityUsd (cryptoEngine.ts ~469) without re-sizing, so the card's size/cost and its liquidity came from two reads. The risk block now records sizedOnLiquidityUsd and the verifier checks against it. A cost that cannot be computed is null, not the old 15% default (risk.estSlippagePct number|null; not displayed in the client today). Not changed: the scanner overwriting DexScreener liquidity with GeckoTerminal reserve (named, separate item).
+Review of feat/crypto-cost-unknown: 1 MUST-FIX taken. Checking size and cost against the recorded basis
+alone made the check a formula self-test, and the card could still show liq $25k beside a size computed
+on $40k. The arithmetic check stays on the basis; a new crypto.sizing.basis check reports cards whose
+served liquidity moved more than 1% from it as "stale" (never pass), and the card says "size and round
+trip from the earlier read at $X liquidity". CRYPTO_DESK.md section 6 updated. Not done: re-scoring on the
+GeckoTerminal refresh (the next momentum tick re-sizes within about 4 min).
+2026-11-06: chart null guards (feat/chart-null-guards). /api/gamma-levels per-ticker branch sent asOf as an ISO string while the SPY branch sent epoch seconds; GammaContextBanner multiplied by 1000 -> "updated Invalid Date" on ticker charts. Server now sends seconds on both branches; the banner reads seconds, ms or ISO (shared/asOfTime.ts) and hides an unreadable stamp. A missing call or put wall (null) crashed LightweightCandlestick (.toFixed on null) and drew NaN lines in CandlestickChart; both now skip the missing wall. Tests: tests/quant/chart-null-guards.test.ts.
+Review of feat/chart-null-guards: the CI type gate failure (banner walls typed non-null) fixed in cae94a6.
+MUST-FIX taken: the per-ticker /api/gamma-levels branch sent the response time as asOf, and the banner
+newly showed it as "updated HH:MM:SS" while the positioning snapshot is cached up to 5 min (a made-up
+fresh time). The snapshot now carries the chain's own data time (chainAsOfMs: Schwab's underlying quote
+time, else receive time) and the route sends that, or null so the banner shows no time; the banner says
+"chain as of".
+2026-11-06: Heatseeker scenario semantics (feat/scenario-semantics). Recording frame 37: "base" path above "bull" (base = dominant magnet 8,021 > bull target 7,782), "BASE region 8,005-8,037" printed as a +-0.2% band around the target while its probability was the middle region centred on spot, and "touch 100%" from min(1, 2 x close-beyond) with close-beyond 56%. Fix (semantics, no clamping): scenarioOddsFromCdf flags baseOutsideRange; the models paths carry the real region bounds (bull above upper, middle lower-upper, bear below lower); a base path outside the range is named MAGNET (a reference with no probability of its own) and the card says MIDDLE region; touch odds are stated only when close-beyond < 50% (the reflection rule's condition), never capped. Tests: tests/quant/scenario-semantics.test.ts.
+Review of feat/scenario-semantics: the touch-odds condition was necessary, not sufficient. "Close-beyond
+under 1/2" still let the 2x reflection rule state 80-92% touch odds on a drifted distribution where the
+true odds are 58-63%. Touch odds are now stated only when the implied distribution is centred on spot
+(spot between its 40% and 60% quantile, TOUCH_CENTRE_TOLERANCE 0.1), otherwise "touch not stated:" with the
+reason (spot's quantile, or median past the target). Also: the MAGNET legend no longer carries a
+percentage; "centred on spot" says the bull/bear midpoint when spot is outside the range. Left (named):
+MAGNET naming in heuristic mode, the leftover target bands in the scenario legend, and the recording's 56%
+close-beyond for a +1.2% target suggests a spot/distribution timing mismatch, to check on a live payload.
+2026-11-06: News AI brief (feat/news-brief-render). The card rendered the model's raw JSON (brief = rawText) and the prompt asked for bull/base/bear probabilities, a confidence score, R:R and trade structures. Now the prompt asks for a descriptive brief (summary, drivers, tape check, positioning, levels from the inputs, what would change the read, counterpoints, data gaps) with explicit rules against probabilities, confidence, targets and trades; the server keeps only those fields (shared/alphaBrief.ts sanitizeBrief) and returns rendered markdown as `brief` (deterministic brief when no model answered); the email composer renders the same sections. Not changed (named): the deterministic Edge Lab baseline verdict/confidence/path odds still shown in the email header.
+Review of feat/news-brief-render: 2 MUST-FIX taken. (1) The provider was chosen on "JSON parsed", so a
+parseable answer with no descriptive fields showed the rules-engine text under an AI badge ("+ web search",
+"engine: claude"), and a usable Sonar/GPT answer was skipped: the first provider whose answer sanitizes to a
+usable brief now wins, else mode "deterministic", provider "none". (2) The email fell back to the Edge Lab
+baseline verdict and confidence without the baseline tag ("Alpha Brief: LEAN BULL · 58%" under
+"engine: claude"), or printed PENDING: a descriptive brief's subject is "descriptive read", the baseline
+appears only under its own heading as a heuristic score, and with neither there is no verdict line.
+SHOULD-FIX taken: the deterministic brief fed to the model has its TRADE IMPLICATIONS section removed;
+numeric levels are kept; the footer says the model was asked not to give probabilities, targets or trade
+ideas (nothing enforces it in text). Left: the deterministic brief's own trade wording (alphaEngine.ts),
+its own copy PR.
+2026-11-06: Crypto target label (feat/crypto-target-label). The record line and How-to said "hit the
+5-minute target" and the outcome chip showed raw `HIT_5M`; the grade means the sampled peak reached the
+$5M market-cap target (CRYPTO_RULES.universe.targetMcapUsd), not a time. Copy now reads "reached the $5M
+market-cap target", the chip "HIT $5M CAP", and the How-to reads the horizon, target and sample gate from
+the rule book instead of carrying its own numbers. Display only; no rule or grade changed.
+Crypto review of feat/crypto-target-label: no MUST-FIX. SHOULD-FIX taken: How-to said "graded within 72 hours"
+(DOUBLED / DEAD / NO_DATA are decided at 72 h, only HIT and RUGGED close early) and omitted no data and the
+20% no-data condition: now stated. The stats row and the first-ENTER line still said "hit 5M" next to "5m"
+volume labels: built from the rule book. The chip is "$5M CAP" (7 characters, was 6) instead of 11, so the
+non-wrapping signal row does not widen at 402 px. Test: tests/quant/crypto-target-label.test.ts.
+
+2026-11-06: Models fallback key (feat/models-fallback-key). When a live /api/models build failed, the fallback
+parsed `experimental` with a non-experimental default while the live path (and every disk write) defaults to
+experimental, so requests without the parameter (Models panel, Discord, edge briefing) looked up a key that
+is never written and the saved-session copy was never served. Both now parse the flag the same way. Found
+by the headline-read-only review. Test: tests/quant/models-fallback-key.test.ts.
+
+2026-11-06: Missing day change is not +0.00% (feat/missing-not-zero). The Trade Desk chart header and the
+Models intraday tape coerced a missing changePct/change to 0 and printed "+0.00%" / "+0.00 (+0.00%)" in
+green, a flat day that was never observed. Both now show a dash or "change unavailable" in neutral tone.
+Checked and left (display already guarded; `?? 0` only picks a tone after a null check): ChartPanel OHLC,
+Mag7Panel, LiveQuoteStrip. Next in this lane: regimePredictor reads a missing DFI as 0 (classifies a regime
+from no data), its own PR.
 
 2026-11-06: Crypto stale ENTER held (feat/crypto-stale-enter, rule book 2026.11.06-1). A candidate kept its
 last verdict until the 48 h eviction even when DexScreener stopped returning its pair, so the feed could

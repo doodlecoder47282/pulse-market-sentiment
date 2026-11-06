@@ -180,7 +180,11 @@ export interface RiskParams {
   liquidityExitStopPct: number;// bail if liquidity drops this much
   targetMcap: number;          // 5M default ride target
   targetMultiple: number | null;
-  estSlippagePct: number;
+  /** Round-trip cost of the sized position in % of size; null when it cannot be computed (no pool liquidity). Never a default. */
+  estSlippagePct: number | null;
+  /** Pool liquidity (USD) the size and cost were computed from; null when none was observed. The candidate's
+   *  liquidity field can be refreshed later by another feed without re-sizing, so checks use this value. */
+  sizedOnLiquidityUsd: number | null;
   holdHorizonHours: number;
   notes: string[];
 }
@@ -1089,7 +1093,8 @@ function scoreCandidate(c: Candidate): void {
       liquidityExitStopPct: CRYPTO_RULES.sizing.liquidityExitStopPct,
       targetMcap: TARGET_MCAP,
       targetMultiple: mcap > 0 ? Number((TARGET_MCAP / mcap).toFixed(1)) : null,
-      estSlippagePct: rt.roundTripPct ?? 15,
+      estSlippagePct: rt.roundTripPct ?? null,
+      sizedOnLiquidityUsd: liqObs ?? null,
       holdHorizonHours: CRYPTO_RULES.sizing.holdHorizonHours,
       notes: [
         `size = ${CRYPTO_RULES.sizing.poolShare * 100}% of pool liquidity (max $${CRYPTO_RULES.sizing.maxPositionUsd}) — the exit is the constraint, not the entry`,

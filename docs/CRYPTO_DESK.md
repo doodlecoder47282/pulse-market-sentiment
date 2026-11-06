@@ -146,7 +146,11 @@ Settings -> Verify live data runs `/api/verify/live`. The crypto section
   Jupiter check, a desk that is off or unknown, liquidity under the floor,
   a cap above the ceiling, flow under the floors, or pair data older than
   the freshness limit (or with no read time);
-- sizing and round-trip cost on every row equal the book's arithmetic;
+- sizing and round-trip cost on every row equal the book's arithmetic on
+  the liquidity the row was sized on (`risk.sizedOnLiquidityUsd`); a card
+  whose served liquidity moved more than 1% from that basis (the scanner
+  refreshed it without re-sizing) is counted as stale, and the card states
+  the basis;
 - desk risk on the signals payload equals the arithmetic on the majors
   payload of the same run;
 - expectancy bookkeeping: shares, gate and label consistent with the book;

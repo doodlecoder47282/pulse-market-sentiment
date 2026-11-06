@@ -11,6 +11,9 @@
 
 import CoinLinks from "./CoinLinks";
 import CryptoHowTo from "./CryptoHowTo";
+import { CRYPTO_RULES } from "@shared/cryptoRules";
+/** The grade HIT_5M means the sampled peak reached this market cap (rule book), not a time. */
+const TARGET_CAP = `$${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M`;
 import BundleRow from "./BundleRow";
 import CoinDesk from "./CoinDesk";
 import type { CardBundle } from "@shared/cryptoBundle";
@@ -66,8 +69,10 @@ interface Candidate {
   score: number | null; verdict: Verdict; verdictCode?: string | null; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
-    targetMcap: number; targetMultiple: number | null; estSlippagePct: number;
+    targetMcap: number; targetMultiple: number | null; estSlippagePct: number | null;
     holdHorizonHours: number; notes: string[];
+    /** Liquidity the size and cost were computed from (a later scan may refresh liq without re-sizing). */
+    sizedOnLiquidityUsd?: number | null;
   } | null;
   structure?: { line: LinePosition; category: MemeClass; cost: TradeCost } | null;
 }
@@ -504,7 +509,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
       )}
       <div className="mt-3 border-t border-border/40 pt-2 text-[11px] text-muted-foreground" data-testid="crypto-brief-record">
         {rec
-          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} hit the 5-minute target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
+          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} reached the $${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M market-cap target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
           : "Record so far: loading. Heuristic scores, not calibrated odds. The desk never places orders."}
       </div>
     </div>
@@ -827,6 +832,12 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <Stat label="target" value={fmtUsd(c.risk.targetMcap, 0)} />
               <Stat label="multiple" value={c.risk.targetMultiple ? `${c.risk.targetMultiple}x` : "—"} />
               <Stat label="round trip" value={c.structure?.cost.roundTripPct != null ? `${c.structure.cost.roundTripPct}%` : "not reported"} />
+              {sizingBasisDrift(c.liquidityUsd, c.risk.sizedOnLiquidityUsd) && (
+                // The card's liq is newer than the read the size was computed from: say so, so the size can be recomputed.
+                <div className="col-span-2 text-[11px] text-amber-200/90 sm:col-span-3" data-testid="crypto-sizing-basis">
+                  size and round trip from the earlier read at {fmtUsd(c.risk.sizedOnLiquidityUsd as number, 0)} liquidity; re-sized on the next refresh
+                </div>
+              )}
             </div>
           )}
           {c.structure && (
@@ -914,6 +925,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
   );
 }
 
+/** True when the card's liquidity differs from the sizing basis by more than 1%. */
+function sizingBasisDrift(liq: number | null | undefined, basis: number | null | undefined): boolean {
+  return liq != null && basis != null && Number.isFinite(liq) && Number.isFinite(basis) && basis > 0 && Math.abs(liq - basis) / basis > 0.01;
+}
+
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className="rounded bg-muted/25 px-1.5 py-1">
@@ -954,7 +970,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         {[
           ["coins", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],
-          ["hit 5M", stats.hit5m, "text-lime-300"],
+          [`hit ${TARGET_CAP} cap`, stats.hit5m, "text-lime-300"],
           ["doubled", stats.doubled, "text-emerald-300"],
           ["rugged", stats.rugged, "text-rose-300"],
           ["dead", stats.dead, "text-muted-foreground"],
@@ -968,7 +984,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       </div>
       <p className="text-[11px] text-muted-foreground" data-testid="crypto-stats-basis">
         counts are distinct coins (first signal per coin){stats.rows ? `; ${stats.rows.total} logged rows` : ""}
-        {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} hit 5M or doubled)` : ""}
+        {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} reached the ${TARGET_CAP} cap or doubled)` : ""}
         {stats.noDataShare != null ? ` · no-data share ${Math.round(stats.noDataShare * 100)}% of resolved coins (missing outcomes, not losses)` : ""}
       </p>
       {stats.survivorship && (
@@ -1015,7 +1031,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
               s.outcome === "HIT_5M" ? "text-lime-300" : s.outcome === "DOUBLED" ? "text-emerald-300"
               : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground"
               : s.outcome === "NO_DATA" ? "text-amber-300/80" : "text-sky-300"
-            }`}>{s.outcome}</span>
+            }`} title={s.outcome === "HIT_5M" ? `reached the ${TARGET_CAP} market-cap target (not a time)` : undefined}>{s.outcome === "HIT_5M" ? `${TARGET_CAP} CAP` : s.outcome}</span>
             <span className="hidden text-[11px] text-muted-foreground sm:block">
               {new Date(Number(s.detected_at)).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
             </span>

@@ -93,6 +93,9 @@ export interface PositioningSnapshot {
   /** Strike-level GEX profile within ±15% of spot */
   profile: { strike: number; gex: number; callOi: number; putOi: number }[];
   warnings: string[];
+  /** When the chain's market data was current (Schwab's underlying quote time, else receive time), epoch ms;
+   *  null when no chain was read. Not the response time: this snapshot is cached up to 5 min. */
+  chainAsOfMs: number | null;
 }
 
 export interface TickerAlpha {
@@ -468,6 +471,7 @@ export async function gatherPositioningForTicker(ticker: string): Promise<Positi
   const warnings: string[] = [];
   let spot: number | null = null;
   let gamma: PerTickerGamma | null = null;
+  let chainAsOfMs: number | null = null;
 
   try {
     const quotes = await getQuotes([wire]);
@@ -480,6 +484,7 @@ export async function gatherPositioningForTicker(ticker: string): Promise<Positi
   try {
     const chain = await getOptionChain(wire, 45);
     if (chain && !("error" in chain)) {
+      chainAsOfMs = Number.isFinite(chain.asOfMs) ? chain.asOfMs : null;
       gamma = buildPerTickerGamma(chain, wire);
       if (!gamma) warnings.push("Chain returned but gamma build failed");
     } else {
@@ -512,6 +517,7 @@ export async function gatherPositioningForTicker(ticker: string): Promise<Positi
     atmIv: gamma?.atmIv ?? null,
     profile: gamma?.profile ?? [],
     warnings,
+    chainAsOfMs: gamma ? chainAsOfMs : null,
   };
   _posCache.set(t, { ts: Date.now(), data });
   return data;

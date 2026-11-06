@@ -76,8 +76,11 @@ interface ModelPath {
   probabilityEvent?: string;
   /** Risk-neutral P(close at or beyond the target) (bull/bear, implied only). */
   pCloseBeyond?: number | null;
-  /** ~ min(1, 2 x pCloseBeyond), reflection principle; 1 if already crossed. */
+  /** ~ 2 x pCloseBeyond (reflection); 1 if already crossed; null when the rule does not apply. */
   pTouch?: number | null;
+  touchWithheld?: string | null;
+  /** The price region the probability refers to (null bound = open-ended), when odds are implied. */
+  region?: { lo: number | null; hi: number | null } | null;
   target: number;
   waypoints: ModelPathWaypoint[];
   color: "base" | "bull" | "bear";
@@ -449,9 +452,17 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
   const bullTgt  = horizon.paths.find(p => p.kind === "bull")?.target ?? spot;
   const bearTgt  = horizon.paths.find(p => p.kind === "bear")?.target ?? spot;
   const baseTgt  = horizon.paths.find(p => p.kind === "base")?.target ?? spot;
-  const bullRange = `${fmtK(bullTgt * 0.998)}-${fmtK(bullTgt * 1.002)}`;
-  const bearRange = `${fmtK(bearTgt * 0.998)}-${fmtK(bearTgt * 1.002)}`;
-  const baseRange = `${fmtK(baseTgt * 0.998)}-${fmtK(baseTgt * 1.002)}`;
+  // The region each probability refers to, from the server when the odds are implied; the
+  // old +-0.2% band around each target is shown only as "near target" for heuristic odds.
+  const regionText = (kind: "bull" | "base" | "bear", tgt: number) => {
+    const r = horizon.paths.find((p) => p.kind === kind)?.region;
+    if (r) return r.lo == null ? `below ${fmtK(r.hi!)}` : r.hi == null ? `above ${fmtK(r.lo)}` : `${fmtK(r.lo)}-${fmtK(r.hi)}`;
+    return `near ${fmtK(tgt)}`;
+  };
+  const bullRange = regionText("bull", bullTgt);
+  const bearRange = regionText("bear", bearTgt);
+  const baseRange = regionText("base", baseTgt);
+  const magnetOutside = horizon.paths.find((p) => p.kind === "base")?.name === "MAGNET";
 
   // Charm pocket (between zero-charm and charm target)
   const charmPocketLow  = a.charmZero != null ? Math.min(a.charmZero, charmTgt?.price ?? a.charmZero) : null;
@@ -486,7 +497,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {/* Region odds (close inside the region around each path target), plus
           the target-specific odds: P(close at or beyond) and P(touch). */}
       <RailRow label={`BULL region ${pathPct(horizon, "bull", probs.bull)}%`} value={bullRange} sub={targetOddsText(horizon, "bull")} color={COLORS.bull} />
-      <RailRow label={`BASE region ${pathPct(horizon, "base", probs.base)}%`} value={baseRange} color={COLORS.base} />
+      <RailRow label={`${magnetOutside ? "MIDDLE" : "BASE"} region ${pathPct(horizon, "base", probs.base)}%`} value={baseRange} sub={magnetOutside ? `magnet path to ${fmtK(baseTgt)} sits outside the bull/bear range` : undefined} color={COLORS.base} />
       <RailRow label={`BEAR region ${pathPct(horizon, "bear", probs.bear)}%`} value={bearRange} sub={targetOddsText(horizon, "bear")} color={COLORS.bear} />
 
       {/* Downside */}
@@ -715,7 +726,8 @@ function targetOddsText(h: ModelHorizon, kind: "bull" | "bear"): string | undefi
   const p = h.paths.find((x) => x.kind === kind);
   if (!p || p.probabilitySource !== "risk-neutral-implied" || p.pCloseBeyond == null) return undefined;
   const cmp = kind === "bull" ? ">=" : "<=";
-  const touch = p.pTouch != null ? ` · touch ${Math.round(p.pTouch * 100)}%` : "";
+  // Touch odds only where the reflection rule applies (close-beyond under 50%); otherwise say so.
+  const touch = p.pTouch != null ? ` · touch ${Math.round(p.pTouch * 100)}%` : p.touchWithheld ? ` · touch not stated: ${p.touchWithheld}` : "";
   return `close ${cmp} tgt ${Math.round(p.pCloseBeyond * 100)}%${touch}`;
 }
 
@@ -758,9 +770,11 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
       )}
       {basePath && (
         <div className="text-cyan-400">
-          BASE region {pathPct(horizon, "base", probs.base)}% → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
-          {" → CLOSE "}
-          <span className="text-cyan-300">{fmtK(basePath.target * 0.999)}-{fmtK(basePath.target * 1.001)}</span>
+          {basePath.name === "MAGNET"
+            ? <>MIDDLE region {pathPct(horizon, "base", probs.base)}% (close {basePath.region ? `${fmtK(basePath.region.lo ?? spot)}-${fmtK(basePath.region.hi ?? spot)}` : "around spot"}) · MAGNET path to <span className="text-cyan-300">{fmtK(basePath.target)}</span>, outside the bull/bear range (no probability of its own)</>
+            : <>BASE region {pathPct(horizon, "base", probs.base)}% → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
+              {" → CLOSE "}
+              <span className="text-cyan-300">{fmtK(basePath.target * 0.999)}-{fmtK(basePath.target * 1.001)}</span></>}
         </div>
       )}
       {bearPath && (
@@ -1154,7 +1168,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   dot={{ r: 4, fill: stroke, strokeWidth: 0 }}
                   activeDot={{ r: 6, fill: stroke, strokeWidth: 2, stroke: "#fff" }}
                   isAnimationActive={false}
-                  name={`${p.name} region ${prob}%`}
+                  name={p.name === "MAGNET" ? "MAGNET path (no probability of its own)" : `${p.name} region ${prob}%`}
                 >
                   {showPrints && (
                     <LabelList
@@ -1559,8 +1573,9 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
     );
   }
 
-  const change = data?.change ?? 0;
-  const changePct = data?.changePct ?? 0;
+  // Missing change is "change unavailable", never +0.00 (0.00%).
+  const change = data?.change != null && Number.isFinite(data.change) ? data.change : null;
+  const changePct = data?.changePct != null && Number.isFinite(data.changePct) ? data.changePct : null;
 
   return (
     <div className="border-b border-border/30 bg-black/60 p-2">
@@ -1570,9 +1585,13 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
         {prevClose != null && <span>· PREV {fmtK(prevClose)}</span>}
         <span>· HI {fmtK(sessionHigh)}</span>
         <span>· LO {fmtK(sessionLow)}</span>
-        <span className={change >= 0 ? "text-green-400" : "text-red-400"}>
-          · {change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
-        </span>
+        {change != null ? (
+          <span className={change >= 0 ? "text-green-400" : "text-red-400"} data-testid="tape-change">
+            · {change >= 0 ? "+" : ""}{change.toFixed(2)}{changePct != null ? ` (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)` : ""}
+          </span>
+        ) : (
+          <span data-testid="tape-change">· change unavailable</span>
+        )}
         <span className="text-muted-foreground">· dashed lines = dealer levels from model</span>
       </div>
       <div className="h-[180px] w-full">
