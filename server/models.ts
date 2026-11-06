@@ -280,6 +280,8 @@ export interface ModelHorizon {
   chainSymbol?: string;
   chainAsOfMs?: number;
   chainStale?: boolean;
+  /** Market closed: the settled last-session chain (the latest that exists; not stale). */
+  chainLastSession?: boolean;
   chainMaxAgeMs?: number;
   chainCoverageComplete?: boolean | null;
 }

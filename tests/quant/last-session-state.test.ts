@@ -38,7 +38,8 @@ test("wiring: the flag travels from the policy to every chip and badge", () => {
   const chip = src("client/src/components/DataStateChip.tsx");
   assert.match(chip, /effectiveDataState\(state, ageMs, maxAgeMs, lastSession\)/);
   assert.match(src("client/src/components/DataAgeChip.tsx"), /lastSession=\{lastSession\}/);
-  for (const f of ["ChainAudit", "ExposurePanel", "Heatseeker", "Killbox", "ModelsPanel", "ChartLevelsCard", "TodayCard"]) {
+  // ChartLevelsCard reads the 0DTE map, whose own stale_session state maps to last_session.
+  for (const f of ["ChainAudit", "ExposurePanel", "Heatseeker", "Killbox", "ModelsPanel", "TodayCard"]) {
     assert.match(src(`client/src/components/${f}.tsx`), /chainLastSession/, f);
   }
   assert.match(src("client/src/components/ChartPanel.tsx"), /lastSession=\{ohlc\.lastSession\}/);
