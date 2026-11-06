@@ -261,8 +261,10 @@ export function makeAccessGate(accessKey: string, opts: AccessGateOptions = {}) 
 }
 
 /** /api/health body. `locked` = the server refuses /api until a key is configured. */
-export function healthPayload(authRequired: boolean, now: Date = new Date(), locked: boolean = false, edition: Edition = "personal") {
-  return { ok: true, service: "batcave", authRequired, locked, edition, time: now.toISOString() };
+export function healthPayload(authRequired: boolean, now: Date = new Date(), locked: boolean = false, edition: Edition = "personal",
+  deploy: { commit: string | null; commitSource: string | null; branch: string | null } = { commit: null, commitSource: null, branch: null }) {
+  // commit: the git commit this process was built from (server/deployInfo.ts), null when the host did not say.
+  return { ok: true, service: "batcave", authRequired, locked, edition, time: now.toISOString(), commit: deploy.commit, commitSource: deploy.commitSource, branch: deploy.branch };
 }
 
 // ── Self-call wrapper ──────────────────────────────────────────────────────

@@ -10,7 +10,8 @@ import { sqlite } from "./storage";
 import { editionFromEnv } from "../shared/edition";
 import { etDate, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
 import { composeOdteMap, type OdteMap, type ForwardLike } from "../shared/odteMap";
-import { evaluateSettle, tallySettles, type SettleEvaluation } from "../shared/odteSettle";
+import { evaluateSettle, tallySettles, wienerScoringStartMs, type SettleEvaluation } from "../shared/odteSettle";
+import { wienerScorecard } from "../shared/odteWiener";
 import { settleFromCandles } from "./odteSettleInputs";
 
 sqlite.exec(`
@@ -93,7 +94,7 @@ export function listSettled(symbol: string, limit = 60): MapDayRow[] {
 }
 
 /** Record the settle for a day against its morning plan. Idempotent: a settled day is left alone. */
-export function recordSettle(dateEt: string, symbol: string, inputs: { settle: number; sessionHigh: number; sessionLow: number }, nowMs = Date.now()): { ok: boolean; why: string; evaluation?: SettleEvaluation } {
+export function recordSettle(dateEt: string, symbol: string, inputs: { settle: number; sessionHigh: number; sessionLow: number; highAfter?: number | null; lowAfter?: number | null }, nowMs = Date.now()): { ok: boolean; why: string; evaluation?: SettleEvaluation } {
   const day = getMapDay(dateEt, symbol);
   if (!day || !day.first) return { ok: false, why: "no morning map for that day" };
   if (day.settle) return { ok: false, why: "already settled" };
@@ -111,6 +112,8 @@ export function ledgerSummary(symbol: string, edition = editionFromEnv()) {
   return {
     symbol,
     tally: tallySettles(evals, personal),
+    // Morning Wiener odds against what happened: counts and calibration, not a claim of edge.
+    wienerScorecard: wienerScorecard(evals.map((e) => e.wiener ?? []).filter((d) => d.length > 0)),
     recent: rows.slice(0, 10).map((r) => ({
       dateEt: r.dateEt, settle: r.settle!.settle,
       lesson: personal ? r.settle!.lesson : (r.settle!.lessonLevels ?? r.settle!.lesson.split("; dip zone")[0]),
@@ -134,7 +137,10 @@ export async function settleToday(symbol: string, deps: SettleDeps, nowMs = Date
   if (!day || !day.first) return { ok: false, why: "no morning map today" };
   if (day.settle) return { ok: false, why: "already settled" };
   const hist = await deps.getPriceHistory(symbol, "day", 1, "minute", 1, false).catch(() => null);
-  const s = settleFromCandles(hist?.candles ?? [], nowMs);
+  // Extremes after the morning map's odds were stated score them: from the
+  // chain's own time (the spot the odds start from), else when the map was kept.
+  // Minute bars: the bar containing that time is included (up to 59 s early).
+  const s = settleFromCandles(hist?.candles ?? [], nowMs, wienerScoringStartMs(day.first, day.firstAt));
   if (!s) return { ok: false, why: "no regular-session candles for today" };
   const out = recordSettle(date, symbol, s, nowMs);
   return { ok: out.ok, why: out.why };
