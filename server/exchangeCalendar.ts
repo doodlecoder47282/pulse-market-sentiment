@@ -206,6 +206,20 @@ export function sessionCloseMs(date: IsoDate): number | null {
   return m == null ? null : etWallToEpochMs(date, m);
 }
 
+/**
+ * True when a one-day option-chain window (today and tomorrow, as the 0DTE
+ * forward requests) holds no unsettled expiry: today has no session or it has
+ * closed, and tomorrow is not a trading day (weekends, holidays, the evening
+ * before a holiday, after a half-day Friday close). The 0DTE forward then
+ * answers "no expiry" by design; checks use this to tell that from a failure.
+ */
+export function noExpiryInOneDayWindow(ms: number = Date.now()): boolean {
+  const c = etClock(ms);
+  const close = sessionCloseMinutes(c.date);
+  const todayLive = close != null && c.minutes < close;
+  return !todayLive && !isTradingDay(addDays(c.date, 1));
+}
+
 /** Regular-session minutes on a date: 390, 210 on half days, 0 when closed. */
 export function sessionMinutes(date: IsoDate): number {
   const m = sessionCloseMinutes(date);

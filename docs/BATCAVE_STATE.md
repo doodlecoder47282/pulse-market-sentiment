@@ -1469,6 +1469,76 @@ renders the dashboard at 402 px and FAILs unless the hit area is >= 44 x 44, is 
 centre (not covered by a sticky layer), sits inside the tape (not clipped), opens the details list with rows,
 and the page has no sideways scroll (screenshot rep/demo/18-macro-details-402.png). The method-page check
 failure in the demo step is the separate #48 defect and still prints until #48 is merged.
+2026-11-04: chart levels on the wrong scale (feat/chart-level-scale). Owner pick, Prophecy-scoped: trace
+first, fix only a confirmed mismatch. Trace: ChartPanel loads candles from /api/ohlc?symbol=<chart> and
+levels from /api/gamma-levels?symbol=<chart> (client/src/components/ChartPanel.tsx). For "^GSPC" the
+candles are $SPX (server/schwabSymbols.ts maps ^GSPC -> $SPX) while /api/gamma-levels sent SPX/^GSPC down
+the SPY-snapshot branch (server/routes.ts, isSpy) and returned SPY strikes: SPY levels were drawn as price
+lines on index candles (LightweightCandlestick createPriceLine on the candle series; CandlestickChart did
+the same) and the banner computed distances from the index price to SPY levels (about -90%). Confirmed in
+code; not observed live. Fix: shared/chartLevels.ts (one underlying per index spelling; levels source per
+symbol; levels drawn only when computed for the chart's own underlying). The index now returns
+supported:false with the reason (levels exist only on SPY's scale here) and the banner shows it; no
+conversion ratio anywhere, no threshold changed, SPY and single names unchanged. Left separate: bare "SPX"
+candles (toSchwabSymbol does not map "SPX"), the null call/put wall crash, the Invalid Date banner time.
+#47 browser check (owner-approved option 1): Railway serves main only and the Vercel preview serves the
+screens with every /api call sent to "unavailable", so no hosted build of the PR revision can show levels.
+CI now runs tests/ux/chart-levels-acceptance.mjs against the exact build under test: both chart engines,
+desktop 1280 px and phone 402 px; SPY levels and banner distances from SPY's own price; the S&P 500 index
+through the REAL server route (unsupported, no levels, reason readable, inside the screen at 402 px, no
+sideways scroll); rapid SPY -> index -> NVDA with the SPY levels reply delayed, sampled every 40 ms, a level
+must never show on another symbol. SPY/NVDA candles and levels are fixed fixtures (exact expected numbers);
+not live Schwab. Evidence (screenshots, level replies, report.json with the commit) is uploaded as the run's
+"chart-levels-<sha>" artifact. Test hooks: data-gamma-callwall and data-last-close on both chart engines.
+First CI run of the chart acceptance: 34/35 pass. The one failure was real: on the first switch to the
+index, the banner briefly said "no option-chain levels were returned" while the levels reply was still in
+flight (no answer yet is not "none returned"). The banner now waits for this symbol's reply.
+2026-11-05: 0DTE Wiener map, core (feat/odte-wiener; owner request: "a more defined 0DTE map with a chart using
+the Wiener model ... for the day only"; owner chose: replace the current cone, core scope first). Found: the
+old 0DTE forward cone mixed unlabelled rules of thumb into its median (pin pull up to 60%, charm tilt, 15%
+wider cone in short gamma) and drew seeded synthetic candles, while its touch odds were driftless. Now
+shared/odteWiener.ts (pure): arithmetic Brownian motion, zero drift, sigma to the close = the 0DTE chain's
+ATM IV (straddle/sqrt(2/pi) as fallback and cross-check); percentile bands (2.5-97.5) every 5 min to the
+close; per level the exact first-passage touch odds and the close-above/below odds; expected remaining
+high/low/range (sigma*sqrt(2/pi)); close distribution in strike-width buckets; drift-aware first passage
+(hitProbability) available and tested against a simulation, unused (mu = 0). server/odteForward.ts adds
+`wiener`, `todayPath` and `pathBasis` (the old path is now labelled a heuristic overlay); no extra Schwab
+request (test counts 1 chain + 1 history read). Card (Heatseeker tab): today's path, bands, levels with touch
+odds, close distribution beside the chart on wide screens, level odds table, dealer overlay off by default
+and labelled, 44 px toggles. Scorecard: the 09:35 morning map carries the Wiener odds; after the close the
+settle scores them on the extremes from the map's minute onward (levels already traded or at the price are
+left out); /api/odte/map/ledger returns wienerScorecard (calibration buckets, Brier, untested below 50
+days). CI demo step renders it at 402 px (FAIL gate). Not in this PR: time-of-day variance weighting; the
+options-implied close distribution comparison. Not verified live.
+Review of feat/odte-wiener (independent): 3 MUST-FIX fixed. (1) A straddle-derived sigma (straddle/0.8) went in
+as "ATM IV" with a circular straddle cross-check; now only chain IV is passed as IV, else the model's own
+straddle conversion is used and labelled (test forces the fallback: no IV, no bid/ask). (2) The next-session
+projection was always 390 min to 16:00; projMinutes for the closed state now comes from the next trading
+day's calendar (210 min to 13:00 before a half day; tested on Thanksgiving). (3) The CI rendered check passed
+on any "unavailable" text; unavailable now passes only in the Friday-close-to-Monday-open gap, as the map
+smoke does. SHOULD-FIX taken: intraday with no same-day expiry -> unavailable with the reason; today's
+touches no longer flagged on the next-session map; pre-open/next-session maps state that the overnight part
+of the implied move is spread across the session (gap not modelled) and the header says "next session";
+Wiener levels built without the sigma rails (which could displace a real level in the dedupe), nearest 14;
+scoring window starts at the chain's own time (the odds' spot), bar containing it included (documented);
+hitProbability keeps the crossing term in log space and handles sigma = 0 (the reviewer's "about 1" for
+a = mu = 30 was wrong: the true value is 0.5 + 1/(60 sqrt(2 pi)) = 0.5066, now pinned); scorecard shows the
+base-rate Brier as its reference instead of "0.25 = coin flip"; copy: "morning map (first map after the
+open)", 5-minute closes plotted and read at the bar's end, model close ranges in text on every screen,
+tag stack clamped, readout clears on touch end, role="group"; tests assert their branches run.
+Re-review (same reviewer): first-round MUST-FIX 1-2 verified; reviewer agreed hitProbability(30,30,1,1) = 0.5066.
+New MUST-FIX fixed: the weekday-only "weekend gap" rule would FAIL CI on market holidays and evenings before
+them (one-day chain window empty). server/exchangeCalendar.ts noExpiryInOneDayWindow(ms) now decides (tested
+on Friday/weekend, the evening before Thanksgiving, after the half-day close, Christmas); CI computes it once
+(NO_EXPIRY_EXPECTED) and both the /api/odte/map smoke and the Wiener rendered check use it. SHOULD-FIX taken:
+next-session map unavailable unless the chain's expiry is the next trading day; scoring start is a tested
+pure helper (wienerScoringStartMs); the vacuous rails test replaced by one that shows the displacement;
+logNormCdf seam reduced (-15/x^6 term); the forming 5-minute bar is left out of today's path.
+Third review (same reviewer): no MUST-FIX; the calendar rule agreed with the forward's 503 no_expiries in all
+360 probe cases (24 dates x 15 times incl. holidays, half days, MLK, Good Friday). SHOULD-FIX taken: the
+Wiener CI check re-reads the calendar at check time (a run crossing a close) and requires the forward's own
+503 no_expiries answer (a server error on a no-expiry day still fails); the displacement test is named for
+what it proves (mechanism + no rail in the list), not for the forward's ordering.
 
 2026-11-06: Crypto stale ENTER held (feat/crypto-stale-enter, rule book 2026.11.06-1). A candidate kept its
 last verdict until the 48 h eviction even when DexScreener stopped returning its pair, so the feed could

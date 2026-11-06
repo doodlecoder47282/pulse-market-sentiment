@@ -224,6 +224,11 @@ jobs:
           IP=$(hostname -I | awk '{print $1}')
           B="http://$IP:5072"
           fail=0
+          # The exchange calendar decides when the 0DTE forward's one-day chain window holds no expiry
+          # (weekends, holidays, evenings before them, after a half-day close): only then is "unavailable" honest.
+          NO_EXPIRY_EXPECTED=$(node --experimental-transform-types --no-warnings -e 'import("./server/exchangeCalendar.ts").then((c) => console.log(c.noExpiryInOneDayWindow(Date.now()) ? "1" : "0"))')
+          export NO_EXPIRY_EXPECTED
+          echo "no expiry expected in the one-day window: $NO_EXPIRY_EXPECTED"
           check() { if [ "$1" = "$2" ]; then echo "PASS $3 ($1)"; else echo "FAIL $3 (got $1, want $2)"; fail=1; fi; }
           {
             curl -s "$B/api/health" | grep -q '"edition":"demo"' && echo "PASS health edition demo" || { echo "FAIL health edition"; fail=1; }
@@ -295,10 +300,8 @@ jobs:
               // In the last half hour 0DTE gamma sits on a handful of strikes, so few clear the 1% share floor.
               const nearClose = j.session && j.session.state === "open" && j.session.minutesToClose <= 30;
               // From Friday's close to Monday's open the one-day chain window holds no expiry: "unavailable / no_expiries" is the honest answer.
-              const et = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) et[x.type] = x.value;
-              const etMin = (Number(et.hour) % 24) * 60 + Number(et.minute);
-              const weekendGap = et.weekday === "Sat" || et.weekday === "Sun" || (et.weekday === "Fri" && etMin >= 16 * 60) || (et.weekday === "Mon" && etMin < 9 * 60 + 30);
-              if (weekendGap && j.dataState === "unavailable" && j.error === "no_expiries") { console.log("PASS 0DTE map: no expiry inside the one-day window between Friday's close and Monday's open (unavailable / no_expiries, as it should be)"); process.exit(0); }
+              const weekendGap = process.env.NO_EXPIRY_EXPECTED === "1"; // exchange calendar: no expiry inside the one-day window
+              if (weekendGap && j.dataState === "unavailable" && j.error === "no_expiries") { console.log("PASS 0DTE map: no expiry inside the one-day window per the exchange calendar (unavailable / no_expiries, as it should be)"); process.exit(0); }
               const ok = priced && (j.strikes || []).length > (nearClose ? 2 : 5) && labelled.includes("pin") && j.zones === null && j.range && j.range.straddle > 0 && j.ledger && j.ledger.kept === false
                 && (j.strikes || []).every((s) => Math.abs(s.gexPt - Math.round(s.gexPct / (j.spot / 100))) <= 1);
               console.log((ok ? "PASS" : "FAIL") + " 0DTE map: state " + j.dataState + ", spot " + j.spot + ", " + (j.strikes || []).length + " strikes, labels " + labelled.join("/") + ", straddle " + (j.range && j.range.straddle) + ", band " + JSON.stringify(j.band && [j.band.low, j.band.high]) + ", zones " + j.zones + ", ledger " + (j.ledger && j.ledger.why));
@@ -539,6 +542,54 @@ jobs:
             await p.screenshot({ path: "rep/demo/18-method.png", fullPage: true });
             console.log((ok ? "PASS" : "FAIL") + " method page: demo note " + note + ", back link " + back + ", disclaimer " + /(not|nothing on this site is) investment advice/i.test(txt) + ", observed zero " + /observed zero/i.test(txt) + ", " + txt.length + " chars");
           } catch (e) { console.log("FAIL method page: " + String(e && e.message || e).split("\n")[0]); }
+          // 0DTE Wiener map (Heatseeker tab) at 402 px: the chart and its level odds, or an explicit unavailable reason;
+          // both toggles at least 44 px tall; no sideways scroll.
+          try {
+            const wp = await b.newPage({ viewport: { width: 402, height: 874 } });
+            await wp.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await wp.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
+            // Phones navigate with the bottom bar; Heatseeker may sit in its "More" sheet (same order as the UX audit).
+            if (await wp.locator('[data-testid="tab-heatseeker"]').first().isVisible().catch(() => false)) {
+              await wp.locator('[data-testid="tab-heatseeker"]').first().click({ timeout: 10000 });
+            } else if (await wp.locator('[data-testid="bottomnav-heatseeker"]').first().isVisible().catch(() => false)) {
+              await wp.locator('[data-testid="bottomnav-heatseeker"]').first().click({ timeout: 10000 });
+            } else {
+              await wp.locator('[data-testid="bottomnav-more"]').click({ timeout: 10000 });
+              await wp.locator('[data-testid="moresheet-heatseeker"]').click({ timeout: 10000 });
+            }
+            await wp.locator('[data-testid="odte-forward-panel"], [data-testid="odte-forward-error"]').first().waitFor({ timeout: 60000 });
+            const panel = await wp.locator('[data-testid="odte-forward-panel"]').count();
+            const unavailable = await wp.locator('[data-testid="odte-wiener-unavailable"]').count();
+            let detail = "", okW = false;
+            if (panel && !unavailable) {
+              await wp.locator('[data-testid="odte-cone"] canvas').waitFor({ timeout: 20000 });
+              const cv = await wp.locator('[data-testid="odte-cone"] canvas').boundingBox();
+              const rows = await wp.locator('[data-testid="odte-level-map"] tbody tr').count();
+              const sigma = (await wp.locator('[data-testid="odte-em-sigma"]').innerText()).trim();
+              const btns = await wp.evaluate(() => ["button-toggle-levelmap", "button-toggle-overlay"].map((id) => { const r = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect(); return r ? Math.round(r.height) : 0; }));
+              const overflowX = await wp.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+              await wp.locator('[data-testid="button-toggle-overlay"]').click();
+              const note = await wp.locator('[data-testid="odte-overlay-note"]').count();
+              await wp.locator('[data-testid="odte-forward-panel"]').screenshot({ path: "rep/demo/19-odte-wiener-402.png" });
+              okW = !!cv && cv.height >= 300 && rows > 0 && /^±[0-9]/.test(sigma) && btns.every((h) => h >= 44) && !overflowX && note === 1;
+              detail = `chart ${cv ? Math.round(cv.width) + "x" + Math.round(cv.height) : "missing"}, ${rows} level rows, sigma ${sigma}, toggles ${btns.join("/")}px, overlay note ${note}, overflowX ${overflowX}`;
+            } else {
+              const why = panel ? (await wp.locator('[data-testid="odte-wiener-unavailable"]').innerText()).trim() : (await wp.locator('[data-testid="odte-forward-error"]').innerText()).trim();
+              // Unavailable is only the honest answer between Friday's close and Monday's open (the
+              // one-day chain window holds no expiry); any other time it is a failure.
+              // Re-read the calendar NOW (the run may have crossed a close since the step began), and require the
+              // forward's own "no expiry" answer, so a server error on a no-expiry day still fails.
+              const { execSync } = await import("node:child_process");
+              const noExpiryNow = execSync(`node --experimental-transform-types --no-warnings -e 'import("./server/exchangeCalendar.ts").then((c) => console.log(c.noExpiryInOneDayWindow(Date.now()) ? "1" : "0"))'`).toString().trim() === "1";
+              const fr = await fetch(`${base}/api/odte/forward?symbol=%24SPX`).catch(() => null);
+              const fj = fr ? await fr.json().catch(() => ({})) : {};
+              const noExpiryAnswer = !!fr && fr.status === 503 && (fj.error === "no_expiries" || fj.error === "no_live_expiries");
+              okW = noExpiryNow && noExpiryAnswer && /unavailable/i.test(why);
+              detail = `calendar says no expiry: ${noExpiryNow}, forward ${fr ? fr.status : "no answer"} ${fj.error ?? ""}, card: ${why.slice(0, 100)}`;
+            }
+            console.log((okW ? "PASS" : "FAIL") + " 0DTE Wiener map at 402px: " + detail);
+            await wp.close();
+          } catch (e) { console.log("FAIL 0DTE Wiener map at 402px: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
@@ -588,10 +639,20 @@ jobs:
           for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5071/api/health >/dev/null 2>&1 && break; sleep 1; done
           rc=0
           BASE_URL=http://127.0.0.1:5071 UX_OUT=rep/ux timeout 1500 node tests/ux/ux-audit.mjs 2>&1 | tail -40 | tee rep/ux-run.log || rc=$?
+          # Chart levels drawn only on their own underlying (PR #47): both engines,
+          # desktop and 402 px, rapid symbol switching; screenshots + replies in rep/ux/chart-levels.
+          BASE_URL=http://127.0.0.1:5071 CHART_OUT=rep/ux/chart-levels timeout 600 node tests/ux/chart-levels-acceptance.mjs 2>&1 | tee rep/ux/chart-levels-run.log || rc=1
           pkill -f "dist/index.cjs" || true
           # The UX scorecard (tests/ux/budget.json) gates the build: a screen that
           # got worse on any device fails this step.
           exit $rc
+      - name: Upload chart-levels evidence (screenshots, level replies, report)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-levels-${{ github.sha }}
+          path: rep/ux/chart-levels
+          if-no-files-found: warn
       - name: Publish report to ci-reports-quant branch
         if: always()
         run: |
