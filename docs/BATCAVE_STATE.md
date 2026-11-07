@@ -1726,3 +1726,21 @@ sessions stored" / "flat: stored bars unreadable") and the chip row is 3 columns
 exercised. Verified by the reviewer: invariance of touch / close / expected range under any deterministic
 time change, adversarial profiles (all variance in one slot, zero windows) draw sane bands, no new DB open
 in the request path, demo edition reads flat cleanly.
+2026-11-07: Crypto liquidity history and exit stress (feat/crypto-history-cards, step 7c part 1). Each
+DexScreener refresh appends an observation (liquidity, cap, top-10) to a per-candidate ring of 60 kept on
+the server (not served raw; the feed carries observationCount). Two card readouts from it
+(shared/cryptoHistory.ts): liquidity velocity, the measured change over the readings in the last hour with
+its span and worst single step, "insufficient" under 3 readings (never a number from too few), and the
+exit-cost stress, the sized round trip at 25/50/75/100% liquidity pulls by the same constant-product
+arithmetic as the card's cost, "no exit" at 100%, labelled "arithmetic at each depth, not a forecast".
+Rule book unchanged (no new numeric leaf; the module prices through tradeCost). Not done from the 7c list:
+post-mortem cards (need the per-ENTER path persisted first) and holder history beyond the top-10 share.
+Tests: tests/quant/crypto-history.test.ts; crypto suite 93/93.
+Crypto review of feat/crypto-history-cards: no MUST-FIX, MERGE-READY after two SHOULD-FIX, all five taken:
+a round trip already over 50% of size with no pull now reads "already ... with no pull" (0), not "from a
+25% pull"; the amber colour on the velocity line follows the book's own liquidity stop
+(sizing.liquidityExitStopPct, -30) instead of a fresh -10; "worst step" is documented as between successive
+readable readings; one rounding (tradeCost's two decimals) on the card's cost and the stress rows; a
+history starting at $0 says "from $0 (percent undefined)" rather than "unreadable". Verified by the
+reviewer: no verdict, gate, score or threshold touched; the GeckoTerminal overwrite appends no observation;
+the ring survives every serialiser and is not served raw.

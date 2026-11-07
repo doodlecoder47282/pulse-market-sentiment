@@ -11,6 +11,7 @@
 
 import CoinLinks from "./CoinLinks";
 import CryptoHowTo from "./CryptoHowTo";
+import type { LiquidityVelocity, ExitCostStress } from "@shared/cryptoHistory";
 import { CRYPTO_RULES } from "@shared/cryptoRules";
 /** The grade HIT_5M means the sampled peak reached this market cap (rule book), not a time. */
 const TARGET_CAP = `$${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M`;
@@ -74,7 +75,7 @@ interface Candidate {
     /** Liquidity the size and cost were computed from (a later scan may refresh liq without re-sizing). */
     sizedOnLiquidityUsd?: number | null;
   } | null;
-  structure?: { line: LinePosition; category: MemeClass; cost: TradeCost } | null;
+  structure?: { line: LinePosition; category: MemeClass; cost: TradeCost; liquidityVelocity?: LiquidityVelocity; exitStress?: ExitCostStress } | null;
 }
 
 interface TradeFlow {
@@ -847,6 +848,22 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 ? ` · a ${c.structure.cost.sizeUsd >= 1000 ? `$${(c.structure.cost.sizeUsd / 1000).toFixed(1)}k` : `$${Math.round(c.structure.cost.sizeUsd)}`} round trip here costs ${c.structure.cost.roundTripPct}% (fees ${c.structure.cost.feesRoundTripPct}% + impact ${c.structure.cost.impactBuyPct}% / ${c.structure.cost.impactSellPct}%)${c.structure.cost.breakEvenMovePct != null ? `, break-even +${c.structure.cost.breakEvenMovePct}%` : ""}`
                 : c.structure.cost.dataState === "unavailable" ? " · round-trip cost unknown: pool liquidity not reported" : ""}
               {" · "}{c.structure.category.reasons.join("; ")}
+            </p>
+          )}
+          {c.structure?.liquidityVelocity && c.structure.exitStress && (
+            <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-liq-history-${c.pairAddress.slice(0, 8)}`}>
+              {/* Amber only past the rule book's own liquidity stop (sizing.liquidityExitStopPct), not a fresh number. */}
+              <span className={c.structure.liquidityVelocity.state === "ok" && (c.structure.liquidityVelocity.changePct ?? 0) <= CRYPTO_RULES.sizing.liquidityExitStopPct ? "text-amber-300/90" : ""}>
+                {c.structure.liquidityVelocity.text}
+              </span>
+              {c.structure.exitStress.state === "ok" ? (
+                <>
+                  {" · "}if liquidity were pulled, the {`$${Math.round(c.structure.exitStress.sizeUsd)}`} round trip would cost{" "}
+                  {c.structure.exitStress.rows.filter((r) => r.pullPct > 0).map((r) => `${r.pullPct}%: ${r.cost.dataState === "observed_zero" ? "no exit" : r.cost.roundTripPct == null ? "no exit at this size" : `${r.cost.roundTripPct}%`}`).join(", ")}
+                  {c.structure.exitStress.firstRuinousPullPct == null ? "" : c.structure.exitStress.firstRuinousPullPct === 0 ? ` (already over ${c.structure.exitStress.ruinPct}% of size with no pull)` : ` (over ${c.structure.exitStress.ruinPct}% of size from a ${c.structure.exitStress.firstRuinousPullPct}% pull)`}
+                  {" "}(arithmetic at each depth, not a forecast)
+                </>
+              ) : ` · ${c.structure.exitStress.text}`}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
