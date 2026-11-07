@@ -47,7 +47,8 @@ export interface LiquidityVelocity {
   /** Liquidity at the first and last reading. */
   fromUsd: number | null;
   toUsd: number | null;
-  /** Largest single-refresh drop in the window, percent (a pull shows here first). */
+  /** Largest drop between successive readable readings in the window, percent (a pull shows here first;
+   *  a step can span an unreadable refresh in between). */
   worstStepPct: number | null;
   text: string;
 }
@@ -68,10 +69,10 @@ export function liquidityVelocity(history: Observation[] | null | undefined, win
     if (a > 0) worst = Math.min(worst, ((b - a) / a) * 100);
   }
   const worstStepPct = Math.round(worst * 10) / 10;
-  const dir = changePct == null ? "unreadable" : changePct > 1 ? "added" : changePct < -1 ? "pulled" : "flat";
+  const dir = changePct == null ? "from $0 (percent undefined)" : changePct > 1 ? "added" : changePct < -1 ? "pulled" : "flat";
   return {
     state: "ok", changePct, spanMinutes: span, readings: h.length, fromUsd: from, toUsd: to, worstStepPct,
-    text: changePct == null ? `liquidity ${dir} over ${span} min (${h.length} readings)`
+    text: changePct == null ? `liquidity ${dir} to $${Math.round(to).toLocaleString("en-US")} over ${span} min (${h.length} readings)`
       : `liquidity ${dir} ${changePct >= 0 ? "+" : ""}${changePct}% over ${span} min (${h.length} readings${worstStepPct < -5 ? `, worst single step ${worstStepPct}%` : ""})`,
   };
 }
@@ -87,7 +88,7 @@ export interface ExitCostStress {
   state: "ok" | "unavailable";
   sizeUsd: number;
   rows: ExitStressRow[];
-  /** The smallest pull at which the sized position's zero-edge round trip costs more than `ruinPct` of size, or null if none of the tested pulls does. */
+  /** The smallest pull (0 = already, with no pull) at which the sized position's zero-edge round trip costs more than `ruinPct` of size, or null if none of the tested pulls does. */
   firstRuinousPullPct: number | null;
   ruinPct: number;
   text: string;
@@ -105,8 +106,9 @@ export function exitCostStress(liquidityUsd: number | null, sizeUsd: number): Ex
     const liq = pullPct >= 100 ? 0 : liquidityUsd * (1 - pullPct / 100);
     return { pullPct, liquidityUsd: liq, cost: tradeCost({ liquidityUsd: liq, sizeUsd }) };
   });
-  const ruin = rows.find((r) => r.pullPct > 0 && (r.cost.roundTripPct == null || r.cost.roundTripPct > STRESS_RUIN_PCT || r.cost.dataState === "observed_zero"));
-  const fmt = (r: ExitStressRow) => r.cost.dataState === "observed_zero" ? "no exit" : r.cost.roundTripPct == null ? "no exit at this size" : `${Math.round(r.cost.roundTripPct * 10) / 10}%`;
+  const ruin = rows.find((r) => r.cost.roundTripPct == null || r.cost.roundTripPct > STRESS_RUIN_PCT || r.cost.dataState === "observed_zero");
+  // Same rounding as the card's own round trip (tradeCost: two decimals).
+  const fmt = (r: ExitStressRow) => r.cost.dataState === "observed_zero" ? "no exit" : r.cost.roundTripPct == null ? "no exit at this size" : `${r.cost.roundTripPct}%`;
   return {
     state: "ok", sizeUsd, rows, firstRuinousPullPct: ruin ? ruin.pullPct : null, ruinPct: STRESS_RUIN_PCT,
     text: `round trip of $${Math.round(sizeUsd)} if liquidity were pulled: ${rows.map((r) => `${r.pullPct}% → ${fmt(r)}`).join(", ")}. Constant-product arithmetic at each depth; not a forecast that liquidity will move.`,

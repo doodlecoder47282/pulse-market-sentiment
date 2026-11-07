@@ -38,6 +38,10 @@ test("velocity: unavailable / insufficient / measured, with the span and worst s
   assert.equal(liquidityVelocity(old, 3600_000, now).changePct, -50);
   const flat = liquidityVelocity([obs(now - 30 * 60_000, 40_000), obs(now - 20 * 60_000, 40_100), obs(now - 10 * 60_000, 40_200)], 3600_000, now);
   assert.match(flat.text, /liquidity flat \+0\.5%/);
+  // From $0: a percent is undefined, and that is said, not "unreadable".
+  const fromZero = liquidityVelocity([obs(now - 30 * 60_000, 0), obs(now - 20 * 60_000, 5_000), obs(now - 10 * 60_000, 8_000)], 3600_000, now);
+  assert.equal(fromZero.state, "ok");
+  assert.match(fromZero.text, /from \$0 \(percent undefined\) to \$8,000/);
 });
 
 test("exit stress: the same arithmetic as the card's round trip, at each pulled depth; 100% pull is no exit", () => {
@@ -54,7 +58,11 @@ test("exit stress: the same arithmetic as the card's round trip, at each pulled 
   assert.match(s.text, /not a forecast that liquidity will move/);
   // A big position in a thin pool: ruin arrives at a partial pull.
   const thin = exitCostStress(4_000, 1_000);
-  assert.ok(thin.firstRuinousPullPct != null && thin.firstRuinousPullPct < 100, String(thin.firstRuinousPullPct));
+  assert.equal(thin.firstRuinousPullPct, 0, "already ruinous with no pull: says 0, not 25");
+  const mid = exitCostStress(6_000, 1_000);
+  assert.equal(mid.firstRuinousPullPct, 50, "41% unpulled, 48% at 25%, 58% at 50%: ruin is reached at the 50% pull");
+  // One rounding on both lines: the card's round trip is tradeCost's two decimals.
+  assert.match(s.text, /0% → \d+\.\d\d%/);
   assert.equal(exitCostStress(null, 200).state, "unavailable");
   assert.equal(exitCostStress(0, 200).state, "unavailable");
 });
@@ -68,4 +76,5 @@ test("wiring: an observation per refresh, derived readouts on structure, raw rin
   const p = readFileSync(new URL("../../client/src/components/CryptoPanel.tsx", import.meta.url), "utf8");
   assert.match(p, /data-testid=\{`crypto-liq-history-/);
   assert.match(p, /\(arithmetic at each depth, not a forecast\)/);
+  assert.match(p, /<= CRYPTO_RULES\.sizing\.liquidityExitStopPct \? "text-amber-300\/90"/, "the colour follows the book's liquidity stop");
 });

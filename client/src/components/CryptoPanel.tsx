@@ -852,14 +852,15 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           )}
           {c.structure?.liquidityVelocity && c.structure.exitStress && (
             <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-liq-history-${c.pairAddress.slice(0, 8)}`}>
-              <span className={c.structure.liquidityVelocity.state === "ok" && (c.structure.liquidityVelocity.changePct ?? 0) < -10 ? "text-amber-300/90" : ""}>
+              {/* Amber only past the rule book's own liquidity stop (sizing.liquidityExitStopPct), not a fresh number. */}
+              <span className={c.structure.liquidityVelocity.state === "ok" && (c.structure.liquidityVelocity.changePct ?? 0) <= CRYPTO_RULES.sizing.liquidityExitStopPct ? "text-amber-300/90" : ""}>
                 {c.structure.liquidityVelocity.text}
               </span>
               {c.structure.exitStress.state === "ok" ? (
                 <>
                   {" · "}if liquidity were pulled, the {`$${Math.round(c.structure.exitStress.sizeUsd)}`} round trip would cost{" "}
-                  {c.structure.exitStress.rows.filter((r) => r.pullPct > 0).map((r) => `${r.pullPct}%: ${r.cost.dataState === "observed_zero" ? "no exit" : r.cost.roundTripPct == null ? "no exit at this size" : `${Math.round(r.cost.roundTripPct * 10) / 10}%`}`).join(", ")}
-                  {c.structure.exitStress.firstRuinousPullPct != null ? ` (over ${c.structure.exitStress.ruinPct}% of size from a ${c.structure.exitStress.firstRuinousPullPct}% pull)` : ""}
+                  {c.structure.exitStress.rows.filter((r) => r.pullPct > 0).map((r) => `${r.pullPct}%: ${r.cost.dataState === "observed_zero" ? "no exit" : r.cost.roundTripPct == null ? "no exit at this size" : `${r.cost.roundTripPct}%`}`).join(", ")}
+                  {c.structure.exitStress.firstRuinousPullPct == null ? "" : c.structure.exitStress.firstRuinousPullPct === 0 ? ` (already over ${c.structure.exitStress.ruinPct}% of size with no pull)` : ` (over ${c.structure.exitStress.ruinPct}% of size from a ${c.structure.exitStress.firstRuinousPullPct}% pull)`}
                   {" "}(arithmetic at each depth, not a forecast)
                 </>
               ) : ` · ${c.structure.exitStress.text}`}
