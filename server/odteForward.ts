@@ -9,12 +9,13 @@
 
 import { schwabNum } from "./schwabChainRows";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
-import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
+import { contractStyle, contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
 import { etDate, nextTradingDay, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionMinutes } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
-import { wienerMap } from "../shared/odteWiener";
+import { normCdf, wienerMap } from "../shared/odteWiener";
+import { compareCloseDistributions, impliedClose } from "../shared/impliedClose";
 import { estimateVarianceProfile, flatProfile, remainingVarianceTimeChange, type VarianceProfile } from "../shared/intradayVariance";
 import { etDayMod } from "./spxMinuteBars";
 import { strikeSpacing } from "../shared/odteMap";
@@ -146,6 +147,12 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     { side: "P", map: chain.putExpDateMap },
   ];
   let totalOI = 0, totalVol = 0, validGammaCount = 0, unpricedGammaCount = 0;
+  // Two-sided mids only, for the chain's own settle distribution (a contract
+  // priced at last is not a quote and would put a kink in the density).
+  // One settlement style only: on a monthly Friday the date key holds SPX (AM) and
+  // SPXW (PM) contracts, and a density needs call and put of the SAME settle.
+  // The style with more two-sided contracts wins; the other is left out.
+  const twoSidedByStyle = new Map<string, Map<number, { callMid: number | null; putMid: number | null }>>();
   for (const { side, map } of passes) {
     const strikes = map?.[nearestKey] || {};
     for (const sk of Object.keys(strikes)) {
@@ -159,10 +166,19 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
         const vol = Math.max(0, schwabNum(c.totalVolume) ?? 0);
         const bid = schwabNum(c.bid), ask = schwabNum(c.ask), last = schwabNum(c.last);
         // Mid needs a two-sided quote; a no-bid contract is priced at last, not ask/2.
-        const mid = bid != null && ask != null && bid > 0 && ask >= bid ? (bid + ask) / 2 : (last ?? 0);
+        const quoted = bid != null && ask != null && bid > 0 && ask >= bid;
+        const mid = quoted ? (bid + ask) / 2 : (last ?? 0);
         const rawIV = schwabNum(c.volatility) ?? 0;
         const T = contractYears(nearestKey, c, nowMs);
         if (!(T > 0)) continue; // settled (e.g. AM SPX after the open): not in the totals either
+        if (quoted) {
+          const style = String(contractStyle(c));
+          let m = twoSidedByStyle.get(style);
+          if (!m) twoSidedByStyle.set(style, (m = new Map()));
+          const q = m.get(strike) ?? { callMid: null, putMid: null };
+          if (side === "C") q.callMid = mid; else q.putMid = mid;
+          m.set(strike, q);
+        }
         totalOI += oi; totalVol += vol;
         const sqrtT = Math.sqrt(T);
         const sigmaClock = ivForClock({
@@ -341,6 +357,12 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     timeChange: remainingVarianceTimeChange(profile, startMin, startMin + projMinutes),
     varianceProfile: { source: profile.source, sessions: profile.sessions, note: profile.note, peakRatio: profile.peakRatio },
   });
+  // The chain's own settle distribution beside the random walk's, over the
+  // same strike spacing; a description of two models (shared/impliedClose.ts).
+  const twoSided = [...twoSidedByStyle.values()].sort((a, b) => b.size - a.size)[0] ?? new Map();
+  const implied = impliedClose(spot, [...twoSided.entries()].map(([strike, q]) => ({ strike, ...q })), strikeSpacing(rows.map((r) => r.strike)) ?? 5);
+  const closeComparison = wiener.state === "ok" && wiener.sigmaToClose != null
+    ? compareCloseDistributions({ spot, sigma: wiener.sigmaToClose }, implied, normCdf) : null;
   // Today's regular-session path so far (5-minute closes), for the left side of the chart.
   const todayPath = sessionState === "closed" && todayClose == null ? [] : ((hist as any)?.candles ?? [])
     .filter((c: any) => Number.isFinite(c?.datetime) && Number.isFinite(c?.close) && etDate(c.datetime) === todayEt)
@@ -380,6 +402,8 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     // 15% wider in short gamma): rules of thumb, not part of the Wiener baseline.
     pathBasis: "dealer overlay (heuristic, untested): pin pull up to 60% toward the pin, charm tilt, cone 15% wider in short gamma",
     wiener,
+    impliedClose: implied,
+    closeComparison,
     todayPath,
     strikes: rows.map(r => ({ strike: r.strike, gex: +r.gex.toFixed(0), callOI: r.callOI, putOI: r.putOI })),
     // Additive (0DTE map): every re-priced zero crossing of this expiry's

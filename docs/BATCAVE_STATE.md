@@ -1744,3 +1744,58 @@ readable readings; one rounding (tradeCost's two decimals) on the card's cost an
 history starting at $0 says "from $0 (percent undefined)" rather than "unreadable". Verified by the
 reviewer: no verdict, gate, score or threshold touched; the GeckoTerminal overwrite appends no observation;
 the ring survives every serialiser and is not served raw.
+2026-11-07: Chain's own settle distribution beside the Wiener map (feat/odte-implied-close, step 7b).
+shared/impliedClose.ts reads the 0DTE chain's risk-neutral settle distribution by Breeden-Litzenberger
+butterflies on two-sided mids (calls above spot, puts below via parity, zero rate, no smoothing), in the
+same strike buckets as the random walk's close distribution. Fail-closed: fewer than 7 consecutive quoted
+strikes, a grid gap (only the longest contiguous run is read), or more than a third of butterflies negative
+is "not readable" with the reason, and nothing is drawn in its place; clipped butterflies and the
+renormalised residual are reported. Recovers a Black-Scholes density from its own mids to within 0.05 pts
+on the mean and 1.5 pts on sigma (test); a rounding bias found on the way (per-bucket rounding before the
+moments shifted the mean 1.7 pts) is fixed. The card draws the implied histogram as an amber outline over
+the cyan random-walk one on one scale, and states the comparison in words: width, mean shift, share above
+spot, total-variation distance, "a description of two models, not a signal". Contracts priced at last (no
+two-sided quote) are excluded from the density. Tests: tests/quant/implied-close.test.ts; odte-map-review
+gains an end-to-end check on the demo chain.
+Review of feat/odte-implied-close: HOLD, 2 MUST-FIX, both taken. (1) Converting puts with the spot pinned
+the mean to the spot by construction and put a kink at the spot whenever the underlying print differed
+from the chain's forward (always after the close: a weekend of carry read as a 37% / 63% tilt). The forward
+is now solved from parity at the two-sided strike nearest the spot (F = K + C - P) and puts convert with F;
+a forward more than 5% from the print is unavailable with the reason; the forward-minus-print gap is stated
+in the sentence. (2) Mid-tick quantisation dominated the comparison: nickel-quantised Black-Scholes mids
+read as "differ by 20%" against their own normal (the demo's 20% was exactly this). The distance is now on
+bins one random-walk sigma wide (nickel noise reads 1%), the published sigma is from the interquartile
+range (robust to one-sided clipping noise in the wings; the variance sigma is in diagnostics), masses that
+need more than 5% renormalising are unavailable ("not one consistent distribution": one-tick jitter on 30%
+of quotes is refused instead of inflating sigma 24%), and the sentence states the resolution floor
+(tick / bucket of mass per strike bucket). SHOULD-FIX taken: AM and PM contracts on a monthly Friday are
+never paired (two-sided mids grouped by settlement style, the larger group read); the sentence gives the
+median versus the forward with the tail it implies ("median +1.5 pts above its forward (longer lower
+tail)") instead of a mean/share pair that read as a contradiction; a readable run whose tails hold more
+than 10% of the mass says so on the card; "beside the plot on wide screens". Tests: forward gap (2 and 5
+pts: no kink, gap stated), nickel quantisation, jitter refused, skewed smile recovered with the right sign.
+Second review of feat/odte-implied-close: HOLD on one MUST-FIX, taken. The single-strike parity forward
+absorbed a stale at-the-money leg as a constant offset on every converted put, moving the median about 17x
+the error (0.1 pt stale read as "+1.75 pts, longer lower tail"). The forward is now the median of parity
+over the two-sided strikes within about one sigma of the spot (one bad leg cannot move it; it shows as a
+clipped kink and, past 0.4 pt, a refused chain), and no skew is claimed within half a strike of the forward
+(a 5-pt grid cannot place the median better). SHOULD-FIX taken: when the implied's tails carry more than
+its body the sentence gives both sigmas ("body ±39.7, tails push the variance sigma to ±49.3"); the sentence
+says 1σ bins do not show a two-humped shape (the histogram does); the client type matches the payload.
+Reviewer's realism check: on quantised SPX mids with a one-tick bounce on up to 30% of quotes the panel
+reads on 99-100% of chains at normal vol; with a full two-tick bounce on a wide-vol day it says "not
+readable" often, which is the honest state. Demo sentence now reads 6% distance (was 20%).
+Third check of feat/odte-implied-close: one localised MUST-FIX, taken. A stale at-the-money leg of 5-8
+mid-ticks (not enough to trip the 5% renormalisation gate) clipped the at-the-money butterfly to zero, and
+the median interpolation jumped a whole bucket past the skew floor ("-2.6 pts, longer upper tail"). The
+diagnostics now count clipped strikes inside the interquartile body; with any such hole the sentence
+reads "median not read: 1 strike inside its body priced out of line (clipped to zero)" and claims no
+skew. The renormalised share is stated whenever it is 0.5% or more. Reviewer verified: the
+median-of-parity forward is exact under every stale-leg case; a book with all puts 0.3 rich reads as a
+-0.3 forward gap with the density intact; the skewed smile's +1.5 pt median was mostly a 5-pt-grid artefact
+(+0.4 on a 1-pt grid), so "no skew readable" is the honest wording while the share-above and the two
+sigmas carry the real feature.
+Fourth check of feat/odte-implied-close: no MUST-FIX; one residual of the same class taken (a hole on a
+shoulder, outside the body, still removed 4.5% of mass from one side and read as skew). Rule now: a chain
+with any clipped strike makes no skew claim ("median not read: N strikes priced out of line (clipped to
+zero[, inside its body])"); width, share above spot, forward gap and distance are still stated.
