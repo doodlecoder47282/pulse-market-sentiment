@@ -30,6 +30,7 @@ interface WienerMapT {
   expected: { high: number; low: number; range: number } | null;
   closeDist: Array<{ lo: number | null; hi: number | null; p: number }>;
   caveats: string[];
+  varianceProfile?: { source: "empirical" | "flat"; sessions: number; note: string; peakRatio: number };
 }
 interface OverlayPoint { minute: number; et: string; median: number }
 interface OdteResponse {
@@ -278,7 +279,10 @@ export default function OdteForward() {
         </div>
       ) : (
         <>
-          <div className="mb-2 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+          <div className="mb-2 grid grid-cols-2 gap-1.5 sm:grid-cols-6">
+            <Chip label="Clock" testId="odte-variance-profile"
+              value={w!.varianceProfile?.source === "empirical" ? `own profile · ${w!.varianceProfile.sessions}d` : "flat"}
+              sub={w!.varianceProfile?.source === "empirical" ? `busiest 5 min ${w!.varianceProfile.peakRatio}x flat; bands only` : (w!.varianceProfile?.note ?? "variance spread evenly")} />
             <Chip label="1σ to the close" testId="odte-em-sigma" value={`±${w!.sigmaToClose}`} sub={w!.sigmaSource === "atm_iv" ? `ATM IV ${data.atmIV}%${w!.sigmaFromStraddle != null ? `; straddle implies ±${w!.sigmaFromStraddle}` : ""}` : "from the ATM straddle (no IV)"} />
             <Chip label="Expected high left" testId="odte-exp-high" value={`${w!.expected!.high}`} sub="mean of the remaining high" />
             <Chip label="Expected low left" testId="odte-exp-low" value={`${w!.expected!.low}`} sub="mean of the remaining low" />

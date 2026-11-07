@@ -1706,3 +1706,15 @@ really is), and the panel polls a settled chain every 10 min instead of every 30
 requests an hour); the OFI payload carries sessionOpen/lastSession, the histogram shows "last session" and
 "last session's tape: closed bullish (15m ...)" instead of a stale warning and a withheld trend. Test:
 tests/quant/flow-closed-labels.test.ts.
+
+2026-11-07: Time-of-day variance for the 0DTE Wiener map (feat/odte-tod-variance, step 7a). The map
+spread the day's variance evenly over the remaining minutes. It now runs on a time change u(t) from the
+desk's own stored $SPX 1-minute bars (shared/intradayVariance.ts): mean squared 1-min log return per 5-min
+slot over the last 20 complete full sessions, normalised, floored, half days excluded; below 10 sessions
+the profile is flat and the card says so ("Clock: flat" / "own profile · 20d, busiest 5 min 2.6x flat").
+Sigma is still the chain's implied move to the close. Only the band shape and the clock at which a width
+is reached change: touch odds, the close distribution and the expected range depend on the total variance
+alone and are proven identical under any profile (test). Bands are clamped non-decreasing, so a bad
+profile can never draw a band that narrows. Storage is read lazily and cached 30 min; tests and the demo
+harness inject deps and open no database. Tests: tests/quant/intraday-variance.test.ts (synthetic U-shaped
+sessions), odte suite 55/55.

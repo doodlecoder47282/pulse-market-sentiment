@@ -7,8 +7,11 @@
 //     X(t) = S + sigma * W(t),   Var X(T) = sigmaToClose^2
 // sigmaToClose is the market's own 1-sigma move to the close, taken from the
 // 0DTE chain's at-the-money implied volatility (server/odteForward.ts), with
-// the at-the-money straddle as a cross-check. Variance is spread evenly over
-// the remaining trading minutes (no time-of-day weighting in this version).
+// the at-the-money straddle as a cross-check. Variance is spread over the
+// remaining minutes by a time change u(t) (shared/intradayVariance.ts): the
+// desk's own time-of-day profile when enough sessions are stored, else flat.
+// The time change moves only the band shape; touch odds, the close
+// distribution and the expected range depend on the total variance alone.
 //
 // Every output is a property of that stated model, not a forecast:
 //   bands       percentiles of the price at each time (not paths);
@@ -125,6 +128,8 @@ export interface WienerMap {
   closeDist: WienerCloseBucket[];
   /** Plain-words limits the card shows. */
   caveats: string[];
+  /** How the remaining variance was spread over the clock. */
+  varianceProfile: { source: "empirical" | "flat"; sessions: number; note: string; peakRatio: number };
 }
 
 export interface WienerInputs {
@@ -146,6 +151,13 @@ export interface WienerInputs {
   bucket?: number;
   /** Band spacing in minutes; default 5. */
   stepMin?: number;
+  /**
+   * Time change: share of the remaining variance elapsed by minute t, u(0)=0,
+   * u(T)=1, non-decreasing. Default t/T (flat). Bands use sigma*sqrt(u(t)).
+   */
+  timeChange?: (t: number) => number;
+  /** How the time change was obtained, for the card. */
+  varianceProfile?: { source: "empirical" | "flat"; sessions: number; note: string; peakRatio: number } | null;
 }
 
 const SQRT_2_OVER_PI = Math.sqrt(2 / Math.PI);
@@ -158,14 +170,17 @@ const hhmm = (abs: number) => {
 
 export const WIENER_CAVEATS = [
   "a model of the remaining range under a random walk with the market's own implied volatility, not a forecast and not a direction",
-  "real intraday moves have fatter tails and uneven time-of-day volatility than this model assumes",
+  "real intraday moves have fatter tails than this model assumes",
   "touch odds are for trading at the level at least once before the close; they say nothing about holding it",
 ];
+const FLAT_PROFILE = { source: "flat" as const, sessions: 0, note: "variance spread evenly over the remaining minutes", peakRatio: 1 };
 
 export function wienerMap(i: WienerInputs): WienerMap {
+  const profile = i.varianceProfile ?? FLAT_PROFILE;
   const base = {
     model: WIENER_MODEL, horizon: i.horizon, minutesLeft: Math.max(0, Math.round(i.minutesLeft)),
     bands: [] as WienerBandPoint[], levels: [] as WienerLevel[], expected: null, closeDist: [] as WienerCloseBucket[], caveats: WIENER_CAVEATS,
+    varianceProfile: profile,
   };
   const spot = typeof i.spot === "number" && Number.isFinite(i.spot) && i.spot > 0 ? i.spot : null;
   const sIv = typeof i.sigmaFromIv === "number" && Number.isFinite(i.sigmaFromIv) && i.sigmaFromIv > 0 ? i.sigmaFromIv : null;
@@ -182,13 +197,18 @@ export function wienerMap(i: WienerInputs): WienerMap {
   const T = i.minutesLeft;
   const step = Math.max(1, Math.round(i.stepMin ?? 5));
 
-  // Bands: percentile k at elapsed t is S + z_k * sigma * sqrt(t/T).
+  // Bands: percentile k at elapsed t is S + z_k * sigma * sqrt(u(t)), u the
+  // time change (t/T when flat). u is clamped and forced non-decreasing so a
+  // bad profile can never draw a band that narrows.
+  const uRaw = i.timeChange ?? ((t: number) => t / T);
+  let uPrev = 0;
+  const u = (t: number) => { const v = Math.max(uPrev, Math.min(1, Math.max(0, uRaw(t)))); uPrev = v; return v; };
   const bands: WienerBandPoint[] = [];
   const times: number[] = [];
   for (let t = 0; t < T; t += step) times.push(t);
   times.push(T);
   for (const t of times) {
-    const sd = sigma * Math.sqrt(t / T);
+    const sd = sigma * Math.sqrt(t >= T ? 1 : u(t));
     const q = {} as Record<BandKey, number>;
     for (const k of Object.keys(BAND_Z) as BandKey[]) q[k] = r2(spot + BAND_Z[k] * sd);
     bands.push({ minute: t, et: hhmm(i.startAbsMin + t), q });
@@ -233,9 +253,13 @@ export function wienerMap(i: WienerInputs): WienerMap {
   for (let a = lo; a < hi; a += w) closeDist.push({ lo: a, hi: a + w, p: r4(cdf(a + w) - cdf(a)) });
   closeDist.push({ lo: hi, hi: null, p: r4(1 - cdf(hi)) });
 
-  const caveats = i.fromPreviousClose
-    ? [...WIENER_CAVEATS, "projected from the last price before the open: the overnight part of the implied move is spread across the session as if it traded continuously, so an opening gap is not modelled and a level a gap jumps over counts as touched"]
-    : WIENER_CAVEATS;
+  const caveats = [
+    ...WIENER_CAVEATS,
+    profile.source === "empirical"
+      ? "band widths follow the desk's own time-of-day variance profile; touch odds, close distribution and expected range depend on the total variance only and are the same under any profile"
+      : "variance is spread evenly over the remaining minutes; real sessions carry more variance per minute at the open and the close",
+    ...(i.fromPreviousClose ? ["projected from the last price before the open: the overnight part of the implied move is spread across the session as if it traded continuously, so an opening gap is not modelled and a level a gap jumps over counts as touched"] : []),
+  ];
   return {
     ...base, caveats, state: "ok", reason: null, spot, sigmaToClose: r2(sigma), sigmaSource,
     sigmaFromStraddle: sStrad != null ? r2(sStrad) : null,

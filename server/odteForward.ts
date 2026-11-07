@@ -15,6 +15,8 @@ import { etDate, nextTradingDay, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionM
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
 import { wienerMap } from "../shared/odteWiener";
+import { estimateVarianceProfile, flatProfile, remainingVarianceTimeChange, type VarianceProfile } from "../shared/intradayVariance";
+import { etDayMod } from "./spxMinuteBars";
 import { strikeSpacing } from "../shared/odteMap";
 
 export interface OdteForwardResult { status: number; body: any }
@@ -23,6 +25,27 @@ export interface OdteForwardResult { status: number; body: any }
 export interface OdteForwardDeps {
   getOptionChain: (symbol: string, dte: number) => Promise<any>;
   getPriceHistory: (symbol: string, periodType: string, period: number, frequencyType: string, frequency: number, extended: boolean) => Promise<any>;
+  /** Time-of-day variance profile from the desk's stored $SPX 1-minute bars; omitted = flat. */
+  varianceProfile?: () => Promise<VarianceProfile> | VarianceProfile;
+}
+
+/** The profile from the stored bars (spx_minute_bars), cached 30 min: a pure read of the desk's own data. */
+let _profileCache: { at: number; p: VarianceProfile } | null = null;
+export async function storedVarianceProfile(nowMs = Date.now()): Promise<VarianceProfile> {
+  if (_profileCache && nowMs - _profileCache.at < 30 * 60_000) return _profileCache.p;
+  let p: VarianceProfile;
+  try {
+    // storage is imported here, not at module load: tests and the demo harness
+    // build the forward with injected deps and must not open the database.
+    const { sqlite } = await import("./storage");
+    // Last ~45 calendar days of bars is enough for 20 complete sessions.
+    const rows = sqlite.prepare("SELECT t, close FROM spx_minute_bars WHERE t >= ? ORDER BY t").all(nowMs - 45 * 86_400_000) as Array<{ t: number; close: number }>;
+    p = estimateVarianceProfile(rows, etDayMod);
+  } catch (e: any) {
+    p = flatProfile(`stored bars unreadable: ${String(e?.message ?? e).slice(0, 80)}`);
+  }
+  _profileCache = { at: nowMs, p };
+  return p;
 }
 
 /** Days from now to the next trading day's expiry, at least 1 (today + tomorrow). */
@@ -36,7 +59,7 @@ export function chainDteWindow(nowMs: number): number {
 export async function buildOdteForward(symbolIn: string, nowMs: number = Date.now(), depsIn?: OdteForwardDeps): Promise<OdteForwardResult> {
   const symbol = String(symbolIn || "$SPX").trim().toUpperCase() || "$SPX";
   // schwab.ts has narrower parameter types than the generic deps shape; the calls below stay inside them.
-  const deps: OdteForwardDeps = depsIn ?? ((await import("./schwab")) as unknown as OdteForwardDeps);
+  const deps: OdteForwardDeps = depsIn ?? { ...((await import("./schwab")) as unknown as OdteForwardDeps), varianceProfile: storedVarianceProfile };
   const proj = await import("./odteProjection");
   // DTE window: 0-1 reaches today's and tomorrow's expiry. On a weekend or
   // holiday the next session is further away, so the window is widened to
@@ -86,6 +109,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   // Projection window: the rest of today, or the whole NEXT session when closed
   // (its own length from the calendar: 210 minutes before a half day).
   const projMinutes = (sessionState === "closed" ? (sessionMinutes(nextTradingDay(todayEt)) || 390) : sessionLen) - startMin;
+  const profile: VarianceProfile = deps.varianceProfile ? await deps.varianceProfile() : flatProfile("no stored-bar profile supplied");
   const minutesToClose = sessionState === "intraday" ? CLOSE - nowMin : projMinutes;
 
   // ── aggregate 0DTE-only per-strike GEX + charm ──
@@ -311,6 +335,11 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
       touchedToday: horizon === "rest_of_today" && L.touched === true,
     })),
     bucket: strikeSpacing(rows.map((r) => r.strike)) ?? 5,
+    // Time change from the desk's own variance profile over the projected
+    // window (minute-of-session: 0 = 09:30). Intraday: from now to the close.
+    // Closed or pre-open: the whole next (or today's) session.
+    timeChange: remainingVarianceTimeChange(profile, startMin, startMin + projMinutes),
+    varianceProfile: { source: profile.source, sessions: profile.sessions, note: profile.note, peakRatio: profile.peakRatio },
   });
   // Today's regular-session path so far (5-minute closes), for the left side of the chart.
   const todayPath = sessionState === "closed" && todayClose == null ? [] : ((hist as any)?.candles ?? [])
