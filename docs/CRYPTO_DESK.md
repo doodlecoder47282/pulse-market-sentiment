@@ -188,6 +188,16 @@ docs/BATCAVE_STATE.md with the PR number.
    arithmetic (quote side = liquidity / 2) for the top-10 holders selling
    25 / 50 / 100% of their stake; a stated model, not a forecast. Next in
    this lane: personal trade journal, then creator-wallet / block-0 checks.
+0c. DONE 2026-11-07 (feat/crypto-history-cards): per-candidate observation
+   history (liquidity, cap, top-10 per refresh; ring of 60 in memory, not
+   served raw). Card readouts from it: liquidity velocity (measured percent
+   change over the readings in the last hour with the span and worst single
+   step; "insufficient" under 3 readings, never a number) and exit-cost stress
+   (the sized round trip at 25/50/75/100% liquidity pulls, the same
+   constant-product arithmetic as the card's cost; "no exit" at 100%). Both
+   descriptive; no rule or threshold changed. Next in this lane: persist the
+   path of each first-ENTER (so a post-mortem card can show what it did), then
+   holder history.
 1. Replay / backtest: run the current rule version over the logged history,
    split by date, report hit rate, average win, average loss, max drawdown,
    net of cost; fills the sample from history. (Fastest path to an answer.)

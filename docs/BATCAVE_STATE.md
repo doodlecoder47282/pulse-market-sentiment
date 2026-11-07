@@ -1707,6 +1707,43 @@ requests an hour); the OFI payload carries sessionOpen/lastSession, the histogra
 "last session's tape: closed bullish (15m ...)" instead of a stale warning and a withheld trend. Test:
 tests/quant/flow-closed-labels.test.ts.
 
+2026-11-07: Time-of-day variance for the 0DTE Wiener map (feat/odte-tod-variance, step 7a). The map
+spread the day's variance evenly over the remaining minutes. It now runs on a time change u(t) from the
+desk's own stored $SPX 1-minute bars (shared/intradayVariance.ts): mean squared 1-min log return per 5-min
+slot over the last 20 complete full sessions, normalised, floored, half days excluded; below 10 sessions
+the profile is flat and the card says so ("Clock: flat" / "own profile · 20d, busiest 5 min 2.6x flat").
+Sigma is still the chain's implied move to the close. Only the band shape and the clock at which a width
+is reached change: touch odds, the close distribution and the expected range depend on the total variance
+alone and are proven identical under any profile (test). Bands are clamped non-decreasing, so a bad
+profile can never draw a band that narrows. Storage is read lazily and cached 30 min; tests and the demo
+harness inject deps and open no database. Tests: tests/quant/intraday-variance.test.ts (synthetic U-shaped
+sessions), odte suite 55/55.
+Review of feat/odte-tod-variance: no MUST-FIX, MERGE-READY. SHOULD-FIX taken: the opening bar's own
+open-to-close move now counts in slot 0 (it was dropped, understating the opening slot by about 20%); the
+flat profile's payload carries the stored-session count; the chip's flat sub-text is short ("flat: 3 of 10
+sessions stored" / "flat: stored bars unreadable") and the chip row is 3 columns at sm, 6 at lg so
+"Pin · walls · flip" no longer wraps to three lines; test dates zero-padded so "most recent 20" is really
+exercised. Verified by the reviewer: invariance of touch / close / expected range under any deterministic
+time change, adversarial profiles (all variance in one slot, zero windows) draw sane bands, no new DB open
+in the request path, demo edition reads flat cleanly.
+2026-11-07: Crypto liquidity history and exit stress (feat/crypto-history-cards, step 7c part 1). Each
+DexScreener refresh appends an observation (liquidity, cap, top-10) to a per-candidate ring of 60 kept on
+the server (not served raw; the feed carries observationCount). Two card readouts from it
+(shared/cryptoHistory.ts): liquidity velocity, the measured change over the readings in the last hour with
+its span and worst single step, "insufficient" under 3 readings (never a number from too few), and the
+exit-cost stress, the sized round trip at 25/50/75/100% liquidity pulls by the same constant-product
+arithmetic as the card's cost, "no exit" at 100%, labelled "arithmetic at each depth, not a forecast".
+Rule book unchanged (no new numeric leaf; the module prices through tradeCost). Not done from the 7c list:
+post-mortem cards (need the per-ENTER path persisted first) and holder history beyond the top-10 share.
+Tests: tests/quant/crypto-history.test.ts; crypto suite 93/93.
+Crypto review of feat/crypto-history-cards: no MUST-FIX, MERGE-READY after two SHOULD-FIX, all five taken:
+a round trip already over 50% of size with no pull now reads "already ... with no pull" (0), not "from a
+25% pull"; the amber colour on the velocity line follows the book's own liquidity stop
+(sizing.liquidityExitStopPct, -30) instead of a fresh -10; "worst step" is documented as between successive
+readable readings; one rounding (tradeCost's two decimals) on the card's cost and the stress rows; a
+history starting at $0 says "from $0 (percent undefined)" rather than "unreadable". Verified by the
+reviewer: no verdict, gate, score or threshold touched; the GeckoTerminal overwrite appends no observation;
+the ring survives every serialiser and is not served raw.
 2026-11-07: Chain's own settle distribution beside the Wiener map (feat/odte-implied-close, step 7b).
 shared/impliedClose.ts reads the 0DTE chain's risk-neutral settle distribution by Breeden-Litzenberger
 butterflies on two-sided mids (calls above spot, puts below via parity, zero rate, no smoothing), in the
