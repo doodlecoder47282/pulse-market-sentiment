@@ -1035,7 +1035,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
           <CardTitle className="flex items-center gap-2 text-sm">
             <Activity className="h-4 w-4 text-cyan-400" />
             Put / Call Flow Ratio
-            <LivenessBadge feedName="flow" value={agg.combinedPcr} stale={data.indexGroup.some((t) => t.chainStale === true)} lastSession={data.marketOpen === false || data.indexGroup.some((t) => t.chainLastSession === true)} className="ml-1" />
+            <LivenessBadge feedName="flow" value={agg.combinedPcr} stale={data.indexGroup.some((t) => t.chainStale === true)} lastSession={data.indexGroup.some((t) => t.chainLastSession === true)} className="ml-1" />
             <EdgeInfo id="pc-flow" />
           </CardTitle>
           <div className="text-[11px] text-muted-foreground">

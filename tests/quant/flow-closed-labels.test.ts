@@ -28,7 +28,7 @@ test("wiring: histogram, Put/Call badge and flow alerts read the closed state", 
   assert.match(h, /maxAgeMs=\{closed \? null : OFI_MAX_AGE_MS\}/);
   assert.match(h, /last session's tape: closed \$\{data\.trend\.toLowerCase\(\)\}/);
   const f = src("client/src/components/FlowPanel.tsx");
-  assert.match(f, /<LivenessBadge feedName="flow" value=\{agg\.combinedPcr\} stale=\{data\.indexGroup\.some\(\(t\) => t\.chainStale === true\)\} lastSession=\{data\.marketOpen === false \|\|/);
+  assert.match(f, /<LivenessBadge feedName="flow" value=\{agg\.combinedPcr\} stale=\{data\.indexGroup\.some\(\(t\) => t\.chainStale === true\)\} lastSession=\{data\.indexGroup\.some\(\(t\) => t\.chainLastSession === true\)\}/);
   assert.match(src("server/flow.ts"), /chainLastSession = chain\.lastSession === true;/);
   const a = src("client/src/components/FlowAlertsPanel.tsx");
   assert.match(a, /chainAsOfMs: number = Date\.now\(\),\s*\): FlowAlert\[\] \{\s*const alerts: FlowAlert\[\] = \[\];\s*const now = chainAsOfMs;/);
