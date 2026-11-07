@@ -1682,3 +1682,10 @@ and Chain Audit skeletons now say after 6 s what they are waiting on ("waiting o
 ... a cold read can take up to 25 s; after that the panel says what failed"). Display only. Test:
 tests/quant/skeleton-slow-note.test.ts. Step 6 remaining: the spacing items from the recording (the list
 was lost with the transcript; needs the owner's frames to redo).
+
+2026-11-07: 0DTE map on a closed day (feat/today-levels-closed), from the Saturday recording. "Today · SPX:
+today's levels UNAVAILABLE, the Schwab chain returned no expiries": the map asked Schwab for a 0-1 DTE chain,
+which on a Saturday (Monday's expiry is 2 days out) is empty, so the map was unavailable all weekend
+although the code already projects the next session when closed. The window now reaches the next trading
+day's expiry (chainDteWindow: 1 on a trading day, 2 Sat, 3 Fri, holidays by the exchange calendar). Test:
+tests/quant/odte-chain-window.test.ts.
