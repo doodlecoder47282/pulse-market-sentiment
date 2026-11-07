@@ -1720,3 +1720,20 @@ the cyan random-walk one on one scale, and states the comparison in words: width
 spot, total-variation distance, "a description of two models, not a signal". Contracts priced at last (no
 two-sided quote) are excluded from the density. Tests: tests/quant/implied-close.test.ts; odte-map-review
 gains an end-to-end check on the demo chain.
+Review of feat/odte-implied-close: HOLD, 2 MUST-FIX, both taken. (1) Converting puts with the spot pinned
+the mean to the spot by construction and put a kink at the spot whenever the underlying print differed
+from the chain's forward (always after the close: a weekend of carry read as a 37% / 63% tilt). The forward
+is now solved from parity at the two-sided strike nearest the spot (F = K + C - P) and puts convert with F;
+a forward more than 5% from the print is unavailable with the reason; the forward-minus-print gap is stated
+in the sentence. (2) Mid-tick quantisation dominated the comparison: nickel-quantised Black-Scholes mids
+read as "differ by 20%" against their own normal (the demo's 20% was exactly this). The distance is now on
+bins one random-walk sigma wide (nickel noise reads 1%), the published sigma is from the interquartile
+range (robust to one-sided clipping noise in the wings; the variance sigma is in diagnostics), masses that
+need more than 5% renormalising are unavailable ("not one consistent distribution": one-tick jitter on 30%
+of quotes is refused instead of inflating sigma 24%), and the sentence states the resolution floor
+(tick / bucket of mass per strike bucket). SHOULD-FIX taken: AM and PM contracts on a monthly Friday are
+never paired (two-sided mids grouped by settlement style, the larger group read); the sentence gives the
+median versus the forward with the tail it implies ("median +1.5 pts above its forward (longer lower
+tail)") instead of a mean/share pair that read as a contradiction; a readable run whose tails hold more
+than 10% of the mass says so on the card; "beside the plot on wide screens". Tests: forward gap (2 and 5
+pts: no kink, gap stated), nickel quantisation, jitter refused, skewed smile recovered with the right sign.

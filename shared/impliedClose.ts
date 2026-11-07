@@ -14,8 +14,12 @@
 //     P(S_T < K_lo) = 1 + (C(K_lo) - C(K_lo - w)) / w   (= 1 - |slope| at the low end)
 //     P(S_T > K_hi) = -(C(K_hi) - C(K_hi - w)) / w       (= |slope| at the high end)
 // Put mids give the same density via put-call parity; the module uses calls
-// above the spot and puts below (the out-of-the-money side, where mids are
-// tighter), converting puts with C = P + S - K.
+// above the FORWARD and puts below (the out-of-the-money side, where mids are
+// tighter), converting puts with C = P + F - K, where F is solved from the
+// chain itself at the two-sided strike nearest the spot (F = K + C - P).
+// Converting with the spot instead would pin the mean to the spot by
+// construction and put a kink at the spot whenever the underlying's last
+// print differs from the chain's own forward (always, after the close).
 //
 // What this is: the market's price-implied distribution of the settle, in
 // the Wiener map's own strike buckets, so the two can be laid side by side.
@@ -46,37 +50,53 @@ export interface ImpliedClose {
   bucket: number | null;
   /** Buckets in the SAME layout as the Wiener closeDist: low tail, inner buckets, high tail. */
   buckets: ImpliedCloseBucket[];
-  /** Implied 1-sigma of the settle in points (sqrt of the distribution's variance), for the side-by-side. */
+  /** Implied 1-sigma of the settle in points, from the interquartile range (IQR / 1.349): robust to mid-tick noise
+   *  in the wings, which inflates a variance-based sigma. The variance-based figure is in diagnostics. */
   sigma: number | null;
-  /** Mean of the distribution (the market's forward for the settle), points. */
+  /** Mean of the distribution, points (close to the parity forward when the mids are consistent). */
   mean: number | null;
+  /** Median of the distribution, points. */
+  median: number | null;
+  /** Forward solved from parity at the two-sided strike nearest the spot (F = K + C - P), points. */
+  forward: number | null;
+  /** Mass resolution: the smallest bucket mass a one-tick mid change can produce (tick / bucket). Noise below this is not a reading. */
+  resolution: number | null;
   /** Strikes used, butterflies clipped at zero (mids out of line), tail masses. */
-  diagnostics: { strikes: number; clipped: number; lowTail: number; highTail: number; renormalised: number };
+  diagnostics: { strikes: number; clipped: number; lowTail: number; highTail: number; renormalised: number; sigmaFromVariance?: number | null };
 }
 
-export const IMPLIED_CLOSE_METHOD = "Breeden-Litzenberger butterflies on 0DTE option mids (calls above spot, puts below via parity), zero rate, no smoothing";
+export const IMPLIED_CLOSE_METHOD = "Breeden-Litzenberger butterflies on 0DTE option mids (calls above the parity forward, puts below via parity), zero rate, no smoothing";
 
 /** Fewer usable strikes than this: unavailable. */
 export const MIN_STRIKES = 7;
 /** More than this share of inner buckets clipped: unavailable (mids too ragged to read a density). */
 export const MAX_CLIPPED_SHARE = 0.34;
+/** Mass that had to be added or removed to make the buckets sum to one. More than this: the mids do not describe one distribution. */
+export const MAX_RENORMALISED = 0.05;
+/** SPX option mids move in this many points (quotes in 0.05, mids in 0.025). */
+export const MID_TICK = 0.025;
 
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
+const r2 = (n: number) => Math.round(n * 100) / 100;
 
 export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number): ImpliedClose {
-  const base = { method: IMPLIED_CLOSE_METHOD, bucket: bucket > 0 ? bucket : null, buckets: [] as ImpliedCloseBucket[], sigma: null, mean: null, diagnostics: { strikes: 0, clipped: 0, lowTail: 0, highTail: 0, renormalised: 0 } };
+  const base = { method: IMPLIED_CLOSE_METHOD, bucket: bucket > 0 ? bucket : null, buckets: [] as ImpliedCloseBucket[], sigma: null, mean: null, median: null, forward: null, resolution: bucket > 0 ? r4(MID_TICK / bucket) : null, diagnostics: { strikes: 0, clipped: 0, lowTail: 0, highTail: 0, renormalised: 0 } };
   if (!(spot > 0)) return { ...base, state: "unavailable", reason: "no spot" };
   if (!(bucket > 0)) return { ...base, state: "unavailable", reason: "no strike spacing" };
-  // One call price per grid strike: the OTM side's mid, puts converted by parity.
+  const onGrid = quotes.filter((q) => Number.isFinite(q.strike) && q.strike > 0 && Math.abs(q.strike / bucket - Math.round(q.strike / bucket)) <= 1e-6);
+  // The chain's own forward: parity at the two-sided strike nearest the spot.
+  const both = onGrid.filter((q) => q.callMid != null && q.callMid > 0 && q.putMid != null && q.putMid > 0);
+  if (!both.length) return { ...base, state: "unavailable", reason: "no strike with both a call and a put mid: the forward cannot be read from the chain" };
+  const atm = both.reduce((b, q) => (Math.abs(q.strike - spot) < Math.abs(b.strike - spot) ? q : b), both[0]);
+  const forward = atm.strike + (atm.callMid as number) - (atm.putMid as number);
+  if (!(forward > 0) || Math.abs(forward - spot) > 0.05 * spot) return { ...base, state: "unavailable", reason: `parity forward ${forward.toFixed(2)} is not near the spot ${spot.toFixed(2)}: the chain's mids and the underlying print disagree`, forward: r2(forward) };
+  // One call price per grid strike: the OTM side's mid, puts converted by parity with the forward.
   const byStrike = new Map<number, number>();
-  for (const q of quotes) {
-    if (!Number.isFinite(q.strike) || q.strike <= 0) continue;
-    // Snap to the grid: strikes off the spacing are not comparable neighbours.
-    if (Math.abs(q.strike / bucket - Math.round(q.strike / bucket)) > 1e-6) continue;
-    const useCall = q.strike >= spot;
+  for (const q of onGrid) {
+    const useCall = q.strike >= forward;
     const c = useCall
       ? (q.callMid != null && q.callMid > 0 ? q.callMid : null)
-      : (q.putMid != null && q.putMid > 0 ? q.putMid + spot - q.strike : null);
+      : (q.putMid != null && q.putMid > 0 ? q.putMid + forward - q.strike : null);
     if (c == null || !Number.isFinite(c) || c < 0) continue;
     byStrike.set(q.strike, c);
   }
@@ -113,7 +133,10 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
   // Masses: tails + inner should sum to ~1; the clip and mid noise leave a
   // residual, which is spread proportionally and REPORTED (renormalised).
   const raw = lowTail + highTail + inner.reduce((s, b) => s + b.p, 0);
-  if (!(raw > 0)) return { ...base, state: "unavailable", reason: "zero total mass from the mids", diagnostics: { ...base.diagnostics, strikes: n, clipped } };
+  if (!(raw > 0)) return { ...base, state: "unavailable", reason: "zero total mass from the mids", diagnostics: { ...base.diagnostics, strikes: n, clipped }, forward: r2(forward) };
+  if (Math.abs(1 - raw) > MAX_RENORMALISED) {
+    return { ...base, state: "unavailable", reason: `the mids' masses sum to ${raw.toFixed(3)}, not 1: ${Math.round(Math.abs(1 - raw) * 100)}% had to be renormalised (limit ${Math.round(MAX_RENORMALISED * 100)}%); not one consistent distribution`, diagnostics: { ...base.diagnostics, strikes: n, clipped, renormalised: r4(Math.abs(1 - raw)) }, forward: r2(forward) };
+  }
   const scale = 1 / raw;
   // Exact (unrounded) masses for the moments; the published buckets are rounded.
   const exact: ImpliedCloseBucket[] = [
@@ -131,10 +154,24 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
   for (const [m, p] of mids) mean += m * p;
   let v = 0;
   for (const [m, p] of mids) v += p * (m - mean) ** 2;
+  // Quantiles: linear inside the bucket that crosses the level; a tail bucket answers with its finite edge.
+  const quantile = (q: number): number | null => {
+    let acc = 0;
+    for (const b of exact) {
+      if (acc + b.p >= q) {
+        if (b.lo == null || b.hi == null) return b.lo ?? b.hi;
+        return b.lo + (b.hi - b.lo) * ((q - acc) / b.p);
+      }
+      acc += b.p;
+    }
+    return null;
+  };
+  const median = quantile(0.5), q25 = quantile(0.25), q75 = quantile(0.75);
+  const sigmaIqr = q25 != null && q75 != null ? (q75 - q25) / 1.349 : null;
   return {
-    ...base, state: "ok", reason: null, buckets,
-    sigma: Math.round(Math.sqrt(v) * 100) / 100, mean: Math.round(mean * 100) / 100,
-    diagnostics: { strikes: n, clipped, lowTail: r4(lowTail * scale), highTail: r4(highTail * scale), renormalised: r4(Math.abs(1 - raw)) },
+    ...base, state: "ok", reason: null, buckets, forward: r2(forward),
+    sigma: sigmaIqr == null ? null : r2(sigmaIqr), mean: r2(mean), median: median == null ? null : r2(median),
+    diagnostics: { strikes: n, clipped, lowTail: r4(lowTail * scale), highTail: r4(highTail * scale), renormalised: r4(Math.abs(1 - raw)), sigmaFromVariance: r2(Math.sqrt(v)) },
   };
 }
 
@@ -144,12 +181,17 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
  * verdict on which is right; the scorecard (50 days) is the only judge.
  */
 export interface CloseComparison {
-  /** Total variation distance between the two bucket distributions, 0 (same) to 1 (disjoint). */
+  /** Total variation distance between the two distributions on coarse bins (one Wiener sigma wide), 0 (same) to 1 (disjoint).
+   *  Coarse so that mid-tick noise (about tick/bucket of mass per strike bucket) does not read as disagreement. */
   tvDistance: number;
+  /** Bin width used for the distance, points. */
+  binWidth: number;
   /** Implied sigma minus Wiener sigma, points; positive = the chain prices a wider settle than the random walk. */
   sigmaDiff: number;
-  /** Implied mean minus spot, points (the market's forward tilt in the settle). */
-  meanShift: number;
+  /** Implied median minus the parity forward, points: the skew of the chain's settle (its mean sits at the forward by parity). */
+  medianShift: number;
+  /** Parity forward minus spot, points: carry and any gap between the chain and the underlying print. */
+  forwardMinusSpot: number;
   /** Share of implied mass above the spot vs the Wiener's (0.5 by construction). */
   pAboveSpotImplied: number;
   text: string;
@@ -160,15 +202,25 @@ export function compareCloseDistributions(
   implied: ImpliedClose,
   normCdf: (x: number) => number,
 ): CloseComparison | null {
-  if (implied.state !== "ok" || implied.sigma == null || implied.mean == null || !(wiener.sigma > 0)) return null;
-  // The random walk's mass in each IMPLIED bucket, exactly from its normal CDF
-  // (no bucket-edge alignment to get wrong), then the total variation distance.
+  if (implied.state !== "ok" || implied.sigma == null || implied.mean == null || implied.median == null || implied.forward == null || !(wiener.sigma > 0)) return null;
+  // Distance on coarse bins one Wiener sigma wide, centred on the spot: the
+  // implied mass is summed into them (a strike bucket straddling a bin edge is
+  // split pro rata), the random walk's comes exactly from its normal CDF.
+  const binWidth = r2(wiener.sigma);
+  const edges: number[] = [];
+  for (let k = -4; k <= 4; k++) edges.push(wiener.spot + k * binWidth);
+  // A tail's mass is placed in the strike bucket just beyond the readable run
+  // (the same placement the moments use), so every implied bucket has a width.
+  const w = implied.bucket ?? binWidth;
+  const placed = implied.buckets.map((b) => ({ lo: b.lo ?? (b.hi as number) - w, hi: b.hi ?? (b.lo as number) + w, p: b.p }));
+  const impliedIn = (lo: number | null, hi: number | null) => placed.reduce((s, b) => {
+    const l = Math.max(b.lo, lo ?? -Infinity), h = Math.min(b.hi, hi ?? Infinity);
+    return h <= l ? s : s + b.p * ((h - l) / (b.hi - b.lo));
+  }, 0);
   const cdf = (x: number | null, tail: 0 | 1) => x == null ? tail : normCdf((x - wiener.spot) / wiener.sigma);
   let tv = 0;
-  for (const b of implied.buckets) {
-    const pw = cdf(b.hi, 1) - cdf(b.lo, 0);
-    tv += Math.abs(pw - b.p);
-  }
+  const bins: Array<[number | null, number | null]> = [[null, edges[0]], ...edges.slice(0, -1).map((e, i) => [e, edges[i + 1]] as [number, number]), [edges[edges.length - 1], null]];
+  for (const [lo, hi] of bins) tv += Math.abs((cdf(hi, 1) - cdf(lo, 0)) - impliedIn(lo, hi));
   const tvDistance = r4(tv / 2);
   const above = implied.buckets.reduce((s, b) => {
     if (b.lo != null && b.lo >= wiener.spot) return s + b.p;
@@ -176,9 +228,12 @@ export function compareCloseDistributions(
     if (b.lo == null) return s;
     return s;
   }, 0);
-  const sigmaDiff = Math.round((implied.sigma - wiener.sigma) * 100) / 100;
-  const meanShift = Math.round((implied.mean - wiener.spot) * 100) / 100;
+  const sigmaDiff = r2(implied.sigma - wiener.sigma);
+  const medianShift = r2(implied.median - implied.forward);
+  const forwardMinusSpot = r2(implied.forward - wiener.spot);
   const widthWord = Math.abs(sigmaDiff) < 0.1 * wiener.sigma ? "about the same width as" : sigmaDiff > 0 ? "wider than" : "narrower than";
-  const text = `the chain's own settle distribution is ${widthWord} the random walk's (implied 1σ ±${implied.sigma} vs ±${wiener.sigma}); its mean sits ${meanShift >= 0 ? "+" : ""}${meanShift} pts from spot with ${Math.round(above * 100)}% of its mass above (the random walk has 50%); the two distributions differ by ${Math.round(tvDistance * 100)}% of their mass. A description of two models, not a signal.`;
-  return { tvDistance, sigmaDiff, meanShift, pAboveSpotImplied: r4(above), text };
+  const skewWord = Math.abs(medianShift) < 0.25 ? "median at its forward (no visible skew)" : medianShift > 0 ? `median ${medianShift > 0 ? "+" : ""}${medianShift} pts above its forward (longer lower tail)` : `median ${medianShift} pts below its forward (longer upper tail)`;
+  const fwdNote = Math.abs(forwardMinusSpot) >= 0.25 ? `; its parity forward sits ${forwardMinusSpot > 0 ? "+" : ""}${forwardMinusSpot} pts from the underlying print` : "";
+  const text = `the chain's own settle distribution is ${widthWord} the random walk's (implied 1σ ±${implied.sigma} from its interquartile range vs ±${wiener.sigma}); ${skewWord}, ${Math.round(above * 100)}% of its mass above spot (the random walk has 50%)${fwdNote}; on 1σ-wide bins the two differ by ${Math.round(tvDistance * 100)}% of their mass (strike-bucket detail below about ${Math.round((implied.resolution ?? 0) * 100)}% per bucket is mid-tick noise, not a reading). A description of two models, not a signal.`;
+  return { tvDistance, binWidth, sigmaDiff, medianShift, forwardMinusSpot, pAboveSpotImplied: r4(above), text };
 }

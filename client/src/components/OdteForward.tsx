@@ -42,7 +42,7 @@ interface OdteResponse {
   wiener?: WienerMapT;
   /** The chain's own settle distribution (Breeden-Litzenberger on 0DTE mids), same bucket spacing. */
   impliedClose?: { state: "ok" | "unavailable"; reason: string | null; method: string; sigma: number | null; mean: number | null;
-    buckets: Array<{ lo: number | null; hi: number | null; p: number }>; diagnostics: { strikes: number; clipped: number; renormalised: number } };
+    buckets: Array<{ lo: number | null; hi: number | null; p: number }>; diagnostics: { strikes: number; clipped: number; renormalised: number; lowTail?: number; highTail?: number } };
   closeComparison?: { tvDistance: number; sigmaDiff: number; meanShift: number; pAboveSpotImplied: number; text: string } | null;
   todayPath?: Array<{ min: number; close: number }>;
   path?: OverlayPoint[];
@@ -400,8 +400,8 @@ export default function OdteForward() {
             <span className="font-semibold uppercase tracking-[0.14em] text-amber-300/90">Chain's own settle distribution</span>
             {data.impliedClose?.state === "ok" && data.closeComparison ? (
               <>
-                <span className="text-foreground/85"> (amber outline beside the plot): {data.closeComparison.text}</span>
-                <span className="text-muted-foreground"> Read from {data.impliedClose.diagnostics.strikes} strikes with two-sided mids{data.impliedClose.diagnostics.clipped ? `, ${data.impliedClose.diagnostics.clipped} butterflies clipped at zero` : ""}; {data.impliedClose.method}.</span>
+                <span className="text-foreground/85"> (amber outline beside the plot on wide screens): {data.closeComparison.text}</span>
+                <span className="text-muted-foreground"> Read from {data.impliedClose.diagnostics.strikes} strikes with two-sided mids{data.impliedClose.diagnostics.clipped ? `, ${data.impliedClose.diagnostics.clipped} butterflies clipped at zero` : ""}{((data.impliedClose.diagnostics.lowTail ?? 0) + (data.impliedClose.diagnostics.highTail ?? 0)) > 0.1 ? `; ${Math.round(((data.impliedClose.diagnostics.lowTail ?? 0) + (data.impliedClose.diagnostics.highTail ?? 0)) * 100)}% of the mass lies beyond the readable strikes and is placed just past them` : ""}; {data.impliedClose.method}.</span>
               </>
             ) : (
               <span className="text-muted-foreground"> not readable: {data.impliedClose?.reason ?? "no chain mids"}. Nothing is drawn in its place.</span>
