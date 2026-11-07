@@ -1706,3 +1706,17 @@ really is), and the panel polls a settled chain every 10 min instead of every 30
 requests an hour); the OFI payload carries sessionOpen/lastSession, the histogram shows "last session" and
 "last session's tape: closed bullish (15m ...)" instead of a stale warning and a withheld trend. Test:
 tests/quant/flow-closed-labels.test.ts.
+
+2026-11-07: Chain's own settle distribution beside the Wiener map (feat/odte-implied-close, step 7b).
+shared/impliedClose.ts reads the 0DTE chain's risk-neutral settle distribution by Breeden-Litzenberger
+butterflies on two-sided mids (calls above spot, puts below via parity, zero rate, no smoothing), in the
+same strike buckets as the random walk's close distribution. Fail-closed: fewer than 7 consecutive quoted
+strikes, a grid gap (only the longest contiguous run is read), or more than a third of butterflies negative
+is "not readable" with the reason, and nothing is drawn in its place; clipped butterflies and the
+renormalised residual are reported. Recovers a Black-Scholes density from its own mids to within 0.05 pts
+on the mean and 1.5 pts on sigma (test); a rounding bias found on the way (per-bucket rounding before the
+moments shifted the mean 1.7 pts) is fixed. The card draws the implied histogram as an amber outline over
+the cyan random-walk one on one scale, and states the comparison in words: width, mean shift, share above
+spot, total-variation distance, "a description of two models, not a signal". Contracts priced at last (no
+two-sided quote) are excluded from the density. Tests: tests/quant/implied-close.test.ts; odte-map-review
+gains an end-to-end check on the demo chain.

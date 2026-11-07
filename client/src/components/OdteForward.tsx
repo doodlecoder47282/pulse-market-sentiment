@@ -40,6 +40,10 @@ interface OdteResponse {
   levels: { callWall: number | null; putWall: number | null; gammaFlip: number | null; pin: number | null };
   chainStale?: boolean; chainAgeMs?: number | null;
   wiener?: WienerMapT;
+  /** The chain's own settle distribution (Breeden-Litzenberger on 0DTE mids), same bucket spacing. */
+  impliedClose?: { state: "ok" | "unavailable"; reason: string | null; method: string; sigma: number | null; mean: number | null;
+    buckets: Array<{ lo: number | null; hi: number | null; p: number }>; diagnostics: { strikes: number; clipped: number; renormalised: number } };
+  closeComparison?: { tvDistance: number; sigmaDiff: number; meanShift: number; pAboveSpotImplied: number; text: string } | null;
   todayPath?: Array<{ min: number; close: number }>;
   path?: OverlayPoint[];
   pathBasis?: string;
@@ -200,15 +204,24 @@ export default function OdteForward() {
       ctx.fillStyle = "#0a0a0a"; ctx.fillText(t.text, padL + iw + histW + 5, y + 3.5);
     }
 
-    // close distribution beside the plot (wide screens)
+    // close distributions beside the plot (wide screens): the random walk's
+    // (cyan, filled) and the chain's own (amber outline), one scale for both so
+    // the shapes are comparable by eye.
     if (wide) {
       const inner = w.closeDist.filter((b) => b.lo != null && b.hi != null);
-      const maxP = Math.max(...inner.map((b) => b.p), 1e-9);
+      const impliedInner = data.impliedClose?.state === "ok" ? data.impliedClose.buckets.filter((b) => b.lo != null && b.hi != null) : [];
+      const maxP = Math.max(...inner.map((b) => b.p), ...impliedInner.map((b) => b.p), 1e-9);
       ctx.fillStyle = "rgba(79,209,232,0.55)";
       for (const b of inner) {
         const y1 = Y(b.hi!), y2 = Y(b.lo!);
         if (y2 < padT || y1 > padT + ih) continue;
         ctx.fillRect(padL + iw + 2, y1 + 0.5, (histW - 6) * (b.p / maxP), Math.max(1, y2 - y1 - 1));
+      }
+      ctx.strokeStyle = "rgba(251,191,36,0.9)"; ctx.lineWidth = 1;
+      for (const b of impliedInner) {
+        const y1 = Y(b.hi!), y2 = Y(b.lo!);
+        if (y2 < padT || y1 > padT + ih) continue;
+        ctx.strokeRect(padL + iw + 2.5, y1 + 1, Math.max(0.5, (histW - 6) * (b.p / maxP)), Math.max(1, y2 - y1 - 2));
       }
     }
 
@@ -382,6 +395,17 @@ export default function OdteForward() {
 
           <div className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground" data-testid="odte-wiener-method">
             {w!.model}. Bands are percentiles of the price at each time, not paths. Touch = trading at the level at least once before the close (exact for this model). {w!.caveats.join("; ")}.
+          </div>
+          <div className="mt-1.5 rounded border border-amber-400/30 bg-amber-400/5 px-2 py-1.5 text-[11px] leading-relaxed" data-testid="odte-implied-close">
+            <span className="font-semibold uppercase tracking-[0.14em] text-amber-300/90">Chain's own settle distribution</span>
+            {data.impliedClose?.state === "ok" && data.closeComparison ? (
+              <>
+                <span className="text-foreground/85"> (amber outline beside the plot): {data.closeComparison.text}</span>
+                <span className="text-muted-foreground"> Read from {data.impliedClose.diagnostics.strikes} strikes with two-sided mids{data.impliedClose.diagnostics.clipped ? `, ${data.impliedClose.diagnostics.clipped} butterflies clipped at zero` : ""}; {data.impliedClose.method}.</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground"> not readable: {data.impliedClose?.reason ?? "no chain mids"}. Nothing is drawn in its place.</span>
+            )}
           </div>
         </>
       )}

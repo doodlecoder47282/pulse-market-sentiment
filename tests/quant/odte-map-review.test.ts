@@ -381,3 +381,19 @@ test("language: everything the investor edition can show, the labels and ladders
   const inv = renderOdteMapText(composeOdteMap(b, { edition: "investor" }));
   assert.ok(!/\b(DIP|FADE|NO-TRADE)\b/.test(inv), inv);
 });
+
+test("implied settle distribution rides on the forward: a state and a reason, never a drawn guess", async () => {
+  const r = await buildOdteForward("$SPX", T, deps);
+  assert.equal(r.status, 200);
+  const ic = r.body.impliedClose;
+  assert.ok(ic && (ic.state === "ok" || ic.state === "unavailable"));
+  if (ic.state === "ok") {
+    assert.ok(Math.abs(ic.buckets.reduce((s: number, b: any) => s + b.p, 0) - 1) < 2e-3);
+    assert.ok(ic.sigma > 0);
+    assert.ok(r.body.closeComparison && /A description of two models, not a signal\./.test(r.body.closeComparison.text));
+    assert.doesNotMatch(r.body.closeComparison.text, INSTRUCTION);
+  } else {
+    assert.ok(typeof ic.reason === "string" && ic.reason.length > 0);
+    assert.equal(r.body.closeComparison, null);
+  }
+});

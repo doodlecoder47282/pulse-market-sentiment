@@ -71,3 +71,15 @@ test("comparison: a skewed implied settle reads as width, tilt and distance in w
   assert.equal(compareCloseDistributions({ spot: S, sigma: 45 }, { ...ic, state: "unavailable", sigma: null }, normCdf), null);
   for (const bad of ["edge", "probability of", "buy", "sell", "long", "short", "expect"]) assert.doesNotMatch(same.text.toLowerCase(), new RegExp(`\\b${bad}\\b`));
 });
+
+test("wiring: the forward reads two-sided mids only, publishes the implied settle and the comparison; the card draws it or says why not", async () => {
+  const { readFileSync } = await import("node:fs");
+  const f = readFileSync(new URL("../../server/odteForward.ts", import.meta.url), "utf8");
+  assert.match(f, /const quoted = bid != null && ask != null && bid > 0 && ask >= bid;/);
+  assert.match(f, /if \(quoted\) \{\s*const q = twoSided\.get\(strike\)/);
+  assert.match(f, /impliedClose: implied,\s*closeComparison,/);
+  const c = readFileSync(new URL("../../client/src/components/OdteForward.tsx", import.meta.url), "utf8");
+  assert.match(c, /data-testid="odte-implied-close"/);
+  assert.match(c, /not readable: \{data\.impliedClose\?\.reason \?\? "no chain mids"\}\. Nothing is drawn in its place\./);
+  assert.match(c, /const maxP = Math\.max\(\.\.\.inner\.map\(\(b\) => b\.p\), \.\.\.impliedInner\.map\(\(b\) => b\.p\), 1e-9\);/, "one scale for both histograms");
+});
