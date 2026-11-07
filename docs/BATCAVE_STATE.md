@@ -1706,3 +1706,14 @@ really is), and the panel polls a settled chain every 10 min instead of every 30
 requests an hour); the OFI payload carries sessionOpen/lastSession, the histogram shows "last session" and
 "last session's tape: closed bullish (15m ...)" instead of a stale warning and a withheld trend. Test:
 tests/quant/flow-closed-labels.test.ts.
+
+2026-11-07: Crypto liquidity history and exit stress (feat/crypto-history-cards, step 7c part 1). Each
+DexScreener refresh appends an observation (liquidity, cap, top-10) to a per-candidate ring of 60 kept on
+the server (not served raw; the feed carries observationCount). Two card readouts from it
+(shared/cryptoHistory.ts): liquidity velocity, the measured change over the readings in the last hour with
+its span and worst single step, "insufficient" under 3 readings (never a number from too few), and the
+exit-cost stress, the sized round trip at 25/50/75/100% liquidity pulls by the same constant-product
+arithmetic as the card's cost, "no exit" at 100%, labelled "arithmetic at each depth, not a forecast".
+Rule book unchanged (no new numeric leaf; the module prices through tradeCost). Not done from the 7c list:
+post-mortem cards (need the per-ENTER path persisted first) and holder history beyond the top-10 share.
+Tests: tests/quant/crypto-history.test.ts; crypto suite 93/93.

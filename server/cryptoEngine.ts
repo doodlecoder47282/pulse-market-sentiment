@@ -59,6 +59,7 @@ import {
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
+import { appendObservation, exitCostStress, liquidityVelocity, type ExitCostStress, type LiquidityVelocity, type Observation } from "../shared/cryptoHistory";
 import { readTokenFacts, indexedRpcAvailable, noteIndexedRateLimit, solRpc, RPC_INDEXED, RPC_ACCOUNT, keyedRpcConfigured, solanaRpcStatus } from "./solanaToken";
 import { bundleEvidence, BUNDLE_MAX_TX, BUNDLE_WINDOW_SLOTS, type BundleEvidence, type CardBundle } from "../shared/cryptoBundle";
 import { startPumpListener, pumpListenerCheck, pumpListenerStatus, launchBundle } from "./pumpListener";
@@ -144,6 +145,8 @@ export interface Candidate {
 
   // rolling history for sustained-flow gating (whale-blink filter)
   hist: Array<{ t: number; volAccel: number | null; netBuyRatio5m: number | null; mcap: number | null }>;
+  /** One observation per DexScreener refresh: liquidity, cap, top-10 (shared/cryptoHistory.ts; ring of 60). */
+  observations: Observation[];
   /** The four ENTER gates' inputs exactly as scoreCandidate saw them (before this poll is pushed to hist). */
   gatesAtScore?: GateEvidence | null;
 
@@ -172,6 +175,10 @@ export interface CandidateStructure {
   category: MemeClass;
   /** Round trip of the risk-sized position (or $100 when there is none) against the pool's depth. */
   cost: TradeCost;
+  /** Measured change in pool depth over the last hour of readings (descriptive). */
+  liquidityVelocity: LiquidityVelocity;
+  /** The same round trip if liquidity were pulled 25/50/75/100% (arithmetic, not a forecast). */
+  exitStress: ExitCostStress;
 }
 
 export interface RiskParams {
@@ -463,6 +470,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
     socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
     hist: [],
+    observations: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
     hardKill: false, score: null, verdict: null, verdictCode: null, verdictReasons: [], risk: null,
@@ -634,6 +642,7 @@ async function momentumTick(): Promise<void> {
         c.jupGapPct = null;
       }
       c.lastRefreshAt = Date.now();
+      c.observations = appendObservation(c.observations, { at: c.lastRefreshAt, liquidityUsd: c.liquidityUsd, marketCap: c.marketCap, top10Pct: c.top10Pct });
       scoreCandidate(c);
       // history AFTER scoring so volAccel/netBuyRatio are fresh; cap 20 readings
       c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: c.marketCap });
@@ -1124,6 +1133,8 @@ function scoreCandidate(c: Candidate): void {
       narrativeHits: c.narrativeHits, history: null,
     }),
     cost: tradeCost({ liquidityUsd: c.liquidityUsd, sizeUsd: c.risk ? Math.max(1, c.risk.maxPositionUsd) : 100 }),
+    liquidityVelocity: liquidityVelocity(c.observations, 60 * 60_000, Date.now()),
+    exitStress: exitCostStress(c.liquidityUsd, c.risk ? Math.max(1, c.risk.maxPositionUsd) : 100),
   };
 }
 
@@ -1411,7 +1422,10 @@ export function getCryptoFeed(): {
       const rank = (v: Candidate["verdict"]) => (v === "ENTER" ? 0 : v === "WATCH" ? 1 : 2);
       return rank(a.verdict) - rank(b.verdict) || (b.score ?? 0) - (a.score ?? 0);
     })
-    .slice(0, 80);
+    .slice(0, 80)
+    // The raw observation ring stays on the server (60 rows a coin); what it
+    // says travels in structure.liquidityVelocity / exitStress.
+    .map(({ observations: _obs, ...rest }) => ({ ...rest, observationCount: _obs.length }));
   return {
     // The instant the served verdicts (freshness, desk risk) were computed; the verifier checks against it.
     asOf: nowRead,
@@ -1796,7 +1810,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
       pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null,
       socialScore: null, socialCheckedAt: null, prevPumpReplies: null, socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
-      hist: [], ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
+      hist: [], observations: [], ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
       hardKill: false, score: null, verdict: null, verdictCode: null, verdictReasons: [], risk: null, structure: null,
     };
     applyDexPair(c, best);
