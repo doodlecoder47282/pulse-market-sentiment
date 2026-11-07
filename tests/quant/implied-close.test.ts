@@ -154,9 +154,15 @@ test("one stale ATM leg cannot move the forward or read as skew (median-of-parit
     const s = stale(d);
     assert.equal(s.state, "ok", `d=${d}`);
     const t = compareCloseDistributions({ spot: S, sigma: 45 }, s, normCdf)!.text;
-    assert.match(t, /median not read: 1 strike inside its body priced out of line/, `d=${d}: ${t}`);
+    assert.match(t, /median not read: 1 strike priced out of line \(clipped to zero, inside its body\)/, `d=${d}: ${t}`);
     assert.doesNotMatch(t, /longer (upper|lower) tail/);
     assert.match(t, /% of mass renormalised/);
   }
   assert.equal(stale(0.4).state, "unavailable", "a leg that far off the others is refused, not read");
+  // A hole on the lower shoulder (outside the body) removed 4.5% of mass below the median and read as skew: no longer.
+  const shoulder = impliedClose(S, grid(S, w, 200).map((K) => { const b = bsF(S, K, sT); return { strike: K, callMid: b.callMid, putMid: b.putMid + (K === 5960 ? 0.19 : 0) }; }), w);
+  assert.equal(shoulder.state, "ok");
+  const st = compareCloseDistributions({ spot: S, sigma: 45 }, shoulder, normCdf)!.text;
+  assert.match(st, /median not read: 1 strike priced out of line \(clipped to zero\)/);
+  assert.doesNotMatch(st, /longer (upper|lower) tail/);
 });

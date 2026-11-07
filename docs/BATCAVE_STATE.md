@@ -1758,3 +1758,7 @@ median-of-parity forward is exact under every stale-leg case; a book with all pu
 -0.3 forward gap with the density intact; the skewed smile's +1.5 pt median was mostly a 5-pt-grid artefact
 (+0.4 on a 1-pt grid), so "no skew readable" is the honest wording while the share-above and the two
 sigmas carry the real feature.
+Fourth check of feat/odte-implied-close: no MUST-FIX; one residual of the same class taken (a hole on a
+shoulder, outside the body, still removed 4.5% of mass from one side and read as skew). Rule now: a chain
+with any clipped strike makes no skew claim ("median not read: N strikes priced out of line (clipped to
+zero[, inside its body])"); width, share above spot, forward gap and distance are still stated.

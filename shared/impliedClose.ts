@@ -245,9 +245,11 @@ export function compareCloseDistributions(
   const tailNote = sv != null && Math.abs(sv - implied.sigma) > 0.1 * implied.sigma ? `; its body is ±${implied.sigma} but its tails push the variance sigma to ±${sv}` : "";
   // Below half a strike bucket the median cannot be placed better than the grid: no skew is claimed.
   const skewFloor = (implied.bucket ?? binWidth) / 2;
-  // A clipped (zero-mass) strike inside the interquartile body moves the median a whole bucket: no skew is claimed then either.
-  const holeInBody = (implied.diagnostics.clippedInBody ?? 0) > 0;
-  const skewWord = holeInBody ? `median not read: ${implied.diagnostics.clippedInBody} strike${implied.diagnostics.clippedInBody === 1 ? "" : "s"} inside its body priced out of line (clipped to zero)`
+  // Any clipped (zero-mass) strike removes a few percent of mass from one side and can move the
+  // median past the floor (inside the body by a whole bucket; on a shoulder by a little less): no
+  // skew is claimed from a chain with a hole anywhere.
+  const holes = implied.diagnostics.clipped;
+  const skewWord = holes > 0 ? `median not read: ${holes} strike${holes === 1 ? "" : "s"} priced out of line (clipped to zero${(implied.diagnostics.clippedInBody ?? 0) > 0 ? ", inside its body" : ""})`
     : Math.abs(medianShift) < skewFloor ? `median within half a strike of its forward (no skew readable at ${implied.bucket ?? binWidth}-pt strikes)` : medianShift > 0 ? `median ${medianShift > 0 ? "+" : ""}${medianShift} pts above its forward (longer lower tail)` : `median ${medianShift} pts below its forward (longer upper tail)`;
   const fwdNote = Math.abs(forwardMinusSpot) >= 0.25 ? `; its parity forward sits ${forwardMinusSpot > 0 ? "+" : ""}${forwardMinusSpot} pts from the underlying print` : "";
   const renormNote = implied.diagnostics.renormalised >= 0.005 ? `; ${Math.round(implied.diagnostics.renormalised * 1000) / 10}% of mass renormalised` : "";
