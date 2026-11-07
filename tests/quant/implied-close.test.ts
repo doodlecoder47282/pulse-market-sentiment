@@ -134,6 +134,19 @@ test("skew: a smile with higher IV below recovers a median above the forward (lo
   assert.ok(ic.median! > ic.forward!, `median ${ic.median} forward ${ic.forward}`);
   assert.ok((ic.diagnostics.sigmaFromVariance ?? 0) > ic.sigma!, "the fat lower tail shows in the variance sigma, not the IQR sigma");
   const cmp = compareCloseDistributions({ spot: S, sigma: 45 }, ic, normCdf)!;
-  assert.match(cmp.text, /median \+[\d.]+ pts above its forward \(longer lower tail\)/);
+  assert.match(cmp.text, /median within half a strike of its forward|median \+[\d.]+ pts above its forward \(longer lower tail\)/);
   assert.match(cmp.text, /from its interquartile range/);
+  assert.match(cmp.text, /its body is ±39\.\d but its tails push the variance sigma to ±49\.\d/, "both sigmas stated when the tails differ");
+});
+
+test("one stale ATM leg cannot move the forward or read as skew (median-of-parity forward, half-bucket skew floor)", () => {
+  const S = 6000, w = 5, sT = 0.0075;
+  const stale = (d: number) => impliedClose(S, grid(S, w, 200).map((K) => { const b = bsF(S, K, sT); return { strike: K, callMid: b.callMid + (K === 6000 ? d : 0), putMid: b.putMid }; }), w);
+  const a = stale(0.1);
+  assert.equal(a.forward, 6000, "the forward is the median of parity over nearby strikes, not the stale strike's");
+  assert.equal(a.diagnostics.clipped, 0);
+  const cmp = compareCloseDistributions({ spot: S, sigma: 45 }, a, normCdf)!;
+  assert.match(cmp.text, /median within half a strike of its forward \(no skew readable at 5-pt strikes\)/);
+  assert.equal(stale(0.2).forward, 6000);
+  assert.equal(stale(0.4).state, "unavailable", "a leg that far off the others is refused, not read");
 });

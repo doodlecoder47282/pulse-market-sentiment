@@ -75,6 +75,8 @@ export const MAX_CLIPPED_SHARE = 0.34;
 export const MAX_RENORMALISED = 0.05;
 /** SPX option mids move in this many points (quotes in 0.05, mids in 0.025). */
 export const MID_TICK = 0.025;
+/** Strikes within this share of the spot vote on the parity forward (about one 0DTE sigma). */
+export const FORWARD_WINDOW_PCT = 0.0075;
 
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -84,11 +86,15 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
   if (!(spot > 0)) return { ...base, state: "unavailable", reason: "no spot" };
   if (!(bucket > 0)) return { ...base, state: "unavailable", reason: "no strike spacing" };
   const onGrid = quotes.filter((q) => Number.isFinite(q.strike) && q.strike > 0 && Math.abs(q.strike / bucket - Math.round(q.strike / bucket)) <= 1e-6);
-  // The chain's own forward: parity at the two-sided strike nearest the spot.
+  // The chain's own forward: the MEDIAN of parity (K + C - P) over the two-sided
+  // strikes near the spot. Parity holds at every strike, so one stale leg at the
+  // money cannot move F (a single-strike F absorbed that leg's error as a
+  // constant offset on every converted put, which read as skew).
   const both = onGrid.filter((q) => q.callMid != null && q.callMid > 0 && q.putMid != null && q.putMid > 0);
   if (!both.length) return { ...base, state: "unavailable", reason: "no strike with both a call and a put mid: the forward cannot be read from the chain" };
-  const atm = both.reduce((b, q) => (Math.abs(q.strike - spot) < Math.abs(b.strike - spot) ? q : b), both[0]);
-  const forward = atm.strike + (atm.callMid as number) - (atm.putMid as number);
+  const near = both.filter((q) => Math.abs(q.strike - spot) <= Math.max(FORWARD_WINDOW_PCT * spot, 2 * bucket));
+  const pool = (near.length >= 3 ? near : both).map((q) => q.strike + (q.callMid as number) - (q.putMid as number)).sort((a, b) => a - b);
+  const forward = pool.length % 2 ? pool[(pool.length - 1) / 2] : (pool[pool.length / 2 - 1] + pool[pool.length / 2]) / 2;
   if (!(forward > 0) || Math.abs(forward - spot) > 0.05 * spot) return { ...base, state: "unavailable", reason: `parity forward ${forward.toFixed(2)} is not near the spot ${spot.toFixed(2)}: the chain's mids and the underlying print disagree`, forward: r2(forward) };
   // One call price per grid strike: the OTM side's mid, puts converted by parity with the forward.
   const byStrike = new Map<number, number>();
@@ -232,8 +238,13 @@ export function compareCloseDistributions(
   const medianShift = r2(implied.median - implied.forward);
   const forwardMinusSpot = r2(implied.forward - wiener.spot);
   const widthWord = Math.abs(sigmaDiff) < 0.1 * wiener.sigma ? "about the same width as" : sigmaDiff > 0 ? "wider than" : "narrower than";
-  const skewWord = Math.abs(medianShift) < 0.25 ? "median at its forward (no visible skew)" : medianShift > 0 ? `median ${medianShift > 0 ? "+" : ""}${medianShift} pts above its forward (longer lower tail)` : `median ${medianShift} pts below its forward (longer upper tail)`;
+  // IQR/1.349 equals sigma only for a normal; when the implied's tails carry more, say both.
+  const sv = implied.diagnostics.sigmaFromVariance;
+  const tailNote = sv != null && Math.abs(sv - implied.sigma) > 0.1 * implied.sigma ? `; its body is ±${implied.sigma} but its tails push the variance sigma to ±${sv}` : "";
+  // Below half a strike bucket the median cannot be placed better than the grid: no skew is claimed.
+  const skewFloor = (implied.bucket ?? binWidth) / 2;
+  const skewWord = Math.abs(medianShift) < skewFloor ? `median within half a strike of its forward (no skew readable at ${implied.bucket ?? binWidth}-pt strikes)` : medianShift > 0 ? `median ${medianShift > 0 ? "+" : ""}${medianShift} pts above its forward (longer lower tail)` : `median ${medianShift} pts below its forward (longer upper tail)`;
   const fwdNote = Math.abs(forwardMinusSpot) >= 0.25 ? `; its parity forward sits ${forwardMinusSpot > 0 ? "+" : ""}${forwardMinusSpot} pts from the underlying print` : "";
-  const text = `the chain's own settle distribution is ${widthWord} the random walk's (implied 1σ ±${implied.sigma} from its interquartile range vs ±${wiener.sigma}); ${skewWord}, ${Math.round(above * 100)}% of its mass above spot (the random walk has 50%)${fwdNote}; on 1σ-wide bins the two differ by ${Math.round(tvDistance * 100)}% of their mass (strike-bucket detail below about ${Math.round((implied.resolution ?? 0) * 100)}% per bucket is mid-tick noise, not a reading). A description of two models, not a signal.`;
+  const text = `the chain's own settle distribution is ${widthWord} the random walk's (implied 1σ ±${implied.sigma} from its interquartile range vs ±${wiener.sigma}${tailNote}); ${skewWord}, ${Math.round(above * 100)}% of its mass above spot (the random walk has 50%)${fwdNote}; on 1σ-wide bins the two differ by ${Math.round(tvDistance * 100)}% of their mass (strike-bucket detail below about ${Math.round((implied.resolution ?? 0) * 100)}% per bucket is mid-tick noise, not a reading; bins this wide do not show a two-humped shape, the histogram does). A description of two models, not a signal.`;
   return { tvDistance, binWidth, sigmaDiff, medianShift, forwardMinusSpot, pAboveSpotImplied: r4(above), text };
 }

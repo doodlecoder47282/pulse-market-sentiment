@@ -1737,3 +1737,14 @@ median versus the forward with the tail it implies ("median +1.5 pts above its f
 tail)") instead of a mean/share pair that read as a contradiction; a readable run whose tails hold more
 than 10% of the mass says so on the card; "beside the plot on wide screens". Tests: forward gap (2 and 5
 pts: no kink, gap stated), nickel quantisation, jitter refused, skewed smile recovered with the right sign.
+Second review of feat/odte-implied-close: HOLD on one MUST-FIX, taken. The single-strike parity forward
+absorbed a stale at-the-money leg as a constant offset on every converted put, moving the median about 17x
+the error (0.1 pt stale read as "+1.75 pts, longer lower tail"). The forward is now the median of parity
+over the two-sided strikes within about one sigma of the spot (one bad leg cannot move it; it shows as a
+clipped kink and, past 0.4 pt, a refused chain), and no skew is claimed within half a strike of the forward
+(a 5-pt grid cannot place the median better). SHOULD-FIX taken: when the implied's tails carry more than
+its body the sentence gives both sigmas ("body ±39.7, tails push the variance sigma to ±49.3"); the sentence
+says 1σ bins do not show a two-humped shape (the histogram does); the client type matches the payload.
+Reviewer's realism check: on quantised SPX mids with a one-tick bounce on up to 30% of quotes the panel
+reads on 99-100% of chains at normal vol; with a full two-tick bounce on a wide-vol day it says "not
+readable" often, which is the honest state. Demo sentence now reads 6% distance (was 20%).

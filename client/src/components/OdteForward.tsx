@@ -43,7 +43,7 @@ interface OdteResponse {
   /** The chain's own settle distribution (Breeden-Litzenberger on 0DTE mids), same bucket spacing. */
   impliedClose?: { state: "ok" | "unavailable"; reason: string | null; method: string; sigma: number | null; mean: number | null;
     buckets: Array<{ lo: number | null; hi: number | null; p: number }>; diagnostics: { strikes: number; clipped: number; renormalised: number; lowTail?: number; highTail?: number } };
-  closeComparison?: { tvDistance: number; sigmaDiff: number; meanShift: number; pAboveSpotImplied: number; text: string } | null;
+  closeComparison?: { tvDistance: number; binWidth: number; sigmaDiff: number; medianShift: number; forwardMinusSpot: number; pAboveSpotImplied: number; text: string } | null;
   todayPath?: Array<{ min: number; close: number }>;
   path?: OverlayPoint[];
   pathBasis?: string;
