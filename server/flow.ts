@@ -54,6 +54,8 @@ export type FlowTicker = {
   /** When Schwab produced the chain, epoch ms. */
   chainAsOfMs?: number | null;
   chainStale?: boolean;
+  /** Market closed: the settled last-session chain (the latest that exists; not stale, not live). */
+  chainLastSession?: boolean;
 };
 
 export type FlowResponse = {
@@ -121,6 +123,7 @@ async function fetchTickerFlow(
   let changeFromOpen: number | null = null;
   let chainAsOfMs: number | null = null;
   let chainStale = false;
+  let chainLastSession = false;
   let ok = false;
 
   try {
@@ -129,6 +132,7 @@ async function fetchTickerFlow(
       ok = true;
       chainAsOfMs = chain.asOfMs;
       chainStale = chain.stale;
+      chainLastSession = chain.lastSession === true;
       spot = chainSpot(chain);
       const t = chainVolumeTotals(chain);
       putVol = t.putVol; callVol = t.callVol; putOI = t.putOI; callOI = t.callOI;
@@ -162,6 +166,7 @@ async function fetchTickerFlow(
     dataState: ok ? "ok" : "unavailable",
     chainAsOfMs,
     chainStale,
+    chainLastSession,
   };
 }
 

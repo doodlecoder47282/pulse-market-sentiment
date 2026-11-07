@@ -1696,3 +1696,13 @@ which on a Saturday (Monday's expiry is 2 days out) is empty, so the map was una
 although the code already projects the next session when closed. The window now reaches the next trading
 day's expiry (chainDteWindow: 1 on a trading day, 2 Sat, 3 Fri, holidays by the exchange calendar). Test:
 tests/quant/odte-chain-window.test.ts.
+2026-11-07: Flow tab closed-market labels (feat/flow-closed-labels), from the Saturday recording. Three
+false states on a closed market: the Put/Call panel's badge pulsed "live" and the alerts header said
+"SCHWAB LIVE" while 16 "unusual volume" alerts were dated 12:14 ET Saturday (Friday's volume, stamped with
+the poll time); the signed-tick histogram read "STALE · Schwab 20h" against a 5-min cap that only applies in
+the session. Now: the flow snapshot carries chainLastSession and the badge reads "closed"; alerts are dated
+by the chain's own asOfMs and the header reads "CLOSED · LAST SESSION" (or "CHAIN STALE" when the chain
+really is), and the panel polls a settled chain every 10 min instead of every 30 s (120 identical
+requests an hour); the OFI payload carries sessionOpen/lastSession, the histogram shows "last session" and
+"last session's tape: closed bullish (15m ...)" instead of a stale warning and a withheld trend. Test:
+tests/quant/flow-closed-labels.test.ts.

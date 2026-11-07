@@ -52,9 +52,11 @@ function computeAlerts(
   symbol: string,
   prevPcr: number | null,
   currentPcr: number | null,
+  /** The chain's own data time: an alert is dated by the data it was read from, not by the poll. */
+  chainAsOfMs: number = Date.now(),
 ): FlowAlert[] {
   const alerts: FlowAlert[] = [];
-  const now = Date.now();
+  const now = chainAsOfMs;
 
   // Helper: get total vol / OI for a strike across an expiry map
   function getStrikeStats(map: Record<string, Record<string, OptionContract[]>>) {
@@ -317,18 +319,25 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
   });
 
   const isConnected = statusData?.connected === true;
+  // Market closed: the chain is the settled last-session copy and cannot change, so
+  // polling it every 30 s is 120 requests an hour for the same bytes.
+  const [chainClosed, setChainClosed] = useState(false);
 
-  // Poll option chain every 30s when connected
+  // Poll option chain every 30s when connected and the session is open
   const { data: chainData } = useQuery<any>({
     queryKey: ["/api/market/option-chain", symbol],
     queryFn: async () => {
       const r = await apiRequest("GET", `/api/market/option-chain/${symbol}?dte=7`);
       return r.json();
     },
-    refetchInterval: 30_000,
+    refetchInterval: chainClosed ? 10 * 60_000 : 30_000,
     staleTime: 25_000,
     enabled: isConnected,
   });
+  useEffect(() => { setChainClosed(chainData?.lastSession === true); }, [chainData?.lastSession]);
+  // What the header may claim: live only on a current chain; a settled chain is "closed"; a stale one says so.
+  const chainLabel: "live" | "closed" | "stale" | null = !chainData || chainData.error ? null
+    : chainData.stale ? "stale" : chainData.lastSession ? "closed" : "live";
 
   // Compute P/C ratio from chain data
   const computePcr = useCallback((chain: any): number | null => {
@@ -363,6 +372,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
       symbol,
       prevPcrRef.current,
       currentPcr,
+      Number.isFinite(chainData.asOfMs) ? chainData.asOfMs : Date.now(),
     );
     if (newAlerts.length > 0) {
       // Same condition -> same row, updated in place; only a new condition is a new row.
@@ -391,7 +401,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
             <button type="button"
               className="flex min-h-[44px] min-w-[44px] flex-1 basis-48 items-center justify-between gap-2 text-left"
               data-testid="flow-alerts-toggle"
-              aria-label={`${isOpen ? "Collapse" : "Expand"} flow alerts; ${totalCount} alerts, ${highCount} high severity; ${isConnected ? "Schwab live" : "offline"}`}
+              aria-label={`${isOpen ? "Collapse" : "Expand"} flow alerts; ${totalCount} alerts, ${highCount} high severity; ${!isConnected ? "offline" : chainLabel === "closed" ? "market closed, last-session chain" : chainLabel === "stale" ? "Schwab chain stale" : "Schwab live"}`}
             >
               <span className="batcave-flow-alerts-summary flex items-center gap-2">
                 <Bell aria-hidden="true" className={`h-3.5 w-3.5 ${totalCount > 0 ? "text-amber-400" : "text-muted-foreground"}`} />
@@ -412,7 +422,15 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
                 )}
                 {/* Connection status indicator */}
                 <span className="flex items-center gap-1 ml-2">
-                  {isConnected ? (
+                  {isConnected && chainLabel === "closed" ? (
+                    <span className="flex items-center gap-1 text-[9px] text-sky-300" title="Market closed: alerts are read from the settled last-session chain and dated by it." data-testid="flow-alerts-closed">
+                      <Wifi aria-hidden="true" className="h-2.5 w-2.5" /> CLOSED · LAST SESSION
+                    </span>
+                  ) : isConnected && chainLabel === "stale" ? (
+                    <span className="flex items-center gap-1 text-[9px] text-amber-400" title={chainData?.staleReason ?? "chain stale"}>
+                      <Wifi aria-hidden="true" className="h-2.5 w-2.5" /> CHAIN STALE
+                    </span>
+                  ) : isConnected ? (
                     <span className="flex items-center gap-1 text-[9px] text-emerald-400">
                       <Wifi aria-hidden="true" className="h-2.5 w-2.5" /> SCHWAB LIVE
                     </span>
