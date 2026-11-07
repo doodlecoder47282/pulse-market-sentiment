@@ -1682,3 +1682,11 @@ and Chain Audit skeletons now say after 6 s what they are waiting on ("waiting o
 ... a cold read can take up to 25 s; after that the panel says what failed"). Display only. Test:
 tests/quant/skeleton-slow-note.test.ts. Step 6 remaining: the spacing items from the recording (the list
 was lost with the transcript; needs the owner's frames to redo).
+
+2026-11-07: Calendar copy (feat/calendar-copy), from the owner's Saturday recording. Three card defects:
+Nasdaq fills an empty forecast/actual cell with "&nbsp;", which the card printed verbatim ("Act: &nbsp;");
+cells are now decoded and an empty or dash-only cell is no value. A Nasdaq row with no country was let
+through as US (Australian "Building Approvals" shown on the US Monday); rows without an explicit US
+country are dropped (Nasdaq's calendar is global). Every earnings card and every unrecognised event
+carried the same generic "Market impact" paragraph; the note now appears only for specific releases (CPI,
+PPI, FOMC, auctions ...). Tests: tests/quant/calendar-copy.test.ts, sources-r2 updated.
