@@ -170,6 +170,9 @@ export interface Candidate {
   structure: CandidateStructure | null;
 }
 
+/** A candidate as the feed serves it: everything but the in-memory observation ring. */
+export type ServedCandidate = Omit<Candidate, "observations"> & { observationCount: number };
+
 export interface CandidateStructure {
   line: LinePosition;
   category: MemeClass;
@@ -1400,7 +1403,8 @@ export function startCryptoEngines(): void {
 export function getCryptoFeed(): {
   asOf: number;
   trackedCount: number;
-  candidates: Candidate[];
+  /** Served candidates: the raw observation ring is replaced by its count. */
+  candidates: ServedCandidate[];
   narrativeHeat: typeof narrativeHeat;
   narrativeUpdatedAt: number | null;
   narrativeSources: typeof narrativeSources;
