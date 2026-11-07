@@ -26,6 +26,8 @@
 //     Lee & Ready (1991), "Inferring Trade Direction from Intraday Data",
 //     J. Finance 46(2), https://doi.org/10.1111/j.1540-6261.1991.tb02683.x
 
+import { isRegularSessionOpen } from "./exchangeCalendar";
+
 export type OfiDataState = "ok" | "partial" | "unavailable";
 export type OfiMethod = "tick-rule-1m" | "lee-ready-l1" | "hybrid-l1";
 export type OfiTradeLevelCounts = { quoteRule: number; tickRule: number; unsigned: number };
@@ -112,8 +114,12 @@ export function ofiTrendWindowComplete(bars: Array<{ volumeMissing?: boolean }>)
   return w.length >= OFI_TREND_WINDOW && w.every((b) => b.volumeMissing !== true);
 }
 
-export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
+export function ofiApiPayload(trend: OfiTrendLike, nowMs: number, sessionOpen: boolean = isRegularSessionOpen(nowMs)) {
   const all = trend.bars;
+  // Market closed: the tape is the settled last-session copy. Its age is real
+  // but it is not stale (nothing can print), and no trend is claimed for a
+  // session that is over. The 5-min max age applies in the session only.
+  const lastSession = !sessionOpen && all.length > 0;
   const firstGap = all.findIndex((b) => b.volumeMissing === true);
   const tailStart = Math.max(0, all.length - OFI_TAIL_BARS);
   const tail: OfiApiBar[] = all.slice(tailStart).map((b, i) => {
@@ -152,6 +158,8 @@ export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
     trendWindowMissingBars,
     trendComplete,
     asOfMs: all.length > 0 ? all[all.length - 1].ts : null,
+    sessionOpen,
+    lastSession,
     capturedAt: Math.floor(nowMs / 1000),
     method: trend.method ?? "tick-rule-1m",
     methodLabel: m.methodLabel,

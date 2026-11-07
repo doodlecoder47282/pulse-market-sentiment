@@ -53,6 +53,9 @@ type OfiResponse = {
   trendWindowMissingBars?: number;
   trendComplete?: boolean;
   asOfMs?: number | null;
+  /** Regular session open at capture; when false the tape is the settled last-session copy. */
+  sessionOpen?: boolean;
+  lastSession?: boolean;
   capturedAt: number;
   /** Signing method (server/ofiPayload.ts ofiMethodLabel); label follows it. */
   method?: "tick-rule-1m" | "lee-ready-l1" | "hybrid-l1";
@@ -131,9 +134,12 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
   // Observed zero: every bar has real volume and nets to zero signed flow.
   // That is a reading, not a dead feed, and is labelled as such.
   const observedZero = data.bars.every(b => !b.volumeMissing && b.signedVolume === 0) && data.cumulativeNow === 0;
-  // A stale tape (last bar past the max age) never carries a trend badge.
-  const tapeStale = effectiveDataState(state, ageFromAsOf(data.asOfMs ?? null, Date.now()), OFI_MAX_AGE_MS) === "stale";
-  const trendComplete = data.trendComplete === true && !observedZero && !tapeStale;
+  // A stale tape (last bar past the max age IN THE SESSION) never carries a trend
+  // badge; after the close the tape is the last-session copy: not stale, and the
+  // trend of a finished session is shown as that, not as a current trend.
+  const closed = data.lastSession === true;
+  const tapeStale = !closed && effectiveDataState(state, ageFromAsOf(data.asOfMs ?? null, Date.now()), OFI_MAX_AGE_MS) === "stale";
+  const trendComplete = data.trendComplete === true && !observedZero && !tapeStale && !closed;
   const missingInWindow = data.trendWindowMissingBars ?? 0;
   const trendColor =
     data.trend === "BULLISH" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
@@ -175,7 +181,8 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
           state={observedZero ? "observed_zero" : state}
           reason={data.dataStateReason}
           asOf={data.asOfMs ?? null}
-          maxAgeMs={OFI_MAX_AGE_MS}
+          maxAgeMs={closed ? null : OFI_MAX_AGE_MS}
+          lastSession={closed}
           source="Schwab"
         />
         {trendComplete ? (
@@ -192,7 +199,9 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
           </>
         ) : (
           <span className="ml-auto font-mono text-[11px] text-muted-foreground" data-testid="ofi-trend-withheld">
-            {tapeStale
+            {closed
+              ? `last session's tape: closed ${data.trend.toLowerCase()} (15m ${fmtVol(data.slope15m)})`
+              : tapeStale
               ? "trend withheld: tape stale"
               : observedZero
               ? "no trend: signed volume nets to 0"

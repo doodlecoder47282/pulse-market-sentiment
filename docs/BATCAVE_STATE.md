@@ -1682,3 +1682,14 @@ and Chain Audit skeletons now say after 6 s what they are waiting on ("waiting o
 ... a cold read can take up to 25 s; after that the panel says what failed"). Display only. Test:
 tests/quant/skeleton-slow-note.test.ts. Step 6 remaining: the spacing items from the recording (the list
 was lost with the transcript; needs the owner's frames to redo).
+
+2026-11-07: Flow tab closed-market labels (feat/flow-closed-labels), from the Saturday recording. Three
+false states on a closed market: the Put/Call panel's badge pulsed "live" and the alerts header said
+"SCHWAB LIVE" while 16 "unusual volume" alerts were dated 12:14 ET Saturday (Friday's volume, stamped with
+the poll time); the signed-tick histogram read "STALE · Schwab 20h" against a 5-min cap that only applies in
+the session. Now: the flow snapshot carries chainLastSession and the badge reads "closed"; alerts are dated
+by the chain's own asOfMs and the header reads "CLOSED · LAST SESSION" (or "CHAIN STALE" when the chain
+really is), and the panel polls a settled chain every 10 min instead of every 30 s (120 identical
+requests an hour); the OFI payload carries sessionOpen/lastSession, the histogram shows "last session" and
+"last session's tape: closed bullish (15m ...)" instead of a stale warning and a withheld trend. Test:
+tests/quant/flow-closed-labels.test.ts.
