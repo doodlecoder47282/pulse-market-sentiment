@@ -25,17 +25,22 @@ function session(dayIndex: number, seed: number) {
   }
   return bars;
 }
-const dayOf = (ms: number) => ({ date: `D${Math.floor(ms / 86_400_000)}`, mod: Math.floor((ms % 86_400_000) / 60_000) });
+const dayOf = (ms: number) => ({ date: `D${String(Math.floor(ms / 86_400_000)).padStart(3, "0")}`, mod: Math.floor((ms % 86_400_000) / 60_000) });
 
 test("profile: flat below the session floor, U-shaped and normalised with enough sessions", () => {
   const few = estimateVarianceProfile([...session(0, 1), ...session(1, 2)], dayOf);
   assert.equal(few.source, "flat");
+  assert.equal(few.sessions, 2, "the payload carries how many are stored even when flat");
   assert.match(few.note, new RegExp(`2 complete sessions stored, ${MIN_SESSIONS} needed`));
   assert.equal(few.slotShare.length, FULL_SESSION_SLOTS);
   const bars = Array.from({ length: 25 }, (_, d) => session(d, d + 7)).flat();
   const p = estimateVarianceProfile(bars, dayOf);
   assert.equal(p.source, "empirical");
   assert.equal(p.sessions, 20, "uses the most recent 20");
+  // The first bar's own move counts in slot 0 when the open is known.
+  const withOpen = bars.map((b, i, a) => ({ ...b, open: i > 0 && dayOf(a[i - 1].t).date === dayOf(b.t).date ? a[i - 1].close : b.close * 0.999 }));
+  const p2 = estimateVarianceProfile(withOpen, dayOf);
+  assert.ok(p2.slotShare[0] > p.slotShare[0], "slot 0 gains the opening bar's return");
   assert.ok(Math.abs(p.slotShare.reduce((s, v) => s + v, 0) - 1) < 1e-9);
   const open = p.slotShare[0], lunch = p.slotShare[39], close = p.slotShare[77];
   assert.ok(open > 3 * lunch && close > 3 * lunch, `U-shape: open ${open}, lunch ${lunch}, close ${close}`);

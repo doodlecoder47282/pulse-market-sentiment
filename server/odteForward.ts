@@ -39,7 +39,7 @@ export async function storedVarianceProfile(nowMs = Date.now()): Promise<Varianc
     // build the forward with injected deps and must not open the database.
     const { sqlite } = await import("./storage");
     // Last ~45 calendar days of bars is enough for 20 complete sessions.
-    const rows = sqlite.prepare("SELECT t, close FROM spx_minute_bars WHERE t >= ? ORDER BY t").all(nowMs - 45 * 86_400_000) as Array<{ t: number; close: number }>;
+    const rows = sqlite.prepare("SELECT t, open, close FROM spx_minute_bars WHERE t >= ? ORDER BY t").all(nowMs - 45 * 86_400_000) as Array<{ t: number; open: number; close: number }>;
     p = estimateVarianceProfile(rows, etDayMod);
   } catch (e: any) {
     p = flatProfile(`stored bars unreadable: ${String(e?.message ?? e).slice(0, 80)}`);

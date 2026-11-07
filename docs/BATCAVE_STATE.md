@@ -1718,3 +1718,11 @@ alone and are proven identical under any profile (test). Bands are clamped non-d
 profile can never draw a band that narrows. Storage is read lazily and cached 30 min; tests and the demo
 harness inject deps and open no database. Tests: tests/quant/intraday-variance.test.ts (synthetic U-shaped
 sessions), odte suite 55/55.
+Review of feat/odte-tod-variance: no MUST-FIX, MERGE-READY. SHOULD-FIX taken: the opening bar's own
+open-to-close move now counts in slot 0 (it was dropped, understating the opening slot by about 20%); the
+flat profile's payload carries the stored-session count; the chip's flat sub-text is short ("flat: 3 of 10
+sessions stored" / "flat: stored bars unreadable") and the chip row is 3 columns at sm, 6 at lg so
+"Pin · walls · flip" no longer wraps to three lines; test dates zero-padded so "most recent 20" is really
+exercised. Verified by the reviewer: invariance of touch / close / expected range under any deterministic
+time change, adversarial profiles (all variance in one slot, zero windows) draw sane bands, no new DB open
+in the request path, demo edition reads flat cleanly.

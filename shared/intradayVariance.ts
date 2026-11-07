@@ -35,6 +35,8 @@ export interface MinuteBarLike {
   /** Bar open, epoch ms. */
   t: number;
   close: number;
+  /** Bar open price; when present the first bar's own open->close move counts (else slot 0 would lose one return). */
+  open?: number;
 }
 
 export interface VarianceProfile {
@@ -49,10 +51,10 @@ export interface VarianceProfile {
   peakRatio: number;
 }
 
-export function flatProfile(reason: string): VarianceProfile {
+export function flatProfile(reason: string, sessionsStored = 0): VarianceProfile {
   const share = 1 / FULL_SESSION_SLOTS;
   return {
-    source: "flat", sessions: 0, slotShare: Array(FULL_SESSION_SLOTS).fill(share), peakRatio: 1,
+    source: "flat", sessions: sessionsStored, slotShare: Array(FULL_SESSION_SLOTS).fill(share), peakRatio: 1,
     note: `variance spread evenly over the remaining minutes (${reason})`,
   };
 }
@@ -71,14 +73,14 @@ export function estimateVarianceProfile(
   const want = opts.sessions ?? PROFILE_SESSIONS;
   const minS = opts.minSessions ?? MIN_SESSIONS;
   // Group by session date, in time order.
-  const byDay = new Map<string, Array<{ mod: number; close: number }>>();
+  const byDay = new Map<string, Array<{ mod: number; close: number; open?: number }>>();
   const sorted = [...bars].filter((b) => Number.isFinite(b.t) && Number.isFinite(b.close) && b.close > 0).sort((a, b) => a.t - b.t);
   for (const b of sorted) {
     const { date, mod } = dayOf(b.t);
     if (mod < 0 || mod >= FULL_SESSION_MIN) continue; // pre/post-market bars are not the session
     let arr = byDay.get(date);
     if (!arr) byDay.set(date, (arr = []));
-    arr.push({ mod, close: b.close });
+    arr.push({ mod, close: b.close, open: Number.isFinite(b.open) && (b.open as number) > 0 ? b.open : undefined });
   }
   // Per complete session: squared 1-min log returns summed into slots, then
   // normalised so each session contributes one unit (a quiet day and a wild
@@ -88,6 +90,12 @@ export function estimateVarianceProfile(
     const slotsSeen = new Set(arr.map((x) => Math.floor(x.mod / SLOT_MIN)));
     if (slotsSeen.size < FULL_SESSION_SLOTS) continue; // partial or half day
     const slots = Array(FULL_SESSION_SLOTS).fill(0);
+    // The first bar's own open->close move belongs to slot 0 (otherwise the
+    // opening slot, the one this profile exists for, loses one of its returns).
+    if (arr[0].open != null) {
+      const r0 = Math.log(arr[0].close / arr[0].open);
+      if (Number.isFinite(r0)) slots[Math.floor(arr[0].mod / SLOT_MIN)] += r0 * r0;
+    }
     for (let k = 1; k < arr.length; k++) {
       const r = Math.log(arr[k].close / arr[k - 1].close);
       if (!Number.isFinite(r)) continue;
@@ -98,7 +106,7 @@ export function estimateVarianceProfile(
     perSession.push(slots.map((v) => v / tot));
   }
   const used = perSession.slice(-want);
-  if (used.length < minS) return flatProfile(`${used.length} complete session${used.length === 1 ? "" : "s"} stored, ${minS} needed for the time-of-day profile`);
+  if (used.length < minS) return flatProfile(`${used.length} complete session${used.length === 1 ? "" : "s"} stored, ${minS} needed for the time-of-day profile`, used.length);
   const mean = Array(FULL_SESSION_SLOTS).fill(0);
   for (const s of used) for (let k = 0; k < FULL_SESSION_SLOTS; k++) mean[k] += s[k] / used.length;
   // Floor: no slot may carry zero variance (the map would stand still there).
