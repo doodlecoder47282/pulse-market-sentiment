@@ -1748,3 +1748,13 @@ says 1σ bins do not show a two-humped shape (the histogram does); the client ty
 Reviewer's realism check: on quantised SPX mids with a one-tick bounce on up to 30% of quotes the panel
 reads on 99-100% of chains at normal vol; with a full two-tick bounce on a wide-vol day it says "not
 readable" often, which is the honest state. Demo sentence now reads 6% distance (was 20%).
+Third check of feat/odte-implied-close: one localised MUST-FIX, taken. A stale at-the-money leg of 5-8
+mid-ticks (not enough to trip the 5% renormalisation gate) clipped the at-the-money butterfly to zero, and
+the median interpolation jumped a whole bucket past the skew floor ("-2.6 pts, longer upper tail"). The
+diagnostics now count clipped strikes inside the interquartile body; with any such hole the sentence
+reads "median not read: 1 strike inside its body priced out of line (clipped to zero)" and claims no
+skew. The renormalised share is stated whenever it is 0.5% or more. Reviewer verified: the
+median-of-parity forward is exact under every stale-leg case; a book with all puts 0.3 rich reads as a
+-0.3 forward gap with the density intact; the skewed smile's +1.5 pt median was mostly a 5-pt-grid artefact
+(+0.4 on a 1-pt grid), so "no skew readable" is the honest wording while the share-above and the two
+sigmas carry the real feature.

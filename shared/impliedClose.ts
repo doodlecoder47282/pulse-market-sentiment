@@ -61,8 +61,8 @@ export interface ImpliedClose {
   forward: number | null;
   /** Mass resolution: the smallest bucket mass a one-tick mid change can produce (tick / bucket). Noise below this is not a reading. */
   resolution: number | null;
-  /** Strikes used, butterflies clipped at zero (mids out of line), tail masses. */
-  diagnostics: { strikes: number; clipped: number; lowTail: number; highTail: number; renormalised: number; sigmaFromVariance?: number | null };
+  /** Strikes used, butterflies clipped at zero (mids out of line), tail masses; clippedInBody = clipped strikes inside the interquartile range (a hole there moves the median a whole bucket). */
+  diagnostics: { strikes: number; clipped: number; clippedInBody?: number; lowTail: number; highTail: number; renormalised: number; sigmaFromVariance?: number | null };
 }
 
 export const IMPLIED_CLOSE_METHOD = "Breeden-Litzenberger butterflies on 0DTE option mids (calls above the parity forward, puts below via parity), zero rate, no smoothing";
@@ -121,10 +121,11 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
   // Inner buckets centred on each interior strike: (K - w/2, K + w/2).
   const inner: ImpliedCloseBucket[] = [];
   let clipped = 0;
+  const clippedAt: number[] = [];
   for (let i = 1; i < n - 1; i++) {
     const k = best[i];
     const fly = (C(best[i - 1]) - 2 * C(k) + C(best[i + 1])) / bucket;
-    if (fly < 0) clipped++;
+    if (fly < 0) { clipped++; clippedAt.push(k); }
     inner.push({ lo: k - bucket / 2, hi: k + bucket / 2, p: Math.max(0, fly) });
   }
   if (clipped / inner.length > MAX_CLIPPED_SHARE) {
@@ -174,10 +175,11 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
   };
   const median = quantile(0.5), q25 = quantile(0.25), q75 = quantile(0.75);
   const sigmaIqr = q25 != null && q75 != null ? (q75 - q25) / 1.349 : null;
+  const clippedInBody = q25 != null && q75 != null ? clippedAt.filter((k) => k >= q25 && k <= q75).length : clippedAt.length;
   return {
     ...base, state: "ok", reason: null, buckets, forward: r2(forward),
     sigma: sigmaIqr == null ? null : r2(sigmaIqr), mean: r2(mean), median: median == null ? null : r2(median),
-    diagnostics: { strikes: n, clipped, lowTail: r4(lowTail * scale), highTail: r4(highTail * scale), renormalised: r4(Math.abs(1 - raw)), sigmaFromVariance: r2(Math.sqrt(v)) },
+    diagnostics: { strikes: n, clipped, clippedInBody, lowTail: r4(lowTail * scale), highTail: r4(highTail * scale), renormalised: r4(Math.abs(1 - raw)), sigmaFromVariance: r2(Math.sqrt(v)) },
   };
 }
 
@@ -243,8 +245,12 @@ export function compareCloseDistributions(
   const tailNote = sv != null && Math.abs(sv - implied.sigma) > 0.1 * implied.sigma ? `; its body is ±${implied.sigma} but its tails push the variance sigma to ±${sv}` : "";
   // Below half a strike bucket the median cannot be placed better than the grid: no skew is claimed.
   const skewFloor = (implied.bucket ?? binWidth) / 2;
-  const skewWord = Math.abs(medianShift) < skewFloor ? `median within half a strike of its forward (no skew readable at ${implied.bucket ?? binWidth}-pt strikes)` : medianShift > 0 ? `median ${medianShift > 0 ? "+" : ""}${medianShift} pts above its forward (longer lower tail)` : `median ${medianShift} pts below its forward (longer upper tail)`;
+  // A clipped (zero-mass) strike inside the interquartile body moves the median a whole bucket: no skew is claimed then either.
+  const holeInBody = (implied.diagnostics.clippedInBody ?? 0) > 0;
+  const skewWord = holeInBody ? `median not read: ${implied.diagnostics.clippedInBody} strike${implied.diagnostics.clippedInBody === 1 ? "" : "s"} inside its body priced out of line (clipped to zero)`
+    : Math.abs(medianShift) < skewFloor ? `median within half a strike of its forward (no skew readable at ${implied.bucket ?? binWidth}-pt strikes)` : medianShift > 0 ? `median ${medianShift > 0 ? "+" : ""}${medianShift} pts above its forward (longer lower tail)` : `median ${medianShift} pts below its forward (longer upper tail)`;
   const fwdNote = Math.abs(forwardMinusSpot) >= 0.25 ? `; its parity forward sits ${forwardMinusSpot > 0 ? "+" : ""}${forwardMinusSpot} pts from the underlying print` : "";
-  const text = `the chain's own settle distribution is ${widthWord} the random walk's (implied 1σ ±${implied.sigma} from its interquartile range vs ±${wiener.sigma}${tailNote}); ${skewWord}, ${Math.round(above * 100)}% of its mass above spot (the random walk has 50%)${fwdNote}; on 1σ-wide bins the two differ by ${Math.round(tvDistance * 100)}% of their mass (strike-bucket detail below about ${Math.round((implied.resolution ?? 0) * 100)}% per bucket is mid-tick noise, not a reading; bins this wide do not show a two-humped shape, the histogram does). A description of two models, not a signal.`;
+  const renormNote = implied.diagnostics.renormalised >= 0.005 ? `; ${Math.round(implied.diagnostics.renormalised * 1000) / 10}% of mass renormalised` : "";
+  const text = `the chain's own settle distribution is ${widthWord} the random walk's (implied 1σ ±${implied.sigma} from its interquartile range vs ±${wiener.sigma}${tailNote}); ${skewWord}, ${Math.round(above * 100)}% of its mass above spot (the random walk has 50%)${fwdNote}${renormNote}; on 1σ-wide bins the two differ by ${Math.round(tvDistance * 100)}% of their mass (strike-bucket detail below about ${Math.round((implied.resolution ?? 0) * 100)}% per bucket is mid-tick noise, not a reading; bins this wide do not show a two-humped shape, the histogram does). A description of two models, not a signal.`;
   return { tvDistance, binWidth, sigmaDiff, medianShift, forwardMinusSpot, pAboveSpotImplied: r4(above), text };
 }

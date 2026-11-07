@@ -148,5 +148,15 @@ test("one stale ATM leg cannot move the forward or read as skew (median-of-parit
   const cmp = compareCloseDistributions({ spot: S, sigma: 45 }, a, normCdf)!;
   assert.match(cmp.text, /median within half a strike of its forward \(no skew readable at 5-pt strikes\)/);
   assert.equal(stale(0.2).forward, 6000);
+  // 5-8 mid-ticks stale: not refused (renormalised under 5%), but the clipped hole at the money is inside the
+  // body, so no skew is claimed and the hole and the renormalised share are stated.
+  for (const d of [0.125, 0.15, 0.2]) {
+    const s = stale(d);
+    assert.equal(s.state, "ok", `d=${d}`);
+    const t = compareCloseDistributions({ spot: S, sigma: 45 }, s, normCdf)!.text;
+    assert.match(t, /median not read: 1 strike inside its body priced out of line/, `d=${d}: ${t}`);
+    assert.doesNotMatch(t, /longer (upper|lower) tail/);
+    assert.match(t, /% of mass renormalised/);
+  }
   assert.equal(stale(0.4).state, "unavailable", "a leg that far off the others is refused, not read");
 });
