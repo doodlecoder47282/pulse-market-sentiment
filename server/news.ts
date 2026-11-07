@@ -327,8 +327,15 @@ export function officialReleaseEvents(
 export function nasdaqEconEvents(rows: Array<{ date: string; time: string; eventName: string; country: string; impact: number; previous?: string; forecast?: string; actual?: string }>): CalendarEvent[] {
   const spec = SOURCES.nasdaq_econ;
   const out: CalendarEvent[] = [];
+  // Nasdaq fills an empty cell with "&nbsp;" (or a dash): that is no value, never a value to print.
+  const cell = (v: string | undefined): string | undefined => {
+    const t = String(v ?? "").replace(/&nbsp;|&#160;|\u00a0/g, " ").trim();
+    return t && !/^[-–—]+$/.test(t) ? t : undefined;
+  };
   for (const row of rows) {
-    if (row.country && !/US|United States/i.test(row.country)) continue;
+    // Nasdaq's calendar is global. A row with no country is not assumed US (the
+    // "Building Approvals" case: an Australian release shown as a US event).
+    if (!row.country || !/^(US|USA|United States)$/i.test(row.country.trim())) continue;
     if (!row.eventName) continue;
     // Nasdaq times are Eastern wall clock. A missing or non-clock time
     // ("All Day", "Tentative") is kept as date-only, not guessed as 8:30.
@@ -342,9 +349,9 @@ export function nasdaqEconEvents(rows: Array<{ date: string; time: string; event
       when,
       whenLabel: tm ? formatEtLabel(when) : formatEtDateLabel(when),
       importance: row.impact >= 3 ? "HIGH" : row.impact >= 2 ? "MED" : "LOW",
-      previous: row.previous || undefined,
-      forecast: row.forecast || undefined,
-      actual: row.actual || undefined,
+      previous: cell(row.previous),
+      forecast: cell(row.forecast),
+      actual: cell(row.actual),
       source: spec.name,
       sourceId: spec.id,
       tier: spec.tier,

@@ -25,13 +25,26 @@ export interface OdteForwardDeps {
   getPriceHistory: (symbol: string, periodType: string, period: number, frequencyType: string, frequency: number, extended: boolean) => Promise<any>;
 }
 
+/** Days from now to the next trading day's expiry, at least 1 (today + tomorrow). */
+export function chainDteWindow(nowMs: number): number {
+  const today = etDate(nowMs);
+  const next = nextTradingDay(today);
+  const days = Math.round((Date.parse(`${next}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86400_000);
+  return Math.max(1, days);
+}
+
 export async function buildOdteForward(symbolIn: string, nowMs: number = Date.now(), depsIn?: OdteForwardDeps): Promise<OdteForwardResult> {
   const symbol = String(symbolIn || "$SPX").trim().toUpperCase() || "$SPX";
   // schwab.ts has narrower parameter types than the generic deps shape; the calls below stay inside them.
   const deps: OdteForwardDeps = depsIn ?? ((await import("./schwab")) as unknown as OdteForwardDeps);
   const proj = await import("./odteProjection");
+  // DTE window: 0-1 reaches today's and tomorrow's expiry. On a weekend or
+  // holiday the next session is further away, so the window is widened to
+  // reach it (Saturday: Monday is 2 days out); asking for 1 DTE then returned
+  // no expiries and the map read "unavailable" all weekend.
+  const dteWindow = chainDteWindow(nowMs);
   const [chain, hist] = await Promise.all([
-    deps.getOptionChain(symbol, 1),
+    deps.getOptionChain(symbol, dteWindow),
     deps.getPriceHistory(symbol, "day", 2, "minute", 5, false).catch(() => ({ candles: [] as any[] })),
   ]);
   if ("error" in chain) {
