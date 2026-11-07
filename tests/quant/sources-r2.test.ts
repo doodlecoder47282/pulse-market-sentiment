@@ -276,8 +276,15 @@ test("news calendar rows: official time exact, Nasdaq date-only time not guessed
     { date: "2026-10-15", time: "08:30", eventName: "Initial Jobless Claims", country: "United States", impact: 2 },
     { date: "2026-10-15", time: "All Day", eventName: "Holiday", country: "US", impact: 1 },
     { date: "2026-10-15", time: "04:00", eventName: "Euro CPI", country: "Euro Zone", impact: 3 },
+    // No country: Nasdaq's calendar is global, so this is not assumed US.
+    { date: "2026-10-15", time: "19:30", eventName: "Building Approvals", country: "", impact: 1 },
+    // Empty cells arrive as "&nbsp;": never printed as a value.
+    { date: "2026-10-16", time: "08:30", eventName: "Housing Starts", country: "US", impact: 2, previous: "1.30M", forecast: "&nbsp;", actual: "&nbsp;" },
   ]);
-  assert.equal(nq.length, 2);
+  assert.equal(nq.length, 3);
+  assert.equal(nq[2].previous, "1.30M");
+  assert.equal(nq[2].forecast, undefined);
+  assert.equal(nq[2].actual, undefined);
   assert.equal(nq[0].when, Date.UTC(2026, 9, 15, 12, 30) / 1000);
   assert.equal(nq[0].tierLabel, "unofficial");
   assert.equal(nq[1].timeExact, false);

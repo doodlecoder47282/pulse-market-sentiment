@@ -282,10 +282,12 @@ function resolveEventUrl(e: CalendarEvent): string {
   return "https://www.nasdaq.com/market-activity/economic-calendar";
 }
 
-// Impact bio per event — returns a short "how it affects markets under X
-// conditions" paragraph. Keyed first by recognizable title patterns, then by
-// a kind-level fallback so every card gets a bio.
-function resolveEventBio(e: CalendarEvent): string {
+/**
+ * A short hand-written note on how a KIND of release tends to trade: shown only
+ * where the note is specific to the release. Single-name earnings and unknown
+ * events get null, so forty cards in a week do not repeat one generic paragraph.
+ */
+function resolveEventBio(e: CalendarEvent): string | null {
   const t = e.title.toLowerCase();
 
   // -- High-signal specific releases --
@@ -371,13 +373,8 @@ function resolveEventBio(e: CalendarEvent): string {
     return "Triple Witching — quarterly expiry of index options, index futures, and single-stock options/futures stacked on the same day. Massive dealer hedging + passive rebalancing = headline volume spike, pin behavior into PM, regime reset the following Monday.";
   }
 
-  // -- Earnings generic --
-  if (e.kind === "EARNINGS") {
-    return "Single-name earnings. Beats-and-raise with strong guide → stock gaps up, pulls sector; weak guide crushes multiple regardless of beat. Mega-caps (AAPL/MSFT/NVDA/GOOGL/META/AMZN/TSLA) drag the index via passive flows; watch IV crush on the open.";
-  }
-
-  // Fallback (rare)
-  return "Scheduled market event. Check the release details for forecast vs. prior — surprises on either side typically produce the intraday vol.";
+  // Single-name earnings and unrecognised events: nothing specific to say per card.
+  return null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1520,16 +1517,18 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
                           {e.notes}
                         </div>
                       )}
-                      {/* Impact bio — how this event moves markets */}
-                      <div
-                        className="vault-bio mt-2 pt-1.5 text-[11px] leading-snug text-[#eaff66]/85"
-                        data-testid={`cal-bio-${e.id}`}
-                      >
-                        <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#39ff14]">
-                          Market Impact
-                        </span>
-                        {bio}
-                      </div>
+                      {/* Impact bio — how this kind of release tends to trade (specific releases only) */}
+                      {bio && (
+                        <div
+                          className="vault-bio mt-2 pt-1.5 text-[11px] leading-snug text-[#eaff66]/85"
+                          data-testid={`cal-bio-${e.id}`}
+                        >
+                          <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#39ff14]">
+                            Market Impact
+                          </span>
+                          {bio}
+                        </div>
+                      )}
                       <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] text-[#9eff2e]/55">
                         <TierBadge label={e.tierLabel} />
                         <span>{e.source}</span>
