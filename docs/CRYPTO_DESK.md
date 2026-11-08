@@ -44,7 +44,13 @@ Public, keyless feeds only unless the owner approves a keyed service.
 | Grades | grader 10 min; horizon pass; momentum peak sampling | continuous | outcome, peak + depth, horizon mark + depth |
 
 Retention: signals and grades are kept indefinitely (they are the sample).
-Candidates leave memory after 48 h without a signal. Rows the horizon pass
+Candidates leave memory after 48 h without a signal, or when the tracked set
+is over its 220 cap: an unscored arrival is kept for at least one momentum
+cycle (about 5 min), then the lowest keep-rank goes first (unscored and never
+answered, then PASS before WATCH before ENTER, lower score first). Market cap
+has one basis everywhere (`shared/cryptoCap.ts` capOf: DexScreener marketCap,
+else FDV, basis recorded on the row); GeckoTerminal never overwrites a
+DexScreener read younger than one cycle. Rows the horizon pass
 cannot price are marked NO_DATA, never deleted: survivorship is measured,
 not hidden. Market-cap basis (marketCap vs FDV) is recorded per row.
 

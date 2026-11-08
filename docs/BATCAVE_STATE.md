@@ -1799,3 +1799,15 @@ Fourth check of feat/odte-implied-close: no MUST-FIX; one residual of the same c
 shoulder, outside the body, still removed 4.5% of mass from one side and read as skew). Rule now: a chain
 with any clipped strike makes no skew claim ("median not read: N strikes priced out of line (clipped to
 zero[, inside its body])"); width, share above spot, forward gap and distance are still stated.
+
+2026-11-08: Crypto discovery unfrozen and one cap basis (feat/crypto-cap-eviction, review item 2). Over
+the 220 cap, any scored name (a PASS at 0 included) outranked every unscored arrival, so new pools were
+evicted in the tick they arrived and the universe froze about 15 min after a restart: the first-ENTER
+sample could not grow. shared/cryptoCap.ts evictOverCap keeps an unscored arrival for one momentum cycle,
+evicts never-answered names first, then PASS before WATCH before ENTER by score (220 scored + 20 arrivals:
+all 20 arrivals survive, 20 lowest PASS leave; test). Cap basis: GeckoTerminal FDV landed in marketCap
+every 60 s and was recorded and graded as a market cap (false RUGGED when DexScreener later reported a
+real marketCap; NO_DATA while priced when marketCap was null and only FDV existed). capOf (marketCap else
+FDV, basis named) is now read by the scorer, persistSignal, the peak and plan samplers and the grader's
+live path; GeckoTerminal does not overwrite a DexScreener read younger than one cycle. No rule-book value
+changed. Tests: tests/quant/crypto-cap.test.ts; crypto suite 96/96. Needs the standing crypto review.
