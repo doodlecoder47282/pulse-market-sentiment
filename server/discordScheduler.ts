@@ -819,7 +819,9 @@ async function maybeFireWeeklyCalibration(): Promise<void> {
   WEEKLY_CAL_FIRED.add(date);
   console.log(`[discordScheduler] firing weekly calibration card for ${date}`);
   try {
-    await postCalibrationCard(7);
+    // The window is CALIBRATION_CARD_DAYS (30): the 20-day gate applies to the
+    // days found inside it, so a 7-day window could never show a reading.
+    await postCalibrationCard();
   } catch (e: any) {
     console.warn(`[discordScheduler] weekly calibration card failed: ${e?.message ?? e}`);
   }
