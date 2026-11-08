@@ -48,6 +48,7 @@ function regimeWord(r: string): string {
     case "CHOP_WEAK": return "light chop";
     case "CHOP_STRONG": return "heavy chop";
     case "GAMMA_UNKNOWN": return "gamma unknown";
+    case "INPUTS_UNAVAILABLE": return "inputs unavailable";
     case "UNAVAILABLE": return "unavailable";
     default: return r.toLowerCase();
   }
@@ -95,7 +96,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const tone = regimeTone(currentRegime);
   // When the regime is unknown, tab copy describes the tab only; it never
   // builds a sentence around "unavailable regime" or implies a neutral read.
-  const known = currentRegime !== "UNAVAILABLE" && currentRegime !== "GAMMA_UNKNOWN";
+  const known = currentRegime !== "UNAVAILABLE" && currentRegime !== "GAMMA_UNKNOWN" && currentRegime !== "INPUTS_UNAVAILABLE";
   const withRegime = (base: string) => (known ? `${base} — ${regimeWord(currentRegime)} regime.` : `${base}.`);
   // Two different "unknown" causes, named apart: the predictor did not answer, or it answered without gamma data.
   const regimeMissing = models == null

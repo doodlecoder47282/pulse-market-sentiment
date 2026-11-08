@@ -1799,3 +1799,19 @@ Fourth check of feat/odte-implied-close: no MUST-FIX; one residual of the same c
 shoulder, outside the body, still removed 4.5% of mass from one side and read as skew). Rule now: a chain
 with any clipped strike makes no skew claim ("median not read: N strikes priced out of line (clipped to
 zero[, inside its body])"); width, share above spot, forward gap and distance are still stated.
+
+2026-11-08: Regime call graded on its own horizon (feat/regime-grading-horizon, review item 1). A 5-120
+minute regime call was graded on the SPY close-to-close move about 26 h later, an event it never forecast,
+and the calibration plot's x-axis treated the heuristic softmax weight as a probability. The grader
+(shared/regimeGrade.ts, pure) now reads the realised $SPX path over the called horizon from the stored
+1-minute bars: |net move| against 0.5% x sqrt(H/390) (the daily proxy scaled by the square-root rule);
+TREND hits at or above, CHOP and neutral below; a horizon past the close is graded to the last bar and
+marked truncated; missing bars wait a day then close as insufficient_history, never a 0% move. Rows graded
+under the earlier proxy are excluded from every figure and counted apart ("N graded under the earlier
+close-to-close proxy, excluded"); the plot axis reads "heuristic score (not a probability)". Also: a
+missing DFI (DEX curve under 3 points) was 0 and classified NEUTRAL with status "ready"; a missing pivot or
+1-day EM produced "pin pressure" / "room to trend" from nothing. models.ts now emits dfiState; the
+predictor returns INPUTS_UNAVAILABLE (own state, like GAMMA_UNKNOWN) with no candidates, zero confidence
+(so nothing is logged) and no proximity driver; the history records no sample from it. Tests:
+tests/quant/regime-grading-horizon.test.ts; regime, edge, headline, models suites pass; r3-4 fixture
+completed. Still to measure: the new grades start from zero (the old ones are not comparable).

@@ -18,7 +18,8 @@ type RegimeBucket =
   | "NEUTRAL"
   | "CHOP_WEAK"
   | "CHOP_STRONG"
-  | "GAMMA_UNKNOWN";
+  | "GAMMA_UNKNOWN"
+  | "INPUTS_UNAVAILABLE";
 
 interface RegimeCandidate {
   regime: RegimeBucket;
@@ -97,6 +98,13 @@ const REGIME_META: Record<
     bar: "bg-muted/40",
     icon: Minus,
     play: "No regime reading: GEX missing or immaterial at spot, so no trend/chop bucket applies.",
+  },
+  INPUTS_UNAVAILABLE: {
+    plain: "Inputs unavailable",
+    tone: "text-muted-foreground",
+    bar: "bg-muted/40",
+    icon: Minus,
+    play: "No regime reading: the delta-flow slope, pivot or expected move is missing in this build; a zero that was never observed is not read as neutral.",
   },
   CHOP_STRONG: {
     plain: "Heavy Chop",
@@ -183,13 +191,13 @@ export default function RegimePredictPanel() {
   }
 
   // Gamma unknown (or no candidates at all): its own state, never "Neutral".
-  if (data.currentRegime === "GAMMA_UNKNOWN" || data.candidates.length === 0) {
+  if (data.currentRegime === "GAMMA_UNKNOWN" || data.currentRegime === "INPUTS_UNAVAILABLE" || data.candidates.length === 0) {
     return (
       <Card className="border-border/60 bg-muted/10" data-testid="card-regime-predict-gamma-unknown">
         <CardContent className="p-4">
           <div className="flex items-center gap-2 mb-2">
             <Minus className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-semibold text-foreground">What&apos;s Next — {REGIME_META.GAMMA_UNKNOWN.plain}</span>
+            <span className="text-sm font-semibold text-foreground">What&apos;s Next — {(REGIME_META[data.currentRegime] ?? REGIME_META.GAMMA_UNKNOWN).plain}</span>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">{data.headline}</p>
         </CardContent>
