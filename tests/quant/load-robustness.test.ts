@@ -84,5 +84,5 @@ test("wiring: cache sweep on write, killbox seeder through the shared ladder, 0D
     assert.doesNotMatch(c, /refetchInterval: (4_000|5_000|10_000|15_000),/, `${f}: raw sub-minute interval left`);
   }
   // The server calendar is the shared one (one session clock for both sides).
-  assert.match(readFileSync(new URL("../../server/exchangeCalendar.ts", import.meta.url), "utf8"), /export \* from "\.\.\/shared\/exchangeCalendar";/);
+  assert.match(readFileSync(new URL("../../server/exchangeCalendar.ts", import.meta.url), "utf8"), /export \* from "\.\.\/shared\/exchangeCalendar\.ts";/);
 });
