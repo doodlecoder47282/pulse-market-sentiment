@@ -600,7 +600,7 @@ test("regime: unknown gamma -> GAMMA_UNKNOWN (not NEUTRAL), no candidates; unkno
   assert.equal(flipRateOf(h2).rate, 1 / 4);
   const rt = src("server/realtimeTargets.ts");
   assert.match(rt, /return "GAMMA_UNKNOWN";/);
-  assert.match(rt, /if \(rawRegime === "GAMMA_UNKNOWN"\) \{/);
+  assert.match(rt, /if \(rawRegime === "GAMMA_UNKNOWN" \|\| rawRegime === "INPUTS_UNAVAILABLE"\) \{/);
   assert.match(src("client/src/components/RegimePredictPanel.tsx"), /plain: "Gamma unknown"/);
   assert.match(src("server/headline.ts"), /models\?\.currentRegime \?\? "UNAVAILABLE"/);
 });

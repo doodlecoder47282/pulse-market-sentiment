@@ -26,6 +26,8 @@ test("grades over the called horizon, not a day later; trend hits on a net move,
   const g = gradeRegimeCallOnPath(trending, t0, 20, "TREND_WEAK", CLOSE);
   assert.equal(g.result, "ok");
   assert.equal(g.coveredMinutes, 20, "exit bar is the horizon end, not the next session");
+  // No look-ahead: the entry bar closed at or before the call, the exit bar at or before the horizon end.
+  assert.ok(g.entryT! + 60_000 <= t0 && g.exitT! + 60_000 <= t0 + 20 * 60_000);
   assert.ok(g.absMovePct! > g.threshold!);
   assert.equal(g.regimeMatch, 1);
   assert.equal(gradeRegimeCallOnPath(trending, t0, 20, "CHOP_STRONG", CLOSE).regimeMatch, 0);
@@ -43,7 +45,7 @@ test("a horizon past the close is truncated to the last bar and marked; missing 
   assert.equal(g.result, "ok");
   assert.equal(g.truncatedAtClose, true);
   assert.equal(g.exitT, CLOSE - 60_000);
-  assert.equal(g.coveredMinutes, 9);
+  assert.equal(g.coveredMinutes, 10, "last completed bar before the call (15:49) to the last bar of the session (15:59)");
   // No bars near the call: insufficient.
   const sparse = b.filter((x) => x.t < OPEN + 30 * 60_000);
   const miss = gradeRegimeCallOnPath(sparse, OPEN + 60 * 60_000, 20, "TREND_WEAK", CLOSE);
@@ -87,6 +89,12 @@ test("predictor: missing DFI, pivot or EM is 'inputs unavailable' with no candid
   assert.deepEqual(b.candidates, []);
   assert.match(b.headline, /main pivot, 1-day expected move not available/);
   assert.ok(!b.driverNotes.some((n) => /pin pressure|trend has room/.test(n)), b.driverNotes.join(" | "));
+  // The other caller that feeds the history: an unavailable DFI is NaN, which recordRawRegime drops.
+  const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
+  assert.equal((r.match(/daily\.audit\?\.dfiState === "unavailable" \|\| daily\.audit\?\.dfi == null \? NaN : Number\(daily\.audit\.dfi\)/g) ?? []).length, 2);
+  assert.doesNotMatch(r, /Number\(daily\.audit\?\.dfi \?\? 0\)/);
+  assert.match(readFileSync(new URL("../../server/realtimeTargets.ts", import.meta.url), "utf8"), /return "INPUTS_UNAVAILABLE";/);
+  assert.match(readFileSync(new URL("../../server/headline.ts", import.meta.url), "utf8"), /currentRegime === "INPUTS_UNAVAILABLE" && typeof \(models as any\)\?\.headline === "string"/);
   assert.ok(Number.isNaN(b.drivers.gammaFlipProxFrac));
   // All inputs present: a reading as before.
   const c = predictTransition({ ...base, audit: { dfi: 1.2, dfiState: "ok", gammaZone: "y", slope: "UP 0.2 -> 0.3", mainPivot: 6010, scenarioTargets: { oneDayEM: 40 } } } as any);

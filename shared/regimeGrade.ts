@@ -49,7 +49,7 @@ export interface RegimeGrade {
   coveredMinutes: number | null;
 }
 
-export const REGIME_GRADE_METHOD = "horizon: $SPX 1-min bars, |net move| over the called horizon vs 0.5% x sqrt(H/390); TREND hits at or above, CHOP/neutral below";
+export const REGIME_GRADE_METHOD = "horizon: $SPX 1-min bars (last completed bar at the call and at the horizon end), |net move| over the called horizon vs 0.5% x sqrt(H/390); TREND hits at or above, CHOP/neutral below";
 /** The daily |move| proxy the threshold is scaled from. */
 export const DAILY_PROXY_PCT = 0.005;
 export const SESSION_MINUTES = 390;
@@ -89,19 +89,20 @@ export function gradeRegimeCallOnPath(
   };
   const sorted = bars.filter((b) => Number.isFinite(b.t) && Number.isFinite(b.close) && b.close > 0).sort((a, b) => a.t - b.t);
   if (!sorted.length) return base;
-  // Entry: the last bar at or before the call, within tolerance (the call reads
-  // the market as of its bar; a bar from long before is a different market).
+  // Entry: the last COMPLETED bar at the call (a bar opened at t closes at
+  // t + 1 min; using the bar that contains the call would read 60 s ahead),
+  // within tolerance: a bar from long before is a different market.
   let entry: MinuteClose | null = null;
-  for (const b of sorted) { if (b.t <= capturedAt) entry = b; else break; }
-  if (!entry || capturedAt - entry.t > ENTRY_TOLERANCE_MS) return base;
+  for (const b of sorted) { if (b.t + 60_000 <= capturedAt) entry = b; else break; }
+  if (!entry || capturedAt - (entry.t + 60_000) > ENTRY_TOLERANCE_MS) return base;
   // Exit: the horizon end, clamped to the session's last bar.
   const targetT = capturedAt + H * 60_000;
   const lastBarT = sessionCloseMs - 60_000; // the 15:59 bar closes at 16:00
   const truncatedAtClose = targetT > lastBarT;
   const exitTarget = Math.min(targetT, lastBarT);
   let exit: MinuteClose | null = null;
-  for (const b of sorted) { if (b.t <= exitTarget) exit = b; else break; }
-  if (!exit || exit.t <= entry.t || exitTarget - exit.t > ENTRY_TOLERANCE_MS) return base;
+  for (const b of sorted) { if (b.t + 60_000 <= exitTarget + (truncatedAtClose ? 60_000 : 0)) exit = b; else break; }
+  if (!exit || exit.t <= entry.t || exitTarget - exit.t > ENTRY_TOLERANCE_MS + 60_000) return base;
   const movePct = (exit.close - entry.close) / entry.close;
   const absMovePct = Math.abs(movePct);
   const threshold = horizonThreshold(H);

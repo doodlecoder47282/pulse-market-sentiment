@@ -101,7 +101,9 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   // Two different "unknown" causes, named apart: the predictor did not answer, or it answered without gamma data.
   const regimeMissing = models == null
     ? `Regime reading unavailable: ${predictWhy ?? "the predictor did not answer"}.`
-    : "Regime unknown until Schwab gamma and VIX term data arrive.";
+    : currentRegime === "INPUTS_UNAVAILABLE" && typeof (models as any)?.headline === "string"
+      ? `Regime: ${(models as any).headline}`
+      : "Regime unknown until Schwab gamma and VIX term data arrive.";
 
   // Whale flow last hour: quick directional count (shared/headlineLines.ts)
   const whaleSummary = whaleCoverageLine(whaleHist as any[] | null, Date.now(), coverage((flowSnap as any)?.scan, (flowSnap as any)?.running ?? null, Date.now()));

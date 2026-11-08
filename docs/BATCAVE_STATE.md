@@ -1815,3 +1815,10 @@ predictor returns INPUTS_UNAVAILABLE (own state, like GAMMA_UNKNOWN) with no can
 (so nothing is logged) and no proximity driver; the history records no sample from it. Tests:
 tests/quant/regime-grading-horizon.test.ts; regime, edge, headline, models suites pass; r3-4 fixture
 completed. Still to measure: the new grades start from zero (the old ones are not comparable).
+Review of feat/regime-grading-horizon: MERGE-READY, no MUST-FIX; three SHOULD-FIX taken: the second
+history feeder (/api/realtime-targets) still pushed a dfi=0 sample when dfiState was unavailable, and
+realtimeTargets' own detectRegime read it as a regime (both now INPUTS_UNAVAILABLE / NaN, dropped); the
+tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now carries the predictor's
+own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
+COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
+grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
