@@ -11,7 +11,7 @@
 // resolution and the CUSUM watchdog. No absolute letter grades: see
 // composeCalibrationCard.
 
-import { rollingBrier, recentForecastProbs } from "./calibration";
+import { rollingBrier, recentForecastProbs, CALIBRATION_CARD_DAYS } from "./calibration";
 import { composeCalibrationCard } from "./calibrationCardText";
 import { watchdogStatus } from "./cusumWatchdog";
 import { webhookOrWarn, safeErrorSummary } from "./webhookConfig";
@@ -26,7 +26,7 @@ function etDate(): string {
   }).format(new Date());
 }
 
-export async function postCalibrationCard(days: number = 7): Promise<{
+export async function postCalibrationCard(days: number = CALIBRATION_CARD_DAYS): Promise<{
   ok: boolean;
   preview: string;
 }> {
@@ -40,7 +40,7 @@ export async function postCalibrationCard(days: number = 7): Promise<{
   try { forecastProbs = recentForecastProbs(30); } catch { forecastProbs = null; }
   let watchdog: ReturnType<typeof watchdogStatus> | null = null;
   try { watchdog = watchdogStatus(60); } catch { watchdog = null; }
-  const final = composeCalibrationCard({ r, forecastProbs, watchdog, today: etDate() });
+  const final = composeCalibrationCard({ r, forecastProbs, watchdog, today: etDate(), windowDays: days, resolutionDays: 30, watchdogDays: 60 });
   const ok = await sendWebhook(final);
   return { ok, preview: final };
 }

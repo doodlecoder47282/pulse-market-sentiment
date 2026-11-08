@@ -1872,3 +1872,12 @@ most frequent bucket with its CI, resolution and the watchdog; under the gate th
 and said to be. No letter grades, no "sharper", no diagnosis. gradeBrier stays exported for API
 consumers with a note that an absolute Brier grade means nothing here. Tests:
 tests/quant/calibration-card.test.ts (gated, ungated, skill n/a, wiring). Needs an independent review.
+Review of feat/calibration-gate (HOLD, one must-fix, taken): the scheduler posted postCalibrationCard(7),
+so with the 20-day gate on the window's days the Sunday card could never show a reading. The posted window
+is now CALIBRATION_CARD_DAYS = 30 (scheduler and route default), the gate stays on the days found in the
+window (a 7-day Brier is a 7-sample estimate whatever the table holds), and the header names the window
+("LAST 30 SETTLED DAYS: n SCORED"). Should-fixes taken: the card states that the base rate is fitted on
+the same days so skill is understated and that the watchdog line is its significance test; each section
+names its own window (30 graded forecasts, 60 days); resolution prints the number without quality
+adjectives; "percentages below are of these n days" under the gate; hit rate and mean forecast are
+read over exactly the Brier rows' dates (WHERE o.date >= oldest); beatsTrivial commented as unused.

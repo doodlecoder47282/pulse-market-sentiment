@@ -3,7 +3,7 @@
 // Pure text composer for the weekly calibration card (tested without a
 // database). server/calibrationCard.ts reads the numbers and posts the text.
 
-import { resolutionScore, gradeResolution, betaBinomialCI } from "./stats";
+import { resolutionScore, betaBinomialCI } from "./stats";
 
 /** The fields of calibration.ts rollingBrier() the card reads. */
 export interface RollingBrierLike {
@@ -29,6 +29,12 @@ export type CalibrationCardInputs = {
   forecastProbs: { bull: number[]; base: number[]; bear: number[] } | null;
   watchdog: { status: "HEALTHY" | "NO_SKILL" | "DRIFTING" | "BROKEN" | "INSUFFICIENT_DATA"; n: number; cValue: number; baseline: number; reason: string } | null;
   today: string;
+  /** Settled-day window the Brier rows score over; named in the header. */
+  windowDays?: number;
+  /** Graded forecasts the resolution section uses. */
+  resolutionDays?: number;
+  /** Days the CUSUM watchdog runs over. */
+  watchdogDays?: number;
 };
 
 /**
@@ -59,10 +65,12 @@ export function composeCalibrationCard(inp: CalibrationCardInputs): string {
   const odds = Object.keys(r.probSourceMix).filter((k) => k !== "unrecorded").length > 1 ? " (two forecasters pooled in one score)" : "";
 
   const lines: string[] = [];
-  lines.push(`**PULSE CALIBRATION  |  WEEK OF ${today}  |  ${r.n} SETTLED DAY${r.n === 1 ? "" : "S"}**`);
+  const win = inp.windowDays ? `LAST ${inp.windowDays} SETTLED DAYS` : "SETTLED DAYS";
+  lines.push(`**PULSE CALIBRATION  |  POSTED ${today}  |  ${win}: ${r.n} SCORED**`);
   lines.push("```");
   lines.push(sectionRule("SAMPLE"));
-  lines.push(`  ${r.n} settled days scored; odds recorded as: ${mixLine(r.probSourceMix)}${odds}; graded row from the ${mixLine(r.slotMix)} slot`);
+  lines.push(`  ${r.n} settled days scored${inp.windowDays ? ` in the last ${inp.windowDays}` : ""}; odds recorded as: ${mixLine(r.probSourceMix)}${odds}; graded row from the ${mixLine(r.slotMix)} slot`);
+  lines.push(`  percentages below are of these ${r.n} day${r.n === 1 ? "" : "s"}`);
   lines.push(sectionRule("REALIZED MIX vs MEAN FORECAST"));
   const gap = (real: number, fc: number) => `${pct(real)} realized vs ${pct(fc)} forecast (${real - fc >= 0 ? "+" : ""}${Math.round((real - fc) * 100)} pts)`;
   lines.push(`  BULL  ${gap(rB, fB)}`);
@@ -81,6 +89,7 @@ export function composeCalibrationCard(inp: CalibrationCardInputs): string {
 
   lines.push("");
   lines.push(sectionRule("BRIER vs CLIMATOLOGY (lower = closer; skill 0 = no better than the base rate)"));
+  lines.push(`  base rate fitted on the same ${r.n} days (the best constant forecast in hindsight), so skill is understated; the watchdog line below is its significance test`);
   const skillFmt = (sk: number | null) => sk == null ? "skill n/a" : `skill ${sk >= 0 ? "+" : ""}${(sk * 100).toFixed(0)}%`;
   const fmtRow = (name: string, brier: number, clim: number, sk: number | null) =>
     `  ${pad(name, 8)} ${fmt3(brier)}   base-rate ${fmt3(clim)}   ${skillFmt(sk)}`;
@@ -108,8 +117,8 @@ export function composeCalibrationCard(inp: CalibrationCardInputs): string {
       const fp = inp.forecastProbs;
       const rows: Array<[string, number]> = [["BULL", resolutionScore(fp.bull)], ["BASE", resolutionScore(fp.base)], ["BEAR", resolutionScore(fp.bear)]];
       lines.push("");
-      lines.push(sectionRule("RESOLUTION (variance of the forecast across days; 0 = the same number every day)"));
-      for (const [name, v] of rows) lines.push(`  ${pad(name, 8)} ${fmt3(v)}  (${gradeResolution(v).label})`);
+      lines.push(sectionRule(`RESOLUTION (variance of the forecast across the last ${inp.resolutionDays ?? 30} graded forecasts; 0 = the same number every day)`));
+      for (const [name, v] of rows) lines.push(`  ${pad(name, 8)} ${fmt3(v)}`);
     } catch { /* optional */ }
   }
   if (inp.watchdog) {
@@ -121,7 +130,7 @@ export function composeCalibrationCard(inp: CalibrationCardInputs): string {
       w.status === "BROKEN" ? "BROKEN" :
       "WARMING UP";
     lines.push("");
-    lines.push(sectionRule("WATCHDOG (CUSUM vs climatology, target = zero skill)"));
+    lines.push(sectionRule(`WATCHDOG (CUSUM vs climatology over ${inp.watchdogDays ?? 60} days, target = zero skill)`));
     lines.push(`  ${badge}   c=${w.cValue.toFixed(3)}   baseline=${w.baseline.toFixed(3)}   n=${w.n}`);
     lines.push(`  ${w.reason}`);
   }

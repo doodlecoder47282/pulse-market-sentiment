@@ -71,6 +71,8 @@ try { sqlite.exec(`ALTER TABLE pulse_predictions ADD COLUMN prob_source TEXT`); 
 
 /** Settled days before the card states a Brier, a skill score or a hit rate as a reading. */
 export const CALIBRATION_MIN_DAYS = 20;
+/** Window the posted card scores over (the gate applies to the days found inside it). A 7-day Brier is a 7-sample estimate whatever the table holds. */
+export const CALIBRATION_CARD_DAYS = 30;
 
 export type PredictionRow = {
   date: string;
@@ -214,7 +216,9 @@ export function rollingBrier(days: number = 30): {
   probSourceMix: Record<string, number>;
   /** Which slot the graded row came from ("daily" 09:30 or "halfhour"). */
   slotMix: Record<string, number>;
-  /** Brier skill vs climatology, 1 - BS/BS_clim (0 = no better than the base rate; null when the baseline is 0). */
+  /** Brier skill vs climatology, 1 - BS/BS_clim (0 = no better than the base rate; null when the baseline is 0).
+   *  The base rate is fitted on the same settled days (the best constant forecast in hindsight), so the
+   *  skill is understated for the model: a conservative comparison, stated on the card. */
   skill: { bull: number | null; base: number | null; bear: number | null; total: number | null };
   /** Below CALIBRATION_MIN_DAYS the readings are shown as counts only. */
   gated: boolean;
@@ -272,10 +276,13 @@ export function rollingBrier(days: number = 30): {
            ORDER BY captured_at ASC
            LIMIT 1
          )
+       WHERE o.date >= ?
        ORDER BY o.date DESC
        LIMIT ?`,
     )
-    .all(days) as Array<{
+    // Same date set as `rows` (the oldest settled date in the window), so the
+    // hit rate and the mean forecast are over exactly the days the Brier is.
+    .all(rows[rows.length - 1].date, days) as Array<{
     outcome_bull: number;
     outcome_base: number;
     outcome_bear: number;
@@ -377,7 +384,8 @@ export function gradeBrier(b: number): { letter: string; label: string } {
   return { letter: "F", label: "poor" };
 }
 
-// True if Pulse beats the trivial forecaster on a metric.
+// True if Pulse beats the trivial forecaster on a metric. Unused by the card
+// (the skill score carries the comparison); kept for API consumers.
 export function beatsTrivial(pulse: number, trivial: number): boolean {
   return pulse < trivial;
 }

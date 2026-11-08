@@ -42,7 +42,7 @@ import { startDiscordScheduler } from "./discordScheduler";
 import { fireTestCard, postDailyModelCard } from "./discord";
 import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { postCalibrationCard } from "./calibrationCard";
-import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
+import { rollingBrier, settleDay, recentForecastProbs, CALIBRATION_CARD_DAYS } from "./calibration";
 import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
@@ -5810,8 +5810,8 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   // Manual fire weekly calibration card
   app.post("/api/discord/calibration", async (req, res) => {
     try {
-      const days = Number(req.query.days ?? 7);
-      const r = await postCalibrationCard(isFinite(days) && days > 0 ? days : 7);
+      const days = Number(req.query.days ?? CALIBRATION_CARD_DAYS);
+      const r = await postCalibrationCard(isFinite(days) && days > 0 ? days : CALIBRATION_CARD_DAYS);
       res.json(r);
     } catch (e: any) {
       res.status(500).json({ ok: false, note: e?.message ?? "failed" });

@@ -16,8 +16,9 @@ const base: RollingBrierLike = {
 };
 
 test("calibration card: under the sample gate it shows counts and the realized-vs-forecast mix only; no score, grade, hit rate or diagnosis", () => {
-  const t = composeCalibrationCard({ r: { ...base, n: 5, gated: true, topPickN: 5, topPickHits: 4, topPickHitRate: 0.8 }, forecastProbs: null, watchdog: null, today: "2026-11-08" });
-  assert.match(t, /5 SETTLED DAYS/);
+  const t = composeCalibrationCard({ r: { ...base, n: 5, gated: true, topPickN: 5, topPickHits: 4, topPickHitRate: 0.8 }, forecastProbs: null, watchdog: null, today: "2026-11-08", windowDays: 30 });
+  assert.match(t, /LAST 30 SETTLED DAYS: 5 SCORED/);
+  assert.match(t, /percentages below are of these 5 days/);
   assert.match(t, /withheld: 5 of the 20 settled days needed/);
   assert.match(t, /BASE  60% realized vs 45% forecast \(\+15 pts\)/);
   assert.doesNotMatch(t, /skill \+|skill -|Top-pick realized|95% CI|always-/);
@@ -27,7 +28,11 @@ test("calibration card: under the sample gate it shows counts and the realized-v
 });
 
 test("calibration card: past the gate, Brier is read against climatology with a skill score, the hit rate against always-picking the most frequent bucket, and the odds mix is named", () => {
-  const t = composeCalibrationCard({ r: base, forecastProbs: { bull: [0.2, 0.3, 0.25], base: [0.5, 0.4, 0.45], bear: [0.3, 0.3, 0.3] }, watchdog: { status: "NO_SKILL", n: 30, cValue: 0.1, baseline: 0.54, reason: "cusum within thresholds" }, today: "2026-11-08" });
+  const t = composeCalibrationCard({ r: base, forecastProbs: { bull: [0.2, 0.3, 0.25], base: [0.5, 0.4, 0.45], bear: [0.3, 0.3, 0.3] }, watchdog: { status: "NO_SKILL", n: 30, cValue: 0.1, baseline: 0.54, reason: "cusum within thresholds" }, today: "2026-11-08", windowDays: 30, resolutionDays: 30, watchdogDays: 60 });
+  assert.match(t, /base rate fitted on the same 30 days .* skill is understated; the watchdog line below is its significance test/);
+  assert.match(t, /RESOLUTION \(variance of the forecast across the last 30 graded forecasts/);
+  assert.doesNotMatch(t, /discrim\)/, "no resolution quality adjectives");
+  assert.match(t, /WATCHDOG \(CUSUM vs climatology over 60 days/);
   assert.match(t, /odds recorded as: risk-neutral-implied 22, hand-set-heuristic 8 \(two forecasters pooled in one score\)/);
   assert.match(t, /graded row from the daily 28, halfhour 2 slot/);
   assert.match(t, /BULL\s+0\.150\s+base-rate 0\.160\s+skill \+6%/);
@@ -55,5 +60,15 @@ test("wiring: predictions record which odds they carried; rollingBrier reports t
   assert.match(d, /probSource: typeof audit\.scenarioProbSource === "string" \? audit\.scenarioProbSource : null,/);
   const card = readFileSync(new URL("../../server/calibrationCard.ts", import.meta.url), "utf8");
   assert.doesNotMatch(card, /gradeBrier|beatsTrivial/);
-  assert.match(card, /composeCalibrationCard\(\{ r, forecastProbs, watchdog, today: etDate\(\) \}\)/);
+  assert.match(card, /composeCalibrationCard\(\{ r, forecastProbs, watchdog, today: etDate\(\), windowDays: days, resolutionDays: 30, watchdogDays: 60 \}\)/);
+  // The posted window must be able to clear the gate: a 7-day card could never show a reading.
+  assert.match(c, /export const CALIBRATION_CARD_DAYS = 30;/);
+  assert.match(card, /postCalibrationCard\(days: number = CALIBRATION_CARD_DAYS\)/);
+  const sched = readFileSync(new URL("../../server/discordScheduler.ts", import.meta.url), "utf8");
+  assert.match(sched, /await postCalibrationCard\(\);/);
+  assert.doesNotMatch(sched, /postCalibrationCard\(7\)/);
+  const routes = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
+  assert.match(routes, /postCalibrationCard\(isFinite\(days\) && days > 0 \? days : CALIBRATION_CARD_DAYS\)/);
+  // Hit rate and mean forecast over the same dates as the Brier rows.
+  assert.match(c, /WHERE o\.date >= \?\s*ORDER BY o\.date DESC\s*LIMIT \?`,\s*\)\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*\.all\(rows\[rows\.length - 1\]\.date, days\)/);
 });
