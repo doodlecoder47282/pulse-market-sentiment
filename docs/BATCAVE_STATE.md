@@ -1911,3 +1911,27 @@ recorded without one. Should-fixes taken: a request Schwab accepts clears the un
 "re-auth required" over flowing data); with the refresh token known dead the mark holds until re-auth
 replaces the row; the Settings copy no longer promises that re-authorising clears an entitlement refusal.
 Tests 25/25 (schwab-readiness/semantics skip locally). Re-review before merge.
+
+2026-11-08: Scenario odds and targets on the horizon's own expected move (feat/scenario-odds-horizon,
+review item 4). buildAudit built the bull/bear targets from the 1-DAY expected move for every horizon and
+read the risk-neutral odds there; a route post-processor (applyTermStructureRescale) then replaced the
+weekly/monthly/quarterly targets with a VIX cone AFTER the odds were read, so a weekly card showed odds of
+the WEEK closing beyond a ONE-DAY band beside targets a week wide (lognormal check: ~45/10/45 instead of
+~16/68/16), and scenarioProbEvent named the targets that were no longer shown. Now shared/horizonExpectedMove.ts
+picks the horizon's EM first (daily: 0DTE straddle, else VIX x sqrt(1/252) x 0.55; others: the horizon
+expiry's SVI ATM total vol, the SAME distribution the odds come from, else VIX9D/VIX x sqrt(days/252), the
+quarterly 0.85 damp kept and named as hand-set), buildAudit caps the targets to it and reads the odds at
+those targets, scenarioTargets carries horizonEM/horizonDays beside oneDayEM (which stays the 1-day figure
+for the intraday decay and the Discord card), expectedMove names source/horizon/days/expiry, the Models
+panel labels the EM "to the weekly close (options-implied, <expiry>)", and the post-processor is gone (the
+daily card is unchanged: same straddle EM, same targets). Tests: tests/quant/horizon-expected-move.test.ts
+(sources, fallbacks, the on-horizon vs one-day odds check against a lognormal CDF, wiring); full quant
+suite 1005 pass, 4 known local package failures. Needs an independent quant review.
+Review of feat/scenario-odds-horizon: MERGE-READY, no must-fix; defect confirmed on main (odds read at
+1-day targets, then targets re-cut to a VIX cone after the odds); daily card unchanged to the cent.
+Should-fixes taken: the Models audit line now shows the thresholds beside the odds ("BULL 45% close >=
+6612 / BEAR 18% close <= 6540"), since the client never rendered scenarioTargets and a weekly bull target
+can sit well inside the EM at the nearest resistance; the implied-atm note says "about 1 sigma ... a
+log-return vol about the forward, band centred on spot as an approximation" (matters ~8% of the EM on
+the quarterly card only). Left as noted: horizonDays is the nominal 5/21/63 beside the actual expiry
+string; the weekly VIX9D fallback keeps its calendar sqrt(7/365) (inherited, named in the note).
