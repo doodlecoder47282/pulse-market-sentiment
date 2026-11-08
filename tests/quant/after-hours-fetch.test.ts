@@ -22,13 +22,32 @@ test("freshFreshness: closed market + fetched after the settled close = last ses
   // One rule with the failed-refresh path.
   const failed = staleServeDecision(Date.parse("2026-11-06T21:16:00Z"), "chains", "timeout", sat);
   assert.equal((failed as any).freshness?.lastSession, true);
+  // The 15 minutes between the close and the settle: index options still
+  // trade, so a chain fetched then is live data of an unsettled session.
+  const settling = Date.parse("2026-11-05T21:05:00Z"); // Thursday 16:05 ET
+  assert.ok(!freshFreshness(settling - 2_000, "chains", false, settling).lastSession, "16:05 ET is not a last-session copy");
+  assert.ok(!(staleServeDecision(settling - 2_000, "chains", "timeout", settling) as any).freshness?.lastSession);
+  const settled = Date.parse("2026-11-05T21:16:00Z"); // 16:16 ET
+  assert.equal(freshFreshness(settled - 1_000, "chains", false, settled).lastSession, true);
+  const halfDay = Date.parse("2026-11-27T18:05:00Z"); // Black Friday 13:05 ET
+  assert.ok(!freshFreshness(halfDay - 2_000, "chains", false, halfDay).lastSession, "half day 13:05 ET is still settling");
+  assert.equal(freshFreshness(halfDay + 11 * 60_000, "chains", false, halfDay + 12 * 60_000).lastSession, true);
+  // Pre-market: an approximation the policy accepts (SPX GTH options trade until 09:15 ET); stated, not changed.
+  const pre = Date.parse("2026-11-05T12:00:00Z"); // 07:00 ET
+  assert.equal(freshFreshness(pre - 1_000, "daily_bars", false, pre).lastSession, true);
 });
 
 test("wiring: weekend minute-bar fallback is last session; 401 forces one refresh then marks the connection", () => {
   const s = readFileSync(new URL("../../server/schwab.ts", import.meta.url), "utf8");
   assert.match(s, /f = \{ \.\.\.r2\.freshness, lastSession: true \};/);
-  assert.match(s, /if \(!retried401\) \{\s*retried401 = true;\s*const fresh = await getAccessToken\(Number\.POSITIVE_INFINITY\);\s*if \(fresh && fresh !== token\) \{ token = fresh; continue; \}/);
+  // One forced refresh per call AND at most one a minute across all callers (no refresh storm on a persistent 401).
+  assert.match(s, /if \(!retried401 && nowMs - _forced401RefreshAt >= FORCED_401_REFRESH_MIN_GAP_MS && attempt < maxAttempts\) \{\s*retried401 = true;\s*_forced401RefreshAt = nowMs;\s*const fresh = await getAccessToken\(Number\.POSITIVE_INFINITY\);\s*if \(fresh && fresh !== token\) \{ token = fresh; continue; \}/);
+  assert.match(s, /const FORCED_401_REFRESH_MIN_GAP_MS = 60_000;/);
   assert.match(s, /_lastUnauthorizedAt = Date\.now\(\);/);
+  // A request Schwab accepts clears the unauthorized mark; a dead refresh token keeps it until re-auth.
+  assert.match(s, /_403Streak\.delete\(epKey\);\s*_lastUnauthorizedAt = null;/);
+  assert.match(s, /&& \(_refreshDead \|\| now - _lastUnauthorizedAt < 10 \* 60_000\);/);
+  assert.match(s, /unauthorizedAt\?: number \| null;\s*\} \{/);
   assert.match(s, /const needsReauth = refreshExpired \|\| refreshKnownBad \|\| unauthorizedRecently;/);
   assert.match(s, /unauthorizedAt: unauthorizedRecently \? _lastUnauthorizedAt : null,/);
   assert.match(readFileSync(new URL("../../client/src/components/SchwabSettings.tsx", import.meta.url), "utf8"), /Schwab refused the access token at/);

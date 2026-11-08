@@ -661,7 +661,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <AlertTriangle className="h-4 w-4 text-amber-400" />
                 <div>
                   <div className="text-sm font-medium text-amber-300">Re-authentication required</div>
-                  <div className="text-[11px] text-muted-foreground">{status?.unauthorizedAt ? `Schwab refused the access token at ${new Date(status.unauthorizedAt).toLocaleTimeString()} even after a refresh. Complete the OAuth flow again below.` : "Refresh token expired. Complete the OAuth flow again below."}</div>
+                  <div className="text-[11px] text-muted-foreground">{status?.unauthorizedAt ? `Schwab refused the access token at ${new Date(status.unauthorizedAt).toLocaleTimeString()} even after a refresh. Re-authorising below replaces the token; if Schwab still refuses it, the app's market-data entitlement is the next thing to check.` : "Refresh token expired. Complete the OAuth flow again below."}</div>
                 </div>
               </div>
             ) : (

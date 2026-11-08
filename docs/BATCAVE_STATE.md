@@ -1809,3 +1809,16 @@ connection chip stayed green over "unauthorized" on every tab: a 401 now forces 
 retries once; a second 401 is recorded, needsReauth is set for 10 min (Settings says Schwab refused the
 token after a refresh), and the request reads "401 unauthorized (token refresh did not clear it)".
 Tests: tests/quant/after-hours-fetch.test.ts.
+Review of feat/after-hours-fetch-401 (HOLD, three MUST-FIX, all taken). (1) tsc: getSchwabStatus's declared
+return type lacked unauthorizedAt (CI type gate red); added. (2) New mislabel: between a session's close
+and its settle (16:00-16:15 ET, 13:00-13:15 on a half day) lastSettledCloseMs returns the PREVIOUS settle,
+so a chain fetched at 16:05 read "last-session copy" while index options still traded; isLastSessionCopy
+(shared by freshFreshness and staleServeDecision) now also requires not inSettlingWindow (tests: Thu 16:05
+not, 16:16 yes, Black Friday 13:05 not; pre-market stays last_session as an accepted approximation, stated).
+(3) Refresh storm: with the refresh endpoint working and market data answering 401 to everything, every
+distinct request forced a refresh, retried, 401'd, and the next poll repeated it up to the request cap;
+a forced refresh now happens at most once a minute across all callers (_forced401RefreshAt), later 401s are
+recorded without one. Should-fixes taken: a request Schwab accepts clears the unauthorized mark (no 10-min
+"re-auth required" over flowing data); with the refresh token known dead the mark holds until re-auth
+replaces the row; the Settings copy no longer promises that re-authorising clears an entitlement refusal.
+Tests 25/25 (schwab-readiness/semantics skip locally). Re-review before merge.
