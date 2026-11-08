@@ -1851,3 +1851,11 @@ panel labels the EM "to the weekly close (options-implied, <expiry>)", and the p
 daily card is unchanged: same straddle EM, same targets). Tests: tests/quant/horizon-expected-move.test.ts
 (sources, fallbacks, the on-horizon vs one-day odds check against a lognormal CDF, wiring); full quant
 suite 1005 pass, 4 known local package failures. Needs an independent quant review.
+Review of feat/scenario-odds-horizon: MERGE-READY, no must-fix; defect confirmed on main (odds read at
+1-day targets, then targets re-cut to a VIX cone after the odds); daily card unchanged to the cent.
+Should-fixes taken: the Models audit line now shows the thresholds beside the odds ("BULL 45% close >=
+6612 / BEAR 18% close <= 6540"), since the client never rendered scenarioTargets and a weekly bull target
+can sit well inside the EM at the nearest resistance; the implied-atm note says "about 1 sigma ... a
+log-return vol about the forward, band centred on spot as an approximation" (matters ~8% of the EM on
+the quarterly card only). Left as noted: horizonDays is the nominal 5/21/63 beside the actual expiry
+string; the weekly VIX9D fallback keeps its calendar sqrt(7/365) (inherited, named in the note).

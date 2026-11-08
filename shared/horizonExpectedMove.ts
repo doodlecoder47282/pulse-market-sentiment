@@ -88,7 +88,7 @@ export function horizonExpectedMove(i: HorizonEmInputs): HorizonExpectedMove {
   const imp = i.implied;
   if (imp && Number.isFinite(imp.atmTotalVol) && imp.atmTotalVol > 0) {
     return { ...base, oneSigma: r2(spot * imp.atmTotalVol), source: "implied-atm", expiry: imp.expiry,
-      note: `1 sigma to the ${imp.expiry} close from the SVI-smoothed at-the-money total vol of that expiry (the same distribution the odds are read from)` };
+      note: `about 1 sigma to the ${imp.expiry} close: spot x the SVI-smoothed at-the-money total vol of that expiry (a log-return vol about the forward, so the band is centred on spot as an approximation; the same distribution the odds are read from)` };
   }
   const damp = horizon === "quarterly" ? QUARTERLY_MEAN_REVERSION_DAMP : 1;
   const dampNote = horizon === "quarterly" ? ` x ${QUARTERLY_MEAN_REVERSION_DAMP} (hand-set mean-reversion damp)` : "";
