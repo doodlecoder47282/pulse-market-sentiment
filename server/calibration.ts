@@ -64,6 +64,13 @@ sqlite.exec(`
     settled_at INTEGER NOT NULL           -- epoch seconds
   );
 `);
+// Which odds were recorded: "risk-neutral-implied" | "hand-set-heuristic" | null
+// (rows from before this column). The card reports the mix instead of pooling
+// two forecasters into one Brier without saying so.
+try { sqlite.exec(`ALTER TABLE pulse_predictions ADD COLUMN prob_source TEXT`); } catch { /* exists */ }
+
+/** Settled days before the card states a Brier, a skill score or a hit rate as a reading. */
+export const CALIBRATION_MIN_DAYS = 20;
 
 export type PredictionRow = {
   date: string;
@@ -77,6 +84,7 @@ export type PredictionRow = {
   probBear: number;
   oneDayEm: number;
   source: "daily" | "halfhour";
+  probSource?: string | null;
 };
 
 // Record a prediction. Called from postBatcaveDailyCard right before it sends.
@@ -86,8 +94,8 @@ export function recordPrediction(p: PredictionRow): void {
       .prepare(
         `INSERT INTO pulse_predictions
          (date, captured_at, spot, target_bull, target_base, target_bear,
-          prob_bull, prob_base, prob_bear, one_day_em, source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          prob_bull, prob_base, prob_bear, one_day_em, source, prob_source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p.date,
@@ -101,6 +109,7 @@ export function recordPrediction(p: PredictionRow): void {
         p.probBear,
         p.oneDayEm,
         p.source,
+        p.probSource ?? null,
       );
   } catch (e) {
     console.error(`[calibration] recordPrediction failed: ${e}`);
@@ -199,6 +208,17 @@ export function rollingBrier(days: number = 30): {
   // Outcome distribution actually realized (helps spot whether base is
   // structurally over/under-weighted).
   realized: { bull: number; base: number; bear: number };
+  /** Mean forecast probability per class over the graded morning rows: the number the realized mix is compared with. */
+  meanForecast: { bull: number; base: number; bear: number };
+  /** Which odds the graded rows carried (prob_source), "unrecorded" for rows before the column. */
+  probSourceMix: Record<string, number>;
+  /** Which slot the graded row came from ("daily" 09:30 or "halfhour"). */
+  slotMix: Record<string, number>;
+  /** Brier skill vs climatology, 1 - BS/BS_clim (0 = no better than the base rate; null when the baseline is 0). */
+  skill: { bull: number | null; base: number | null; bear: number | null; total: number | null };
+  /** Below CALIBRATION_MIN_DAYS the readings are shown as counts only. */
+  gated: boolean;
+  minDays: number;
 } | null {
   const rows = sqlite
     .prepare(
@@ -242,7 +262,7 @@ export function rollingBrier(days: number = 30): {
     .prepare(
       `SELECT
          o.outcome_bull, o.outcome_base, o.outcome_bear,
-         p.prob_bull, p.prob_base, p.prob_bear
+         p.prob_bull, p.prob_base, p.prob_bear, p.prob_source, p.source
        FROM pulse_outcomes o
        JOIN pulse_predictions p
          ON p.date = o.date
@@ -262,9 +282,19 @@ export function rollingBrier(days: number = 30): {
     prob_bull: number;
     prob_base: number;
     prob_bear: number;
+    prob_source: string | null;
+    source: string | null;
   }>;
   let hits = 0;
+  const probSourceMix: Record<string, number> = {};
+  const slotMix: Record<string, number> = {};
+  let fB = 0, fM = 0, fR = 0;
   for (const r of hitRows) {
+    const ps = r.prob_source ?? "unrecorded";
+    probSourceMix[ps] = (probSourceMix[ps] ?? 0) + 1;
+    const sl = r.source ?? "unrecorded";
+    slotMix[sl] = (slotMix[sl] ?? 0) + 1;
+    fB += r.prob_bull; fM += r.prob_base; fR += r.prob_bear;
     const probs = [r.prob_bull, r.prob_base, r.prob_bear];
     const outs = [r.outcome_bull, r.outcome_base, r.outcome_bear];
     let topIdx = 0;
@@ -272,8 +302,16 @@ export function rollingBrier(days: number = 30): {
     if (outs[topIdx] === 1) hits++;
   }
   const topPickHitRate = hitRows.length > 0 ? hits / hitRows.length : 0;
+  const m = hitRows.length || 1;
+  const skillOf = (bs: number, clim: number) => (Number.isFinite(clim) && clim > 0 ? 1 - bs / clim : null);
 
   return {
+    meanForecast: { bull: fB / m, base: fM / m, bear: fR / m },
+    probSourceMix,
+    slotMix,
+    skill: { bull: skillOf(meanBull, trivialBull), base: skillOf(meanBase, trivialBase), bear: skillOf(meanBear, trivialBear), total: skillOf(meanTotal, trivialTotal) },
+    gated: n < CALIBRATION_MIN_DAYS,
+    minDays: CALIBRATION_MIN_DAYS,
     n,
     bull: meanBull,
     base: meanBase,
@@ -325,8 +363,11 @@ export function recentForecastProbs(days: number = 30): {
   };
 }
 
-// Lightweight grade letter from a Brier — for the user-facing card.
-// Reference: 0.06–0.12 = top forecaster, <0.20 good, <0.25 ok, >0.25 weak.
+// Letter grade from an ABSOLUTE Brier. Not used by the card any more: an
+// absolute Brier threshold says nothing in a three-class problem whose base
+// bucket realises most days (a constant base-rate forecast scores "good"
+// here), so the card reports skill against climatology instead. Kept for
+// the /api/calibration consumers that still read it.
 export function gradeBrier(b: number): { letter: string; label: string } {
   if (b < 0.06) return { letter: "A+", label: "elite" };
   if (b < 0.10) return { letter: "A", label: "excellent" };

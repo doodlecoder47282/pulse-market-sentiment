@@ -1857,3 +1857,18 @@ tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now 
 own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
 COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
 grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
+
+2026-11-08: Calibration card gated and read against climatology (feat/calibration-gate, review item 5).
+The weekly card gave absolute Brier letter grades ("elite", "excellent") and "+N% sharper" from the first
+settled day, compared the top-pick hit rate with a 33% baseline when the base bucket realises most days, and
+pooled implied and heuristic odds (and 09:30 and half-hour rows) into one score without saying so; its
+"vol may be over-modeled / skew under-priced" prose was interpretation off tiny samples. Now:
+pulse_predictions records prob_source (ALTER TABLE, older rows read "unrecorded"); rollingBrier returns the
+odds and slot mix, the mean forecast per bucket, Brier skill vs the climatology forecast (1 - BS/BS_clim,
+null when the baseline is 0) and a gate at CALIBRATION_MIN_DAYS = 20; server/calibrationCardText.ts
+(pure, tested) composes the card: sample line, realized mix beside the mean forecast with the gap in
+points, then, past the gate only, Brier vs base-rate with skill, the hit rate against always-picking the
+most frequent bucket with its CI, resolution and the watchdog; under the gate the scores are withheld
+and said to be. No letter grades, no "sharper", no diagnosis. gradeBrier stays exported for API
+consumers with a note that an absolute Brier grade means nothing here. Tests:
+tests/quant/calibration-card.test.ts (gated, ungated, skill n/a, wiring). Needs an independent review.
