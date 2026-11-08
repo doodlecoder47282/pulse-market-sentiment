@@ -33,7 +33,7 @@ import {
 } from "recharts";
 import { Layers, TrendingUpIcon, Waves } from "lucide-react";
 
-import { livePoll } from "@/lib/pollInterval";
+import { livePoll, pacedInterval } from "@/lib/pollInterval";
 // ─── Types (mirror server payloads) ─────────────────────────────────────────
 interface HeatseekerStrike {
   strike: number;
@@ -356,7 +356,7 @@ export default function DepthSkewFlow({ symbol, expiry }: { symbol?: string; exp
               />
               <Stat
                 label="Poll"
-                value={tracker.isFetching ? "refreshing…" : "4s"}
+                value={tracker.isFetching ? "refreshing…" : `${Math.round(pacedInterval(4_000) / 1000)}s`}
                 tone="muted"
               />
             </>

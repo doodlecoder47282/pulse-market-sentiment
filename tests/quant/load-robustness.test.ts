@@ -66,15 +66,21 @@ test("client poll pacing: live in the session, slower in extended hours, five mi
 test("wiring: cache sweep on write, killbox seeder through the shared ladder, 0DTE tracker makes no off-hours request, panels paced", () => {
   const sw = readFileSync(new URL("../../server/schwab.ts", import.meta.url), "utf8");
   assert.match(sw, /if \(ttl > 0\) _cache\.set\(cacheKey, \{ data, fetchedAt, expiresAt: fetchedAt \+ ttl, fingerprint, kind \}\);\s*if \(fetchedAt - _lastCacheSweep > CACHE_SWEEP_MS\) sweepSchwabCache\(fetchedAt\);/);
-  assert.match(sw, /if \(cacheEntryUnservable\(e\.kind, e\.fetchedAt, nowMs\)\) \{ _cache\.delete\(k\); n\+\+; \}/);
+  assert.match(sw, /if \(cacheEntryUnservable\(e\.kind, e\.fetchedAt, nowMs, settled\)\) \{ _cache\.delete\(k\); n\+\+; \}/);
   assert.match(sw, /cacheEvictedTotal: _cacheEvicted,/);
   const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
   assert.match(r, /const \{ getOptionChainLadder \} = await import\("\.\/schwab"\);\s*const chain = await getOptionChainLadder\(symbol, dte\);/);
   const ot = readFileSync(new URL("../../server/odteTracker.ts", import.meta.url), "utf8");
-  assert.match(ot, /if \(!inSession\) \{\s*lastSnapshot = \{ \.\.\.lastSnapshot, asOf: Date\.now\(\), connected: false, note: "0DTE tracker idle \(outside session\)" \};\s*return;\s*\}\s*const chain: OptionChainResponse = await getOptionChain\("\$SPX", 0\);/);
+  // Off-hours: no request, but tracked positions and events still carry their current state (a disarm after the close shows at once).
+  assert.match(ot, /if \(!inSession\) \{[^}]*lastSnapshot = \{ \.\.\.lastSnapshot, asOf: Date\.now\(\), connected: false, note: "0DTE tracker idle \(outside session\)", tracked: \[\.\.\.tracked\], events: events\.slice\(-200\) \};\s*return;\s*\}\s*const chain: OptionChainResponse = await getOptionChain\("\$SPX", 0\);/);
+  assert.doesNotMatch(ot, /if \(!inSession \|\| authFailure\)/, "the dead off-hours branch inside the error path is gone");
+  // The sweep computes the settle once, not per entry.
+  assert.match(sw, /const settled = lastSettledCloseMs\(nowMs\);[^\n]*\n\s*for \(const \[k, e\] of _cache\) \{\s*if \(cacheEntryUnservable\(e\.kind, e\.fetchedAt, nowMs, settled\)\)/);
+  assert.equal(cacheEntryUnservable("chains", T("2026-11-05T18:00:00Z"), T("2026-11-07T20:00:00Z"), T("2026-11-06T21:15:00Z")), true, "settle passed in gives the same answer");
+  assert.match(readFileSync(new URL("../../client/src/components/DepthSkewFlow.tsx", import.meta.url), "utf8"), /`\$\{Math\.round\(pacedInterval\(4_000\) \/ 1000\)\}s`/);
   for (const f of ["Heatseeker", "OdteContractChart", "DepthSkewFlow", "LiveQuoteStrip", "MacroCarousel", "FlowPanel", "ModelsPanel", "TradeDesk", "Mag7Panel", "ChartPanel"]) {
     const c = readFileSync(new URL(`../../client/src/components/${f}.tsx`, import.meta.url), "utf8");
-    assert.match(c, /import \{ livePoll \} from "@\/lib\/pollInterval";/, f);
+    assert.match(c, /import \{ livePoll(, pacedInterval)? \} from "@\/lib\/pollInterval";/, f);
     assert.doesNotMatch(c, /refetchInterval: (4_000|5_000|10_000|15_000),/, `${f}: raw sub-minute interval left`);
   }
   // The server calendar is the shared one (one session clock for both sides).

@@ -1876,3 +1876,16 @@ closed, re-evaluated every tick; the exchange calendar moved to shared/exchangeC
 server path re-exports) so both sides pace by one session clock. Crypto panels (24/7) untouched. Tests:
 tests/quant/load-robustness.test.ts (eviction rule, TTL schedule incl. half day, pacing incl. holiday,
 wiring); calendar-dependent suites 76/76. Needs an independent review (data-layer change).
+Review of feat/load-robustness (HOLD, one must-fix, taken): the off-hours idle snapshot spread the old
+snapshot, so a disarm, arm or exit-brain transition after 16:15 ET was not shown until 09:25 the next
+session (main re-read the chain every minute and rebuilt the lists). The idle branch now carries the
+current tracked positions and the last 200 events; the dead "!inSession" test inside the error path is
+gone. Should-fixes taken: the sweep computes the settle once per pass (27 us of Intl per entry would
+otherwise block the loop on a large map); the Depth/Skew/Flow "Poll" stat shows the paced interval
+instead of a hard-coded 4 s; header comments on the paced panels corrected; orphaned docblock moved
+back; the SETTLED_EVENING comment names staleServeDecision (there is no isLastSessionCopy in this
+branch). Stated here as the reviewer asked: killbox gradient rows now come from the shared ladder
+(segments 0-2, 3-7, 8-30, 31-45, 46-100, each with its own strike plan) rather than one 60-DTE plan,
+the same path /api/chain-audit already uses for 60 DTE, and the merged chain is stale when ANY segment
+was re-served, so the seeder skips such ticks. A change in the inputs of a stored reading, consistent
+with the audit endpoint.

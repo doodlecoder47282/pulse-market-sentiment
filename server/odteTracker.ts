@@ -211,7 +211,9 @@ async function poll() {
     // not requested: the loop only keeps the idle note current. This used to
     // fetch the 0DTE $SPX chain once a minute all night and all weekend.
     if (!inSession) {
-      lastSnapshot = { ...lastSnapshot, asOf: Date.now(), connected: false, note: "0DTE tracker idle (outside session)" };
+      // tracked and events still move off-hours (disarm, arm, an exit-brain
+      // transition), so the idle snapshot carries their current state.
+      lastSnapshot = { ...lastSnapshot, asOf: Date.now(), connected: false, note: "0DTE tracker idle (outside session)", tracked: [...tracked], events: events.slice(-200) };
       return;
     }
     const chain: OptionChainResponse = await getOptionChain("$SPX", 0);
@@ -222,12 +224,14 @@ async function poll() {
       // Note the SPY rows are keyed SPY_..., so armed $SPX positions do not update
       // during a fallback anyway.
       const authFailure = String((chain as any).error ?? "").includes("schwab_required");
-      if (!inSession || authFailure) {
+      if (authFailure) {
         lastSnapshot = {
           ...lastSnapshot,
           asOf: Date.now(),
           connected: false,
-          note: authFailure ? "Schwab connection required for 0DTE tracker" : "0DTE tracker idle (outside session)",
+          note: "Schwab connection required for 0DTE tracker",
+          tracked: [...tracked],
+          events: events.slice(-200),
         };
         return;
       }

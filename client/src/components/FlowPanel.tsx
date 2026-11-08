@@ -7,7 +7,7 @@ import EdgeInfo from "@/components/EdgeInfo";
 //   4. Mag 7 row: AAPL MSFT NVDA GOOGL META AMZN TSLA tiles
 //   5. [NEW] Intraday call/put volume chart with P/C ratio over time
 //
-// Polls /api/flow every 10s.
+// Polls /api/flow every 10 s in the regular session (slower when the market is closed: lib/pollInterval).
 // Compact variant (FlowStrip) for the Chart tab.
 
 import { useQuery } from "@tanstack/react-query";

@@ -8,7 +8,7 @@
  *                  (emerald = buy-classified, rose = sell-classified, muted = other)
  *
  * Data from GET /api/odte-tracker/chart?key=<contractKey>&bucketMs=<ms>
- * Polls every 5 s.
+ * Polls every 5 s in the regular session (slower when the market is closed: lib/pollInterval).
  */
 
 import { useMemo, useState } from "react";

@@ -103,8 +103,9 @@ export const NON_TRADING_DAY_TTL_MS: Record<SchwabDataKind, number> = {
 
 /**
  * Fresh TTL on a trading day once the session has settled (after 16:15 /
- * 13:15 ET until midnight ET). Chains and daily bars are the last-session
- * copy from here on (isLastSessionCopy) and are re-read every few minutes,
+ * 13:15 ET until midnight ET). Chains and daily bars do not change in the
+ * regular session's sense from here on (staleServeDecision serves them as the
+ * last-session copy when a refresh fails) and are re-read every few minutes,
  * not every 60 s: a weekday evening used to cost the same chain budget as
  * the open. Quotes and minute bars keep their TTL (extended-hours prints).
  * Cboe GTH index options trade overnight; a 5-minute chain TTL is a cost
@@ -200,8 +201,6 @@ export function staleServeDecision(
   };
 }
 
-/** Close of the most recent finished session + 15 min (index options settle
- *  their last prints by 16:15 ET), or null when the calendar cannot say. */
 /**
  * A cached payload that can never be served again: older than the longest
  * serve age of its kind (the closed-market cap is the larger) AND older than
@@ -211,13 +210,15 @@ export function staleServeDecision(
  * carry dates in their params, so without eviction the map grew by every
  * expiry-window and date-range key ever requested (about 1 GB a week).
  */
-export function cacheEntryUnservable(kind: SchwabDataKind, fetchedAtMs: number, nowMs: number = Date.now()): boolean {
+export function cacheEntryUnservable(kind: SchwabDataKind, fetchedAtMs: number, nowMs: number = Date.now(), settledMs?: number | null): boolean {
   const maxAge = Math.max(MAX_SERVE_AGE_MS.rth[kind], MAX_SERVE_AGE_MS.closed[kind]);
   if (nowMs - fetchedAtMs <= maxAge) return false;
-  const settled = lastSettledCloseMs(nowMs);
+  const settled = settledMs === undefined ? lastSettledCloseMs(nowMs) : settledMs;
   return settled == null || fetchedAtMs < settled;
 }
 
+/** Close of the most recent finished session + 15 min (index options settle
+ *  their last prints by 16:15 ET), or null when the calendar cannot say. */
 export function lastSettledCloseMs(nowMs: number = Date.now()): number | null {
   let d = etDate(nowMs);
   for (let i = 0; i < 10; i++) {

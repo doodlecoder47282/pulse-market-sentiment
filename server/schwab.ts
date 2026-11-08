@@ -16,7 +16,7 @@ import { etDate, addDays, isRegularSessionOpen, lastSessionDate } from "./exchan
 import { quoteFreshness } from "./quoteFreshness";
 import { gexByStrikeFromChain } from "./gammaProfile";
 import {
-  FRESH_TTL_MS, freshTtlMs, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs, cacheEntryUnservable,
+  FRESH_TTL_MS, freshTtlMs, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs, cacheEntryUnservable, lastSettledCloseMs,
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   chainAsOf, chainLadderSegments, mergeChainSegments,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
@@ -321,8 +321,9 @@ let _lastCacheSweep = 0;
 let _cacheEvicted = 0;
 export function sweepSchwabCache(nowMs: number = Date.now()): number {
   let n = 0;
+  const settled = lastSettledCloseMs(nowMs); // once per sweep: Intl formatting per entry would block the loop
   for (const [k, e] of _cache) {
-    if (cacheEntryUnservable(e.kind, e.fetchedAt, nowMs)) { _cache.delete(k); n++; }
+    if (cacheEntryUnservable(e.kind, e.fetchedAt, nowMs, settled)) { _cache.delete(k); n++; }
   }
   _cacheEvicted += n;
   _lastCacheSweep = nowMs;

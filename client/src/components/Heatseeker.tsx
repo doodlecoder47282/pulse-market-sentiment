@@ -11,7 +11,7 @@ import EdgeInfo from "@/components/EdgeInfo";
  *   3. Greek profile lines: GEX + DEX + Vanna + Charm across strike axis
  *   4. Sticky-zone cards: top 5 with score breakdown + interpretation
  *
- * Polls /api/heatseeker every 5s. Respects SchwabGate — shows setup prompt if
+ * Polls /api/heatseeker every 5 s in the regular session (slower when the market is closed: lib/pollInterval). Respects SchwabGate — shows setup prompt if
  * unconnected.
  */
 
