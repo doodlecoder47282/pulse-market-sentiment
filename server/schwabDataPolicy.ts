@@ -101,8 +101,30 @@ export const NON_TRADING_DAY_TTL_MS: Record<SchwabDataKind, number> = {
   other: 0,
 };
 
+/**
+ * Fresh TTL on a trading day once the session has settled (after 16:15 /
+ * 13:15 ET until midnight ET). Chains and daily bars are the last-session
+ * copy from here on (isLastSessionCopy) and are re-read every few minutes,
+ * not every 60 s: a weekday evening used to cost the same chain budget as
+ * the open. Quotes and minute bars keep their TTL (extended-hours prints).
+ * Cboe GTH index options trade overnight; a 5-minute chain TTL is a cost
+ * cap, and the payload's own asOf still says when it was read.
+ */
+export const SETTLED_EVENING_TTL_MS: Record<SchwabDataKind, number> = {
+  quotes: 30_000,
+  chains: 5 * 60_000,
+  minute_bars: 20_000,
+  daily_bars: 60 * 60_000,
+  markets: 300_000,
+  other: 0,
+};
+
 export function freshTtlMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
-  return isTradingDay(etDate(nowMs)) ? FRESH_TTL_MS[kind] : Math.max(FRESH_TTL_MS[kind], NON_TRADING_DAY_TTL_MS[kind]);
+  const d = etDate(nowMs);
+  if (!isTradingDay(d)) return Math.max(FRESH_TTL_MS[kind], NON_TRADING_DAY_TTL_MS[kind]);
+  const c = sessionCloseMs(d);
+  if (c != null && nowMs >= c + 15 * 60_000) return Math.max(FRESH_TTL_MS[kind], SETTLED_EVENING_TTL_MS[kind]);
+  return FRESH_TTL_MS[kind];
 }
 
 export function maxServeAgeMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {

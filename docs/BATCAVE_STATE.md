@@ -1857,3 +1857,22 @@ tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now 
 own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
 COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
 grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
+
+2026-11-08: Load and robustness (feat/load-robustness, review item 6). Five confirmed costs, no behaviour
+of any reading changed. (1) The Schwab response cache never evicted: keys carry expiry windows and date
+ranges, so the map grew by every distinct request ever made (about 1 GB a week). schwabDataPolicy
+cacheEntryUnservable (past the longest serve age of its kind AND older than the last settled close, so
+never the last-session copy) drives a sweep every 5 min on write; evictions are counted in /api/schwab/diag
+(cacheEvictedTotal). (2) killboxAutoSeed fetched its own 0-60 DTE $SPX chain every 5 min; it now goes
+through getOptionChainLadder, the same segments the Models build and the OI capture fetch, so the tick is
+a cache hit when they ran recently. (3) Weekday evenings kept the session TTLs: after the settle (16:15 /
+13:15 ET) chains refresh every 5 min and daily bars hourly (SETTLED_EVENING_TTL_MS); quotes and minute bars
+keep theirs (extended-hours prints move; Cboe GTH noted as the reason the chain TTL is a cost cap, not a
+claim that nothing trades). (4) The 0DTE tracker requested the dead 0DTE chain once a minute all night and
+weekend; outside its session window it now only keeps the idle note current. (5) Ten equities/options
+panels polled at 4-15 s regardless of the clock; client/src/lib/pollInterval.ts livePoll(ms) keeps the live
+cadence in the regular session, 6x slower (capped at 5 min) in extended hours, 5 min when the market is
+closed, re-evaluated every tick; the exchange calendar moved to shared/exchangeCalendar.ts (pure; the
+server path re-exports) so both sides pace by one session clock. Crypto panels (24/7) untouched. Tests:
+tests/quant/load-robustness.test.ts (eviction rule, TTL schedule incl. half day, pacing incl. holiday,
+wiring); calendar-dependent suites 76/76. Needs an independent review (data-layer change).
