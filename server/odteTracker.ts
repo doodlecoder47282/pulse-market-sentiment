@@ -36,7 +36,7 @@ import { armedStreamSymbols, streamOwnersSyncedBy } from "./odteStreamPolicy";
 // getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
 // returns the identical snapshot. Cadence is clamped to this TTL.
 const CHAIN_CACHE_TTL_MS = 60_000;
-const OFF_HOURS_POLL_MS = 60_000;
+const OFF_HOURS_POLL_MS = 60_000; // timer cadence only: no request is made off-hours (poll)
 
 // Session window for live polling: 09:25-16:15 ET on weekdays (a few minutes of margin
 // around RTH). Outside it the tracker idles at the off-hours cadence and never falls
@@ -206,6 +206,16 @@ function rollingAvg(win: Array<{ ts: number; dv: number }>, nowTs: number): numb
 async function poll() {
   try {
     const inSession = inTrackerSession();
+    // Outside the session window nothing a 0DTE tracker reads can change
+    // (the day's contracts have expired or not yet opened), so the chain is
+    // not requested: the loop only keeps the idle note current. This used to
+    // fetch the 0DTE $SPX chain once a minute all night and all weekend.
+    if (!inSession) {
+      // tracked and events still move off-hours (disarm, arm, an exit-brain
+      // transition), so the idle snapshot carries their current state.
+      lastSnapshot = { ...lastSnapshot, asOf: Date.now(), connected: false, note: "0DTE tracker idle (outside session)", tracked: [...tracked], events: events.slice(-200) };
+      return;
+    }
     const chain: OptionChainResponse = await getOptionChain("$SPX", 0);
     if ("error" in chain) {
       // SPX unavailable. Off-hours, or when the failure is an auth failure
@@ -214,12 +224,14 @@ async function poll() {
       // Note the SPY rows are keyed SPY_..., so armed $SPX positions do not update
       // during a fallback anyway.
       const authFailure = String((chain as any).error ?? "").includes("schwab_required");
-      if (!inSession || authFailure) {
+      if (authFailure) {
         lastSnapshot = {
           ...lastSnapshot,
           asOf: Date.now(),
           connected: false,
-          note: authFailure ? "Schwab connection required for 0DTE tracker" : "0DTE tracker idle (outside session)",
+          note: "Schwab connection required for 0DTE tracker",
+          tracked: [...tracked],
+          events: events.slice(-200),
         };
         return;
       }

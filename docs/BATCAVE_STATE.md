@@ -1995,3 +1995,35 @@ and EdgeInfo "Re-check before every entry" rewritten; Ticker Outlook "no edge" -
 thesis below" -> "the read no longer holds below"; AsOfNote is nowrap and the four header rows it joined
 wrap at phone width. Level names in the model (Buy zone / Sell zone, NEG-Γ ENTRY) are persistent kind
 labels and are left; noted for a later naming pass.
+
+2026-11-08: Load and robustness (feat/load-robustness, review item 6). Five confirmed costs, no behaviour
+of any reading changed. (1) The Schwab response cache never evicted: keys carry expiry windows and date
+ranges, so the map grew by every distinct request ever made (about 1 GB a week). schwabDataPolicy
+cacheEntryUnservable (past the longest serve age of its kind AND older than the last settled close, so
+never the last-session copy) drives a sweep every 5 min on write; evictions are counted in /api/schwab/diag
+(cacheEvictedTotal). (2) killboxAutoSeed fetched its own 0-60 DTE $SPX chain every 5 min; it now goes
+through getOptionChainLadder, the same segments the Models build and the OI capture fetch, so the tick is
+a cache hit when they ran recently. (3) Weekday evenings kept the session TTLs: after the settle (16:15 /
+13:15 ET) chains refresh every 5 min and daily bars hourly (SETTLED_EVENING_TTL_MS); quotes and minute bars
+keep theirs (extended-hours prints move; Cboe GTH noted as the reason the chain TTL is a cost cap, not a
+claim that nothing trades). (4) The 0DTE tracker requested the dead 0DTE chain once a minute all night and
+weekend; outside its session window it now only keeps the idle note current. (5) Ten equities/options
+panels polled at 4-15 s regardless of the clock; client/src/lib/pollInterval.ts livePoll(ms) keeps the live
+cadence in the regular session, 6x slower (capped at 5 min) in extended hours, 5 min when the market is
+closed, re-evaluated every tick; the exchange calendar moved to shared/exchangeCalendar.ts (pure; the
+server path re-exports) so both sides pace by one session clock. Crypto panels (24/7) untouched. Tests:
+tests/quant/load-robustness.test.ts (eviction rule, TTL schedule incl. half day, pacing incl. holiday,
+wiring); calendar-dependent suites 76/76. Needs an independent review (data-layer change).
+Review of feat/load-robustness (HOLD, one must-fix, taken): the off-hours idle snapshot spread the old
+snapshot, so a disarm, arm or exit-brain transition after 16:15 ET was not shown until 09:25 the next
+session (main re-read the chain every minute and rebuilt the lists). The idle branch now carries the
+current tracked positions and the last 200 events; the dead "!inSession" test inside the error path is
+gone. Should-fixes taken: the sweep computes the settle once per pass (27 us of Intl per entry would
+otherwise block the loop on a large map); the Depth/Skew/Flow "Poll" stat shows the paced interval
+instead of a hard-coded 4 s; header comments on the paced panels corrected; orphaned docblock moved
+back; the SETTLED_EVENING comment names staleServeDecision (there is no isLastSessionCopy in this
+branch). Stated here as the reviewer asked: killbox gradient rows now come from the shared ladder
+(segments 0-2, 3-7, 8-30, 31-45, 46-100, each with its own strike plan) rather than one 60-DTE plan,
+the same path /api/chain-audit already uses for 60 DTE, and the merged chain is stale when ANY segment
+was re-served, so the seeder skips such ticks. A change in the inputs of a stored reading, consistent
+with the audit endpoint.

@@ -11,6 +11,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useIsDemo } from "@/lib/useEdition";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
+import { livePoll } from "@/lib/pollInterval";
 type MacroCategory = "equities" | "bonds" | "credit" | "commods" | "fx" | "crypto";
 
 type MacroQuote = {
@@ -80,7 +81,7 @@ function useMacroQuery() {
       const r = await apiRequest("GET", "/api/macro");
       return r.json();
     },
-    refetchInterval: 10_000,   // real-time — matches server cache
+    refetchInterval: livePoll(10_000), // matches the server cache in the session; 5 min when closed
     staleTime: 8_000,
     refetchOnWindowFocus: true,
   });

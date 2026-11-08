@@ -11,7 +11,7 @@ import EdgeInfo from "@/components/EdgeInfo";
  *   3. Greek profile lines: GEX + DEX + Vanna + Charm across strike axis
  *   4. Sticky-zone cards: top 5 with score breakdown + interpretation
  *
- * Polls /api/heatseeker every 5s. Respects SchwabGate — shows setup prompt if
+ * Polls /api/heatseeker every 5 s in the regular session (slower when the market is closed: lib/pollInterval). Respects SchwabGate — shows setup prompt if
  * unconnected.
  */
 
@@ -46,6 +46,7 @@ import UnavailablePanel from "./UnavailablePanel";
 import OdteContractChart from "./OdteContractChart";
 import { friendlyError } from "@/lib/friendlyError";
 
+import { livePoll } from "@/lib/pollInterval";
 // Contract snapshot shape from /api/odte-tracker (used to enrich drill-down meta)
 interface OdteContract {
   key: string;
@@ -285,7 +286,7 @@ export default function Heatseeker() {
       const res = await apiRequest("GET", `/api/heatseeker?${qs.toString()}`);
       return res.json();
     },
-    refetchInterval: 5_000,        // 5-second live tick
+    refetchInterval: livePoll(5_000), // 5-second live tick in the session; 5 min when the market is closed
     refetchIntervalInBackground: false,
     staleTime: 4_000,
   });

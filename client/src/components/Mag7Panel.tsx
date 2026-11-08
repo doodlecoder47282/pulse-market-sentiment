@@ -12,6 +12,7 @@ import { TrendingUp, TrendingDown, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 import AsOfNote from "@/components/AsOfNote";
+import { livePoll } from "@/lib/pollInterval";
 type Mag7Member = {
   symbol: string;
   name: string;
@@ -42,7 +43,7 @@ function useMag7() {
       const r = await apiRequest("GET", "/api/mag7");
       return r.json();
     },
-    refetchInterval: 15_000,
+    refetchInterval: livePoll(15_000),
     staleTime: 12_000,
     refetchOnWindowFocus: true,
   });

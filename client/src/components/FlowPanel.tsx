@@ -7,7 +7,7 @@ import EdgeInfo from "@/components/EdgeInfo";
 //   4. Mag 7 row: AAPL MSFT NVDA GOOGL META AMZN TSLA tiles
 //   5. [NEW] Intraday call/put volume chart with P/C ratio over time
 //
-// Polls /api/flow every 10s.
+// Polls /api/flow every 10 s in the regular session (slower when the market is closed: lib/pollInterval).
 // Compact variant (FlowStrip) for the Chart tab.
 
 import { useQuery } from "@tanstack/react-query";
@@ -27,6 +27,7 @@ import { FlowAlertsPanel } from "./FlowAlertsPanel";
 import LivenessBadge from "./LivenessBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+import { livePoll } from "@/lib/pollInterval";
 // Zone vs the symbol's OWN history (server/pcrHistory.ts): z-score of
 // ln((puts+0.5)/(calls+0.5)) over its last 60 completed Schwab sessions.
 // No fixed cut-offs; without 20 sessions the zone is "insufficient_history".
@@ -996,7 +997,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
       const r = await apiRequest("GET", "/api/flow");
       return r.json();
     },
-    refetchInterval: 10_000,
+    refetchInterval: livePoll(10_000),
     staleTime: 8_000,
     refetchOnWindowFocus: true,
   });
@@ -1153,7 +1154,7 @@ export function FlowStrip() {
       const r = await apiRequest("GET", "/api/flow");
       return r.json();
     },
-    refetchInterval: 10_000,
+    refetchInterval: livePoll(10_000),
     staleTime: 8_000,
   });
 

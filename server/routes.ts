@@ -5351,9 +5351,14 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       if (!isRegularSessionOpen()) return;
 
       // Mimic the chain-audit handler inline — write directly into the table.
+      // Through the shared DTE ladder (schwab.getOptionChainLadder): the
+      // Models build and the OI capture fetch the same $SPX segments, so this
+      // tick is a cache hit when they ran recently instead of its own 0-60 DTE
+      // chain request every 5 minutes.
       const symbol = "$SPX";
       const dte = 60;
-      const chain = await schwabGetOptionChain(symbol, dte);
+      const { getOptionChainLadder } = await import("./schwab");
+      const chain = await getOptionChainLadder(symbol, dte);
       const usedSymbol = symbol;
       if ("error" in chain) {
         // No SPY substitute: an SPX gradient row must come from the SPX chain.

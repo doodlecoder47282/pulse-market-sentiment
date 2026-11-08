@@ -26,6 +26,7 @@ import { useAlphaNewsMarkers, AlphaNewsPanel, AlphaNewsToggle } from "./AlphaNew
 import TickerOutlookCard from "./TickerOutlookCard";
 import DataStateChip from "./DataStateChip";
 
+import { livePoll } from "@/lib/pollInterval";
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
 
@@ -125,7 +126,7 @@ export default function ChartPanel() {
       );
       return r.json();
     },
-    refetchInterval: tf === "1D" || tf === "5D" ? 10_000 : 60_000,
+    refetchInterval: livePoll(tf === "1D" || tf === "5D" ? 10_000 : 60_000),
     staleTime: 8_000,
     refetchOnWindowFocus: true,
     enabled: engine !== "tv", // TV widget fetches its own data

@@ -101,8 +101,31 @@ export const NON_TRADING_DAY_TTL_MS: Record<SchwabDataKind, number> = {
   other: 0,
 };
 
+/**
+ * Fresh TTL on a trading day once the session has settled (after 16:15 /
+ * 13:15 ET until midnight ET). Chains and daily bars do not change in the
+ * regular session's sense from here on (staleServeDecision serves them as the
+ * last-session copy when a refresh fails) and are re-read every few minutes,
+ * not every 60 s: a weekday evening used to cost the same chain budget as
+ * the open. Quotes and minute bars keep their TTL (extended-hours prints).
+ * Cboe GTH index options trade overnight; a 5-minute chain TTL is a cost
+ * cap, and the payload's own asOf still says when it was read.
+ */
+export const SETTLED_EVENING_TTL_MS: Record<SchwabDataKind, number> = {
+  quotes: 30_000,
+  chains: 5 * 60_000,
+  minute_bars: 20_000,
+  daily_bars: 60 * 60_000,
+  markets: 300_000,
+  other: 0,
+};
+
 export function freshTtlMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
-  return isTradingDay(etDate(nowMs)) ? FRESH_TTL_MS[kind] : Math.max(FRESH_TTL_MS[kind], NON_TRADING_DAY_TTL_MS[kind]);
+  const d = etDate(nowMs);
+  if (!isTradingDay(d)) return Math.max(FRESH_TTL_MS[kind], NON_TRADING_DAY_TTL_MS[kind]);
+  const c = sessionCloseMs(d);
+  if (c != null && nowMs >= c + 15 * 60_000) return Math.max(FRESH_TTL_MS[kind], SETTLED_EVENING_TTL_MS[kind]);
+  return FRESH_TTL_MS[kind];
 }
 
 export function maxServeAgeMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
@@ -175,6 +198,22 @@ export function staleServeDecision(
     serve: true,
     freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: true, maxAgeMs, reason },
   };
+}
+
+/**
+ * A cached payload that can never be served again: older than the longest
+ * serve age of its kind (the closed-market cap is the larger) AND older than
+ * the last settled close (so it is not the last-session copy either, which
+ * staleServeDecision may serve at any age while the market is closed). The
+ * Schwab cache keeps one entry per path+params; chains and price history
+ * carry dates in their params, so without eviction the map grew by every
+ * expiry-window and date-range key ever requested (about 1 GB a week).
+ */
+export function cacheEntryUnservable(kind: SchwabDataKind, fetchedAtMs: number, nowMs: number = Date.now(), settledMs?: number | null): boolean {
+  const maxAge = Math.max(MAX_SERVE_AGE_MS.rth[kind], MAX_SERVE_AGE_MS.closed[kind]);
+  if (nowMs - fetchedAtMs <= maxAge) return false;
+  const settled = settledMs === undefined ? lastSettledCloseMs(nowMs) : settledMs;
+  return settled == null || fetchedAtMs < settled;
 }
 
 /** Close of the most recent finished session + 15 min (index options settle

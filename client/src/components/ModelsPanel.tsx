@@ -48,6 +48,7 @@ import PivotProjection from "@/components/models/PivotProjection";
 import MLAccuracyCard from "@/components/models/MLAccuracyCard";
 import MultiDayCone from "@/components/models/MultiDayCone";
 
+import { livePoll } from "@/lib/pollInterval";
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
 type Horizon = "daily" | "weekly" | "monthly" | "quarterly";
@@ -1536,7 +1537,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
       );
       return r.json();
     },
-    refetchInterval: 15_000,
+    refetchInterval: livePoll(15_000),
     staleTime: 10_000,
   });
 
