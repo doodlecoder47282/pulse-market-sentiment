@@ -1835,6 +1835,82 @@ time change, Breeden-Litzenberger, straddle inversion, GEX/DEX units, calendar);
    above 1024 px (index.css:770); DEX flip fallback to peak |DEX| unmarked (chainAudit.ts:437);
    "MOPEX max pain" is over all expiries in the window; vomma "normal" on missing VIX (models.ts:1437).
 Order of work: 1, 2, 3 as bounded PRs with tests; then 4 and 5; then the 6 and 7 sweeps.
+2026-11-08: Regime call graded on its own horizon (feat/regime-grading-horizon, review item 1). A 5-120
+minute regime call was graded on the SPY close-to-close move about 26 h later, an event it never forecast,
+and the calibration plot's x-axis treated the heuristic softmax weight as a probability. The grader
+(shared/regimeGrade.ts, pure) now reads the realised $SPX path over the called horizon from the stored
+1-minute bars: |net move| against 0.5% x sqrt(H/390) (the daily proxy scaled by the square-root rule);
+TREND hits at or above, CHOP and neutral below; a horizon past the close is graded to the last bar and
+marked truncated; missing bars wait a day then close as insufficient_history, never a 0% move. Rows graded
+under the earlier proxy are excluded from every figure and counted apart ("N graded under the earlier
+close-to-close proxy, excluded"); the plot axis reads "heuristic score (not a probability)". Also: a
+missing DFI (DEX curve under 3 points) was 0 and classified NEUTRAL with status "ready"; a missing pivot or
+1-day EM produced "pin pressure" / "room to trend" from nothing. models.ts now emits dfiState; the
+predictor returns INPUTS_UNAVAILABLE (own state, like GAMMA_UNKNOWN) with no candidates, zero confidence
+(so nothing is logged) and no proximity driver; the history records no sample from it. Tests:
+tests/quant/regime-grading-horizon.test.ts; regime, edge, headline, models suites pass; r3-4 fixture
+completed. Still to measure: the new grades start from zero (the old ones are not comparable).
+Review of feat/regime-grading-horizon: MERGE-READY, no MUST-FIX; three SHOULD-FIX taken: the second
+history feeder (/api/realtime-targets) still pushed a dfi=0 sample when dfiState was unavailable, and
+realtimeTargets' own detectRegime read it as a regime (both now INPUTS_UNAVAILABLE / NaN, dropped); the
+tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now carries the predictor's
+own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
+COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
+grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
+2026-11-08: Crypto discovery unfrozen and one cap basis (feat/crypto-cap-eviction, review item 2). Over
+the 220 cap, any scored name (a PASS at 0 included) outranked every unscored arrival, so new pools were
+evicted in the tick they arrived and the universe froze about 15 min after a restart: the first-ENTER
+sample could not grow. shared/cryptoCap.ts evictOverCap keeps an unscored arrival for one momentum cycle,
+evicts never-answered names first, then PASS before WATCH before ENTER by score (220 scored + 20 arrivals:
+all 20 arrivals survive, 20 lowest PASS leave; test). Cap basis: GeckoTerminal FDV landed in marketCap
+every 60 s and was recorded and graded as a market cap (false RUGGED when DexScreener later reported a
+real marketCap; NO_DATA while priced when marketCap was null and only FDV existed). capOf (marketCap else
+FDV, basis named) is now read by the scorer, persistSignal, the peak and plan samplers and the grader's
+live path; GeckoTerminal does not overwrite a DexScreener read younger than one cycle. No rule-book value
+changed. Tests: tests/quant/crypto-cap.test.ts; crypto suite 96/96. Needs the standing crypto review.
+Review of feat/crypto-cap-eviction (HOLD, two MUST-FIX, both taken). (1) The horizon pass's live path
+still read live.marketCap; it and the 10-min grader now read capOnBasis(live, basis) where basis is the
+row's own features_json.mcapBasis (SELECTs carry mcap_basis). (2) A basis switch mid-life (entry on FDV
+500k, DexScreener later reports marketCap 40k and FDV 500k) was graded 40k against 500k and called
+RUGGED; every row is now sampled and graded on the basis it was recorded on (shared/cryptoCap.ts
+capOnBasis; CRYPTO_PEAK_SAMPLE_SQL runs once per basis in PEAK_SAMPLE_BASES with a null sample touching
+nothing). Test runs gradeSignal itself: on-basis OPEN, off-basis RUGGED. Should-fixes taken: the protected
+arrival set is bounded (an unscored arrival inside its first cycle ranks 500: above every PASS, below
+every WATCH and ENTER; 300 arrivals against 200 WATCH/ENTER + 20 PASS evict only the 20 PASS and 280
+arrivals; test); the Crypto tab shows the cap the desk scored on with an FDV tag when that is the basis
+(card total, card line, desk fact "cap (FDV)", plan levels and liq/cap on the same number); the
+MOMENTUM_CYCLE_MS comment states the arithmetic (220 / 90 per 75 s tick = 2.4 ticks, 3 ticks + margin =
+300 s); the stray capOf JSDoc in cryptoEngine.ts removed; docs/CRYPTO_DESK.md states the DexScreener
+outage behaviour (GeckoTerminal fills in after one silent cycle and the basis it carried is recorded).
+Tests: crypto suite + exit-plan + r4 + regime-crypto-r2 149/149. Re-review requested before merge.
+Re-review of feat/crypto-cap-eviction: MERGE-READY, both must-fixes and all should-fixes confirmed fixed;
+three new should-fixes taken: CRYPTO_DESK.md now says GeckoTerminal leaves only the market cap and FDV of
+a fresh DexScreener read alone (price and liquidity still refresh); a row recorded with basis "none"
+(unreachable today) folds into the null-basis statement so no row can go unsampled (r4 test: five rows,
+one statement each, FDV row untouched when FDV is not reported); the observation ring and hist record
+capOf(c).cap so liquidityVelocity/exitStress see the FDV-only cap. 127/127.
+2026-11-08: After-hours successful fetch and 401 (feat/after-hours-fetch-401, review item 3). #63 labelled
+the settled copy only on the failed-refresh path; a chain or daily-bar payload fetched successfully on a
+Saturday read "live" (badge) or "stale 16h" (age chips). freshFreshness now applies the same rule as
+staleServeDecision (market closed and fetched after the last settled close = last session), and the
+weekend minute-bar fallback carries lastSession too. A Schwab 401 never forced a token refresh and the
+connection chip stayed green over "unauthorized" on every tab: a 401 now forces one coalesced refresh and
+retries once; a second 401 is recorded, needsReauth is set for 10 min (Settings says Schwab refused the
+token after a refresh), and the request reads "401 unauthorized (token refresh did not clear it)".
+Tests: tests/quant/after-hours-fetch.test.ts.
+Review of feat/after-hours-fetch-401 (HOLD, three MUST-FIX, all taken). (1) tsc: getSchwabStatus's declared
+return type lacked unauthorizedAt (CI type gate red); added. (2) New mislabel: between a session's close
+and its settle (16:00-16:15 ET, 13:00-13:15 on a half day) lastSettledCloseMs returns the PREVIOUS settle,
+so a chain fetched at 16:05 read "last-session copy" while index options still traded; isLastSessionCopy
+(shared by freshFreshness and staleServeDecision) now also requires not inSettlingWindow (tests: Thu 16:05
+not, 16:16 yes, Black Friday 13:05 not; pre-market stays last_session as an accepted approximation, stated).
+(3) Refresh storm: with the refresh endpoint working and market data answering 401 to everything, every
+distinct request forced a refresh, retried, 401'd, and the next poll repeated it up to the request cap;
+a forced refresh now happens at most once a minute across all callers (_forced401RefreshAt), later 401s are
+recorded without one. Should-fixes taken: a request Schwab accepts clears the unauthorized mark (no 10-min
+"re-auth required" over flowing data); with the refresh token known dead the mark holds until re-auth
+replaces the row; the Settings copy no longer promises that re-authorising clears an entitlement refusal.
+Tests 25/25 (schwab-readiness/semantics skip locally). Re-review before merge.
 
 2026-11-08: Scenario odds and targets on the horizon's own expected move (feat/scenario-odds-horizon,
 review item 4). buildAudit built the bull/bear targets from the 1-DAY expected move for every horizon and

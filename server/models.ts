@@ -171,8 +171,9 @@ export interface ModelAudit {
   gammaZone: "y+" | "y-" | "y?";           // positive = dampening, negative = amplifying, "y?" = unknown (missing / no material gamma)
   gammaZoneLabel: string;                  // "DAMPENING" / "AMPLIFYING" / "UNKNOWN"
   gammaAtSpot: number;                     // raw gamma × OI at current spot (for DFI)
-  dfi: number;                             // Delta Flow Indicator — normalised DEX slope (signed, float)
-  dfiLabel: string;                        // "BULLISH" / "BEARISH" / "NEUTRAL"
+  dfi: number;                             // Delta Flow Indicator — normalised DEX slope (signed, float); 0 when unavailable (see dfiState)
+  dfiState: "ok" | "unavailable";          // "unavailable" = the DEX curve had fewer than 3 points, so no slope exists; dfi is not a reading then
+  dfiLabel: string;                        // "BULLISH" / "BEARISH" / "NEUTRAL" / "UNAVAILABLE"
   dfiFlipped: boolean;                     // true if dfi sign changed vs prior reading
   contractCount: number;                   // rows in the chain for this horizon
   mainPivot: number | null;                // dominant magnet / zero-gamma — the primary intraday pivot
@@ -982,8 +983,11 @@ function buildAudit(
   // dDEX/dS evaluated at current spot, normalised to the GEX scale.
   // Positive DFI = bullish delta accumulation. Negative = bearish.
   // Range is roughly -5 to +5 in normal conditions.
+  // With fewer than 3 curve points there is no slope to read: dfi stays 0 for
+  // readers that need a number, and dfiState says it is not a reading.
   let dfi = 0;
   const curveLen = profile.curve.length;
+  const dfiState: "ok" | "unavailable" = curveLen >= 3 ? "ok" : "unavailable";
   if (curveLen >= 3) {
     // Find index closest to spot in the curve
     const idx = profile.curve.reduce((best, p, i) =>
@@ -1000,7 +1004,7 @@ function buildAudit(
     // Round to 2 decimals
     dfi = parseFloat(dfi.toFixed(2));
   }
-  const dfiLabel = dfi > 0.1 ? "BULLISH" : dfi < -0.1 ? "BEARISH" : "NEUTRAL";
+  const dfiLabel = dfiState === "unavailable" ? "UNAVAILABLE" : dfi > 0.1 ? "BULLISH" : dfi < -0.1 ? "BEARISH" : "NEUTRAL";
   // dfiFlipped: for real-time use — here we mark true when we're near the charm zero crossover
   const charmZero = profile.zeroCharmSpot;
   const dfiFlipped = charmZero != null && Math.abs(charmZero - spot) / spot < 0.003;
@@ -1192,6 +1196,7 @@ function buildAudit(
     gammaZoneLabel,
     gammaAtSpot,
     dfi,
+    dfiState,
     dfiLabel,
     dfiFlipped,
     contractCount: profile.contractCount,

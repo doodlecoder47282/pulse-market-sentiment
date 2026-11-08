@@ -69,7 +69,7 @@ test("exit stress: the same arithmetic as the card's round trip, at each pulled 
 
 test("wiring: an observation per refresh, derived readouts on structure, raw ring not served", () => {
   const e = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
-  assert.match(e, /c\.lastRefreshAt = Date\.now\(\);\s*c\.observations = appendObservation\(c\.observations, \{ at: c\.lastRefreshAt, liquidityUsd: c\.liquidityUsd, marketCap: c\.marketCap, top10Pct: c\.top10Pct \}\);/);
+  assert.match(e, /c\.lastRefreshAt = Date\.now\(\);\s*c\.observations = appendObservation\(c\.observations, \{ at: c\.lastRefreshAt, liquidityUsd: c\.liquidityUsd, marketCap: capOf\(c\)\.cap, top10Pct: c\.top10Pct \}\);/);
   assert.match(e, /liquidityVelocity: liquidityVelocity\(c\.observations, 60 \* 60_000, Date\.now\(\)\),/);
   assert.match(e, /exitStress: exitCostStress\(c\.liquidityUsd, c\.risk \? Math\.max\(1, c\.risk\.maxPositionUsd\) : 100\),/);
   assert.match(e, /\.map\(\(\{ observations: _obs, \.\.\.rest \}\) => \(\{ \.\.\.rest, observationCount: _obs\.length \}\)\)/);
