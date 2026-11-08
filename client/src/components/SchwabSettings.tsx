@@ -42,6 +42,8 @@ interface SchwabStatus {
   expiresIn: number;        // seconds
   refreshExpiresIn: number; // seconds
   needsReauth: boolean;
+  /** Schwab answered 401 even after a forced token refresh (ms), within the last 10 min. */
+  unauthorizedAt?: number | null;
   /** Token storage at rest (server/schwabTokenStore.ts). */
   tokenStore?: {
     mode: "encrypted" | "plaintext-local" | "locked";
@@ -659,7 +661,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <AlertTriangle className="h-4 w-4 text-amber-400" />
                 <div>
                   <div className="text-sm font-medium text-amber-300">Re-authentication required</div>
-                  <div className="text-[11px] text-muted-foreground">Refresh token expired. Complete the OAuth flow again below.</div>
+                  <div className="text-[11px] text-muted-foreground">{status?.unauthorizedAt ? `Schwab refused the access token at ${new Date(status.unauthorizedAt).toLocaleTimeString()} even after a refresh. Complete the OAuth flow again below.` : "Refresh token expired. Complete the OAuth flow again below."}</div>
                 </div>
               </div>
             ) : (

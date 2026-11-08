@@ -1799,3 +1799,13 @@ Fourth check of feat/odte-implied-close: no MUST-FIX; one residual of the same c
 shoulder, outside the body, still removed 4.5% of mass from one side and read as skew). Rule now: a chain
 with any clipped strike makes no skew claim ("median not read: N strikes priced out of line (clipped to
 zero[, inside its body])"); width, share above spot, forward gap and distance are still stated.
+
+2026-11-08: After-hours successful fetch and 401 (feat/after-hours-fetch-401, review item 3). #63 labelled
+the settled copy only on the failed-refresh path; a chain or daily-bar payload fetched successfully on a
+Saturday read "live" (badge) or "stale 16h" (age chips). freshFreshness now applies the same rule as
+staleServeDecision (market closed and fetched after the last settled close = last session), and the
+weekend minute-bar fallback carries lastSession too. A Schwab 401 never forced a token refresh and the
+connection chip stayed green over "unauthorized" on every tab: a 401 now forces one coalesced refresh and
+retries once; a second 401 is recorded, needsReauth is set for 10 min (Settings says Schwab refused the
+token after a refresh), and the request reads "401 unauthorized (token refresh did not clear it)".
+Tests: tests/quant/after-hours-fetch.test.ts.

@@ -208,6 +208,8 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
 
 // In-memory last-refresh-error tracker. Cleared on successful refresh.
 let _lastRefreshError: { at: number; status: number; message: string } | null = null;
+/** Last time Schwab answered 401 to a request even after a forced token refresh. */
+let _lastUnauthorizedAt: number | null = null;
 
 /** Returns the current Schwab connection status.
  *  needsReauth fires when:
@@ -260,10 +262,15 @@ export function getSchwabStatus(): {
     _lastRefreshError != null &&
     _lastRefreshError.at > row.updatedAt &&
     accessExpired;
-  const needsReauth = refreshExpired || refreshKnownBad;
+  // Schwab refused the token after a forced refresh within the last 10 min and
+  // the token row has not changed since: the connection is not usable, whatever
+  // the expiry says.
+  const unauthorizedRecently = _lastUnauthorizedAt != null && now - _lastUnauthorizedAt < 10 * 60_000 && _lastUnauthorizedAt > row.updatedAt;
+  const needsReauth = refreshExpired || refreshKnownBad || unauthorizedRecently;
   const connected = !needsReauth && row.expiresAt > 0;
   return {
     connected,
+    unauthorizedAt: unauthorizedRecently ? _lastUnauthorizedAt : null,
     expiresIn: Math.max(0, Math.floor((row.expiresAt - now) / 1000)),
     refreshExpiresIn: Math.max(0, Math.floor((row.refreshExpiresAt - now) / 1000)),
     needsReauth,
@@ -427,8 +434,9 @@ async function schwabFetchMetaOnce(
     if (data == null) return { data: null, freshness: null, reason: "Demo edition: no Schwab streamer for sample data" };
     return { data, freshness: freshFreshness(now, schwabDataKind(path, params), false), reason: null };
   }
-  const token = await getAccessToken();
+  let token = await getAccessToken();
   if (!token) return { data: null, freshness: null, reason: "Schwab not connected" };
+  let retried401 = false;
 
   // Build cache key — exclude endDate from key for pricehistory minute bars
   // because we use endDate=now() to force Schwab to return today's tape, but
@@ -559,10 +567,20 @@ async function schwabFetchMetaOnce(
         if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl, fingerprint });
         return deliver({ data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes }, "transport_response", fetchedAt, fingerprint);
       }
-      // 401 → token issue, no retry
+      // 401 → the access token is not accepted. Once per call: force a refresh
+      // (coalesced; getAccessToken refreshes when the token has under the
+      // lookahead left, so Infinity forces it) and retry with the new token.
+      // A second 401 is recorded so the connection status reflects it instead
+      // of a green chip over "unauthorized" on every tab.
       if (res.status === 401) {
         console.warn("[schwab] 401 unauthorized:", path);
-        return { data: null, freshness: null, reason: "Schwab 401 unauthorized" };
+        if (!retried401) {
+          retried401 = true;
+          const fresh = await getAccessToken(Number.POSITIVE_INFINITY);
+          if (fresh && fresh !== token) { token = fresh; continue; }
+        }
+        _lastUnauthorizedAt = Date.now();
+        return { data: null, freshness: null, reason: "Schwab 401 unauthorized (token refresh did not clear it)" };
       }
       // 403 → may be permission OR transient (Schwab returns 403 for rate-adjacent
       // refusals). Cool down endpoint 60s, no retry. Track 403 streak — if 3 in a row
@@ -967,7 +985,8 @@ export async function getPriceHistory(
       const lastDay = lastSessionDate(all);
       if (lastDay && r2.freshness) {
         candles = all.filter((c) => typeof c?.datetime === "number" && etDate(c.datetime) === lastDay);
-        f = r2.freshness;
+        // Minute bars of a finished session shown after the close: the last-session copy, not stale.
+        f = { ...r2.freshness, lastSession: true };
         reason = `market closed: last session ${lastDay}`;
       }
     }
