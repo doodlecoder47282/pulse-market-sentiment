@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
 import { VERDICT_CODE_TEXT } from "@shared/cryptoVerdict";
+import { capOf } from "@shared/cryptoCap";
 import type { CryptoReplay } from "@shared/cryptoReplay";
 import type { LinePosition, MemeClass, TradeCost } from "@shared/memeStructure";
 
@@ -45,7 +46,7 @@ interface Candidate {
   chain: string; pairAddress: string; tokenAddress: string;
   symbol: string; name: string; dexId: string;
   pumpfunGraduate: boolean; discoveredVia: string;
-  priceUsd: number | null; marketCap: number | null; liquidityUsd: number | null;
+  priceUsd: number | null; marketCap: number | null; fdv: number | null; liquidityUsd: number | null;
   vol5m: number | null; vol1h: number | null; vol24h: number | null;
   buys5m: number | null; sells5m: number | null;
   chg5m: number | null; chg1h: number | null; chg24h: number | null;
@@ -179,6 +180,11 @@ const fmtUsd = (n: number | null | undefined, digits = 1): string => {
   if (a >= 1e6) return `$${(n / 1e6).toFixed(digits)}M`;
   if (a >= 1e3) return `$${(n / 1e3).toFixed(digits)}K`;
   return `$${n.toFixed(a < 1 ? 4 : 0)}`;
+};
+/** The cap the desk scored on (shared/cryptoCap capOf): marketCap, else FDV with the basis named. */
+const capText = (c: { marketCap: number | null; fdv: number | null }): string => {
+  const { cap, basis } = capOf(c);
+  return cap == null ? "n/a" : basis === "fdv" ? `${fmtUsd(cap)} (FDV)` : fmtUsd(cap);
 };
 
 const fmtAge = (min: number | null): string => {
@@ -323,7 +329,7 @@ function AutopsyCard() {
                 <div className="mt-1 text-amber-300">unavailable: {ok.stress.reason}</div>
               ) : (
                 <>
-                  <div className="mt-1 font-mono tabular-nums text-muted-foreground">top-10 hold {ok.stress.top10Pct}% of supply, about {fmtUsd(ok.stress.top10ValueUsd ?? 0)} at the current price ({ok.stress.basis === "fdv" ? "FDV basis" : "market-cap basis"}); pool quote side about {fmtUsd(ok.stress.quoteReserveUsd ?? 0)}</div>
+                  <div className="mt-1 font-mono tabular-nums text-muted-foreground">top-10 hold {ok.stress.top10Pct}% of supply, about {ok.stress.top10ValueUsd != null ? fmtUsd(ok.stress.top10ValueUsd) : "n/a"} at the current price ({ok.stress.basis === "fdv" ? "FDV basis" : "market-cap basis"}); pool quote side about {ok.stress.quoteReserveUsd != null ? fmtUsd(ok.stress.quoteReserveUsd) : "n/a"}</div>
                   <div className="mt-1 overflow-x-auto">
                     <table className="w-full min-w-[420px] font-mono tabular-nums">
                       <thead><tr className="text-muted-foreground"><th className="text-left">sold</th><th className="text-right">value</th><th className="text-right">x pool quote</th><th className="text-right">price falls</th><th className="text-right">sellers receive</th></tr></thead>
@@ -411,7 +417,7 @@ function VenueLine({ name, v }: { name: string; v: VenueCell }) {
             <span className={v.state === "stale" ? "text-amber-300" : undefined}>{v.state === "stale" ? "stale · " : ""}mid {fmtPx(v.mid)}</span>
             {v.spreadBps != null && <> · spr {v.spreadBps.toFixed(1)} bps</>}
             {f && (f.count > 0
-              ? <> · taker buy {Math.round((f.takerBuyShare ?? 0) * 100)}% of {f.count} trades / {Math.round(f.coveredSec / 60)}m</>
+              ? <> · taker buy {f.takerBuyShare != null ? `${Math.round(f.takerBuyShare * 100)}%` : "n/a"} of {f.count} trades / {Math.round(f.coveredSec / 60)}m</>
               : <> · 0 trades in window (observed)</>)}
             {v.lastTradeUtc && <> · last {new Date(v.lastTradeUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>}
           </>}
@@ -483,7 +489,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
           <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
           <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight" data-testid="crypto-brief-headline">{headline}</h2>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {feed ? `${feed.trackedCount} pools tracked · read ${new Date(feed.asOf ?? Date.now()).toLocaleTimeString()}` : feedError ? "no read" : "warming up"}
+            {feed ? `${feed.trackedCount} pools tracked · read ${feed.asOf ? new Date(feed.asOf).toLocaleTimeString() : "time unknown"}` : feedError ? "no read" : "warming up"}
             {notOk.length > 0 ? ` · ${notOk.map((e) => `${e.name} ${e.status}`).join(", ")}` : engines.length > 0 ? " · all agents running" : ""}
           </p>
         </div>
@@ -499,7 +505,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
                   <span className={`text-[11px] font-semibold ${c.verdict === "ENTER" ? "text-lime-300" : "text-amber-300"}`}>{c.verdict === "ENTER" ? "Enter" : "Watch"}{c.score != null ? ` · ${c.score}` : ""}</span>
                 </div>
                 <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                  cap {c.marketCap != null ? fmtUsd(c.marketCap) : "n/a"} · liq {c.liquidityUsd != null ? fmtUsd(c.liquidityUsd) : "n/a"}
+                  cap {capText(c)} · liq {c.liquidityUsd != null ? fmtUsd(c.liquidityUsd) : "n/a"}
                 </div>
                 {c.verdictReasons[0] && <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground">{c.verdictReasons[0]}</div>}
               </button>
@@ -609,7 +615,7 @@ export default function CryptoPanel() {
           </button>
         ))}
         <span className="ml-auto text-[11px] text-muted-foreground">
-          tracking {feed?.trackedCount ?? 0} pools · refresh 45s
+          tracking {feed?.trackedCount ?? "?"} pools · refresh 45s
         </span>
       </div>
 
@@ -727,7 +733,8 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     accent === "enter" ? "border-lime-400/35 hover:border-lime-400/60"
     : accent === "watch" ? "border-amber-400/30 hover:border-amber-400/55"
     : "border-border/50 hover:border-border";
-  const mcapPct = c.marketCap != null ? Math.min(100, (c.marketCap / 1_000_000) * 100) : 0;
+  const cap = capOf(c);
+  const mcapPct = cap.cap != null ? Math.min(100, (cap.cap / 1_000_000) * 100) : 0;
   return (
     <div id={`crypto-card-${c.chain}-${c.pairAddress}`} className="scroll-mt-24">
     <button
@@ -765,7 +772,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <div className="font-mono text-sm font-bold tabular-nums">{fmtUsd(c.marketCap)}</div>
+          <div className="font-mono text-sm font-bold tabular-nums" title={cap.basis === "fdv" ? "DexScreener reports no market cap for this pair; the desk scores and grades it on fully diluted value" : cap.basis === "marketCap" ? "DexScreener market cap" : "no market cap or FDV reported"}>{fmtUsd(cap.cap)}{cap.basis === "fdv" ? <span className="ml-1 text-[10px] font-normal text-muted-foreground">FDV</span> : null}</div>
           <div className={`font-mono text-[11px] tabular-nums ${pctCls(c.chg1h)}`}>
             {c.chg1h != null ? `${c.chg1h >= 0 ? "+" : ""}${c.chg1h.toFixed(0)}% 1h` : "—"}
           </div>
@@ -785,7 +792,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           {c.pumpLive && <span className="font-semibold text-rose-400">● LIVE</span>}
           <span className="flex items-center gap-1">
             <Flame className={`h-2.5 w-2.5 ${(c.fomoScore ?? 0) >= 60 ? "text-orange-400" : "text-muted-foreground"}`} />
-            fomo {Math.round(c.fomoScore ?? 0)}
+            fomo {c.fomoScore != null ? Math.round(c.fomoScore) : "n/a"}
           </span>
           <span
             className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}

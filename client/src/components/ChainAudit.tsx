@@ -29,6 +29,7 @@ interface DEXResult {
   maxPositive: { strike: number; value: number } | null;
   maxNegative: { strike: number; value: number } | null;
   flipStrike: number | null;
+  flipMethod?: "sign_change" | "peak_fallback" | "none";
   totalCallDex: number;
   totalPutDex: number;
   totalNetDex: number;
@@ -412,7 +413,7 @@ export default function ChainAudit() {
         )}
         {(data as any)?.stale && (
           <Badge variant="outline" className="border-amber-500/40 font-mono text-[11px] text-amber-300" data-testid="chain-audit-stale">
-            Last good audit · {Math.round(((data as any).staleAgeSec ?? 0) / 60)} min old
+            Last good audit · {(data as any).staleAgeSec != null ? `${Math.round((data as any).staleAgeSec / 60)} min old` : "age unknown"}
           </Badge>
         )}
         {data?.audit?.dataQuality === "partial" && (
@@ -468,9 +469,11 @@ export default function ChainAudit() {
           <Section title="Key Levels" testId="section-kpi">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <KPICard
-                label="DEX Flip Strike"
+                label={audit.dex.flipMethod === "peak_fallback" ? "DEX Peak Strike (no flip)" : "DEX Flip Strike"}
                 value={fmtStrike(audit.dex.flipStrike)}
-                sub={audit.dex.flipStrike ? `${(audit.dex.flipStrike - data.spot).toFixed(0)} pts from spot` : undefined}
+                sub={audit.dex.flipStrike
+                  ? `${(audit.dex.flipStrike - data.spot).toFixed(0)} pts from spot${audit.dex.flipMethod === "peak_fallback" ? " · cumulative DEX does not change sign in the quoted strikes; largest |DEX| above spot shown" : ""}`
+                  : undefined}
                 color="#06b6d4"
                 testId="kpi-dex-flip"
               />

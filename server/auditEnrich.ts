@@ -796,8 +796,8 @@ async function getAtmIV(spot: number): Promise<number | null> {
  * Main entry — augments daily horizon audit with the 5 missing fields.
  * Returns the same response object (mutated in place).
  *
- * IMPORTANT: This must run AFTER applyTermStructureRescale so the
- * scenarioTargets are already proper for non-daily horizons.
+ * Reads only the daily horizon; the non-daily scenario targets are built on
+ * their own horizon's expected move in models.ts buildAudit.
  */
 export async function enrichAudit(
   result: ModelsResponse,

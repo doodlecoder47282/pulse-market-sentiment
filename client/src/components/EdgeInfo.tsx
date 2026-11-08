@@ -48,7 +48,7 @@ const INFO: Record<string, InfoEntry> = {
   "spx-chart": {
     title: "SPX Chart + Dealer Levels",
     what: "Live SPX candles with the three dealer levels overlaid: call wall (resistance), put wall (support), gamma flip (the regime line).",
-    how: "Above the flip, dealers dampen moves \u2014 fade pushes into the walls. Below the flip they amplify \u2014 respect momentum and don't fade.",
+    how: "Above the flip the model describes dealer hedging as damping moves toward the walls; below the flip, as amplifying them. The chart marks where that description changes; it does not say what to do about it.",
     edge: "The flip marks where the model says dealer hedging changes from damping moves to amplifying them. That is how the model describes hedging; this chart does not measure whether either side of it changes any outcome.",
   },
   "order-flow": {
@@ -125,7 +125,7 @@ const INFO: Record<string, InfoEntry> = {
     what: "Tight, machine-computed pivot zones for the selected expiry \u2014 each band is a weighted center of gamma notional, today's option volume, open interest, and charm, with sub-strike precision instead of a wide strike-to-strike range.",
     how: "Each band carries a model label. EXHAUST marks where the model sees hedging absorbing a rally or flush. ACCELERANT marks short-gamma zones where the model sees hedging adding to a move through them. PIN marks where the model sees hedging pulling price back. FLIP is the line where the model switches between damping and amplifying. FRESH shows how much of the positioning is today's flow versus stale open interest. These are model labels; Batcave has not measured how often price behaves that way.",
     edge: "The bands are narrower than strike-to-strike walls, which makes them easier to compare with price. They are model output from the current chain; Batcave has not measured whether narrower levels improve any entry or exit.",
-    risk: "Bands move as flow updates \u2014 a band that was exhaust in the morning can flip to accelerant after a big print. Re-check before every entry, and volume expansion through a band overrides its label.",
+    risk: "Bands move as flow updates \u2014 a band that was exhaust in the morning can flip to accelerant after a big print. The label is as of the last flow update, and volume expansion through a band is not part of it.",
   },
   "trade-environment": {
     title: "Trade Environment",

@@ -1857,6 +1857,144 @@ tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now 
 own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
 COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
 grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
+2026-11-08: Crypto discovery unfrozen and one cap basis (feat/crypto-cap-eviction, review item 2). Over
+the 220 cap, any scored name (a PASS at 0 included) outranked every unscored arrival, so new pools were
+evicted in the tick they arrived and the universe froze about 15 min after a restart: the first-ENTER
+sample could not grow. shared/cryptoCap.ts evictOverCap keeps an unscored arrival for one momentum cycle,
+evicts never-answered names first, then PASS before WATCH before ENTER by score (220 scored + 20 arrivals:
+all 20 arrivals survive, 20 lowest PASS leave; test). Cap basis: GeckoTerminal FDV landed in marketCap
+every 60 s and was recorded and graded as a market cap (false RUGGED when DexScreener later reported a
+real marketCap; NO_DATA while priced when marketCap was null and only FDV existed). capOf (marketCap else
+FDV, basis named) is now read by the scorer, persistSignal, the peak and plan samplers and the grader's
+live path; GeckoTerminal does not overwrite a DexScreener read younger than one cycle. No rule-book value
+changed. Tests: tests/quant/crypto-cap.test.ts; crypto suite 96/96. Needs the standing crypto review.
+Review of feat/crypto-cap-eviction (HOLD, two MUST-FIX, both taken). (1) The horizon pass's live path
+still read live.marketCap; it and the 10-min grader now read capOnBasis(live, basis) where basis is the
+row's own features_json.mcapBasis (SELECTs carry mcap_basis). (2) A basis switch mid-life (entry on FDV
+500k, DexScreener later reports marketCap 40k and FDV 500k) was graded 40k against 500k and called
+RUGGED; every row is now sampled and graded on the basis it was recorded on (shared/cryptoCap.ts
+capOnBasis; CRYPTO_PEAK_SAMPLE_SQL runs once per basis in PEAK_SAMPLE_BASES with a null sample touching
+nothing). Test runs gradeSignal itself: on-basis OPEN, off-basis RUGGED. Should-fixes taken: the protected
+arrival set is bounded (an unscored arrival inside its first cycle ranks 500: above every PASS, below
+every WATCH and ENTER; 300 arrivals against 200 WATCH/ENTER + 20 PASS evict only the 20 PASS and 280
+arrivals; test); the Crypto tab shows the cap the desk scored on with an FDV tag when that is the basis
+(card total, card line, desk fact "cap (FDV)", plan levels and liq/cap on the same number); the
+MOMENTUM_CYCLE_MS comment states the arithmetic (220 / 90 per 75 s tick = 2.4 ticks, 3 ticks + margin =
+300 s); the stray capOf JSDoc in cryptoEngine.ts removed; docs/CRYPTO_DESK.md states the DexScreener
+outage behaviour (GeckoTerminal fills in after one silent cycle and the basis it carried is recorded).
+Tests: crypto suite + exit-plan + r4 + regime-crypto-r2 149/149. Re-review requested before merge.
+Re-review of feat/crypto-cap-eviction: MERGE-READY, both must-fixes and all should-fixes confirmed fixed;
+three new should-fixes taken: CRYPTO_DESK.md now says GeckoTerminal leaves only the market cap and FDV of
+a fresh DexScreener read alone (price and liquidity still refresh); a row recorded with basis "none"
+(unreachable today) folds into the null-basis statement so no row can go unsampled (r4 test: five rows,
+one statement each, FDV row untouched when FDV is not reported); the observation ring and hist record
+capOf(c).cap so liquidityVelocity/exitStress see the FDV-only cap. 127/127.
+2026-11-08: After-hours successful fetch and 401 (feat/after-hours-fetch-401, review item 3). #63 labelled
+the settled copy only on the failed-refresh path; a chain or daily-bar payload fetched successfully on a
+Saturday read "live" (badge) or "stale 16h" (age chips). freshFreshness now applies the same rule as
+staleServeDecision (market closed and fetched after the last settled close = last session), and the
+weekend minute-bar fallback carries lastSession too. A Schwab 401 never forced a token refresh and the
+connection chip stayed green over "unauthorized" on every tab: a 401 now forces one coalesced refresh and
+retries once; a second 401 is recorded, needsReauth is set for 10 min (Settings says Schwab refused the
+token after a refresh), and the request reads "401 unauthorized (token refresh did not clear it)".
+Tests: tests/quant/after-hours-fetch.test.ts.
+Review of feat/after-hours-fetch-401 (HOLD, three MUST-FIX, all taken). (1) tsc: getSchwabStatus's declared
+return type lacked unauthorizedAt (CI type gate red); added. (2) New mislabel: between a session's close
+and its settle (16:00-16:15 ET, 13:00-13:15 on a half day) lastSettledCloseMs returns the PREVIOUS settle,
+so a chain fetched at 16:05 read "last-session copy" while index options still traded; isLastSessionCopy
+(shared by freshFreshness and staleServeDecision) now also requires not inSettlingWindow (tests: Thu 16:05
+not, 16:16 yes, Black Friday 13:05 not; pre-market stays last_session as an accepted approximation, stated).
+(3) Refresh storm: with the refresh endpoint working and market data answering 401 to everything, every
+distinct request forced a refresh, retried, 401'd, and the next poll repeated it up to the request cap;
+a forced refresh now happens at most once a minute across all callers (_forced401RefreshAt), later 401s are
+recorded without one. Should-fixes taken: a request Schwab accepts clears the unauthorized mark (no 10-min
+"re-auth required" over flowing data); with the refresh token known dead the mark holds until re-auth
+replaces the row; the Settings copy no longer promises that re-authorising clears an entitlement refusal.
+Tests 25/25 (schwab-readiness/semantics skip locally). Re-review before merge.
+
+2026-11-08: Scenario odds and targets on the horizon's own expected move (feat/scenario-odds-horizon,
+review item 4). buildAudit built the bull/bear targets from the 1-DAY expected move for every horizon and
+read the risk-neutral odds there; a route post-processor (applyTermStructureRescale) then replaced the
+weekly/monthly/quarterly targets with a VIX cone AFTER the odds were read, so a weekly card showed odds of
+the WEEK closing beyond a ONE-DAY band beside targets a week wide (lognormal check: ~45/10/45 instead of
+~16/68/16), and scenarioProbEvent named the targets that were no longer shown. Now shared/horizonExpectedMove.ts
+picks the horizon's EM first (daily: 0DTE straddle, else VIX x sqrt(1/252) x 0.55; others: the horizon
+expiry's SVI ATM total vol, the SAME distribution the odds come from, else VIX9D/VIX x sqrt(days/252), the
+quarterly 0.85 damp kept and named as hand-set), buildAudit caps the targets to it and reads the odds at
+those targets, scenarioTargets carries horizonEM/horizonDays beside oneDayEM (which stays the 1-day figure
+for the intraday decay and the Discord card), expectedMove names source/horizon/days/expiry, the Models
+panel labels the EM "to the weekly close (options-implied, <expiry>)", and the post-processor is gone (the
+daily card is unchanged: same straddle EM, same targets). Tests: tests/quant/horizon-expected-move.test.ts
+(sources, fallbacks, the on-horizon vs one-day odds check against a lognormal CDF, wiring); full quant
+suite 1005 pass, 4 known local package failures. Needs an independent quant review.
+Review of feat/scenario-odds-horizon: MERGE-READY, no must-fix; defect confirmed on main (odds read at
+1-day targets, then targets re-cut to a VIX cone after the odds); daily card unchanged to the cent.
+Should-fixes taken: the Models audit line now shows the thresholds beside the odds ("BULL 45% close >=
+6612 / BEAR 18% close <= 6540"), since the client never rendered scenarioTargets and a weekly bull target
+can sit well inside the EM at the nearest resistance; the implied-atm note says "about 1 sigma ... a
+log-return vol about the forward, band centred on spot as an approximation" (matters ~8% of the EM on
+the quarterly card only). Left as noted: horizonDays is the nominal 5/21/63 beside the actual expiry
+string; the weekly VIX9D fallback keeps its calendar sqrt(7/365) (inherited, named in the note).
+
+2026-11-08: Calibration card gated and read against climatology (feat/calibration-gate, review item 5).
+The weekly card gave absolute Brier letter grades ("elite", "excellent") and "+N% sharper" from the first
+settled day, compared the top-pick hit rate with a 33% baseline when the base bucket realises most days, and
+pooled implied and heuristic odds (and 09:30 and half-hour rows) into one score without saying so; its
+"vol may be over-modeled / skew under-priced" prose was interpretation off tiny samples. Now:
+pulse_predictions records prob_source (ALTER TABLE, older rows read "unrecorded"); rollingBrier returns the
+odds and slot mix, the mean forecast per bucket, Brier skill vs the climatology forecast (1 - BS/BS_clim,
+null when the baseline is 0) and a gate at CALIBRATION_MIN_DAYS = 20; server/calibrationCardText.ts
+(pure, tested) composes the card: sample line, realized mix beside the mean forecast with the gap in
+points, then, past the gate only, Brier vs base-rate with skill, the hit rate against always-picking the
+most frequent bucket with its CI, resolution and the watchdog; under the gate the scores are withheld
+and said to be. No letter grades, no "sharper", no diagnosis. gradeBrier stays exported for API
+consumers with a note that an absolute Brier grade means nothing here. Tests:
+tests/quant/calibration-card.test.ts (gated, ungated, skill n/a, wiring). Needs an independent review.
+Review of feat/calibration-gate (HOLD, one must-fix, taken): the scheduler posted postCalibrationCard(7),
+so with the 20-day gate on the window's days the Sunday card could never show a reading. The posted window
+is now CALIBRATION_CARD_DAYS = 30 (scheduler and route default), the gate stays on the days found in the
+window (a 7-day Brier is a 7-sample estimate whatever the table holds), and the header names the window
+("LAST 30 SETTLED DAYS: n SCORED"). Should-fixes taken: the card states that the base rate is fitted on
+the same days so skill is understated and that the watchdog line is its significance test; each section
+names its own window (30 graded forecasts, 60 days); resolution prints the number without quality
+adjectives; "percentages below are of these n days" under the gate; hit rate and mean forecast are
+read over exactly the Brier rows' dates (WHERE o.date >= oldest); beatsTrivial commented as unused.
+
+2026-11-08: Copy and display sweep (feat/copy-display-sweep, review item 7). Instruction-style copy
+rewritten as description of what the model says (EdgeInfo chart card "fade pushes into the walls",
+Daily Playbook flip notes "Expect momentum", ML projection "dealers buy dips, sell rips" and
+"buy-the-dip hedging supports floor", Trade Desk wall glossary "Dealers sell rallies / buy dips" and the
+"long entry / short entry" legend, Ticker Outlook "sizing should respect that", Exposure GEX gloss,
+Seasonality "should be combined", Canary "RISK-ON CONFIRMED" -> "RISK-ON ALIGNED"). `?? 0` reaching the
+screen replaced with n/a or unknown (Crypto feed read time no longer shown as now; holder stress dollars;
+taker buy share; fomo; Thermal traded-today volumes; Schwab token and refresh expiry; Chain Audit stale
+age; Position Sizer dollars; 13-week sigma). Seven panels whose payload carried an asOf the card never
+showed now show "read HH:MM · N min ago" (AsOfNote; helpers in client/src/lib/asOf.ts: ms, seconds or
+ISO, missing reads "read time unknown", never now): Mag 7, JPM collar, 0DTE Wiener map, Daily Playbook,
+Regime headline, Ticker Outlook, Depth/Skew/Flow. Legibility floor below 1024 px: 8-10 px labels render
+at 11 px (desktop keeps 12 px). DEX flip: when cumulative net DEX does not change sign in the quoted
+strikes the code meant to fall back to the peak |DEX| strike under the "flip" label; chainAudit now
+returns flipMethod and the card reads "DEX Peak Strike (no flip)" with the reason. "MOPEX MAX PAIN" is computed
+over every expiry in the horizon's window and is now labelled "WINDOW MAX PAIN" with a note (kind id
+unchanged for backtests and target derivation; Trade Desk glossary corrected). Vomma on a missing VIX
+is "unavailable" (was "normal"); the Models vol row says "VIX unavailable: vol level not read". Tests:
+tests/quant/copy-display-sweep.test.ts. Needs a review (copy + client).
+Review of feat/copy-display-sweep (HOLD, three must-fixes, all taken). (1) The legibility floors are
+scoped to .batcave-shell, a class a later nav rework dropped from the dashboard root, so the new phone
+floor AND the existing desktop floor were dead CSS; the class is back on the root (only the font floors
+and CSS variables take effect; .batcave-main/.batcave-header are not used). (2) The DEX peak fallback was
+unreachable on main (seed Math.abs(-Infinity) = Infinity, so the reduce never picked a strike: the card
+showed a dash, never a mislabelled peak; the entry above is corrected); the seed is fixed and the
+fallback now runs and is named, with a behavioural test (all-positive DEX -> peak_fallback at the
+largest |DEX| strike; a real sign change -> sign_change; nothing above spot -> none). (3) The 0DTE map
+note showed the computation time beside a possibly stale chain; it now shows the CHAIN's asOf
+("chain read HH:MM"). Should-fixes taken: Put Wall glossary says what the model tags (FLOOR by position)
+without a hedging-direction claim; Discord card label and gloss updated to WINDOW MAX PAIN (no pull
+claim); ML projection negative-gamma line is "the model describes"; Seasonality "70%+ win rate preferred"
+and EdgeInfo "Re-check before every entry" rewritten; Ticker Outlook "no edge" -> "no lean", "kill
+thesis below" -> "the read no longer holds below"; AsOfNote is nowrap and the four header rows it joined
+wrap at phone width. Level names in the model (Buy zone / Sell zone, NEG-Γ ENTRY) are persistent kind
+labels and are left; noted for a later naming pass.
 
 2026-11-08: Load and robustness (feat/load-robustness, review item 6). Five confirmed costs, no behaviour
 of any reading changed. (1) The Schwab response cache never evicted: keys carry expiry windows and date

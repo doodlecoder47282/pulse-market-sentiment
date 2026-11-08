@@ -496,7 +496,7 @@ export default function ThermalHeatmap() {
               )}
               <div className="text-[11px] text-slate-500 mt-1">OI c/{hover.callOI} p/{hover.putOI}</div>
               {(hover.callVolume != null || hover.putVolume != null) && (
-                <div className="text-[11px] text-slate-500">traded today c/{hover.callVolume ?? 0} p/{hover.putVolume ?? 0} (not in exposure)</div>
+                <div className="text-[11px] text-slate-500">traded today c/{hover.callVolume ?? "n/a"} p/{hover.putVolume ?? "n/a"} (not in exposure)</div>
               )}
             </div>
           )}

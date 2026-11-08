@@ -184,8 +184,7 @@ export function staleServeDecision(
   // age is: a distinct state, not "stale" (stale means a failed refresh of
   // data that could have moved). Quotes and minute bars move after hours
   // and keep the age cap.
-  const settled = lastSettledCloseMs(nowMs);
-  if ((kind === "chains" || kind === "daily_bars") && !isRegularSessionOpen(nowMs) && settled != null && fetchedAtMs >= settled) {
+  if (isLastSessionCopy(kind, fetchedAtMs, nowMs)) {
     const why = `${reason}; market closed, last-session copy`;
     return { serve: true, freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: false, lastSession: true, maxAgeMs, reason: why } };
   }
@@ -219,6 +218,26 @@ export function cacheEntryUnservable(kind: SchwabDataKind, fetchedAtMs: number, 
 
 /** Close of the most recent finished session + 15 min (index options settle
  *  their last prints by 16:15 ET), or null when the calendar cannot say. */
+/**
+ * True in the 15 minutes between a session's close and its settle (16:00-16:15
+ * ET, 13:00-13:15 on a half day): index options are still trading, so a chain
+ * read then is live data of a session that has not settled, never a
+ * last-session copy.
+ */
+export function inSettlingWindow(nowMs: number = Date.now()): boolean {
+  const d = etDate(nowMs);
+  const c = isTradingDay(d) ? sessionCloseMs(d) : null;
+  return c != null && nowMs >= c && nowMs < c + 15 * 60_000;
+}
+
+/** A chain or daily-bar payload fetched at `fetchedAtMs` is the settled last-session copy at `nowMs`. */
+export function isLastSessionCopy(kind: SchwabDataKind, fetchedAtMs: number, nowMs: number): boolean {
+  if (kind !== "chains" && kind !== "daily_bars") return false;
+  if (isRegularSessionOpen(nowMs) || inSettlingWindow(nowMs)) return false;
+  const settled = lastSettledCloseMs(nowMs);
+  return settled != null && fetchedAtMs >= settled;
+}
+
 export function lastSettledCloseMs(nowMs: number = Date.now()): number | null {
   let d = etDate(nowMs);
   for (let i = 0; i < 10; i++) {
@@ -229,20 +248,28 @@ export function lastSettledCloseMs(nowMs: number = Date.now()): number | null {
   return null;
 }
 
-/** Freshness of a payload served fresh (new request) or from a TTL cache hit. */
+/**
+ * Freshness of a payload served fresh (new request) or from a TTL cache hit.
+ * The SAME last-session rule as staleServeDecision applies: with the market
+ * closed, a chain or daily-bar payload fetched after the last settled close
+ * is the settled last-session copy (not live, not stale), whether the fetch
+ * succeeded just now or the copy came from the cache. Before this, only the
+ * failed-refresh path set lastSession, so a Saturday fetch read "live".
+ */
 export function freshFreshness(
   fetchedAtMs: number,
   kind: SchwabDataKind,
   servedFromCache: boolean,
   nowMs: number = Date.now(),
 ): SchwabFreshness {
+  const lastSession = isLastSessionCopy(kind, fetchedAtMs, nowMs);
   return {
     asOfMs: fetchedAtMs,
     ageMs: Math.max(0, nowMs - fetchedAtMs),
     servedFromCache,
     stale: false,
+    ...(lastSession ? { lastSession: true, reason: "market closed, last-session copy" } : { reason: null }),
     maxAgeMs: maxServeAgeMs(kind, nowMs),
-    reason: null,
   };
 }
 

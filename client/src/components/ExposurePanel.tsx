@@ -186,7 +186,7 @@ export default function ExposurePanel({ symbol }: Props) {
 
 const EXPOSURE_TOOLTIPS: Record<string, string> = {
   "DEX": "Delta Exposure: total dealer delta in dollars. Positive = dealers are net long delta (bought calls/sold puts); negative = net short delta. Drives the directional hedging flow.",
-  "GEX": "Gamma Exposure: total dealer gamma in dollars per 1% move. Positive = dealers stabilize price (buy dips, sell rips); negative = dealers amplify moves.",
+  "GEX": "Gamma Exposure: total dealer gamma in dollars per 1% move. Positive = the model describes dealer hedging as damping moves; negative = as amplifying them.",
   "VEX": "Vanna Exposure: change in dealer delta, in $, per +1 vol point (vanna x OI x 100 x S x 0.01). Positive = dealer delta rises when IV rises (they sell into a vol spike to re-hedge); negative = they buy.",
   "Charm": "Charm (delta decay) exposure: how dealer delta changes with time. Accelerates into expiry — can create persistent directional drift near OPEX.",
 };

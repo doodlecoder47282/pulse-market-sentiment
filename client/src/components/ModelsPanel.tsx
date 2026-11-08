@@ -121,9 +121,14 @@ interface ModelAudit {
   scenarioProb: { bull: number; base: number; bear: number };
   scenarioProbSource?: "risk-neutral-implied" | "hand-set-heuristic";
   scenarioProbNote?: string;
+  /** Price thresholds the audit odds refer to: bull = close >= bull, bear = close <= bear, base = neither. */
+  scenarioTargets?: { bull: number; base: number; bear: number; oneDayEM: number; horizonEM?: number; horizonDays?: number };
   expectedMove?: {
     oneSigma: number;
-    source: "0dte-straddle" | "vix-scaled";
+    source: "0dte-straddle" | "implied-atm" | "vix-scaled" | "fixed-fallback";
+    horizon?: "daily" | "weekly" | "monthly" | "quarterly";
+    days?: number;
+    expiry?: string | null;
     straddleMid: number | null;
     strike: number | null;
     note: string;
@@ -191,7 +196,7 @@ interface ModelHorizon {
   paths: ModelPath[];
   audit: ModelAudit;
   vol: { vix: number | null; vixChangePct: number | null; termRatio: number | null; termLabel: string };
-  vomma: "elevated" | "normal";
+  vomma: "elevated" | "normal" | "unavailable";
   confidence: "HIGH" | "MODERATE" | "LOW";
   mmMatrix?: MMMatrix;
   weeklyTrajectory?: WeeklyTrajectory;
@@ -680,11 +685,11 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
 
       {/* Line 7: Scenario probabilities */}
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/30 pt-0.5">
-        <span className="text-green-400">BULL {probs.bull}%</span>
+        <span className="text-green-400">BULL {probs.bull}%{a.scenarioTargets ? <span className="text-muted-foreground"> close ≥ {fmtK(a.scenarioTargets.bull)}</span> : null}</span>
         <span>·</span>
-        <span className="text-cyan-400">BASE {probs.base}%</span>
+        <span className="text-cyan-400">BASE {probs.base}%{a.scenarioTargets ? <span className="text-muted-foreground"> between</span> : null}</span>
         <span>·</span>
-        <span className="text-red-400">BEAR {probs.bear}%</span>
+        <span className="text-red-400">BEAR {probs.bear}%{a.scenarioTargets ? <span className="text-muted-foreground"> close ≤ {fmtK(a.scenarioTargets.bear)}</span> : null}</span>
         <span className="text-muted-foreground">
           ({scenarioSourceLabel(a.scenarioProbSource)})
         </span>
@@ -692,7 +697,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
           <>
             <span>|</span>
             <span>
-              EM (expected move, model) ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : "VIX fallback"})
+              EM (expected move to {a.expectedMove.horizon && a.expectedMove.horizon !== "daily" ? `the ${a.expectedMove.horizon} close` : "the close"}) ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : a.expectedMove.source === "implied-atm" ? `options-implied${a.expectedMove.expiry ? `, ${a.expectedMove.expiry} expiry` : ""}` : a.expectedMove.source === "vix-scaled" ? "VIX fallback" : "fixed fallback"})
             </span>
           </>
         )}
@@ -1923,7 +1928,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
             <span className="text-red-400">BEAR <span className="font-bold">{fmtPrice(traj.endpoint.bear)}</span></span>
           </div>
           <div className="mt-1 text-[11px] text-muted-foreground">
-            1 sd (log) ±{fmtPrice(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0)} · BULL/BEAR = t(4) 84%/16% quantiles{traj.weeks[12]?.q10 != null && traj.weeks[12]?.q90 != null ? ` · q10–q90 ${fmtPrice(traj.weeks[12].q10)}–${fmtPrice(traj.weeks[12].q90)}` : ""} (thru WK13, coverage untested)
+            1 sd (log) ±{(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek) != null ? fmtPrice((traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek) as number) : "n/a"} · BULL/BEAR = t(4) 84%/16% quantiles{traj.weeks[12]?.q10 != null && traj.weeks[12]?.q90 != null ? ` · q10–q90 ${fmtPrice(traj.weeks[12].q10)}–${fmtPrice(traj.weeks[12].q90)}` : ""} (thru WK13, coverage untested)
           </div>
         </div>
 
@@ -2073,7 +2078,10 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
         <span>·</span>
         <span>TERM VIX3M/VIX {horizon.vol.termRatio?.toFixed(3) ?? "—"} ({horizon.vol.termLabel})</span>
         {horizon.vomma === "elevated" && (
-          <><span>·</span><span className="text-amber-400">⚠ VOL ELEVATED</span></>
+          <><span>·</span><span className="text-amber-400">VOL ELEVATED (VIX above 20)</span></>
+        )}
+        {horizon.vomma === "unavailable" && (
+          <><span>·</span><span>VIX unavailable: vol level not read</span></>
         )}
         <span>·</span>
         <span>γ at spot: <span className={

@@ -1553,12 +1553,12 @@ function ModelOutputPanel({
 const FIELD_TOOLTIPS: Record<string, string> = {
   "Q-Score": "Quantitative composite sentiment score (0–100). <30 = Pinned/fear, 30–60 = Mixed, >60 = Fragile/greed. Weights VIX, gamma, PCR, term structure, social, and Fear & Greed.",
   "Total GEX ($B)": "Total Gamma Exposure in billions. Dealer gamma in dollars per 1% move. Positive = dealers long gamma (stabilizing, mean-reversion). Negative = short gamma (amplifying, breakout).",
-  "Call Wall": "Strike with the largest positive gamma concentration (call OI). Dealers sell rallies above this level — acts as a ceiling or resistance zone.",
-  "Put Wall": "Strike with the largest negative gamma concentration (put OI). Dealers buy dips below this level — acts as a floor or support zone.",
+  "Call Wall": "Strike with the largest positive gamma concentration (call OI). In the model, dealer hedging leans against rallies into it, so it is drawn as a resistance zone.",
+  "Put Wall": "Strike with the largest put gamma concentration (put OI) below spot. The model tags it FLOOR and draws it as a support zone; the tag is a position in the chain, not a measured hedging direction.",
   "Zero Gamma": "The price level where net dealer gamma flips from positive to negative. Above = positive gamma (dampened moves); below = negative gamma (amplified moves).",
   "HVL": "High Volatility Level: the strike where volatility positioning peaks. Price near HVL = choppy, high-vol conditions. Good reference for intraday range expectations.",
   "Gamma Flip": "Price at which cumulative per-strike GEX flips sign — similar to Zero Gamma but uses the crossover centroid method. Regime boundary for positioning.",
-  "MOPEX": "Monthly OPEX strike: the max-pain level for the nearest monthly expiration. Price gravitates toward this level as expiry approaches due to dealer delta hedging.",
+  "MOPEX": "Max-pain strike over all expiries in the model's window (the strike minimising total intrinsic value across open interest), kept under its old MOPEX name. A level the model describes, not a pull the desk measures.",
   "Vanna": "Vanna exposure level: rate of change of delta with respect to vol (dΔ/dσ). Rising vol = dealers buy delta above Vanna strike; falling vol = they sell. Amplifies vol-driven moves.",
   "Zomma": "Zomma level: rate of change of gamma with respect to vol (dΓ/dσ). High zomma = gamma changes significantly when vol moves. Used to anticipate dealer re-hedging flows.",
   "Charm": "Charm (delta decay) level: rate of change of delta over time (dΔ/dt). Increases near expiry. Dealers must re-hedge as time passes — drives directional flows into close.",
@@ -2051,8 +2051,8 @@ const LEGEND_GROUPS: Array<{
   {
     group: "Bias / Direction",
     items: [
-      { swatch: "bg-emerald-500/30 border-emerald-500/60", label: "Bullish / Long", meaning: "Upside scenario, support, long entry" },
-      { swatch: "bg-red-500/30 border-red-500/60", label: "Bearish / Short", meaning: "Downside scenario, resistance, short entry" },
+      { swatch: "bg-emerald-500/30 border-emerald-500/60", label: "Bullish", meaning: "Upside scenario, support levels" },
+      { swatch: "bg-red-500/30 border-red-500/60", label: "Bearish", meaning: "Downside scenario, resistance levels" },
       { swatch: "bg-amber-500/30 border-amber-500/60", label: "Volatile / Pin", meaning: "Two-sided risk, chop, pin pressure" },
       { swatch: "bg-muted border-border", label: "Neutral", meaning: "No bias, awaiting trigger" },
     ],

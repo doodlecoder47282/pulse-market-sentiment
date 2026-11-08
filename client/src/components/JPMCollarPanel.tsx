@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, Shield, AlertTriangle } from "lucide-react";
 
+import AsOfNote from "@/components/AsOfNote";
 interface CollarQuarter {
   quarter: string;
   rollDate: string;
@@ -120,6 +121,7 @@ export default function JPMCollarPanel() {
         </div>
       )}
       {/* Current quarter summary */}
+      <div className="mb-1"><AsOfNote asOf={data?.asOf} /></div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="rounded-lg border border-border/60 bg-card/50 p-2.5">
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Quarter</div>

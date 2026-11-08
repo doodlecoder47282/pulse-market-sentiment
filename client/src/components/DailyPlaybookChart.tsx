@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, Minus, TrendingDown, Lock, Activity, Info, AlertTriangle, Zap, Heart, HeartCrack, Flame, Snowflake } from "lucide-react";
 
+import AsOfNote from "@/components/AsOfNote";
 // ─── Types (mirror server/dailyPlaybook.ts) ─────────────────────────────────
 
 type PathKey = "bull" | "base" | "bear";
@@ -303,10 +304,11 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
         {/* Header strip */}
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/30 pb-3">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Activity className="h-4 w-4 text-amber-400" />
               <span className="font-mono text-[11px] uppercase tracking-widest text-amber-400/80">Daily Playbook</span>
               <span className="text-[11px] text-muted-foreground">— {symbol}</span>
+              <AsOfNote asOf={pb?.asOf} />
             </div>
             <div className="text-[13px] text-foreground/90 leading-snug max-w-2xl">{headline}</div>
           </div>
@@ -362,8 +364,8 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               </div>
               <div className="text-[11px] text-amber-200/80 leading-snug">
                 {drift.regime.flipDirection === "toShort"
-                  ? "Long→short gamma. Pin regime broken. Expect momentum, wider intraday range, dealer hedging amplifies moves."
-                  : "Short→long gamma. Momentum regime ending. Expect mean-reversion, range contraction, dealer hedging dampens moves."}
+                  ? "Long→short gamma: the model now describes dealer hedging as amplifying moves (the pin description no longer applies)."
+                  : "Short→long gamma: the model now describes dealer hedging as damping moves (the momentum description no longer applies)."}
               </div>
               <div className="text-[11px] font-mono text-amber-200/60 mt-0.5">
                 spot vs flip: {drift.regime.spotVsFlip >= 0 ? "+" : ""}${drift.regime.spotVsFlip.toFixed(2)} · GEX {drift.regime.totalGexB >= 0 ? "+" : ""}{drift.regime.totalGexB.toFixed(2)}B
