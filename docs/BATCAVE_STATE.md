@@ -1959,3 +1959,39 @@ the same days so skill is understated and that the watchdog line is its signific
 names its own window (30 graded forecasts, 60 days); resolution prints the number without quality
 adjectives; "percentages below are of these n days" under the gate; hit rate and mean forecast are
 read over exactly the Brier rows' dates (WHERE o.date >= oldest); beatsTrivial commented as unused.
+
+2026-11-08: Copy and display sweep (feat/copy-display-sweep, review item 7). Instruction-style copy
+rewritten as description of what the model says (EdgeInfo chart card "fade pushes into the walls",
+Daily Playbook flip notes "Expect momentum", ML projection "dealers buy dips, sell rips" and
+"buy-the-dip hedging supports floor", Trade Desk wall glossary "Dealers sell rallies / buy dips" and the
+"long entry / short entry" legend, Ticker Outlook "sizing should respect that", Exposure GEX gloss,
+Seasonality "should be combined", Canary "RISK-ON CONFIRMED" -> "RISK-ON ALIGNED"). `?? 0` reaching the
+screen replaced with n/a or unknown (Crypto feed read time no longer shown as now; holder stress dollars;
+taker buy share; fomo; Thermal traded-today volumes; Schwab token and refresh expiry; Chain Audit stale
+age; Position Sizer dollars; 13-week sigma). Seven panels whose payload carried an asOf the card never
+showed now show "read HH:MM · N min ago" (AsOfNote; helpers in client/src/lib/asOf.ts: ms, seconds or
+ISO, missing reads "read time unknown", never now): Mag 7, JPM collar, 0DTE Wiener map, Daily Playbook,
+Regime headline, Ticker Outlook, Depth/Skew/Flow. Legibility floor below 1024 px: 8-10 px labels render
+at 11 px (desktop keeps 12 px). DEX flip: when cumulative net DEX does not change sign in the quoted
+strikes the code meant to fall back to the peak |DEX| strike under the "flip" label; chainAudit now
+returns flipMethod and the card reads "DEX Peak Strike (no flip)" with the reason. "MOPEX MAX PAIN" is computed
+over every expiry in the horizon's window and is now labelled "WINDOW MAX PAIN" with a note (kind id
+unchanged for backtests and target derivation; Trade Desk glossary corrected). Vomma on a missing VIX
+is "unavailable" (was "normal"); the Models vol row says "VIX unavailable: vol level not read". Tests:
+tests/quant/copy-display-sweep.test.ts. Needs a review (copy + client).
+Review of feat/copy-display-sweep (HOLD, three must-fixes, all taken). (1) The legibility floors are
+scoped to .batcave-shell, a class a later nav rework dropped from the dashboard root, so the new phone
+floor AND the existing desktop floor were dead CSS; the class is back on the root (only the font floors
+and CSS variables take effect; .batcave-main/.batcave-header are not used). (2) The DEX peak fallback was
+unreachable on main (seed Math.abs(-Infinity) = Infinity, so the reduce never picked a strike: the card
+showed a dash, never a mislabelled peak; the entry above is corrected); the seed is fixed and the
+fallback now runs and is named, with a behavioural test (all-positive DEX -> peak_fallback at the
+largest |DEX| strike; a real sign change -> sign_change; nothing above spot -> none). (3) The 0DTE map
+note showed the computation time beside a possibly stale chain; it now shows the CHAIN's asOf
+("chain read HH:MM"). Should-fixes taken: Put Wall glossary says what the model tags (FLOOR by position)
+without a hedging-direction claim; Discord card label and gloss updated to WINDOW MAX PAIN (no pull
+claim); ML projection negative-gamma line is "the model describes"; Seasonality "70%+ win rate preferred"
+and EdgeInfo "Re-check before every entry" rewritten; Ticker Outlook "no edge" -> "no lean", "kill
+thesis below" -> "the read no longer holds below"; AsOfNote is nowrap and the four header rows it joined
+wrap at phone width. Level names in the model (Buy zone / Sell zone, NEG-Γ ENTRY) are persistent kind
+labels and are left; noted for a later naming pass.

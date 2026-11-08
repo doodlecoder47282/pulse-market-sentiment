@@ -351,7 +351,9 @@ export default function Dashboard() {
 
   return (
     <div
-      className="min-h-screen bg-background"
+      // batcave-shell scopes the legibility floors in index.css (the class was dropped from this root in a
+      // later nav rework, so both floors were dead until it was restored).
+      className="batcave-shell min-h-screen bg-background"
       style={{ paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}
     >
       {/* Floating Take Five launcher — visible on every tab */}

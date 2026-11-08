@@ -329,7 +329,7 @@ function AutopsyCard() {
                 <div className="mt-1 text-amber-300">unavailable: {ok.stress.reason}</div>
               ) : (
                 <>
-                  <div className="mt-1 font-mono tabular-nums text-muted-foreground">top-10 hold {ok.stress.top10Pct}% of supply, about {fmtUsd(ok.stress.top10ValueUsd ?? 0)} at the current price ({ok.stress.basis === "fdv" ? "FDV basis" : "market-cap basis"}); pool quote side about {fmtUsd(ok.stress.quoteReserveUsd ?? 0)}</div>
+                  <div className="mt-1 font-mono tabular-nums text-muted-foreground">top-10 hold {ok.stress.top10Pct}% of supply, about {ok.stress.top10ValueUsd != null ? fmtUsd(ok.stress.top10ValueUsd) : "n/a"} at the current price ({ok.stress.basis === "fdv" ? "FDV basis" : "market-cap basis"}); pool quote side about {ok.stress.quoteReserveUsd != null ? fmtUsd(ok.stress.quoteReserveUsd) : "n/a"}</div>
                   <div className="mt-1 overflow-x-auto">
                     <table className="w-full min-w-[420px] font-mono tabular-nums">
                       <thead><tr className="text-muted-foreground"><th className="text-left">sold</th><th className="text-right">value</th><th className="text-right">x pool quote</th><th className="text-right">price falls</th><th className="text-right">sellers receive</th></tr></thead>
@@ -417,7 +417,7 @@ function VenueLine({ name, v }: { name: string; v: VenueCell }) {
             <span className={v.state === "stale" ? "text-amber-300" : undefined}>{v.state === "stale" ? "stale · " : ""}mid {fmtPx(v.mid)}</span>
             {v.spreadBps != null && <> · spr {v.spreadBps.toFixed(1)} bps</>}
             {f && (f.count > 0
-              ? <> · taker buy {Math.round((f.takerBuyShare ?? 0) * 100)}% of {f.count} trades / {Math.round(f.coveredSec / 60)}m</>
+              ? <> · taker buy {f.takerBuyShare != null ? `${Math.round(f.takerBuyShare * 100)}%` : "n/a"} of {f.count} trades / {Math.round(f.coveredSec / 60)}m</>
               : <> · 0 trades in window (observed)</>)}
             {v.lastTradeUtc && <> · last {new Date(v.lastTradeUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>}
           </>}
@@ -489,7 +489,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
           <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
           <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight" data-testid="crypto-brief-headline">{headline}</h2>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {feed ? `${feed.trackedCount} pools tracked · read ${new Date(feed.asOf ?? Date.now()).toLocaleTimeString()}` : feedError ? "no read" : "warming up"}
+            {feed ? `${feed.trackedCount} pools tracked · read ${feed.asOf ? new Date(feed.asOf).toLocaleTimeString() : "time unknown"}` : feedError ? "no read" : "warming up"}
             {notOk.length > 0 ? ` · ${notOk.map((e) => `${e.name} ${e.status}`).join(", ")}` : engines.length > 0 ? " · all agents running" : ""}
           </p>
         </div>
@@ -615,7 +615,7 @@ export default function CryptoPanel() {
           </button>
         ))}
         <span className="ml-auto text-[11px] text-muted-foreground">
-          tracking {feed?.trackedCount ?? 0} pools · refresh 45s
+          tracking {feed?.trackedCount ?? "?"} pools · refresh 45s
         </span>
       </div>
 
@@ -792,7 +792,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           {c.pumpLive && <span className="font-semibold text-rose-400">● LIVE</span>}
           <span className="flex items-center gap-1">
             <Flame className={`h-2.5 w-2.5 ${(c.fomoScore ?? 0) >= 60 ? "text-orange-400" : "text-muted-foreground"}`} />
-            fomo {Math.round(c.fomoScore ?? 0)}
+            fomo {c.fomoScore != null ? Math.round(c.fomoScore) : "n/a"}
           </span>
           <span
             className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}

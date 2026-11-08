@@ -135,7 +135,7 @@ const ANNOTATIONS: Record<string, AnnFn> = {
       : `magnet support at ${fmt0(level.price)} — dealers absorb demand`,
   extremeVac: () => "extreme vacuum — air-pocket below",
   putWall: () => "max negative gamma pin — capitulation level",
-  mopexMaxPain: () => "max pain anchor — strikes pulling toward expiry",
+  mopexMaxPain: () => "window max pain — strike minimising total intrinsic value over the window's expiries",
   lowerVomma: () => "vomma cluster — vol-of-vol pin below",
   downsidePivot: () => "downside pivot — structure breaks below",
   t1Down: ({ supportBelow }) => {
@@ -189,7 +189,7 @@ const DISPLAY_NAME: Record<string, string> = {
   zommaBridge: "ZOMMA BRIDGE",
   negGammaEntry: "NEG Γ ENTRY",
   extremeVac: "EXTREME VAC",
-  mopexMaxPain: "MOPEX MAX PAIN",
+  mopexMaxPain: "WINDOW MAX PAIN",
   lowerVomma: "LOWER VOMMA",
   downsidePivot: "DOWNSIDE PIVOT",
   t1Up: "UPSIDE TARGET",

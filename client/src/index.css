@@ -767,6 +767,14 @@
 @media (max-width: 767px) {
   .batcave-main { padding-bottom: calc(var(--batcave-bottom-offset) + 1rem); }
 }
+/* Legibility floor at every width: legacy 8-10px labels render at 11px on
+   phones and tablets (the desktop block below lifts them to 12px). Pixel
+   dimensions and SVG/canvas chart coordinates are not touched. */
+@media (max-width: 1023px) {
+  .batcave-shell [class~="text-[8px]"],
+  .batcave-shell [class~="text-[9px]"],
+  .batcave-shell [class~="text-[10px]"] { font-size: 11px; line-height: 1.4; }
+}
 @media (min-width: 1024px) {
   /* A modest 6.25% rem-scale lift, plus a floor for legacy 8–11px labels.
      Pixel dimensions and SVG/canvas chart coordinates are not zoomed. */

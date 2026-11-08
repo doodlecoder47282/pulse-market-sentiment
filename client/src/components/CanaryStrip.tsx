@@ -33,7 +33,7 @@ const READ_STYLE: Record<CanarySnapshot["read"], { label: string; cls: string }>
   alarm: { label: "ALARM", cls: "border-red-500/60 text-red-400 bg-red-500/10" },
   divergence: { label: "DIVERGENCE", cls: "border-amber-500/50 text-amber-400 bg-amber-500/10" },
   canaries_chirping: { label: "CHIRPING", cls: "border-amber-500/30 text-amber-300" },
-  confirming_risk_on: { label: "RISK-ON CONFIRMED", cls: "border-lime-500/40 text-lime-400" },
+  confirming_risk_on: { label: "RISK-ON ALIGNED", cls: "border-lime-500/40 text-lime-400" },
   quiet: { label: "QUIET", cls: "border-border text-muted-foreground" },
   no_data: { label: "NO DATA", cls: "border-border text-muted-foreground" },
 };

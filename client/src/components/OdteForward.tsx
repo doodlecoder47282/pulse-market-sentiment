@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
+import AsOfNote from "@/components/AsOfNote";
 type BandKey = "p025" | "p10" | "p25" | "p50" | "p75" | "p90" | "p975";
 interface WienerBand { minute: number; et: string; q: Record<BandKey, number> }
 interface WienerLevel {
@@ -39,7 +40,7 @@ interface OdteResponse {
   atmIV: number; atmIVSource?: "chain" | "straddle"; gexValid?: boolean;
   netGex: number | null; regime: "long_gamma" | "short_gamma" | "indeterminate";
   levels: { callWall: number | null; putWall: number | null; gammaFlip: number | null; pin: number | null };
-  chainStale?: boolean; chainAgeMs?: number | null;
+  chainStale?: boolean; chainAgeMs?: number | null; chainAsOfMs?: number | null;
   wiener?: WienerMapT;
   /** The chain's own settle distribution (Breeden-Litzenberger on 0DTE mids), same bucket spacing. */
   impliedClose?: { state: "ok" | "unavailable"; reason: string | null; method: string; sigma: number | null; mean: number | null;
@@ -281,6 +282,7 @@ export default function OdteForward() {
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-cyan-300">0DTE Wiener map · {w?.horizon === "next_session" ? "next session" : "today"}</span>
         <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{data.symbol} · exp {data.expiry} · {sessionLabel}{data.chainStale ? " · chain stale" : ""}</span>
+        <AsOfNote asOf={data.chainAsOfMs ?? null} label="chain" />
         <span className={`rounded border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${regime === "indeterminate" ? "border-border text-muted-foreground" : regime === "long_gamma" ? "border-lime-500/40 text-lime-400" : "border-red-500/40 text-red-400"}`} data-testid="odte-regime">
           {regime === "indeterminate" ? "gamma sign not determined" : regime === "long_gamma" ? "long gamma at spot" : "short gamma at spot"}
         </span>

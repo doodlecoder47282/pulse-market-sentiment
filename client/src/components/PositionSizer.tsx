@@ -316,7 +316,7 @@ export function PositionSizer() {
             {r.perContract && (
               <div className="text-xs text-muted-foreground font-mono tabular-nums" data-testid="text-sizer-dollars">
                 per contract (x100): premium {fmtCents(r.perContract.premium)} · loss at stop {fmtCents(r.perContract.riskAtStop)} · fees {fmtCents(r.perContract.feesRoundTrip)}
-                {" "}| position: max loss if it expires worthless {fmtCents(r.maxLossDollars ?? 0)} · fees {fmtCents(r.feesDollars ?? 0)} · risk budget {fmtCents(r.riskBudgetDollars ?? 0)}
+                {" "}| position: max loss if it expires worthless {r.maxLossDollars != null ? fmtCents(r.maxLossDollars) : "n/a"} · fees {r.feesDollars != null ? fmtCents(r.feesDollars) : "n/a"} · risk budget {r.riskBudgetDollars != null ? fmtCents(r.riskBudgetDollars) : "n/a"}
               </div>
             )}
             <details className="text-xs text-muted-foreground">

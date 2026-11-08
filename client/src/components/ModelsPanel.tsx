@@ -195,7 +195,7 @@ interface ModelHorizon {
   paths: ModelPath[];
   audit: ModelAudit;
   vol: { vix: number | null; vixChangePct: number | null; termRatio: number | null; termLabel: string };
-  vomma: "elevated" | "normal";
+  vomma: "elevated" | "normal" | "unavailable";
   confidence: "HIGH" | "MODERATE" | "LOW";
   mmMatrix?: MMMatrix;
   weeklyTrajectory?: WeeklyTrajectory;
@@ -1927,7 +1927,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
             <span className="text-red-400">BEAR <span className="font-bold">{fmtPrice(traj.endpoint.bear)}</span></span>
           </div>
           <div className="mt-1 text-[11px] text-muted-foreground">
-            1 sd (log) ±{fmtPrice(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0)} · BULL/BEAR = t(4) 84%/16% quantiles{traj.weeks[12]?.q10 != null && traj.weeks[12]?.q90 != null ? ` · q10–q90 ${fmtPrice(traj.weeks[12].q10)}–${fmtPrice(traj.weeks[12].q90)}` : ""} (thru WK13, coverage untested)
+            1 sd (log) ±{(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek) != null ? fmtPrice((traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek) as number) : "n/a"} · BULL/BEAR = t(4) 84%/16% quantiles{traj.weeks[12]?.q10 != null && traj.weeks[12]?.q90 != null ? ` · q10–q90 ${fmtPrice(traj.weeks[12].q10)}–${fmtPrice(traj.weeks[12].q90)}` : ""} (thru WK13, coverage untested)
           </div>
         </div>
 
@@ -2077,7 +2077,10 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
         <span>·</span>
         <span>TERM VIX3M/VIX {horizon.vol.termRatio?.toFixed(3) ?? "—"} ({horizon.vol.termLabel})</span>
         {horizon.vomma === "elevated" && (
-          <><span>·</span><span className="text-amber-400">⚠ VOL ELEVATED</span></>
+          <><span>·</span><span className="text-amber-400">VOL ELEVATED (VIX above 20)</span></>
+        )}
+        {horizon.vomma === "unavailable" && (
+          <><span>·</span><span>VIX unavailable: vol level not read</span></>
         )}
         <span>·</span>
         <span>γ at spot: <span className={

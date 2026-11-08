@@ -37,6 +37,7 @@ import {
   CartesianGrid,
 } from "recharts";
 
+import AsOfNote from "@/components/AsOfNote";
 type Direction = "BULL" | "BEAR" | "NEUTRAL";
 
 interface OutlookVerdict {
@@ -260,13 +261,13 @@ function plainEnglishThesis(v: OutlookVerdict, ticker: string, calendar: TickerC
   const conf =
     v.confidence >= 70 ? "strong lean" :
     v.confidence >= 55 ? "lean" :
-    v.confidence >= 45 ? "low-conviction" : "no edge";
+    v.confidence >= 45 ? "low-conviction" : "no lean";
   const ern = calendar?.nextEarnings;
   const ernNote = ern && ern.daysOut <= 7
-    ? ` Earnings in ${ern.daysOut}d — sizing should respect that.`
+    ? ` Earnings in ${ern.daysOut}d (an event inside the horizon).`
     : "";
   const target = v.targetPrice != null ? ` toward ${fmtMoney(v.targetPrice)}` : "";
-  const stop = v.invalidation != null ? `, kill thesis below ${fmtMoney(v.invalidation)}` : "";
+  const stop = v.invalidation != null ? `, the read no longer holds below ${fmtMoney(v.invalidation)}` : "";
   return `${ticker} is a ${conf} ${dirWord} call${target}${stop}.${ernNote}`;
 }
 
@@ -385,11 +386,12 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                 ai outlook
               </span>
               <span className="font-mono text-base font-bold text-foreground">{ticker}</span>
+              <AsOfNote asOf={q.data?.asOf} />
               {q.data?.spot != null && (
                 <span className="font-mono text-xs text-muted-foreground">
                   ${fmtMoney(q.data.spot)}
