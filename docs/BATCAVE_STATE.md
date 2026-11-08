@@ -1799,3 +1799,39 @@ Fourth check of feat/odte-implied-close: no MUST-FIX; one residual of the same c
 shoulder, outside the body, still removed 4.5% of mass from one side and read as skew). Rule now: a chain
 with any clipped strike makes no skew claim ("median not read: N strikes priced out of line (clipped to
 zero[, inside its body])"); width, share above spot, forward gap and distance are still stated.
+
+2026-11-08: Full review (four independent reviewers: market data layer, quant models, crypto desk,
+client) at main 7525dbf. Formulas verified correct throughout (Wiener first passage and bands, variance
+time change, Breeden-Litzenberger, straddle inversion, GEX/DEX units, calendar); 141 model tests and
+93 crypto tests pass; the Schwab self-throttle cannot be exceeded by construction. Findings, ranked:
+1. Regime predictor graded on the wrong event: a 20-min regime call is scored on the SPY close-to-close
+   move 26 h later (outcomeLogger.ts:235-283, edgeStats.ts:248-330), and the calibration plot treats a
+   heuristic softmax weight as a probability. A missing DFI becomes 0 and classifies NEUTRAL with status
+   "ready" (regimePredictor.ts:250, models.ts:978); a missing pivot or EM makes "pin pressure" / "room to
+   trend" lines from nothing (:291-292).
+2. Crypto discovery frozen at the 220 cap: scored names (even PASS at 0) outrank unscored arrivals, which
+   are evicted the tick they arrive (cryptoEngine.ts:514-519); the universe fixes ~15 min after a restart.
+   Cap basis mixed: GeckoTerminal FDV written into marketCap (:441-443, 483) and read as cap by the grader
+   (false RUGGED; NO_DATA while priced). exitPlanBook keeps the current rulesVersion only, so the plan
+   record resets on every bump (exitPlanBook.ts:67). cryptoStats.ts:391 hard-codes 2x. Jupiter keyless
+   endpoint (api.jup.ag/price/v3) may have moved to lite-api: verify live.
+3. After hours: freshFreshness never sets lastSession, so a chain fetched successfully on a Saturday reads
+   "live" (badge) or "stale" (age chips); only the failed-refresh path labels last session
+   (schwabDataPolicy.ts:194 vs :165). A Schwab 401 never forces a token refresh and the chip stays green
+   (schwab.ts:563-566, :259-264).
+4. Scenario odds on weekly/monthly/quarterly horizons grade daily-EM targets under the horizon's CDF
+   (models.ts:1047-1103): 45/10/45 beside path odds with the same names.
+5. Calibration card: no sample gate (grades from n=1), absolute Brier (a "B" can be worse than the base
+   rate shown beside it), risk-neutral and heuristic days pooled (calibration.ts, calibrationCard.ts).
+6. Load/robustness: chain _cache never evicts (~1 GB/week); killboxAutoSeed pulls a 0-60 DTE $SPX chain
+   every 5 min on its own key; weekday evenings keep session TTLs; odteTracker polls a settled chain all
+   night; six client panels poll at 3-5 s all weekend (Heatseeker, LiveOdteTracker, DepthSkewFlow,
+   OdteContractChart, LiveQuoteStrip, MacroCarousel).
+7. Copy/display: instruction-style phrases (EdgeInfo.tsx:51, NewsPanel.tsx:295-351,
+   DailyPlaybookChart.tsx:365-366, MLProjectionPanel.tsx:892/910, TradeDesk.tsx:1555/2053,
+   CanaryStrip.tsx:36, TickerOutlookCard.tsx:266); `?? 0` reaching the screen (CryptoPanel.tsx:486
+   feed asOf shown as now, ThermalHeatmap.tsx:499, MLAccuracyCard.tsx:457-460, SchwabSettings.tsx:610,
+   ChainAudit.tsx:415, and eight more); eleven panels with an asOf never shown; 12 px text floor only
+   above 1024 px (index.css:770); DEX flip fallback to peak |DEX| unmarked (chainAudit.ts:437);
+   "MOPEX max pain" is over all expiries in the window; vomma "normal" on missing VIX (models.ts:1437).
+Order of work: 1, 2, 3 as bounded PRs with tests; then 4 and 5; then the 6 and 7 sweeps.
