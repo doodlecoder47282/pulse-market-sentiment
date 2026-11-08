@@ -180,6 +180,22 @@ export function staleServeDecision(
 
 /** Close of the most recent finished session + 15 min (index options settle
  *  their last prints by 16:15 ET), or null when the calendar cannot say. */
+/**
+ * A cached payload that can never be served again: older than the longest
+ * serve age of its kind (the closed-market cap is the larger) AND older than
+ * the last settled close (so it is not the last-session copy either, which
+ * staleServeDecision may serve at any age while the market is closed). The
+ * Schwab cache keeps one entry per path+params; chains and price history
+ * carry dates in their params, so without eviction the map grew by every
+ * expiry-window and date-range key ever requested (about 1 GB a week).
+ */
+export function cacheEntryUnservable(kind: SchwabDataKind, fetchedAtMs: number, nowMs: number = Date.now()): boolean {
+  const maxAge = Math.max(MAX_SERVE_AGE_MS.rth[kind], MAX_SERVE_AGE_MS.closed[kind]);
+  if (nowMs - fetchedAtMs <= maxAge) return false;
+  const settled = lastSettledCloseMs(nowMs);
+  return settled == null || fetchedAtMs < settled;
+}
+
 export function lastSettledCloseMs(nowMs: number = Date.now()): number | null {
   let d = etDate(nowMs);
   for (let i = 0; i < 10; i++) {

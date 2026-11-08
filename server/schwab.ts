@@ -16,7 +16,7 @@ import { etDate, addDays, isRegularSessionOpen, lastSessionDate } from "./exchan
 import { quoteFreshness } from "./quoteFreshness";
 import { gexByStrikeFromChain } from "./gammaProfile";
 import {
-  FRESH_TTL_MS, freshTtlMs, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
+  FRESH_TTL_MS, freshTtlMs, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs, cacheEntryUnservable,
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   chainAsOf, chainLadderSegments, mergeChainSegments,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
@@ -302,7 +302,7 @@ export function clearTokens(): void {
 // maxServeAgeMs(kind) and is marked stale with its age; past that the caller
 // gets null (unavailable). Policy and limits: server/schwabDataPolicy.ts.
 
-type CacheEntry = { data: any; fetchedAt: number; expiresAt: number; fingerprint?: string };
+type CacheEntry = { data: any; fetchedAt: number; expiresAt: number; fingerprint?: string; kind: SchwabDataKind };
 // Evidence receipts (Trade Brief): the successful body receipt is tied to the
 // parsed payload. Opt-in readers verify the fingerprint and take an isolated copy;
 // a missing fingerprint or a changed payload stays unverified.
@@ -313,6 +313,21 @@ function fingerprintPayload(data: any): string | undefined {
 type SchwabFetchOpts = { skipCache?: boolean; onAcquisition?: (metadata: EvidenceAcquisition) => void;
   priority?: "interactive"; onBudgetBlocked?: () => void };
 const _cache = new Map<string, CacheEntry>();
+// Eviction: an entry that can never be served again (schwabDataPolicy
+// cacheEntryUnservable) leaves the map. Keys carry expiry windows and date
+// ranges, so the map used to grow by every distinct request ever made.
+const CACHE_SWEEP_MS = 5 * 60_000;
+let _lastCacheSweep = 0;
+let _cacheEvicted = 0;
+export function sweepSchwabCache(nowMs: number = Date.now()): number {
+  let n = 0;
+  for (const [k, e] of _cache) {
+    if (cacheEntryUnservable(e.kind, e.fetchedAt, nowMs)) { _cache.delete(k); n++; }
+  }
+  _cacheEvicted += n;
+  _lastCacheSweep = nowMs;
+  return n;
+}
 
 // Self-throttle: track requests in last 60s. Schwab limit ~120/min on marketdata.
 // We cap at 100/min to leave headroom.
@@ -556,7 +571,8 @@ async function schwabFetchMetaOnce(
         const data = JSON.parse(text);
         const fetchedAt = Date.now();
         const fingerprint = opts?.onAcquisition || ttl > 0 ? fingerprintPayload(data) : undefined;
-        if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl, fingerprint });
+        if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl, fingerprint, kind });
+        if (fetchedAt - _lastCacheSweep > CACHE_SWEEP_MS) sweepSchwabCache(fetchedAt);
         return deliver({ data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes }, "transport_response", fetchedAt, fingerprint);
       }
       // 401 → token issue, no retry
@@ -623,6 +639,7 @@ export function getSchwabDiagnostics() {
   }
   return {
     cacheEntries: _cache.size,
+    cacheEvictedTotal: _cacheEvicted,
     requestsLastMinute: _reqLog.length,
     requestsByCaller: Object.entries(_reqWho.reduce((m, r) => { m[r.k] = (m[r.k] ?? 0) + 1; return m; }, {} as Record<string, number>))
       .sort((a, b) => b[1] - a[1]).slice(0, 60).map(([k, n]) => ({ n, k })),

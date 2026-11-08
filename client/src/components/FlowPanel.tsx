@@ -27,6 +27,7 @@ import { FlowAlertsPanel } from "./FlowAlertsPanel";
 import LivenessBadge from "./LivenessBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+import { livePoll } from "@/lib/pollInterval";
 // Zone vs the symbol's OWN history (server/pcrHistory.ts): z-score of
 // ln((puts+0.5)/(calls+0.5)) over its last 60 completed Schwab sessions.
 // No fixed cut-offs; without 20 sessions the zone is "insufficient_history".
@@ -996,7 +997,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
       const r = await apiRequest("GET", "/api/flow");
       return r.json();
     },
-    refetchInterval: 10_000,
+    refetchInterval: livePoll(10_000),
     staleTime: 8_000,
     refetchOnWindowFocus: true,
   });
@@ -1153,7 +1154,7 @@ export function FlowStrip() {
       const r = await apiRequest("GET", "/api/flow");
       return r.json();
     },
-    refetchInterval: 10_000,
+    refetchInterval: livePoll(10_000),
     staleTime: 8_000,
   });
 

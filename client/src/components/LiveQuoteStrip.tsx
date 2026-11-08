@@ -6,6 +6,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { FlashNumber } from "./FlashNumber";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { livePoll } from "@/lib/pollInterval";
 type QuoteCell = {
   price: number | null;
   changePct: number | null;
@@ -56,7 +57,7 @@ export default function LiveQuoteStrip() {
       const r = await apiRequest("GET", "/api/quotes");
       return r.json();
     },
-    refetchInterval: 5_000,
+    refetchInterval: livePoll(5_000),
     staleTime: 4_000,
     refetchOnWindowFocus: true,
   });

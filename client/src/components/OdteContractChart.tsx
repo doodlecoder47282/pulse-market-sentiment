@@ -32,6 +32,7 @@ import {
 } from "recharts";
 import { TrendingUp, X, CandlestickChart, ChevronLeft, ChevronRight } from "lucide-react";
 
+import { livePoll } from "@/lib/pollInterval";
 interface ChartBar {
   ts: number;
   timeLabel: string;
@@ -118,7 +119,7 @@ export default function OdteContractChart({
       );
       return r.json();
     },
-    refetchInterval: 5_000,
+    refetchInterval: livePoll(5_000),
     staleTime: 4_500,
   });
 

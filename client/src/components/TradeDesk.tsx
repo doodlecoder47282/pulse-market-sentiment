@@ -51,6 +51,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import { useEdition } from "@/lib/useEdition";
 import { featureAllowed } from "@shared/edition";
 
+import { livePoll } from "@/lib/pollInterval";
 // --- Types matching /api/trade-desk payload ----------------------------------
 
 type Bar = { t: number; o: number | null; h: number | null; l: number | null; c: number | null; v: number | null };
@@ -1674,7 +1675,7 @@ function EodPlayMaker() {
   const spxOhlc = useQuery<any>({
     queryKey: ["/api/ohlc", "^GSPC"],
     queryFn: async () => (await apiRequest("GET", "/api/ohlc?symbol=%5EGSPC&tf=1D")).json(),
-    refetchInterval: 15_000,
+    refetchInterval: livePoll(15_000),
   });
 
   // Derive live values from the two endpoints

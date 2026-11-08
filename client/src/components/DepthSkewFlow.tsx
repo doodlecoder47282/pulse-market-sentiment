@@ -33,6 +33,7 @@ import {
 } from "recharts";
 import { Layers, TrendingUpIcon, Waves } from "lucide-react";
 
+import { livePoll } from "@/lib/pollInterval";
 // ─── Types (mirror server payloads) ─────────────────────────────────────────
 interface HeatseekerStrike {
   strike: number;
@@ -113,7 +114,7 @@ export default function DepthSkewFlow({ symbol, expiry }: { symbol?: string; exp
       const r = await apiRequest("GET", `/api/heatseeker${qs.toString() ? `?${qs.toString()}` : ""}`);
       return r.json();
     },
-    refetchInterval: 5_000,
+    refetchInterval: livePoll(5_000),
     staleTime: 4_000,
   });
 
@@ -123,7 +124,7 @@ export default function DepthSkewFlow({ symbol, expiry }: { symbol?: string; exp
       const r = await apiRequest("GET", "/api/odte-tracker");
       return r.json();
     },
-    refetchInterval: 4_000,
+    refetchInterval: livePoll(4_000),
     staleTime: 3_000,
     enabled: mode === "flow",
   });
