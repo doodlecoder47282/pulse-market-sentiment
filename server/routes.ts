@@ -4673,7 +4673,9 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       // Side-effect: feed raw regime into predictor history (fail-soft)
       try {
         const { recordRawRegime } = await import("./regimePredictor");
-        recordRawRegime(out.diag.regimeRaw as any, Number(daily.audit?.dfi ?? 0));
+        // An unavailable DFI (no DEX slope) is not a sample: NaN is dropped by recordRawRegime.
+        const dfiSample = daily.audit?.dfiState === "unavailable" || daily.audit?.dfi == null ? NaN : Number(daily.audit.dfi);
+        recordRawRegime(out.diag.regimeRaw as any, dfiSample);
       } catch {}
       res.json(out);
     } catch (e: any) {
@@ -5074,7 +5076,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       try {
         const { recordRawRegime } = await import("./regimePredictor");
         const rawNow = (out as any).currentRegime;
-        const dfiNow = Number(daily.audit?.dfi ?? 0);
+        const dfiNow = daily.audit?.dfiState === "unavailable" || daily.audit?.dfi == null ? NaN : Number(daily.audit.dfi);
         if (rawNow) recordRawRegime(rawNow, dfiNow);
       } catch {}
       // Closed-loop edge tracking (throttled).

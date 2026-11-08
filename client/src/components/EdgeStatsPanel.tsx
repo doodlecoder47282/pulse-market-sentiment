@@ -40,6 +40,7 @@ interface RegimeEdge {
   calibration: CalibPoint[];
   calibrationSessions?: number;
   calibrationEvent?: string;
+  legacyProxyGraded?: number;
   reliability?: { n: number; verdict: "calibrated" | "not calibrated" | "insufficient data"; test: { name: string; reasons: string[] } };
 }
 interface Suggestion {
@@ -131,7 +132,7 @@ function HeadlineCards({ w, r }: { w: WhaleEdge; r: RegimeEdge }) {
         <div className={`text-2xl font-semibold ${rateColor(r.graded ? r.overallHitRate : null)}`} data-testid="text-regime-hit">
           {r.graded ? pct(r.overallHitRate) : "—"}
         </div>
-        <div className="text-[11px] text-muted-foreground">{r.graded} graded · {r.pending} pending</div>
+        <div className="text-[11px] text-muted-foreground">{r.graded} graded on the called horizon · {r.pending} pending{r.legacyProxyGraded ? ` · ${r.legacyProxyGraded} graded under the earlier close-to-close proxy, excluded` : ""}</div>
       </div>
     </div>
   );
@@ -227,7 +228,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
             );
           })}
           {/* axis labels */}
-          <text x={size / 2} y={size - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.5">predicted</text>
+          <text x={size / 2} y={size - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.5">heuristic score (not a probability)</text>
           <text x={8} y={size / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.5" transform={`rotate(-90 8 ${size / 2})`}>actual</text>
         </svg>
         <div className="flex-1 space-y-1.5 text-sm">
