@@ -53,7 +53,7 @@ import {
   computeSocialScore, resolveSocialCollection, expireSocial,
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
   observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats, CRYPTO_SAMPLE_READY_MIN_GRADED, CRYPTO_NO_DATA_MAX_SHARE,
-  CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
+  CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, PEAK_SAMPLE_BASES, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
   peakSampleParams, graderMarkParams, graderNoDataParams,
   countMentions, socialCoverage, type DexPool,
   momentumPoints, honeypotRead, jupiterAllowsEnter,
@@ -67,7 +67,7 @@ import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
-import { capOf, evictOverCap, MOMENTUM_CYCLE_MS } from "../shared/cryptoCap";
+import { capOf, capOnBasis, evictOverCap, MOMENTUM_CYCLE_MS } from "../shared/cryptoCap";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -224,13 +224,7 @@ const CANDIDATE_TTL_MS = CRYPTO_RULES.universe.candidateTtlHours * 3600_000; // 
 const SCANNER_MS = 60_000;
 const MOMENTUM_MS = 75_000;
 
-/**
- * ONE market-cap basis for the desk: DexScreener marketCap, else FDV, with
- * the basis named. Used by the scorer, persistSignal, the peak sampler, the
- * plan sampler and the grader's live path, so an entry recorded on FDV is
- * graded on FDV (not RUGGED against a later marketCap that happens to be
- * reported) and a pair with no marketCap but an FDV is still sampled.
- */
+// Market cap has one basis (shared/cryptoCap.ts capOf / capOnBasis); see there.
 const MOMENTUM_BATCH = 90; // tracked coins refreshed per momentum tick (3 DexScreener calls)
 const NARRATIVE_MS = 5 * 60_000;
 const MAJORS_MS = 60_000;
@@ -523,7 +517,7 @@ async function scannerTick(): Promise<void> {
   const now = Date.now();
   for (const [k, c] of tracked) {
     const stale = now - (c.lastRefreshAt ?? c.firstSeenAt) > CANDIDATE_TTL_MS;
-    const grewOut = (c.marketCap ?? 0) > MCAP_CEILING * 4; // 6M+: past our window entirely
+    const grewOut = (capOf(c).cap ?? 0) > MCAP_CEILING * 4; // 6M+: past our window entirely
     if (stale || grewOut) tracked.delete(k);
   }
   if (tracked.size > MAX_TRACKED) {
@@ -682,12 +676,18 @@ async function momentumTick(): Promise<void> {
 // market cap (null) is not a sample; an observed 0 is (it never raises a peak).
 let _peakStmt: ReturnType<typeof sqlite.prepare> | null = null;
 function recordPeakSample(c: Candidate): void {
-  const { cap } = capOf(c); // same basis as the entry row (marketCap, else FDV)
+  const { cap } = capOf(c);
   if (cap == null) return;
   try {
     _peakStmt = _peakStmt ?? sqlite.prepare(CRYPTO_PEAK_SAMPLE_SQL);
-    _peakStmt.run(peakSampleParams(cap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress));
-    samplePlans(c.chain, c.pairAddress, cap, c.liquidityUsd, c.lastRefreshAt ?? Date.now());
+    // Each OPEN row is sampled on the basis it was recorded on: FDV rows on
+    // FDV, marketCap rows on marketCap, older rows (no basis) on marketCap
+    // else FDV. A row whose basis is not reported this refresh is left alone.
+    const at = c.lastRefreshAt ?? Date.now();
+    for (const basis of PEAK_SAMPLE_BASES) {
+      _peakStmt.run(peakSampleParams(capOnBasis(c, basis), basis, at, c.liquidityUsd, c.chain, c.pairAddress));
+    }
+    samplePlans(c.chain, c.pairAddress, cap, c.liquidityUsd, at);
   } catch (e: any) {
     console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
@@ -826,7 +826,7 @@ async function socialTick(): Promise<void> {
   // stale after 5 min. ~3 bsky + ~3 pump calls per tick — trivial load.
   const now = Date.now();
   const due = [...tracked.values()]
-    .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
+    .filter((c) => c.lastRefreshAt != null && (capOf(c).cap ?? 0) <= MCAP_CEILING * 2)
     .filter((c) => c.socialAttemptAt == null || now - c.socialAttemptAt > 5 * 60_000)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 4);
@@ -1206,7 +1206,7 @@ const NO_DATA_AFTER_ERRORS_MS = 7 * 24 * 3600_000; // fetch errors this long aft
 
 async function graderTick(): Promise<void> {
   const open = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT ?`,
+    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT ?`,
   ).all(CRYPTO_GRADER_BATCH) as any[];
   if (open.length === 0) return;
 
@@ -1221,14 +1221,19 @@ async function graderTick(): Promise<void> {
     let mcap: number | null = null;
     let liq: number | null = null;
     const live = tracked.get(key);
+    // The cap is read on the basis the row was RECORDED on (FDV rows on FDV,
+    // marketCap rows on marketCap): an entry on FDV $500k is never graded
+    // RUGGED against a marketCap of $40k that DexScreener started reporting
+    // later. A basis no longer reported reads as unpriced, never the other.
+    const basis: string | null = row.mcap_basis ?? null;
     if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) {
-      mcap = capOf(live).cap; liq = live.liquidityUsd; // same basis as the fetch path below
+      mcap = capOnBasis(live, basis); liq = live.liquidityUsd;
     } else {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
         const p = resp?.pairs?.[0] ?? resp?.pair;
         // observed 0 stays 0: a full liquidity pull must grade RUGGED
-        mcap = observedNumber(p?.marketCap) ?? observedNumber(p?.fdv);
+        mcap = capOnBasis({ marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) }, basis);
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         // transient fetch error: retry next tick, unless it has failed for a week
@@ -1281,7 +1286,7 @@ sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = NULL, horizon_liquidity
 async function horizonTick(): Promise<void> {
   const now = Date.now();
   const due = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
+    `SELECT id, pair_address, chain, detected_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
   ).all(HORIZON_PASS_SINCE_MS, GRADE_HORIZON_MS, now, HORIZON_BATCH * 3) as any[];
   if (!due.length) return;
   const mark = sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = @mcap, horizon_liquidity = @liq, horizon_at = @now WHERE id = @id AND horizon_at IS NULL`);
@@ -1296,12 +1301,13 @@ async function horizonTick(): Promise<void> {
     const key = `${row.chain}:${row.pair_address}`;
     const live = tracked.get(key);
     let mcap: number | null = null, liq: number | null = null;
-    if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) { mcap = live.marketCap; liq = live.liquidityUsd; }
+    const hBasis: string | null = row.mcap_basis ?? null; // same basis as the entry row, like the grader
+    if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) { mcap = capOnBasis(live, hBasis); liq = live.liquidityUsd; }
     else {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
         const p = resp?.pairs?.[0] ?? resp?.pair;
-        mcap = observedNumber(p?.marketCap) ?? observedNumber(p?.fdv);
+        mcap = capOnBasis({ marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) }, hBasis);
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         const attempts = (r?.attempts ?? 0) + 1;

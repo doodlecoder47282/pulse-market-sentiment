@@ -8,8 +8,10 @@ import type { CardBundle } from "@shared/cryptoBundle";
 import { bundleLine } from "@shared/cryptoBundle";
 import { CRYPTO_RULES } from "@shared/cryptoRules";
 import { planLevels, sizeFromBankroll, buildTradePrompt, type PlanSummary, type PromptCoin } from "@shared/exitPlan";
+import { capOf } from "@shared/cryptoCap";
 
 export type DeskCoin = PromptCoin & {
+  fdv?: number | null;
   bundle?: CardBundle | null;
   socialScore?: number | null;
   bskyMentions1h?: number | null;
@@ -68,8 +70,10 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
   const rec = sig.data?.exitPlan ?? null;
 
   const b = c.bundle;
-  const liqToCap = c.liquidityUsd != null && c.marketCap ? (c.liquidityUsd / c.marketCap) * 100 : null;
-  const levels = planLevels(c.marketCap).filter((l) => l.kind === "trim" || l.kind === "target" || l.kind === "stop");
+  // The same cap the server scored and recorded the entry on (marketCap, else FDV): the plan levels and the liq/cap read stay on that number.
+  const cap = capOf({ marketCap: c.marketCap, fdv: c.fdv ?? null });
+  const liqToCap = c.liquidityUsd != null && cap.cap ? (c.liquidityUsd / cap.cap) * 100 : null;
+  const levels = planLevels(cap.cap).filter((l) => l.kind === "trim" || l.kind === "target" || l.kind === "stop");
   const size = sizeFromBankroll(bankroll, c.risk?.maxPositionUsd);
   const showPlan = c.verdict === "ENTER" || c.verdict === "WATCH";
   const bLine = b ? bundleLine(b) : null;
@@ -84,7 +88,7 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
   return (
     <div className="mt-1 space-y-2 rounded-xl border border-border/50 bg-card/40 p-3" data-testid="crypto-coin-desk">
       <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6" data-testid="crypto-coin-facts">
-        <Fact k="cap" v={usd(c.marketCap)} />
+        <Fact k={cap.basis === "fdv" ? "cap (FDV)" : "cap"} v={usd(cap.cap)} />
         <Fact k="liq" v={usd(c.liquidityUsd)} />
         <Fact k="liq/cap" v={liqToCap == null ? "—" : `${liqToCap.toFixed(1)}%`} tone={liqToCap != null && liqToCap < 5 ? "warn" : undefined} />
         <Fact k="age" v={age(c.ageMinutes)} />

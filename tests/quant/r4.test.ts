@@ -366,23 +366,23 @@ import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_S
 test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair", () => {
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, outcome TEXT,
-    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, peak_liquidity REAL)`);
+    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, peak_liquidity REAL, features_json TEXT)`);
   const ins = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, peak_mcap, peak_at) VALUES (?, ?, ?, ?, ?, ?)`);
   ins.run("a", "solana", "P1", "OPEN", null, null);
   ins.run("b", "solana", "P1", "OPEN", 500_000, 100);
   ins.run("c", "solana", "P1", "DEAD", 100, 1);
   ins.run("d", "solana", "P2", "OPEN", 10, 1);
   const st = db.prepare(CRYPTO_PEAK_SAMPLE_SQL);
-  st.run(peakSampleParams(400_000, 200, 50_000, "solana", "P1"));
+  st.run(peakSampleParams(400_000, null, 200, 50_000, "solana", "P1"));
   const get = (id: string) => db.prepare(`SELECT * FROM crypto_signals WHERE id = ?`).get(id) as any;
   assert.equal(get("a").peak_mcap, 400_000); assert.equal(get("a").peak_at, 200);   // first sample
   assert.equal(get("b").peak_mcap, 500_000); assert.equal(get("b").peak_at, 100);   // lower sample: unchanged
   assert.equal(get("b").last_mcap, 400_000); assert.equal(get("b").last_liquidity, 50_000);
   assert.equal(get("c").peak_mcap, 100);                                            // resolved row untouched
   assert.equal(get("d").peak_mcap, 10);                                             // other pair untouched
-  st.run(peakSampleParams(900_000, 300, 60_000, "solana", "P1"));
+  st.run(peakSampleParams(900_000, null, 300, 60_000, "solana", "P1"));
   assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").peak_at, 300);
-  st.run(peakSampleParams(0, 400, 0, "solana", "P1"));                                                // observed 0: sample, never a new peak
+  st.run(peakSampleParams(0, null, 400, 0, "solana", "P1"));                                                // observed 0: sample, never a new peak
   assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").last_mcap, 0);
   db.close();
 });
@@ -535,14 +535,14 @@ test("edge brief verdict: strict allow-list of descriptive labels", () => {
 test("crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED from the max", () => {
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, outcome TEXT, mcap_at_signal REAL,
-    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, peak_liquidity REAL, graded_at INTEGER)`);
+    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, peak_liquidity REAL, graded_at INTEGER, features_json TEXT)`);
   const ins = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, mcap_at_signal, peak_mcap, peak_at) VALUES (?, 'solana', ?, 'OPEN', ?, ?, ?)`);
   const T = 5_000_000;
   const get = (id: string) => db.prepare(`SELECT * FROM crypto_signals WHERE id = ?`).get(id) as any;
   const mark = db.prepare(CRYPTO_GRADER_MARK_SQL);
   // Race: grader read peak 300k, momentum raised it to 6M meanwhile, grader writes its stale g.peak 400k as OPEN.
   ins.run("a", "P1", 200_000, 300_000, 10);
-  db.prepare(CRYPTO_PEAK_SAMPLE_SQL).run(peakSampleParams(6_000_000, 20, 90_000, "solana", "P1"));
+  db.prepare(CRYPTO_PEAK_SAMPLE_SQL).run(peakSampleParams(6_000_000, null, 20, 90_000, "solana", "P1"));
   mark.run(graderMarkParams(400_000, 30, 400_000, 80_000, "OPEN", T, "a"));
   assert.equal(get("a").peak_mcap, 6_000_000);       // not lowered
   assert.equal(get("a").peak_at, 20);                // peak time kept
