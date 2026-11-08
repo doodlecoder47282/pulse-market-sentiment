@@ -9,7 +9,8 @@ const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url),
 test("regime predictor: candidates carry a 0..100 heuristic score, not a probability claim", async () => {
   const { predictTransition } = await import("../../server/regimePredictor");
   // Round 4: models emits y+ / y- / y?; anything else reads as gamma unknown.
-  const out: any = predictTransition({ audit: { dfi: 1.2, gammaZone: "y+" } } as any);
+  // A complete audit (a missing pivot or EM now reads "inputs unavailable", its own state).
+  const out: any = predictTransition({ audit: { dfi: 1.2, dfiState: "ok", gammaZone: "y+", mainPivot: 6010, spot: 6000, scenarioTargets: { oneDayEM: 40 } }, spot: 6000 } as any);
   assert.equal(out.scoreKind, "heuristic_softmax_weight");
   let sum = 0;
   for (const c of out.candidates) {
