@@ -1889,3 +1889,25 @@ a fresh DexScreener read alone (price and liquidity still refresh); a row record
 (unreachable today) folds into the null-basis statement so no row can go unsampled (r4 test: five rows,
 one statement each, FDV row untouched when FDV is not reported); the observation ring and hist record
 capOf(c).cap so liquidityVelocity/exitStress see the FDV-only cap. 127/127.
+2026-11-08: After-hours successful fetch and 401 (feat/after-hours-fetch-401, review item 3). #63 labelled
+the settled copy only on the failed-refresh path; a chain or daily-bar payload fetched successfully on a
+Saturday read "live" (badge) or "stale 16h" (age chips). freshFreshness now applies the same rule as
+staleServeDecision (market closed and fetched after the last settled close = last session), and the
+weekend minute-bar fallback carries lastSession too. A Schwab 401 never forced a token refresh and the
+connection chip stayed green over "unauthorized" on every tab: a 401 now forces one coalesced refresh and
+retries once; a second 401 is recorded, needsReauth is set for 10 min (Settings says Schwab refused the
+token after a refresh), and the request reads "401 unauthorized (token refresh did not clear it)".
+Tests: tests/quant/after-hours-fetch.test.ts.
+Review of feat/after-hours-fetch-401 (HOLD, three MUST-FIX, all taken). (1) tsc: getSchwabStatus's declared
+return type lacked unauthorizedAt (CI type gate red); added. (2) New mislabel: between a session's close
+and its settle (16:00-16:15 ET, 13:00-13:15 on a half day) lastSettledCloseMs returns the PREVIOUS settle,
+so a chain fetched at 16:05 read "last-session copy" while index options still traded; isLastSessionCopy
+(shared by freshFreshness and staleServeDecision) now also requires not inSettlingWindow (tests: Thu 16:05
+not, 16:16 yes, Black Friday 13:05 not; pre-market stays last_session as an accepted approximation, stated).
+(3) Refresh storm: with the refresh endpoint working and market data answering 401 to everything, every
+distinct request forced a refresh, retried, 401'd, and the next poll repeated it up to the request cap;
+a forced refresh now happens at most once a minute across all callers (_forced401RefreshAt), later 401s are
+recorded without one. Should-fixes taken: a request Schwab accepts clears the unauthorized mark (no 10-min
+"re-auth required" over flowing data); with the refresh token known dead the mark holds until re-auth
+replaces the row; the Settings copy no longer promises that re-authorising clears an entitlement refusal.
+Tests 25/25 (schwab-readiness/semantics skip locally). Re-review before merge.
