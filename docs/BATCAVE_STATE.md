@@ -1826,3 +1826,9 @@ MOMENTUM_CYCLE_MS comment states the arithmetic (220 / 90 per 75 s tick = 2.4 ti
 300 s); the stray capOf JSDoc in cryptoEngine.ts removed; docs/CRYPTO_DESK.md states the DexScreener
 outage behaviour (GeckoTerminal fills in after one silent cycle and the basis it carried is recorded).
 Tests: crypto suite + exit-plan + r4 + regime-crypto-r2 149/149. Re-review requested before merge.
+Re-review of feat/crypto-cap-eviction: MERGE-READY, both must-fixes and all should-fixes confirmed fixed;
+three new should-fixes taken: CRYPTO_DESK.md now says GeckoTerminal leaves only the market cap and FDV of
+a fresh DexScreener read alone (price and liquidity still refresh); a row recorded with basis "none"
+(unreachable today) folds into the null-basis statement so no row can go unsampled (r4 test: five rows,
+one statement each, FDV row untouched when FDV is not reported); the observation ring and hist record
+capOf(c).cap so liquidityVelocity/exitStress see the FDV-only cap. 127/127.

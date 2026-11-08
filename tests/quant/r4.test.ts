@@ -361,7 +361,8 @@ test("ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server nev
 
 // ── 9. Crypto: peak sampled on every momentum refresh; ENTER needs holders ──
 import { DatabaseSync } from "node:sqlite";
-import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats, peakSampleParams, graderMarkParams, graderNoDataParams } from "../../server/cryptoStats";
+import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats, peakSampleParams, graderMarkParams, graderNoDataParams, PEAK_SAMPLE_BASES } from "../../server/cryptoStats";
+import { capOnBasis } from "../../shared/cryptoCap";
 
 test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair", () => {
   const db = new DatabaseSync(":memory:");
@@ -384,6 +385,26 @@ test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, on
   assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").peak_at, 300);
   st.run(peakSampleParams(0, null, 400, 0, "solana", "P1"));                                                // observed 0: sample, never a new peak
   assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").last_mcap, 0);
+  // Per-basis sampling: each OPEN row is touched by exactly one of the three statements.
+  const insF = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, features_json) VALUES (?, 'solana', 'P3', 'OPEN', ?)`);
+  insF.run("f", JSON.stringify({ mcapBasis: "fdv" }));
+  insF.run("m", JSON.stringify({ mcapBasis: "marketCap" }));
+  insF.run("n", JSON.stringify({ mcapBasis: "none" }));
+  insF.run("o", JSON.stringify({ other: 1 }));
+  insF.run("z", null);
+  const live = { marketCap: 40_000, fdv: 500_000 };
+  let touched = 0;
+  for (const basis of PEAK_SAMPLE_BASES) touched += Number(st.run(peakSampleParams(capOnBasis(live, basis), basis, 500, 1_000, "solana", "P3")).changes);
+  assert.equal(touched, 5, "one statement per row, no row twice");
+  assert.equal(get("f").last_mcap, 500_000, "fdv row sampled on FDV");
+  assert.equal(get("m").last_mcap, 40_000, "marketCap row sampled on marketCap");
+  for (const id of ["n", "o", "z"]) assert.equal(get(id).last_mcap, 40_000, `${id}: no usable basis takes marketCap else FDV`);
+  // A basis that is not reported this refresh leaves its rows alone (never the other number).
+  touched = 0;
+  for (const basis of PEAK_SAMPLE_BASES) touched += Number(st.run(peakSampleParams(capOnBasis({ marketCap: 90_000, fdv: null }, basis), basis, 600, 1_000, "solana", "P3")).changes);
+  assert.equal(touched, 4);
+  assert.equal(get("f").last_mcap, 500_000, "fdv row untouched when FDV is not reported");
+  assert.equal(get("m").last_mcap, 90_000);
   db.close();
 });
 

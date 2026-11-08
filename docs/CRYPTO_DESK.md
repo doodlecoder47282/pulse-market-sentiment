@@ -55,10 +55,10 @@ on the row as `features_json.mcapBasis`), and a row is sampled and graded on
 the basis it was recorded on (`capOnBasis`): an FDV entry is never called
 RUGGED against a marketCap that appears later, and a row whose basis stops
 being reported is unpriced on that pass, never priced on the other number.
-GeckoTerminal never overwrites a DexScreener read younger than one cycle;
+GeckoTerminal never overwrites the market cap or FDV of a DexScreener read
+younger than one cycle (its price and liquidity still refresh every 60 s);
 when DexScreener has been silent on a pair for longer than that (an outage or
-a dropped batch), GeckoTerminal's price, liquidity, market cap and FDV fill
-in as before, and the row records whichever basis that read carried. Rows the
+a dropped batch), GeckoTerminal's market cap and FDV fill in as before, and the row records whichever basis that read carried. Rows the
 horizon pass cannot price are marked NO_DATA, never deleted: survivorship is
 measured, not hidden.
 

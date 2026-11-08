@@ -656,10 +656,10 @@ async function momentumTick(): Promise<void> {
         c.jupGapPct = null;
       }
       c.lastRefreshAt = Date.now();
-      c.observations = appendObservation(c.observations, { at: c.lastRefreshAt, liquidityUsd: c.liquidityUsd, marketCap: c.marketCap, top10Pct: c.top10Pct });
+      c.observations = appendObservation(c.observations, { at: c.lastRefreshAt, liquidityUsd: c.liquidityUsd, marketCap: capOf(c).cap, top10Pct: c.top10Pct });
       scoreCandidate(c);
       // history AFTER scoring so volAccel/netBuyRatio are fresh; cap 20 readings
-      c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: c.marketCap });
+      c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: capOf(c).cap });
       if (c.hist.length > 20) c.hist.shift();
       persistSignal(c);
       recordPeakSample(c);

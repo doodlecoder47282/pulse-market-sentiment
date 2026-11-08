@@ -348,7 +348,9 @@ export function peakSamplingNote(tracked: number | null | undefined, tickMs: num
  * (peakSampleParams: sample, basis, sample time ms, liquidity, chain, pair
  * address). The engine runs it once per basis in PEAK_SAMPLE_BASES: "fdv"
  * rows take the FDV sample, "marketCap" rows the marketCap sample, rows from
- * before the basis was recorded (NULL) take marketCap else FDV (capOnBasis).
+ * before the basis was recorded (NULL) and rows recorded with no cap at all
+ * ("none", not reachable today: no_price is a PASS) take marketCap else FDV
+ * (capOnBasis).
  * A null sample (that basis not reported this refresh) touches nothing: a
  * basis is never switched mid-life. SQLite evaluates each SET expression on
  * the pre-update row, so peak_at moves only with the peak.
@@ -359,7 +361,9 @@ export const CRYPTO_PEAK_SAMPLE_SQL = `UPDATE crypto_signals SET
   peak_mcap = CASE WHEN peak_mcap IS NULL OR @sample > peak_mcap THEN @sample ELSE peak_mcap END,
   last_mcap = @sample, last_liquidity = @liq
 WHERE outcome = 'OPEN' AND chain = @chain AND pair_address = @pair
-  AND json_extract(features_json, '$.mcapBasis') IS @basis AND @sample IS NOT NULL`;
+  AND (json_extract(features_json, '$.mcapBasis') IS @basis
+       OR (@basis IS NULL AND json_extract(features_json, '$.mcapBasis') = 'none'))
+  AND @sample IS NOT NULL`;
 export const PEAK_SAMPLE_BASES = ["fdv", "marketCap", null] as const;
 
 // Named parameters: better-sqlite3 (the server) reads a numbered placeholder
