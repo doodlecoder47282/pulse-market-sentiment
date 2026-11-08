@@ -1857,3 +1857,35 @@ tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now 
 own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
 COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
 grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
+2026-11-08: Crypto discovery unfrozen and one cap basis (feat/crypto-cap-eviction, review item 2). Over
+the 220 cap, any scored name (a PASS at 0 included) outranked every unscored arrival, so new pools were
+evicted in the tick they arrived and the universe froze about 15 min after a restart: the first-ENTER
+sample could not grow. shared/cryptoCap.ts evictOverCap keeps an unscored arrival for one momentum cycle,
+evicts never-answered names first, then PASS before WATCH before ENTER by score (220 scored + 20 arrivals:
+all 20 arrivals survive, 20 lowest PASS leave; test). Cap basis: GeckoTerminal FDV landed in marketCap
+every 60 s and was recorded and graded as a market cap (false RUGGED when DexScreener later reported a
+real marketCap; NO_DATA while priced when marketCap was null and only FDV existed). capOf (marketCap else
+FDV, basis named) is now read by the scorer, persistSignal, the peak and plan samplers and the grader's
+live path; GeckoTerminal does not overwrite a DexScreener read younger than one cycle. No rule-book value
+changed. Tests: tests/quant/crypto-cap.test.ts; crypto suite 96/96. Needs the standing crypto review.
+Review of feat/crypto-cap-eviction (HOLD, two MUST-FIX, both taken). (1) The horizon pass's live path
+still read live.marketCap; it and the 10-min grader now read capOnBasis(live, basis) where basis is the
+row's own features_json.mcapBasis (SELECTs carry mcap_basis). (2) A basis switch mid-life (entry on FDV
+500k, DexScreener later reports marketCap 40k and FDV 500k) was graded 40k against 500k and called
+RUGGED; every row is now sampled and graded on the basis it was recorded on (shared/cryptoCap.ts
+capOnBasis; CRYPTO_PEAK_SAMPLE_SQL runs once per basis in PEAK_SAMPLE_BASES with a null sample touching
+nothing). Test runs gradeSignal itself: on-basis OPEN, off-basis RUGGED. Should-fixes taken: the protected
+arrival set is bounded (an unscored arrival inside its first cycle ranks 500: above every PASS, below
+every WATCH and ENTER; 300 arrivals against 200 WATCH/ENTER + 20 PASS evict only the 20 PASS and 280
+arrivals; test); the Crypto tab shows the cap the desk scored on with an FDV tag when that is the basis
+(card total, card line, desk fact "cap (FDV)", plan levels and liq/cap on the same number); the
+MOMENTUM_CYCLE_MS comment states the arithmetic (220 / 90 per 75 s tick = 2.4 ticks, 3 ticks + margin =
+300 s); the stray capOf JSDoc in cryptoEngine.ts removed; docs/CRYPTO_DESK.md states the DexScreener
+outage behaviour (GeckoTerminal fills in after one silent cycle and the basis it carried is recorded).
+Tests: crypto suite + exit-plan + r4 + regime-crypto-r2 149/149. Re-review requested before merge.
+Re-review of feat/crypto-cap-eviction: MERGE-READY, both must-fixes and all should-fixes confirmed fixed;
+three new should-fixes taken: CRYPTO_DESK.md now says GeckoTerminal leaves only the market cap and FDV of
+a fresh DexScreener read alone (price and liquidity still refresh); a row recorded with basis "none"
+(unreachable today) folds into the null-basis statement so no row can go unsampled (r4 test: five rows,
+one statement each, FDV row untouched when FDV is not reported); the observation ring and hist record
+capOf(c).cap so liquidityVelocity/exitStress see the FDV-only cap. 127/127.
