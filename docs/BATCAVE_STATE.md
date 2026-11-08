@@ -1835,3 +1835,19 @@ time change, Breeden-Litzenberger, straddle inversion, GEX/DEX units, calendar);
    above 1024 px (index.css:770); DEX flip fallback to peak |DEX| unmarked (chainAudit.ts:437);
    "MOPEX max pain" is over all expiries in the window; vomma "normal" on missing VIX (models.ts:1437).
 Order of work: 1, 2, 3 as bounded PRs with tests; then 4 and 5; then the 6 and 7 sweeps.
+
+2026-11-08: Scenario odds and targets on the horizon's own expected move (feat/scenario-odds-horizon,
+review item 4). buildAudit built the bull/bear targets from the 1-DAY expected move for every horizon and
+read the risk-neutral odds there; a route post-processor (applyTermStructureRescale) then replaced the
+weekly/monthly/quarterly targets with a VIX cone AFTER the odds were read, so a weekly card showed odds of
+the WEEK closing beyond a ONE-DAY band beside targets a week wide (lognormal check: ~45/10/45 instead of
+~16/68/16), and scenarioProbEvent named the targets that were no longer shown. Now shared/horizonExpectedMove.ts
+picks the horizon's EM first (daily: 0DTE straddle, else VIX x sqrt(1/252) x 0.55; others: the horizon
+expiry's SVI ATM total vol, the SAME distribution the odds come from, else VIX9D/VIX x sqrt(days/252), the
+quarterly 0.85 damp kept and named as hand-set), buildAudit caps the targets to it and reads the odds at
+those targets, scenarioTargets carries horizonEM/horizonDays beside oneDayEM (which stays the 1-day figure
+for the intraday decay and the Discord card), expectedMove names source/horizon/days/expiry, the Models
+panel labels the EM "to the weekly close (options-implied, <expiry>)", and the post-processor is gone (the
+daily card is unchanged: same straddle EM, same targets). Tests: tests/quant/horizon-expected-move.test.ts
+(sources, fallbacks, the on-horizon vs one-day odds check against a lognormal CDF, wiring); full quant
+suite 1005 pass, 4 known local package failures. Needs an independent quant review.

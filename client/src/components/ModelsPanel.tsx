@@ -122,7 +122,10 @@ interface ModelAudit {
   scenarioProbNote?: string;
   expectedMove?: {
     oneSigma: number;
-    source: "0dte-straddle" | "vix-scaled";
+    source: "0dte-straddle" | "implied-atm" | "vix-scaled" | "fixed-fallback";
+    horizon?: "daily" | "weekly" | "monthly" | "quarterly";
+    days?: number;
+    expiry?: string | null;
     straddleMid: number | null;
     strike: number | null;
     note: string;
@@ -691,7 +694,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
           <>
             <span>|</span>
             <span>
-              EM (expected move, model) ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : "VIX fallback"})
+              EM (expected move to {a.expectedMove.horizon && a.expectedMove.horizon !== "daily" ? `the ${a.expectedMove.horizon} close` : "the close"}) ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : a.expectedMove.source === "implied-atm" ? `options-implied${a.expectedMove.expiry ? `, ${a.expectedMove.expiry} expiry` : ""}` : a.expectedMove.source === "vix-scaled" ? "VIX fallback" : "fixed fallback"})
             </span>
           </>
         )}

@@ -29,6 +29,7 @@
 // approach since SPX·0.1 ≈ SPY to a few bps).
 
 import { vixToAtmPct } from "@shared/vol";
+import { horizonExpectedMove, type HorizonExpectedMove } from "@shared/horizonExpectedMove";
 import type { ExposureProfile, ExposureRow } from "./exposureProfile";
 import { buildExposureProfile, rowYears } from "./exposureProfile";
 import { exposureRowsFromSchwabChain, chainSpot } from "./schwabChainRows";
@@ -191,18 +192,14 @@ export interface ModelAudit {
   // The graded event (calibration.ts): bull = close >= scenarioTargets.bull,
   // bear = close <= scenarioTargets.bear, base = neither.
   scenarioProbEvent?: string;
-  // Daily expected move (1 standard deviation to the close, index points).
-  // "0dte-straddle": same-day ATM straddle mid inverted with Black-76
-  // (straddle ~ 0.8 sigma S sqrt(T), Brenner-Subrahmanyam 1988).
-  // "vix-scaled": fallback, VIX -> ATM vol x sqrt(1/252) x 0.55 hand-set
-  // residual-session factor.
-  expectedMove?: {
-    oneSigma: number;
-    source: "0dte-straddle" | "vix-scaled";
-    straddleMid: number | null;            // index points per share
-    strike: number | null;
-    note: string;
-  };
+  // Expected move of THIS horizon (1 standard deviation of the close at the
+  // horizon's end, index points), shared/horizonExpectedMove.ts. The scenario
+  // targets are capped to it and the scenario odds are read at those targets.
+  // daily: "0dte-straddle" (same-day ATM straddle, Brenner-Subrahmanyam) else
+  // "vix-scaled" (x 0.55 hand-set residual-session factor); other horizons:
+  // "implied-atm" (the horizon expiry's SVI-smoothed ATM total vol, the same
+  // distribution the odds come from) else "vix-scaled" sqrt(days/252).
+  expectedMove?: HorizonExpectedMove;
   impliedDistribution?: {
     expiry: string;
     measure: "risk-neutral";
@@ -213,7 +210,13 @@ export interface ModelAudit {
     quotesUsed: number;
     negativeMassClipped: number;
   } | null;
-  scenarioTargets: { bull: number; base: number; bear: number; oneDayEM: number }; // close-by-EOD price targets per scenario
+  // Price targets per scenario for the close at the END of this horizon:
+  // bull = nearest structural resistance above spot capped to spot + EM,
+  // base = spot, bear = first structural support below capped to spot - EM,
+  // with EM = expectedMove.oneSigma of this horizon (horizonEM). oneDayEM is
+  // the 1-day figure (same as horizonEM on the daily card), kept for the
+  // intraday target decay (realtimeTargets) and the Discord card.
+  scenarioTargets: { bull: number; base: number; bear: number; oneDayEM: number; horizonEM: number; horizonDays: number };
   closeTargets: {                         // Selz #5 — discrete BULL / BASE / BEAR close targets (chart right edge)
     bull:  { price: number; prob: number } | null;
     base:  { price: number; prob: number } | null;
@@ -917,8 +920,12 @@ function buildAudit(
     lastRecal: { at: number; dfi: number; dfiDeltaSinceOpen: number | null } | null;
     vixTermRatio?: number | null;
     vixForEM?: number | null;
+    vix9d?: number | null;
     straddleEM?: StraddleExpectedMove | null;
     impliedDistribution?: ModelAudit["impliedDistribution"];
+    /** sigma_ATM sqrt(T) of the accepted implied distribution (the one impliedCdf reads), for the horizon EM. */
+    impliedAtmTotalVol?: number | null;
+    horizon: Horizon;
   },
 ): ModelAudit {
   const cur = profile.current;
@@ -1029,45 +1036,33 @@ function buildAudit(
     putWallDistBps,
   });
 
-  // ─── Scenario TARGETS (close-by-EOD price levels per scenario) ─────────
-  // Mirrors @SelzTrades-style daily print. Pulls strictly from already-
-  // computed levels + charm — no LLM, no external feed.
-  //   BULL  = nearest structural resistance above spot, capped to spot+1d EM
+  // ─── Scenario TARGETS (price levels per scenario for the close at the END of this horizon) ──
+  // Pulls strictly from already-computed levels + the horizon's expected move
+  // (shared/horizonExpectedMove.ts) — no LLM, no external feed.
+  //   BULL  = nearest structural resistance above spot, capped to spot + EM
   //   BASE  = spot (a charm drift was intended but never computed; see below)
   //   BEAR  = first structural support below spot that fails (strongMag /
-  //           zeroGamma / putWall), capped to spot-1d EM
-  // 1-day EM uses VIX-style annualized IV (extras.vixForEM, scale 0..100 in
-  // percent annualised) on the standard formula spot × iv × √(1/252). For an
-  // EOD-print target we want the close-by-end-of-session move, so we scale
-  // by 0.55 to approximate the residual session move from the start of the
-  // window when we publish the card (charm/theta has already burned some).
-  // If VIX feed is missing, fall back to ~1.0% fixed EM — conservative.
+  //           zeroGamma / putWall), capped to spot - EM
+  // EM is the 1-sigma move to THIS horizon's end: the same-day straddle for
+  // the daily card; for the other horizons the ATM total vol of the horizon
+  // expiry's implied distribution (the same distribution the odds below are
+  // read from), else a VIX cone. The targets used to be 1-day for every
+  // horizon and were re-cut to a VIX cone by a route post-processor AFTER the
+  // odds had been read, so the weekly odds answered a one-day question.
   const vixForEM = extras.vixForEM ?? null;
-  // vixForEM is a VIX-style level — convert to true ATM vol before the EM.
-  const fullDayEM = vixForEM != null && vixForEM > 0
-    ? spot * (vixToAtmPct(vixForEM) / 100) * Math.sqrt(1 / 252)
-    : spot * 0.010;
-  // Preferred: the same-day (0DTE) ATM straddle, which prices exactly the
-  // residual session, so no hand-set session factor is needed.
   const straddle = extras.straddleEM ?? null;
-  const oneDayEM = straddle ? straddle.oneSigmaMove : fullDayEM * 0.55;
-  const expectedMove: NonNullable<ModelAudit["expectedMove"]> = straddle
-    ? {
-        oneSigma: parseFloat(straddle.oneSigmaMove.toFixed(2)),
-        source: "0dte-straddle",
-        straddleMid: parseFloat(straddle.straddleMid.toFixed(2)),
-        strike: straddle.strike,
-        note: "1 sigma to the close from the 0DTE ATM straddle mid (straddle ~ 0.8 sigma S sqrt T)",
-      }
-    : {
-        oneSigma: parseFloat(oneDayEM.toFixed(2)),
-        source: "vix-scaled",
-        straddleMid: null,
-        strike: null,
-        note: vixForEM != null && vixForEM > 0
-          ? "fallback: VIX-implied ATM vol x sqrt(1/252) x 0.55 (hand-set session factor); no same-day straddle"
-          : "fallback: fixed 1% x 0.55 (VIX and same-day straddle unavailable)",
-      };
+  const expectedMove: HorizonExpectedMove = horizonExpectedMove({
+    spot, horizon: extras.horizon, vix: vixForEM, vix9d: extras.vix9d ?? null,
+    straddle: extras.horizon === "daily" && straddle ? { oneSigmaMove: straddle.oneSigmaMove, straddleMid: straddle.straddleMid, strike: straddle.strike } : null,
+    implied: extras.horizon !== "daily" && extras.impliedAtmTotalVol != null && extras.impliedDistribution?.expiry
+      ? { atmTotalVol: extras.impliedAtmTotalVol, expiry: extras.impliedDistribution.expiry }
+      : null,
+  });
+  const horizonEM = expectedMove.oneSigma;
+  // The 1-day figure for the intraday decay and the Discord card (identical on the daily card).
+  const oneDayEM = extras.horizon === "daily"
+    ? horizonEM
+    : horizonExpectedMove({ spot, horizon: "daily", vix: vixForEM, straddle: straddle ? { oneSigmaMove: straddle.oneSigmaMove, straddleMid: straddle.straddleMid, strike: straddle.strike } : null }).oneSigma;
 
   const resistAbove = levels
     .filter((l) => l.side === "resistance" && l.price > spot)
@@ -1078,7 +1073,7 @@ function buildAudit(
 
   // Bull target: nearest resistance, capped to spot + EM. If no resistance,
   // fall back to spot + EM.
-  const bullCap = spot + oneDayEM;
+  const bullCap = spot + horizonEM;
   const bullRaw = resistAbove[0]?.price ?? bullCap;
   const bullTarget = Math.min(bullRaw, bullCap);
 
@@ -1091,7 +1086,7 @@ function buildAudit(
   const baseTarget = spot * (1 + charmDrift);
 
   // Bear target: first failing support below, capped to spot - EM.
-  const bearCap = spot - oneDayEM;
+  const bearCap = spot - horizonEM;
   const bearRaw = supportBelow[0]?.price ?? bearCap;
   const bearTarget = Math.max(bearRaw, bearCap);
 
@@ -1100,6 +1095,8 @@ function buildAudit(
     base: parseFloat(baseTarget.toFixed(2)),
     bear: parseFloat(bearTarget.toFixed(2)),
     oneDayEM: parseFloat(oneDayEM.toFixed(2)),
+    horizonEM: parseFloat(horizonEM.toFixed(2)),
+    horizonDays: expectedMove.days,
   };
 
   // Risk-neutral odds of exactly the events calibration.ts grades against
@@ -1207,7 +1204,7 @@ function buildAudit(
     scenarioProbNote: scenarioProbSource === "risk-neutral-implied"
       ? "Risk-neutral (options-implied) probability of the graded events: close >= bull target, close <= bear target, else base (SVI-smoothed distribution of this horizon's expiry). Not a real-world forecast."
       : "Heuristic: hand-set regime splits with flow/term-structure tilts. Not calibrated to outcomes.",
-    scenarioProbEvent: `bull: close >= ${scenarioTargets.bull}; bear: close <= ${scenarioTargets.bear}; base: neither`,
+    scenarioProbEvent: `bull: close >= ${scenarioTargets.bull}; bear: close <= ${scenarioTargets.bear}; base: neither (${extras.horizon} horizon${extras.impliedDistribution?.expiry ? `, ${extras.impliedDistribution.expiry} close` : ""})`,
     expectedMove,
     impliedDistribution: extras.impliedDistribution ?? null,
     scenarioTargets,
@@ -1231,12 +1228,14 @@ export interface ModelBuildInput {
   vix: number | null;
   vixPrev: number | null;
   vix3m: number | null;
+  /** VIX9D, the weekly EM fallback when no implied distribution is accepted. */
+  vix9d?: number | null;
   intradayChange?: { change: number | null; windowMin: number | null };
   experimental?: boolean;
 }
 
 async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
-  const { horizon, symbol, chainSymbol, vix, vixPrev, vix3m, intradayChange } = input;
+  const { horizon, symbol, chainSymbol, vix, vixPrev, vix3m, vix9d, intradayChange } = input;
 
   // Schwab chain for the model's own index (was the CBOE SPY chain rescaled
   // x realSPX/SPY for the SPX view). "SPX" -> $SPX (AM SPX + PM SPXW, each on
@@ -1397,7 +1396,10 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     lastRecal: lastRecalOut,
     vixTermRatio: vixTermRatioForAudit,
     vixForEM: vix ?? null,
+    vix9d: vix9d ?? null,
+    horizon,
     impliedCdf,
+    impliedAtmTotalVol: dist && scenarioProbSource === "risk-neutral-implied" ? dist.atmTotalVol : null,
     straddleEM: implied.straddle,
     impliedDistribution: dist && implied.expiry && scenarioProbSource === "risk-neutral-implied"
       ? {
@@ -1583,6 +1585,7 @@ export async function buildModelsSnapshot(input: {
   vix: number | null;
   vixPrev: number | null;
   vix3m: number | null;
+  vix9d?: number | null;
   spxIntraday?: { change: number | null; windowMin: number | null };
   spyIntraday?: { change: number | null; windowMin: number | null };
   symbols?: Array<"^GSPC" | "SPY">;
@@ -1621,6 +1624,7 @@ export async function buildModelsSnapshot(input: {
           vix: input.vix,
           vixPrev: input.vixPrev,
           vix3m: input.vix3m,
+          vix9d: input.vix9d ?? null,
           intradayChange: primarySymbol === "^GSPC" ? input.spxIntraday : input.spyIntraday,
           experimental: input.experimental ?? false,
         });
