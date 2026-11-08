@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
 import { VERDICT_CODE_TEXT } from "@shared/cryptoVerdict";
+import { capOf } from "@shared/cryptoCap";
 import type { CryptoReplay } from "@shared/cryptoReplay";
 import type { LinePosition, MemeClass, TradeCost } from "@shared/memeStructure";
 
@@ -45,7 +46,7 @@ interface Candidate {
   chain: string; pairAddress: string; tokenAddress: string;
   symbol: string; name: string; dexId: string;
   pumpfunGraduate: boolean; discoveredVia: string;
-  priceUsd: number | null; marketCap: number | null; liquidityUsd: number | null;
+  priceUsd: number | null; marketCap: number | null; fdv: number | null; liquidityUsd: number | null;
   vol5m: number | null; vol1h: number | null; vol24h: number | null;
   buys5m: number | null; sells5m: number | null;
   chg5m: number | null; chg1h: number | null; chg24h: number | null;
@@ -179,6 +180,11 @@ const fmtUsd = (n: number | null | undefined, digits = 1): string => {
   if (a >= 1e6) return `$${(n / 1e6).toFixed(digits)}M`;
   if (a >= 1e3) return `$${(n / 1e3).toFixed(digits)}K`;
   return `$${n.toFixed(a < 1 ? 4 : 0)}`;
+};
+/** The cap the desk scored on (shared/cryptoCap capOf): marketCap, else FDV with the basis named. */
+const capText = (c: { marketCap: number | null; fdv: number | null }): string => {
+  const { cap, basis } = capOf(c);
+  return cap == null ? "n/a" : basis === "fdv" ? `${fmtUsd(cap)} (FDV)` : fmtUsd(cap);
 };
 
 const fmtAge = (min: number | null): string => {
@@ -499,7 +505,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
                   <span className={`text-[11px] font-semibold ${c.verdict === "ENTER" ? "text-lime-300" : "text-amber-300"}`}>{c.verdict === "ENTER" ? "Enter" : "Watch"}{c.score != null ? ` · ${c.score}` : ""}</span>
                 </div>
                 <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                  cap {c.marketCap != null ? fmtUsd(c.marketCap) : "n/a"} · liq {c.liquidityUsd != null ? fmtUsd(c.liquidityUsd) : "n/a"}
+                  cap {capText(c)} · liq {c.liquidityUsd != null ? fmtUsd(c.liquidityUsd) : "n/a"}
                 </div>
                 {c.verdictReasons[0] && <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground">{c.verdictReasons[0]}</div>}
               </button>
@@ -727,7 +733,8 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     accent === "enter" ? "border-lime-400/35 hover:border-lime-400/60"
     : accent === "watch" ? "border-amber-400/30 hover:border-amber-400/55"
     : "border-border/50 hover:border-border";
-  const mcapPct = c.marketCap != null ? Math.min(100, (c.marketCap / 1_000_000) * 100) : 0;
+  const cap = capOf(c);
+  const mcapPct = cap.cap != null ? Math.min(100, (cap.cap / 1_000_000) * 100) : 0;
   return (
     <div id={`crypto-card-${c.chain}-${c.pairAddress}`} className="scroll-mt-24">
     <button
@@ -765,7 +772,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <div className="font-mono text-sm font-bold tabular-nums">{fmtUsd(c.marketCap)}</div>
+          <div className="font-mono text-sm font-bold tabular-nums" title={cap.basis === "fdv" ? "DexScreener reports no market cap for this pair; the desk scores and grades it on fully diluted value" : cap.basis === "marketCap" ? "DexScreener market cap" : "no market cap or FDV reported"}>{fmtUsd(cap.cap)}{cap.basis === "fdv" ? <span className="ml-1 text-[10px] font-normal text-muted-foreground">FDV</span> : null}</div>
           <div className={`font-mono text-[11px] tabular-nums ${pctCls(c.chg1h)}`}>
             {c.chg1h != null ? `${c.chg1h >= 0 ? "+" : ""}${c.chg1h.toFixed(0)}% 1h` : "—"}
           </div>

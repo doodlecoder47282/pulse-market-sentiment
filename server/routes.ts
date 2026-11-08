@@ -1,4 +1,3 @@
-import { vixToAtmPct } from "@shared/vol";
 import { levelsSourceFor, INDEX_NOT_WIRED_REASON } from "../shared/chartLevels";
 import { EMPTY_RETRY_CAP_MS, EMPTY_RETRY_SESSION_CAP_MS, emptyRetryDelayMs, modelsCacheGate, modelsPeekReason } from "./modelsBackoff";
 import { briefForPrompt, sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
@@ -176,84 +175,6 @@ async function fetchVixTermData(): Promise<{ vix: number | null; vix9d: number |
     return data;
   } catch {
     return { vix: null, vix9d: null, vix3m: null };
-  }
-}
-
-/**
- * Post-processor: rescale non-daily horizon scenarioTargets to reflect the
- * proper term-structure expected move for each horizon window.
- *
- * - daily:     unchanged (0DTE/1DTE stays as-is)
- * - weekly:    7-day cone using VIX9D (or sqrt(5) fallback)
- * - monthly:   21-day cone using VIX30 (or sqrt(21) fallback)
- * - quarterly: 63-day cone with 0.85 mean-reversion damp
- *
- * Pure function. try/catch guard: any error returns the original result.
- */
-function applyTermStructureRescale(
-  result: ModelsResponse,
-  vixData: { vix: number | null; vix9d: number | null; vix3m: number | null },
-): ModelsResponse {
-  try {
-    const dailyHorizon = result.horizons["daily"];
-    if (!dailyHorizon) return result; // nothing to anchor from
-
-    const dailyEM = dailyHorizon.audit?.scenarioTargets?.oneDayEM;
-    const spot = dailyHorizon.spot;
-    if (!dailyEM || !spot || spot <= 0) return result;
-
-    const { vix, vix9d } = vixData;
-
-    // Compute horizon EMs
-    // weekly (7 calendar days ≈ 5 trading days)
-    let weeklyEM: number;
-    if (vix9d && vix9d > 0) {
-      // VIX9D is variance-swap style like VIX — same put-wing contamination.
-      weeklyEM = spot * (vixToAtmPct(vix9d) / 100) * Math.sqrt(7 / 365);
-    } else {
-      weeklyEM = dailyEM * Math.sqrt(5);
-    }
-
-    // monthly (21 trading days)
-    let monthlyEM: number;
-    if (vix && vix > 0) {
-      monthlyEM = spot * (vixToAtmPct(vix) / 100) * Math.sqrt(21 / 252);
-    } else {
-      monthlyEM = dailyEM * Math.sqrt(21);
-    }
-
-    // quarterly (63 trading days, mean-reversion damped)
-    let quarterlyEM: number;
-    if (vix && vix > 0) {
-      quarterlyEM = spot * (vixToAtmPct(vix) / 100) * Math.sqrt(63 / 252) * 0.85;
-    } else {
-      quarterlyEM = dailyEM * Math.sqrt(63) * 0.85;
-    }
-
-    const horizonEMs: Record<string, number> = {
-      weekly: weeklyEM,
-      monthly: monthlyEM,
-      quarterly: quarterlyEM,
-    };
-
-    for (const hKey of ["weekly", "monthly", "quarterly"] as const) {
-      const h = result.horizons[hKey];
-      if (!h || !h.audit?.scenarioTargets) continue;
-      const hSpot = h.spot ?? spot;
-      const hEM = horizonEMs[hKey];
-      const st = h.audit.scenarioTargets;
-      h.audit.scenarioTargets = {
-        ...st,
-        bull: parseFloat((hSpot + hEM).toFixed(2)),
-        base: parseFloat(hSpot.toFixed(2)),  // neutral drift (base = spot, no drift)
-        bear: parseFloat((hSpot - hEM).toFixed(2)),
-        oneDayEM: st.oneDayEM,               // preserve original per-day EM input
-        horizonEM: parseFloat(hEM.toFixed(2)),
-      } as any;
-    }
-    return result;
-  } catch {
-    return result;
   }
 }
 
@@ -816,6 +737,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         vix: snap?.vol.vix.value ?? null,
         vixPrev: snap?.vol.vix.prev ?? null,
         vix3m: snap?.vol.vix3m.value ?? null,
+        vix9d: snap?.vol.vix9d?.value ?? null,
         symbols: [symbol],
         experimental,
       });
@@ -847,13 +769,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       const data = await buildModelsForKey(symbol, experimental);
       // Post-process pipeline (order matters):
-      //   1. Term-structure rescale: 1W/1M/3M EMs from VIX9D/VIX
-      //   2. Audit enrichment: vommaPockets, realizedSigma20d, intradayPivot, wickZones
-      //   3. Quarterly weekly trajectory: 13-week bull/base/bear cone w/ anchors
+      //   1. Audit enrichment: vommaPockets, realizedSigma20d, intradayPivot, wickZones
+      //   2. Quarterly weekly trajectory: 13-week bull/base/bear cone w/ anchors
+      // (The weekly/monthly/quarterly scenario targets are built on their own
+      // horizon's expected move inside models.ts buildAudit, together with the
+      // odds; the old term-structure rescale that re-cut them here after the
+      // odds were read is gone.)
       const vixData = await fetchVixTermData().catch(() => ({ vix: null, vix9d: null, vix3m: null }));
-      const rescaled = applyTermStructureRescale(data, vixData);
       const { enrichAudit } = await import("./auditEnrich");
-      const enriched = await enrichAudit(rescaled, vixData);
+      const enriched = await enrichAudit(data, vixData);
 
       // Attach 13-week trajectory to the quarterly horizon (additive only).
       try {

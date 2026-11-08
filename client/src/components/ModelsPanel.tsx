@@ -120,9 +120,14 @@ interface ModelAudit {
   scenarioProb: { bull: number; base: number; bear: number };
   scenarioProbSource?: "risk-neutral-implied" | "hand-set-heuristic";
   scenarioProbNote?: string;
+  /** Price thresholds the audit odds refer to: bull = close >= bull, bear = close <= bear, base = neither. */
+  scenarioTargets?: { bull: number; base: number; bear: number; oneDayEM: number; horizonEM?: number; horizonDays?: number };
   expectedMove?: {
     oneSigma: number;
-    source: "0dte-straddle" | "vix-scaled";
+    source: "0dte-straddle" | "implied-atm" | "vix-scaled" | "fixed-fallback";
+    horizon?: "daily" | "weekly" | "monthly" | "quarterly";
+    days?: number;
+    expiry?: string | null;
     straddleMid: number | null;
     strike: number | null;
     note: string;
@@ -679,11 +684,11 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
 
       {/* Line 7: Scenario probabilities */}
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/30 pt-0.5">
-        <span className="text-green-400">BULL {probs.bull}%</span>
+        <span className="text-green-400">BULL {probs.bull}%{a.scenarioTargets ? <span className="text-muted-foreground"> close ≥ {fmtK(a.scenarioTargets.bull)}</span> : null}</span>
         <span>·</span>
-        <span className="text-cyan-400">BASE {probs.base}%</span>
+        <span className="text-cyan-400">BASE {probs.base}%{a.scenarioTargets ? <span className="text-muted-foreground"> between</span> : null}</span>
         <span>·</span>
-        <span className="text-red-400">BEAR {probs.bear}%</span>
+        <span className="text-red-400">BEAR {probs.bear}%{a.scenarioTargets ? <span className="text-muted-foreground"> close ≤ {fmtK(a.scenarioTargets.bear)}</span> : null}</span>
         <span className="text-muted-foreground">
           ({scenarioSourceLabel(a.scenarioProbSource)})
         </span>
@@ -691,7 +696,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
           <>
             <span>|</span>
             <span>
-              EM (expected move, model) ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : "VIX fallback"})
+              EM (expected move to {a.expectedMove.horizon && a.expectedMove.horizon !== "daily" ? `the ${a.expectedMove.horizon} close` : "the close"}) ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : a.expectedMove.source === "implied-atm" ? `options-implied${a.expectedMove.expiry ? `, ${a.expectedMove.expiry} expiry` : ""}` : a.expectedMove.source === "vix-scaled" ? "VIX fallback" : "fixed fallback"})
             </span>
           </>
         )}

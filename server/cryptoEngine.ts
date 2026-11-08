@@ -53,7 +53,7 @@ import {
   computeSocialScore, resolveSocialCollection, expireSocial,
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
   observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats, CRYPTO_SAMPLE_READY_MIN_GRADED, CRYPTO_NO_DATA_MAX_SHARE,
-  CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
+  CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, PEAK_SAMPLE_BASES, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
   peakSampleParams, graderMarkParams, graderNoDataParams,
   countMentions, socialCoverage, type DexPool,
   momentumPoints, honeypotRead, jupiterAllowsEnter,
@@ -67,6 +67,7 @@ import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
+import { capOf, capOnBasis, evictOverCap, MOMENTUM_CYCLE_MS } from "../shared/cryptoCap";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -222,6 +223,8 @@ const MAX_TRACKED = CRYPTO_RULES.universe.maxTracked;          // memory + rate-
 const CANDIDATE_TTL_MS = CRYPTO_RULES.universe.candidateTtlHours * 3600_000; // drop after this long without a signal
 const SCANNER_MS = 60_000;
 const MOMENTUM_MS = 75_000;
+
+// Market cap has one basis (shared/cryptoCap.ts capOf / capOnBasis); see there.
 const MOMENTUM_BATCH = 90; // tracked coins refreshed per momentum tick (3 DexScreener calls)
 const NARRATIVE_MS = 5 * 60_000;
 const MAJORS_MS = 60_000;
@@ -353,11 +356,11 @@ function persistSignal(c: Candidate): void {
       // The same market-cap basis the verdict and the grader use (marketCap,
       // else FDV): a pair with marketCap null and FDV present used to be
       // ENTER-able with mcap_at_signal NULL, which the grader read as 0.
-      c.verdict, c.verdictCode, c.score, c.marketCap ?? c.fdv ?? null, c.priceUsd, c.liquidityUsd,
+      c.verdict, c.verdictCode, c.score, capOf(c).cap, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
         rulesVersion: CRYPTO_RULES_VERSION,
         score: c.score,
-        mcapBasis: c.marketCap != null ? "marketCap" : c.fdv != null ? "fdv" : "none",
+        mcapBasis: capOf(c).basis,
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
         meme: c.memeScore, memeMethod: MEME_SCORE_METHOD, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
         boosted: c.boosted, pumpfunGraduate: c.pumpfunGraduate,
@@ -480,8 +483,14 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     structure: null,
   };
   // GT gives a coarse first look — momentum engine refines with DexScreener.
-  c.marketCap = effMcap ?? c.marketCap;
-  c.fdv = Number.isFinite(fdv) ? fdv : c.fdv;
+  // A DexScreener read younger than one refresh cycle is the better source and
+  // is not overwritten (GT's FDV used to land in marketCap every 60 s and was
+  // then recorded and graded as a market cap).
+  const dsFresh = c.lastRefreshAt != null && Date.now() - c.lastRefreshAt < MOMENTUM_CYCLE_MS;
+  if (!dsFresh) {
+    c.marketCap = Number.isFinite(mcap) && mcap > 0 ? mcap : c.marketCap;
+    c.fdv = Number.isFinite(fdv) ? fdv : c.fdv;
+  }
   // observed 0 stays 0 (a drained pool); only an absent field keeps the old value
   c.priceUsd = observedNumber(attrs.base_token_price_usd) ?? c.priceUsd;
   c.liquidityUsd = observedNumber(attrs.reserve_in_usd) ?? c.liquidityUsd;
@@ -508,14 +517,16 @@ async function scannerTick(): Promise<void> {
   const now = Date.now();
   for (const [k, c] of tracked) {
     const stale = now - (c.lastRefreshAt ?? c.firstSeenAt) > CANDIDATE_TTL_MS;
-    const grewOut = (c.marketCap ?? 0) > MCAP_CEILING * 4; // 6M+: past our window entirely
+    const grewOut = (capOf(c).cap ?? 0) > MCAP_CEILING * 4; // 6M+: past our window entirely
     if (stale || grewOut) tracked.delete(k);
   }
   if (tracked.size > MAX_TRACKED) {
-    const sorted = [...tracked.entries()].sort(
-      (a, b) => (b[1].score ?? -1) - (a[1].score ?? -1) || b[1].firstSeenAt - a[1].firstSeenAt,
-    );
-    for (const [k] of sorted.slice(MAX_TRACKED)) tracked.delete(k);
+    // Over the cap: an arrival not yet scored is kept for at least one momentum
+    // cycle (a scored name, even a PASS at 0, used to outrank every unscored
+    // arrival, so new pools were evicted the tick they appeared and the universe
+    // froze ~15 min after a restart). Then the lowest-ranked go first: PASS
+    // before WATCH before ENTER, lower score first, older first.
+    for (const k of evictOverCap([...tracked.entries()], MAX_TRACKED, now)) tracked.delete(k);
   }
 }
 
@@ -645,10 +656,10 @@ async function momentumTick(): Promise<void> {
         c.jupGapPct = null;
       }
       c.lastRefreshAt = Date.now();
-      c.observations = appendObservation(c.observations, { at: c.lastRefreshAt, liquidityUsd: c.liquidityUsd, marketCap: c.marketCap, top10Pct: c.top10Pct });
+      c.observations = appendObservation(c.observations, { at: c.lastRefreshAt, liquidityUsd: c.liquidityUsd, marketCap: capOf(c).cap, top10Pct: c.top10Pct });
       scoreCandidate(c);
       // history AFTER scoring so volAccel/netBuyRatio are fresh; cap 20 readings
-      c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: c.marketCap });
+      c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: capOf(c).cap });
       if (c.hist.length > 20) c.hist.shift();
       persistSignal(c);
       recordPeakSample(c);
@@ -665,11 +676,18 @@ async function momentumTick(): Promise<void> {
 // market cap (null) is not a sample; an observed 0 is (it never raises a peak).
 let _peakStmt: ReturnType<typeof sqlite.prepare> | null = null;
 function recordPeakSample(c: Candidate): void {
-  if (c.marketCap == null || !Number.isFinite(c.marketCap)) return;
+  const { cap } = capOf(c);
+  if (cap == null) return;
   try {
     _peakStmt = _peakStmt ?? sqlite.prepare(CRYPTO_PEAK_SAMPLE_SQL);
-    _peakStmt.run(peakSampleParams(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress));
-    samplePlans(c.chain, c.pairAddress, c.marketCap, c.liquidityUsd, c.lastRefreshAt ?? Date.now());
+    // Each OPEN row is sampled on the basis it was recorded on: FDV rows on
+    // FDV, marketCap rows on marketCap, older rows (no basis) on marketCap
+    // else FDV. A row whose basis is not reported this refresh is left alone.
+    const at = c.lastRefreshAt ?? Date.now();
+    for (const basis of PEAK_SAMPLE_BASES) {
+      _peakStmt.run(peakSampleParams(capOnBasis(c, basis), basis, at, c.liquidityUsd, c.chain, c.pairAddress));
+    }
+    samplePlans(c.chain, c.pairAddress, cap, c.liquidityUsd, at);
   } catch (e: any) {
     console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
@@ -808,7 +826,7 @@ async function socialTick(): Promise<void> {
   // stale after 5 min. ~3 bsky + ~3 pump calls per tick — trivial load.
   const now = Date.now();
   const due = [...tracked.values()]
-    .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
+    .filter((c) => c.lastRefreshAt != null && (capOf(c).cap ?? 0) <= MCAP_CEILING * 2)
     .filter((c) => c.socialAttemptAt == null || now - c.socialAttemptAt > 5 * 60_000)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 4);
@@ -986,7 +1004,7 @@ function scoreCandidate(c: Candidate): void {
   // states; both kill, with different reasons.
   const liqObs = c.liquidityUsd;
   const liq = liqObs ?? 0;
-  const mcap = c.marketCap ?? c.fdv ?? 0;
+  const mcap = capOf(c).cap ?? 0;
   if (liqObs == null) { flags.push("liquidity not reported by the source (missing) — exit cannot be verified"); hardKill = true; }
   else if (liqObs === 0) { flags.push("liquidity $0 observed — pool drained / liquidity pulled"); hardKill = true; }
   else if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k floor — cannot exit`); hardKill = true; }
@@ -1188,7 +1206,7 @@ const NO_DATA_AFTER_ERRORS_MS = 7 * 24 * 3600_000; // fetch errors this long aft
 
 async function graderTick(): Promise<void> {
   const open = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT ?`,
+    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT ?`,
   ).all(CRYPTO_GRADER_BATCH) as any[];
   if (open.length === 0) return;
 
@@ -1203,14 +1221,19 @@ async function graderTick(): Promise<void> {
     let mcap: number | null = null;
     let liq: number | null = null;
     const live = tracked.get(key);
+    // The cap is read on the basis the row was RECORDED on (FDV rows on FDV,
+    // marketCap rows on marketCap): an entry on FDV $500k is never graded
+    // RUGGED against a marketCap of $40k that DexScreener started reporting
+    // later. A basis no longer reported reads as unpriced, never the other.
+    const basis: string | null = row.mcap_basis ?? null;
     if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) {
-      mcap = live.marketCap; liq = live.liquidityUsd;
+      mcap = capOnBasis(live, basis); liq = live.liquidityUsd;
     } else {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
         const p = resp?.pairs?.[0] ?? resp?.pair;
         // observed 0 stays 0: a full liquidity pull must grade RUGGED
-        mcap = observedNumber(p?.marketCap) ?? observedNumber(p?.fdv);
+        mcap = capOnBasis({ marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) }, basis);
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         // transient fetch error: retry next tick, unless it has failed for a week
@@ -1263,7 +1286,7 @@ sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = NULL, horizon_liquidity
 async function horizonTick(): Promise<void> {
   const now = Date.now();
   const due = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
+    `SELECT id, pair_address, chain, detected_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
   ).all(HORIZON_PASS_SINCE_MS, GRADE_HORIZON_MS, now, HORIZON_BATCH * 3) as any[];
   if (!due.length) return;
   const mark = sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = @mcap, horizon_liquidity = @liq, horizon_at = @now WHERE id = @id AND horizon_at IS NULL`);
@@ -1278,12 +1301,13 @@ async function horizonTick(): Promise<void> {
     const key = `${row.chain}:${row.pair_address}`;
     const live = tracked.get(key);
     let mcap: number | null = null, liq: number | null = null;
-    if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) { mcap = live.marketCap; liq = live.liquidityUsd; }
+    const hBasis: string | null = row.mcap_basis ?? null; // same basis as the entry row, like the grader
+    if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) { mcap = capOnBasis(live, hBasis); liq = live.liquidityUsd; }
     else {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
         const p = resp?.pairs?.[0] ?? resp?.pair;
-        mcap = observedNumber(p?.marketCap) ?? observedNumber(p?.fdv);
+        mcap = capOnBasis({ marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) }, hBasis);
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         const attempts = (r?.attempts ?? 0) + 1;

@@ -5,8 +5,8 @@ import { addDays, dayOfWeek, etDate, isTradingDay, nextTradingDay, prevTradingDa
  * quarterlyTrajectory.ts  —  v2 (precision pass)
  *
  * Builds a week-by-week (13-week) bull/base/bear trajectory for the 3-month
- * horizon — instead of just the endpoint targets that applyTermStructureRescale
- * produces.
+ * horizon — instead of just the endpoint targets the quarterly audit carries
+ * (models.ts buildAudit, on the quarterly expected move).
  *
  * v2 upgrades over v1 (items 1, 2 and 4 SUPERSEDED in round 4, see below:
  * the cone width is now the SPX ATM IV term structure with t(4) bands):
