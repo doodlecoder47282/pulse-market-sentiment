@@ -267,7 +267,7 @@ export default function DepthSkewFlow({ symbol, expiry }: { symbol?: string; exp
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
               {modeMeta[mode].icon}
               {modeMeta[mode].label} · {heat.data?.symbol} {mode === "flow" ? "0DTE tracker ($SPX nearest expiry)" : dteLabel}
               <EdgeInfo id="depth-skew-flow" />

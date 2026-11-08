@@ -1553,7 +1553,7 @@ const FIELD_TOOLTIPS: Record<string, string> = {
   "Q-Score": "Quantitative composite sentiment score (0–100). <30 = Pinned/fear, 30–60 = Mixed, >60 = Fragile/greed. Weights VIX, gamma, PCR, term structure, social, and Fear & Greed.",
   "Total GEX ($B)": "Total Gamma Exposure in billions. Dealer gamma in dollars per 1% move. Positive = dealers long gamma (stabilizing, mean-reversion). Negative = short gamma (amplifying, breakout).",
   "Call Wall": "Strike with the largest positive gamma concentration (call OI). In the model, dealer hedging leans against rallies into it, so it is drawn as a resistance zone.",
-  "Put Wall": "Strike with the largest negative gamma concentration (put OI). In the model, dealer hedging leans against declines into it, so it is drawn as a support zone.",
+  "Put Wall": "Strike with the largest put gamma concentration (put OI) below spot. The model tags it FLOOR and draws it as a support zone; the tag is a position in the chain, not a measured hedging direction.",
   "Zero Gamma": "The price level where net dealer gamma flips from positive to negative. Above = positive gamma (dampened moves); below = negative gamma (amplified moves).",
   "HVL": "High Volatility Level: the strike where volatility positioning peaks. Price near HVL = choppy, high-vol conditions. Good reference for intraday range expectations.",
   "Gamma Flip": "Price at which cumulative per-strike GEX flips sign — similar to Zero Gamma but uses the crossover centroid method. Regime boundary for positioning.",

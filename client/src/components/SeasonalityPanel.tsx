@@ -629,7 +629,7 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
             <div>Source: Yahoo Finance daily closes · Lookback: {yearly.yearsCovered[0]}–{yearly.yearsCovered[yearly.yearsCovered.length - 1]} ({yearly.yearsCovered.length} years)</div>
             <div>Monthly returns: month-over-month % change, averaged across years</div>
             <div>Win rate: % of years that period was positive · Geometric avg: compounded</div>
-            <div>Not dividend-adjusted · 70%+ win rate preferred for tradeable signals</div>
+            <div>Not dividend-adjusted · win rate is the share of past years the window closed up, over the years shown</div>
             <div className="text-muted-foreground">Seasonal averages are one description of past years; they are not a forecast of this one.</div>
           </div>
         )}

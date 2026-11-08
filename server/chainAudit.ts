@@ -442,8 +442,10 @@ export function computeDEX(contracts: Contract[], spot: number): DEXResult {
   // largest, not where it flips, and the card says which it is showing.
   let flipMethod: DEXResult["flipMethod"] = flipStrike != null ? "sign_change" : "none";
   if (flipStrike == null && aboveSpot.length > 0) {
+    // (The old seed `Math.abs(best?.netDex ?? -Infinity)` was Infinity, so this
+    // branch never produced a strike: the card showed a dash, never the peak.)
     const peak = aboveSpot.reduce<DEXStrike | null>((best, p) =>
-      Math.abs(p.netDex) > Math.abs(best?.netDex ?? -Infinity) ? p : best, null);
+      best == null || Math.abs(p.netDex) > Math.abs(best.netDex) ? p : best, null);
     flipStrike = peak ? peak.strike : null;
     if (flipStrike != null) flipMethod = "peak_fallback";
   }

@@ -304,7 +304,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
         {/* Header strip */}
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/30 pb-3">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Activity className="h-4 w-4 text-amber-400" />
               <span className="font-mono text-[11px] uppercase tracking-widest text-amber-400/80">Daily Playbook</span>
               <span className="text-[11px] text-muted-foreground">— {symbol}</span>

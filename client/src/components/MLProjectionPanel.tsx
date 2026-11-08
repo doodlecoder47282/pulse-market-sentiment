@@ -891,7 +891,7 @@ export default function MLProjectionPanel() {
   if (regimeLabel === "positive gamma") {
     interpretations.push("positive gamma — the model describes dealer hedging as damping moves (pinning).");
   } else if (regimeLabel === "negative gamma") {
-    interpretations.push("negative gamma — vol regime, moves accelerate.");
+    interpretations.push("negative gamma — the model describes dealer hedging as amplifying moves.");
   } else if (regimeLabel === "unavailable") {
     interpretations.push("dealer gamma unavailable (Schwab SPX chain missing or stale) — no regime read.");
   } else {

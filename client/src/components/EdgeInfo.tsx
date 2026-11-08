@@ -125,7 +125,7 @@ const INFO: Record<string, InfoEntry> = {
     what: "Tight, machine-computed pivot zones for the selected expiry \u2014 each band is a weighted center of gamma notional, today's option volume, open interest, and charm, with sub-strike precision instead of a wide strike-to-strike range.",
     how: "Each band carries a model label. EXHAUST marks where the model sees hedging absorbing a rally or flush. ACCELERANT marks short-gamma zones where the model sees hedging adding to a move through them. PIN marks where the model sees hedging pulling price back. FLIP is the line where the model switches between damping and amplifying. FRESH shows how much of the positioning is today's flow versus stale open interest. These are model labels; Batcave has not measured how often price behaves that way.",
     edge: "The bands are narrower than strike-to-strike walls, which makes them easier to compare with price. They are model output from the current chain; Batcave has not measured whether narrower levels improve any entry or exit.",
-    risk: "Bands move as flow updates \u2014 a band that was exhaust in the morning can flip to accelerant after a big print. Re-check before every entry, and volume expansion through a band overrides its label.",
+    risk: "Bands move as flow updates \u2014 a band that was exhaust in the morning can flip to accelerant after a big print. The label is as of the last flow update, and volume expansion through a band is not part of it.",
   },
   "trade-environment": {
     title: "Trade Environment",
