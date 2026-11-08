@@ -867,6 +867,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
       probBear: (sp.bear as number) / 100,
       oneDayEm: oneDayEM,
       source: isDailySlot ? "daily" : "halfhour",
+      probSource: typeof audit.scenarioProbSource === "string" ? audit.scenarioProbSource : null,
     });
   } catch (e: any) {
     console.warn(`[discordBatcaveCard] recordPrediction failed: ${e?.message ?? e}`);

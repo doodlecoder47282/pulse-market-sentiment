@@ -1935,3 +1935,27 @@ can sit well inside the EM at the nearest resistance; the implied-atm note says 
 log-return vol about the forward, band centred on spot as an approximation" (matters ~8% of the EM on
 the quarterly card only). Left as noted: horizonDays is the nominal 5/21/63 beside the actual expiry
 string; the weekly VIX9D fallback keeps its calendar sqrt(7/365) (inherited, named in the note).
+
+2026-11-08: Calibration card gated and read against climatology (feat/calibration-gate, review item 5).
+The weekly card gave absolute Brier letter grades ("elite", "excellent") and "+N% sharper" from the first
+settled day, compared the top-pick hit rate with a 33% baseline when the base bucket realises most days, and
+pooled implied and heuristic odds (and 09:30 and half-hour rows) into one score without saying so; its
+"vol may be over-modeled / skew under-priced" prose was interpretation off tiny samples. Now:
+pulse_predictions records prob_source (ALTER TABLE, older rows read "unrecorded"); rollingBrier returns the
+odds and slot mix, the mean forecast per bucket, Brier skill vs the climatology forecast (1 - BS/BS_clim,
+null when the baseline is 0) and a gate at CALIBRATION_MIN_DAYS = 20; server/calibrationCardText.ts
+(pure, tested) composes the card: sample line, realized mix beside the mean forecast with the gap in
+points, then, past the gate only, Brier vs base-rate with skill, the hit rate against always-picking the
+most frequent bucket with its CI, resolution and the watchdog; under the gate the scores are withheld
+and said to be. No letter grades, no "sharper", no diagnosis. gradeBrier stays exported for API
+consumers with a note that an absolute Brier grade means nothing here. Tests:
+tests/quant/calibration-card.test.ts (gated, ungated, skill n/a, wiring). Needs an independent review.
+Review of feat/calibration-gate (HOLD, one must-fix, taken): the scheduler posted postCalibrationCard(7),
+so with the 20-day gate on the window's days the Sunday card could never show a reading. The posted window
+is now CALIBRATION_CARD_DAYS = 30 (scheduler and route default), the gate stays on the days found in the
+window (a 7-day Brier is a 7-sample estimate whatever the table holds), and the header names the window
+("LAST 30 SETTLED DAYS: n SCORED"). Should-fixes taken: the card states that the base rate is fitted on
+the same days so skill is understated and that the watchdog line is its significance test; each section
+names its own window (30 graded forecasts, 60 days); resolution prints the number without quality
+adjectives; "percentages below are of these n days" under the gate; hit rate and mean forecast are
+read over exactly the Brier rows' dates (WHERE o.date >= oldest); beatsTrivial commented as unused.
