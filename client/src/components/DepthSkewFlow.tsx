@@ -33,6 +33,7 @@ import {
 } from "recharts";
 import { Layers, TrendingUpIcon, Waves } from "lucide-react";
 
+import AsOfNote from "@/components/AsOfNote";
 // ─── Types (mirror server payloads) ─────────────────────────────────────────
 interface HeatseekerStrike {
   strike: number;
@@ -270,6 +271,7 @@ export default function DepthSkewFlow({ symbol, expiry }: { symbol?: string; exp
               {modeMeta[mode].icon}
               {modeMeta[mode].label} · {heat.data?.symbol} {mode === "flow" ? "0DTE tracker ($SPX nearest expiry)" : dteLabel}
               <EdgeInfo id="depth-skew-flow" />
+              <AsOfNote asOf={mode === "flow" ? tracker.data?.asOf : heat.data?.asOf} />
             </CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {modeMeta[mode].blurb}

@@ -11,6 +11,7 @@ import { useTickers } from "./TickerContext";
 import { TrendingUp, TrendingDown, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
+import AsOfNote from "@/components/AsOfNote";
 type Mag7Member = {
   symbol: string;
   name: string;
@@ -145,6 +146,7 @@ export default function Mag7Panel() {
           <Users className="h-4 w-4 text-cyan-400" />
           <div className="text-sm font-semibold uppercase tracking-wider">Mag 7</div>
           <EdgeInfo id="mag7" />
+          <AsOfNote asOf={data?.asOf} />
           <Badge variant="outline" className="border-cyan-500/40 text-[11px] text-cyan-300">
             Equal-weight basket · {membersNote}
           </Badge>

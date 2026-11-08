@@ -1857,3 +1857,23 @@ tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now 
 own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
 COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
 grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
+
+2026-11-08: Copy and display sweep (feat/copy-display-sweep, review item 7). Instruction-style copy
+rewritten as description of what the model says (EdgeInfo chart card "fade pushes into the walls",
+Daily Playbook flip notes "Expect momentum", ML projection "dealers buy dips, sell rips" and
+"buy-the-dip hedging supports floor", Trade Desk wall glossary "Dealers sell rallies / buy dips" and the
+"long entry / short entry" legend, Ticker Outlook "sizing should respect that", Exposure GEX gloss,
+Seasonality "should be combined", Canary "RISK-ON CONFIRMED" -> "RISK-ON ALIGNED"). `?? 0` reaching the
+screen replaced with n/a or unknown (Crypto feed read time no longer shown as now; holder stress dollars;
+taker buy share; fomo; Thermal traded-today volumes; Schwab token and refresh expiry; Chain Audit stale
+age; Position Sizer dollars; 13-week sigma). Seven panels whose payload carried an asOf the card never
+showed now show "read HH:MM · N min ago" (AsOfNote; helpers in client/src/lib/asOf.ts: ms, seconds or
+ISO, missing reads "read time unknown", never now): Mag 7, JPM collar, 0DTE Wiener map, Daily Playbook,
+Regime headline, Ticker Outlook, Depth/Skew/Flow. Legibility floor below 1024 px: 8-10 px labels render
+at 11 px (desktop keeps 12 px). DEX flip: when cumulative net DEX does not change sign in the quoted
+strikes the card used to show the peak |DEX| strike under the "flip" label; chainAudit now returns
+flipMethod and the card reads "DEX Peak Strike (no flip)" with the reason. "MOPEX MAX PAIN" is computed
+over every expiry in the horizon's window and is now labelled "WINDOW MAX PAIN" with a note (kind id
+unchanged for backtests and target derivation; Trade Desk glossary corrected). Vomma on a missing VIX
+is "unavailable" (was "normal"); the Models vol row says "VIX unavailable: vol level not read". Tests:
+tests/quant/copy-display-sweep.test.ts. Needs a review (copy + client).

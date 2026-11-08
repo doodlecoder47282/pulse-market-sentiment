@@ -37,6 +37,7 @@ import {
   CartesianGrid,
 } from "recharts";
 
+import AsOfNote from "@/components/AsOfNote";
 type Direction = "BULL" | "BEAR" | "NEUTRAL";
 
 interface OutlookVerdict {
@@ -263,7 +264,7 @@ function plainEnglishThesis(v: OutlookVerdict, ticker: string, calendar: TickerC
     v.confidence >= 45 ? "low-conviction" : "no edge";
   const ern = calendar?.nextEarnings;
   const ernNote = ern && ern.daysOut <= 7
-    ? ` Earnings in ${ern.daysOut}d — sizing should respect that.`
+    ? ` Earnings in ${ern.daysOut}d (an event inside the horizon).`
     : "";
   const target = v.targetPrice != null ? ` toward ${fmtMoney(v.targetPrice)}` : "";
   const stop = v.invalidation != null ? `, kill thesis below ${fmtMoney(v.invalidation)}` : "";
@@ -390,6 +391,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 ai outlook
               </span>
               <span className="font-mono text-base font-bold text-foreground">{ticker}</span>
+              <AsOfNote asOf={q.data?.asOf} />
               {q.data?.spot != null && (
                 <span className="font-mono text-xs text-muted-foreground">
                   ${fmtMoney(q.data.spot)}

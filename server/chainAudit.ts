@@ -65,6 +65,10 @@ export interface DEXResult {
   maxPositive: { strike: number; value: number } | null;
   maxNegative: { strike: number; value: number } | null;
   flipStrike: number | null;  // cumulative net DEX flips sign from spot upward
+  /** "sign_change": a real sign change in cumulative net DEX above spot; "peak_fallback": no sign change in the
+   *  quoted strikes, so the strike with the largest |net DEX| above spot is shown instead (a different thing,
+   *  labelled); "none": no strikes above spot. */
+  flipMethod: "sign_change" | "peak_fallback" | "none";
   totalCallDex: number;
   totalPutDex: number;
   totalNetDex: number;
@@ -432,12 +436,16 @@ export function computeDEX(contracts: Contract[], spot: number): DEXResult {
       break;
     }
   }
-  // Fallback: if no sign-change above spot, use the peak |netDex| strike nearest spot as flip
-  // (interpret as "dealer inventory maxes here → likely turnaround").
+  // Fallback: no sign change above spot inside the quoted strikes. The strike
+  // with the largest |netDex| above spot is shown instead, and NAMED as such
+  // (flipMethod "peak_fallback"): it is where dealer delta inventory is
+  // largest, not where it flips, and the card says which it is showing.
+  let flipMethod: DEXResult["flipMethod"] = flipStrike != null ? "sign_change" : "none";
   if (flipStrike == null && aboveSpot.length > 0) {
     const peak = aboveSpot.reduce<DEXStrike | null>((best, p) =>
       Math.abs(p.netDex) > Math.abs(best?.netDex ?? -Infinity) ? p : best, null);
     flipStrike = peak ? peak.strike : null;
+    if (flipStrike != null) flipMethod = "peak_fallback";
   }
 
   const totalCallDex = profile.reduce((s, p) => s + p.callDex, 0);
@@ -449,6 +457,7 @@ export function computeDEX(contracts: Contract[], spot: number): DEXResult {
     maxPositive: maxPositive ? { strike: maxPositive.strike, value: maxPositive.netDex } : null,
     maxNegative: maxNegative ? { strike: maxNegative.strike, value: maxNegative.netDex } : null,
     flipStrike,
+    flipMethod,
     totalCallDex,
     totalPutDex,
     totalNetDex,

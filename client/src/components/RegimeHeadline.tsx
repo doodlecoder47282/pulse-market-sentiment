@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, TrendingDown, Activity, AlertTriangle } from "lucide-react";
 
+import AsOfNote from "@/components/AsOfNote";
 type Tier = "bullish" | "bearish" | "neutral" | "warning";
 
 interface HeadlineResponse {
@@ -90,6 +91,7 @@ export default function RegimeHeadline() {
           <span className={`font-mono text-[11px] uppercase tracking-widest ${style.label}`} data-testid="regime-label">
             {REGIME_LABEL[data.regime]}
           </span>
+          <AsOfNote asOf={data.asOf} />
         </div>
         <div className={`min-w-0 flex-1 basis-full whitespace-normal break-words text-sm font-medium md:basis-auto ${style.text}`} data-testid="regime-headline-text">
           {data.headline}

@@ -889,7 +889,7 @@ export default function MLProjectionPanel() {
     }
   }
   if (regimeLabel === "positive gamma") {
-    interpretations.push("positive gamma — pin behavior. dealers buy dips, sell rips.");
+    interpretations.push("positive gamma — the model describes dealer hedging as damping moves (pinning).");
   } else if (regimeLabel === "negative gamma") {
     interpretations.push("negative gamma — vol regime, moves accelerate.");
   } else if (regimeLabel === "unavailable") {
@@ -907,7 +907,7 @@ export default function MLProjectionPanel() {
     );
   } else if (flipDistPct != null && flipDistPct < 0 && levels?.gammaFlip?.value) {
     interpretations.push(
-      `above flip ($${fmtPrice(levels.gammaFlip.value)}) — buy-the-dip hedging supports floor.`,
+      `above flip ($${fmtPrice(levels.gammaFlip.value)}) — in the model, dealer hedging damps moves here.`,
     );
   } else if (callDistPct != null && putDistPct != null) {
     interpretations.push("between walls — directional flow drives the print.");

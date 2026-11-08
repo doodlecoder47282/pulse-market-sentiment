@@ -48,7 +48,7 @@ const INFO: Record<string, InfoEntry> = {
   "spx-chart": {
     title: "SPX Chart + Dealer Levels",
     what: "Live SPX candles with the three dealer levels overlaid: call wall (resistance), put wall (support), gamma flip (the regime line).",
-    how: "Above the flip, dealers dampen moves \u2014 fade pushes into the walls. Below the flip they amplify \u2014 respect momentum and don't fade.",
+    how: "Above the flip the model describes dealer hedging as damping moves toward the walls; below the flip, as amplifying them. The chart marks where that description changes; it does not say what to do about it.",
     edge: "The flip marks where the model says dealer hedging changes from damping moves to amplifying them. That is how the model describes hedging; this chart does not measure whether either side of it changes any outcome.",
   },
   "order-flow": {

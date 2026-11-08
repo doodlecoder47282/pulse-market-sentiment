@@ -113,7 +113,7 @@ function StreamFeedRow({ connected, stream }: { connected: boolean; stream: Stre
       </div>
       {connected && stream?.mode && stream.mode !== "down" && (
         <div className="text-muted-foreground font-mono">
-          L1 eq {svcAge("LEVELONE_EQUITIES")} · chart {svcAge("CHART_EQUITY")} · options {svc.LEVELONE_OPTIONS?.keys ?? 0} keys
+          L1 eq {svcAge("LEVELONE_EQUITIES")} · chart {svcAge("CHART_EQUITY")} · options {svc.LEVELONE_OPTIONS?.keys ?? "?"} keys
           {typeof stream.reconnects === "number" ? ` · reconnects ${stream.reconnects}` : ""}
           {stream.subscriptions?.optionsOverCap?.length ? ` · ${stream.subscriptions.optionsOverCap.length} over cap (REST)` : ""}
           {stream.delayedSymbols?.length ? ` · delayed flag: ${stream.delayedSymbols.join(", ")} (REST used)` : ""}
@@ -607,11 +607,11 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
-                    <span>Token expires: <span className="text-foreground font-mono">{formatDuration(status?.expiresIn ?? 0)}</span></span>
+                    <span>Token expires: <span className="text-foreground font-mono">{status?.expiresIn != null ? formatDuration(status.expiresIn) : "unknown"}</span></span>
                   </div>
                   <div className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
-                    <span>Refresh valid: <span className="text-foreground font-mono">{formatDuration(status?.refreshExpiresIn ?? 0)}</span></span>
+                    <span>Refresh valid: <span className="text-foreground font-mono">{status?.refreshExpiresIn != null ? formatDuration(status.refreshExpiresIn) : "unknown"}</span></span>
                   </div>
                 </div>
                 <SchwabSelfTest />

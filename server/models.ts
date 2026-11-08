@@ -273,7 +273,8 @@ export interface ModelHorizon {
     termRatio: number | null;              // vix3m / vix
     termLabel: string;                     // "contango" / "backwardation"
   };
-  vomma: "elevated" | "normal";
+  /** VIX above 20 = "elevated"; a missing VIX is "unavailable", never "normal". */
+  vomma: "elevated" | "normal" | "unavailable";
   confidence: "HIGH" | "MODERATE" | "LOW";
   mmMatrix?: import("./mmMatrix").MMMatrix;
   /** Option chain provenance: Schwab symbol, when Schwab produced it (epoch ms), stale flag, strike coverage. */
@@ -488,15 +489,20 @@ function extractLevels(
     });
   }
 
-  // MOPEX max pain (monthly exp bias)
+  // Max pain over EVERY expiry in this horizon's DTE window (the strike
+  // minimising total intrinsic value across all open interest in the rows),
+  // not the monthly expiry alone. The kind id "mopexMaxPain" is kept as the
+  // persistent key the backtests and target derivation use; the label says
+  // what the number is.
   const mp = maxPain(rows);
   if (mp) {
     out.push({
-      label: `MOPEX MAX PAIN ${fmtK(mp)}`,
-      name: "MOPEX MAX PAIN",
+      label: `WINDOW MAX PAIN ${fmtK(mp)}`,
+      name: "WINDOW MAX PAIN",
       price: mp,
       kind: "mopexMaxPain",
       tag: "PIN",
+      note: "strike minimising total intrinsic value over all expiries in this horizon's window (not the monthly expiry alone)",
     });
   }
 
@@ -1439,7 +1445,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const termLabel = termRatio == null ? "unavailable"
     : termRatio > 1 ? "contango (calm front-end)" : "backwardation (stress front-end)";
   const vixChangePct = vix && vixPrev ? ((vix - vixPrev) / vixPrev) * 100 : null;
-  const vomma: "elevated" | "normal" = (vix ?? 0) > 20 ? "elevated" : "normal";
+  const vomma: "elevated" | "normal" | "unavailable" = vix == null ? "unavailable" : vix > 20 ? "elevated" : "normal";
   const confidence: "HIGH" | "MODERATE" | "LOW" =
     Math.abs(scaledProfile.current.gex) > 5e9 ? "HIGH" : Math.abs(scaledProfile.current.gex) > 1e9 ? "MODERATE" : "LOW";
 
