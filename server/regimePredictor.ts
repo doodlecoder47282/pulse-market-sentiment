@@ -40,7 +40,10 @@ type RegimeBucket =
   | "CHOP_STRONG"
   // Round 4: GEX missing or immaterial ("y?"). Its own state, never NEUTRAL:
   // the buckets below are defined by the gamma sign, so none applies.
-  | "GAMMA_UNKNOWN";
+  | "GAMMA_UNKNOWN"
+  // The DFI (no DEX slope), the main pivot or the 1-day EM is missing: no
+  // regime is read from a zero that was never observed.
+  | "INPUTS_UNAVAILABLE";
 
 const ALL_REGIMES: RegimeBucket[] = [
   "TREND_STRONG",
@@ -63,6 +66,8 @@ const _history: RawSample[] = [];
 
 /** Public observer hook — call from any place that has a fresh audit. */
 export function recordRawRegime(raw: RegimeBucket, dfi: number, ts: number = Date.now()): void {
+  // A regime read from missing inputs, or a non-finite DFI, is not a sample.
+  if (raw === "INPUTS_UNAVAILABLE" || !Number.isFinite(dfi)) return;
   try {
     _history.push({ ts, raw, dfi });
     if (_history.length > HISTORY_CAP) _history.shift();
@@ -111,7 +116,7 @@ function dfiSlopeFromHistory(): { slope: number; samples: number } {
  * sample is a data dropout, so known -> unknown -> known is not two flips.
  */
 export function flipRateOf(history: ReadonlyArray<{ ts: number; raw: string }>): { rate: number; flips: number; samples: number } {
-  const h = history.filter((x) => x.raw !== "GAMMA_UNKNOWN");
+  const h = history.filter((x) => x.raw !== "GAMMA_UNKNOWN" && x.raw !== "INPUTS_UNAVAILABLE");
   if (h.length < 3) return { rate: 0, flips: 0, samples: h.length };
   let flips = 0;
   for (let i = 1; i < h.length; i++) {
@@ -247,7 +252,14 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const horizonMinutes = input.horizonMinutes ?? 20;
 
   const audit = input.audit ?? {};
-  const dfi = Number(audit.dfi ?? 0);
+  // Missing inputs are missing, not zero: a null DFI (no DEX slope), pivot or
+  // 1-day EM makes the call "degraded" with no candidates, instead of a NEUTRAL
+  // regime, "pin pressure" or "room to trend" read from nothing.
+  const dfiMissing = audit.dfi == null || !Number.isFinite(Number(audit.dfi)) || audit.dfiState === "unavailable";
+  const dfi = dfiMissing ? NaN : Number(audit.dfi);
+  const pivotMissing = audit.mainPivot == null || !Number.isFinite(Number(audit.mainPivot));
+  const emMissing = audit.scenarioTargets?.oneDayEM == null || !Number.isFinite(Number(audit.scenarioTargets.oneDayEM)) || Number(audit.scenarioTargets.oneDayEM) <= 0;
+  const missingInputs = [dfiMissing ? "DFI (no DEX slope)" : null, pivotMissing ? "main pivot" : null, emMissing ? "1-day expected move" : null].filter(Boolean) as string[];
   const gZone = String(audit.gammaZone ?? "").toLowerCase();
   const slopeText = String(audit.slope ?? "");
   // Slope text e.g. "DN 0.31° → -0.61"; second number is signed magnitude
@@ -255,7 +267,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const slopeMag = Math.abs(parseFloat(matches[1] ?? "0") || 0);
   const slopeSigned = parseFloat(matches[1] ?? "0") || 0;
 
-  const currentRaw = rawRegimeFor(dfi, gZone, slopeMag);
+  const currentRaw: RegimeBucket = dfiMissing ? "INPUTS_UNAVAILABLE" : rawRegimeFor(dfi, gZone, slopeMag);
 
   // Drivers
   const { slope: dfiSlopePerMin, samples: histSamples } = dfiSlopeFromHistory();
@@ -288,9 +300,10 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
 
   // Gamma flip proximity — spot vs mainPivot, normalized by oneDayEM
   const spot = Number(input.spot ?? audit.spot ?? 0);
-  const pivot = Number(audit.mainPivot ?? spot);
-  const oneDayEM = Math.max(0.5, Number(audit.scenarioTargets?.oneDayEM ?? 1));
-  const gammaFlipProxFrac = clamp(Math.abs(spot - pivot) / oneDayEM, 0, 5);
+  const pivot = pivotMissing ? NaN : Number(audit.mainPivot);
+  const oneDayEM = emMissing ? NaN : Math.max(0.5, Number(audit.scenarioTargets.oneDayEM));
+  // NaN when any input is missing: no proximity driver fires from it.
+  const gammaFlipProxFrac = pivotMissing || emMissing ? NaN : clamp(Math.abs(spot - pivot) / oneDayEM, 0, 5);
 
   const sessionFrac = sessionFracRemaining(nowMs);
 
@@ -306,6 +319,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     CHOP_WEAK: 0,
     CHOP_STRONG: 0,
     GAMMA_UNKNOWN: 0, // never scored: not in ALL_REGIMES
+    INPUTS_UNAVAILABLE: 0,
   };
 
   // 1) projected raw regime gets the largest base bump
@@ -457,7 +471,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   // ─── Status gating ─── warming-up if not enough samples
   let status: "ready" | "warming" | "degraded" = "ready";
   if (histSamples < 5) status = "warming";
-  if (!Number.isFinite(dfi) || gammaZoneEffect(audit.gammaZone) === "unknown") status = "degraded";
+  if (missingInputs.length || gammaZoneEffect(audit.gammaZone) === "unknown") status = "degraded";
 
   // ─── Plain-English synthesis ───
   const top = candidates[0];
@@ -468,7 +482,9 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
       return `collecting data — ${histSamples}/5 samples needed before forecast is reliable.`;
     }
     if (status === "degraded") {
-      return "audit incomplete — predictor running on partial data.";
+      return missingInputs.length
+        ? `no regime call: ${missingInputs.join(", ")} not available in this build.`
+        : "audit incomplete — predictor running on partial data.";
     }
     if (!top) return "no signal yet.";
     // Heuristic score out of 100 (hand-set softmax weight), not a probability.
@@ -498,20 +514,25 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   else if (sessionFrac > 0.75) driverNotes.push(`first 1.5hr of RTH — direction-setting window.`);
   if (flipRate > 0.3) driverNotes.push(`high flip rate (${flipRate.toFixed(2)}/min) — uncertain regime.`);
 
-  // Gamma unknown: no bucket applies, so no candidates and no confidence.
+  // Gamma unknown, or an input missing: no bucket applies, so no candidates,
+  // no confidence (the outcome logger skips confidence < 0.3) and no drivers
+  // computed from the missing value.
   const gammaUnknown = currentRaw === "GAMMA_UNKNOWN";
+  const noRead = gammaUnknown || missingInputs.length > 0;
   return {
     currentRegime: currentRaw,
-    candidates: gammaUnknown ? [] : candidates,
+    candidates: noRead ? [] : candidates,
     horizonMinutes,
-    confidence: gammaUnknown ? 0 : confidence,
-    confidenceScore: gammaUnknown ? 0 : Math.round(confidence * 1000) / 10,
+    confidence: noRead ? 0 : confidence,
+    confidenceScore: noRead ? 0 : Math.round(confidence * 1000) / 10,
     scoreKind: "heuristic_softmax_weight",
     status,
     headline: gammaUnknown
       ? "gamma unknown (GEX missing or immaterial at spot): no regime reading; the trend/chop buckets need the gamma sign."
-      : headline,
-    driverNotes,
+      : missingInputs.length
+        ? `no regime call: ${missingInputs.join(", ")} not available in this build.`
+        : headline,
+    driverNotes: noRead ? driverNotes.filter((n) => !/gamma flip|far from pivot|^DFI /.test(n)) : driverNotes,
     drivers: {
       dfi,
       dfiSlopePerMin,
@@ -542,5 +563,6 @@ function prettyRegime(r: RegimeBucket): string {
     case "CHOP_WEAK":    return "light chop";
     case "CHOP_STRONG":  return "heavy chop";
     case "GAMMA_UNKNOWN": return "gamma unknown";
+    case "INPUTS_UNAVAILABLE": return "inputs unavailable";
   }
 }

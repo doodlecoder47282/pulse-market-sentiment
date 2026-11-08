@@ -16,10 +16,16 @@ import { getFlowConfig } from "./flowConfig";
 /** Threshold suggestions are tested on at least this much history (walk-forward needs rows). */
 export const SUGGESTION_WINDOW_DAYS = 180;
 
-// The event a regime call's hit_30 records (outcomeLogger.gradeRegimeCall):
-// a proxy, not the regime itself.
+// The event a regime call's hit_30 records (outcomeLogger.gradeRegimeCall,
+// shared/regimeGrade.ts): the realised $SPX path over the CALLED horizon; a
+// proxy for the regime, not the regime itself. Rows graded under the earlier
+// close-to-close proxy (an event the call never forecast) are excluded here
+// and counted apart.
 const REGIME_HIT_EVENT =
-  "regime-match proxy: SPY close-to-close |move| >= 0.5% to the grading date for TREND calls, < 0.5% for CHOP/neutral; one call per ET session";
+  "regime-match proxy on the called horizon: $SPX |net move| over H minutes >= 0.5% x sqrt(H/390) for TREND calls, below for CHOP/neutral; one call per ET session; the plotted x-axis is the predictor's heuristic score, not a probability";
+const isHorizonGraded = (r: any): boolean => {
+  try { return String(JSON.parse(r.outcomeJson || "{}").method ?? "").startsWith("horizon:"); } catch { return false; }
+};
 
 export interface EdgeStats {
   asOf: number;
@@ -87,6 +93,8 @@ interface RegimeCallEdge {
   reliability?: ReliabilityReport;
   calibrationSessions?: number;   // independent sessions behind calibration + reliability
   calibrationEvent?: string;      // what hit30 measures for regime calls
+  /** Rows graded under the earlier close-to-close proxy: not in any figure above. */
+  legacyProxyGraded?: number;
 }
 
 export interface ThresholdSuggestion {
@@ -247,7 +255,9 @@ function deltaTier(d: number): string {
 
 function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
   const total = rows.length;
-  const graded = rows.filter((r) => r.graded === 1 && r.hit30 != null);
+  const gradedAll = rows.filter((r) => r.graded === 1 && r.hit30 != null);
+  const graded = gradedAll.filter(isHorizonGraded);
+  const legacyProxyGraded = gradedAll.length - graded.length;
   const pending = rows.filter((r) => r.graded === 0).length;
   const overallHitRate = graded.length
     ? graded.filter((r) => r.hit30 === 1).length / graded.length
@@ -346,6 +356,7 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
     reliability,
     calibrationSessions: sessionRows.length,
     calibrationEvent: REGIME_HIT_EVENT,
+    legacyProxyGraded,
   };
 }
 

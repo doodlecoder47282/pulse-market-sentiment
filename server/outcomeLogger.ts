@@ -8,6 +8,8 @@ import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { loadWhaleEntryQuote, loadWhaleExitQuote } from "./whalePersistence";
 import { acceptExitQuote, askToBidReturn, etCloseMs, optionTradeDollars, usableEntryAsk, WHALE_MARKS_METHOD } from "./validationMath";
+import { gradeRegimeCallOnPath } from "../shared/regimeGrade";
+import { etDate, etWallToEpochMs, sessionMinutes } from "./exchangeCalendar";
 
 /** How old the logged exit quote may be at the expiry close (the flow loop re-quotes every few minutes). */
 const WHALE_EXIT_QUOTE_MAX_AGE_MS = 20 * 60_000;
@@ -96,15 +98,16 @@ export function logWhaleAlertPrediction(p: WhaleAlertPrediction): string {
 }
 
 /**
- * Log a regime call prediction. Grading scheduled for next trading day +1
- * at 20:00 UTC. Confidence < 0.30 is skipped (low-info predictions).
+ * Log a regime call prediction. Graded on the realised $SPX path over the
+ * called horizon (shared/regimeGrade.ts), once the horizon has passed and the
+ * minute bars have been persisted. Confidence < 0.30 is skipped (low-info).
  */
 export function logRegimeCallPrediction(p: RegimeCallPrediction): string {
   try {
     if (p.confidence < 0.3) return "";
     const id = randomUUID();
-    // Grade ~26h after capture so next-session close is available.
-    const gradingDueAt = p.capturedAt + 26 * 60 * 60 * 1000;
+    // Due when the horizon has elapsed plus a margin for the bar poller (2 min cadence).
+    const gradingDueAt = p.capturedAt + Math.max(5, Math.min(120, p.horizonMinutes || 20)) * 60_000 + 5 * 60_000;
 
     db.insert(predictionOutcomes)
       .values({
@@ -232,50 +235,54 @@ function gradeWhaleAlert(row: any, now: number): boolean {
  * OUTCOME_ON_OPTION_MARKS_SQL / isOutcomeOnOptionMarks (validationMath).
  */
 
+/**
+ * Grade a regime call on the event it forecast: the realised $SPX path over
+ * the called horizon, from the stored 1-minute bars (shared/regimeGrade.ts).
+ * SPY calls are graded on the $SPX path too (the index the ETF tracks; the
+ * percent move is the same to within basis points) and the outcome says so.
+ * Rows whose bars are missing stay ungraded until a day has passed, then
+ * close as insufficient_history: never a 0% move.
+ */
 function gradeRegimeCall(row: any, now: number): boolean {
-  // Grade by checking realized SPY/^GSPC move direction over horizon.
-  // For now we score based on whether predicted regime category implies
-  // directional bias and the realized move matches.
   const pred = JSON.parse(row.predictionJson || "{}");
-  const symbol = row.symbol === "^GSPC" ? "SPY" : row.symbol;
-
-  const entryBar = closeOnOrBefore(symbol, row.capturedAt);
-  const exitBar = closeOnOrBefore(symbol, row.gradingDueAt);
-  if (!entryBar || !exitBar || exitBar.t <= entryBar.t) {
-    markGraded(row.predictionId, { result: "insufficient_history" }, now, null, null, null, null);
+  const inputs = JSON.parse(row.inputsJson || "{}");
+  const horizonMinutes = Math.max(5, Math.min(120, Number(inputs.horizonMinutes) || 20));
+  const capturedAt = Number(row.capturedAt);
+  const dateEt = etDate(capturedAt);
+  const sessionCloseMs = etWallToEpochMs(dateEt, 9 * 60 + 30 + (sessionMinutes(dateEt) || 390));
+  const dayStart = etWallToEpochMs(dateEt, 9 * 60 + 30) - 60_000;
+  let bars: Array<{ t: number; close: number }> = [];
+  try {
+    bars = sqlite.prepare("SELECT t, close FROM spx_minute_bars WHERE t >= ? AND t <= ? ORDER BY t").all(dayStart, sessionCloseMs) as any;
+  } catch { bars = []; }
+  const g = gradeRegimeCallOnPath(bars, capturedAt, horizonMinutes, pred.topCandidate ?? pred.regime, sessionCloseMs);
+  if (g.result !== "ok") {
+    // Bars may still arrive (the poller lags); give up only after a day.
+    if (now - capturedAt < 24 * 3600_000) return false;
+    markGraded(row.predictionId, { result: "insufficient_history", method: g.method, gradedOn: "$SPX 1-min bars", horizonMinutes }, now, null, null, null, null);
     return false;
   }
-  const movePct = (exitBar.close - entryBar.close) / entryBar.close;
-  const absMove = Math.abs(movePct);
-  const top = String(pred.topCandidate || pred.regime || "");
-
-  // Implied direction by regime bucket
-  let expectedTrend: "trend" | "chop" | "neutral" = "neutral";
-  if (top.startsWith("TREND")) expectedTrend = "trend";
-  else if (top.startsWith("CHOP")) expectedTrend = "chop";
-
-  // Trend regime "hits" if abs move >= 0.5%; chop regime hits if abs move < 0.5%.
-  let regimeMatch = 0;
-  if (expectedTrend === "trend" && absMove >= 0.005) regimeMatch = 1;
-  else if (expectedTrend === "chop" && absMove < 0.005) regimeMatch = 1;
-  else if (expectedTrend === "neutral") regimeMatch = absMove < 0.005 ? 1 : 0;
-
-  // Treat regimeMatch as the "hit" signal. pctReturn = signed move percent in pp.
-  const pctReturn = movePct;
   markGraded(
     row.predictionId,
     {
       result: "ok",
-      entryClose: entryBar.close,
-      exitClose: exitBar.close,
-      movePct,
-      absMovePct: absMove,
-      expectedTrend,
-      regimeMatch,
+      method: g.method,
+      gradedOn: "$SPX 1-min bars",
+      horizonMinutes,
+      entryT: g.entryT, exitT: g.exitT,
+      entryClose: g.entryClose,
+      exitClose: g.exitClose,
+      movePct: g.movePct,
+      absMovePct: g.absMovePct,
+      threshold: g.threshold,
+      expectedTrend: g.expected,
+      regimeMatch: g.regimeMatch,
+      truncatedAtClose: g.truncatedAtClose,
+      coveredMinutes: g.coveredMinutes,
     },
     now,
-    pctReturn,
-    regimeMatch, // hit_30 = regime call correct
+    g.movePct,
+    g.regimeMatch, // hit_30 = regime call matched the realised horizon path
     null,
     null,
   );
@@ -315,23 +322,6 @@ function parseExpirationToMs(exp: string): number {
   return etCloseMs(`${m[1]}-${m[2]}-${m[3]}`);
 }
 
-function closeOnOrBefore(symbol: string, atMs: number): { close: number; t: number; date: string } | null {
-  try {
-    // daily_bars.t is stored in unix SECONDS (not ms). Convert.
-    const atSec = Math.floor(atMs / 1000);
-    const stmt = sqlite.prepare(
-      `SELECT date, close, t FROM daily_bars
-         WHERE symbol = ? AND t <= ?
-         ORDER BY t DESC LIMIT 1`,
-    );
-    const row: any = stmt.get(symbol, atSec);
-    if (!row) return null;
-    // Return t as ms for consistent downstream comparisons.
-    return { close: Number(row.close), t: Number(row.t) * 1000, date: String(row.date) };
-  } catch {
-    return null;
-  }
-}
 
 // ─── Scheduler ───────────────────────────────────────────────────────────────
 

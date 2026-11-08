@@ -1835,3 +1835,25 @@ time change, Breeden-Litzenberger, straddle inversion, GEX/DEX units, calendar);
    above 1024 px (index.css:770); DEX flip fallback to peak |DEX| unmarked (chainAudit.ts:437);
    "MOPEX max pain" is over all expiries in the window; vomma "normal" on missing VIX (models.ts:1437).
 Order of work: 1, 2, 3 as bounded PRs with tests; then 4 and 5; then the 6 and 7 sweeps.
+2026-11-08: Regime call graded on its own horizon (feat/regime-grading-horizon, review item 1). A 5-120
+minute regime call was graded on the SPY close-to-close move about 26 h later, an event it never forecast,
+and the calibration plot's x-axis treated the heuristic softmax weight as a probability. The grader
+(shared/regimeGrade.ts, pure) now reads the realised $SPX path over the called horizon from the stored
+1-minute bars: |net move| against 0.5% x sqrt(H/390) (the daily proxy scaled by the square-root rule);
+TREND hits at or above, CHOP and neutral below; a horizon past the close is graded to the last bar and
+marked truncated; missing bars wait a day then close as insufficient_history, never a 0% move. Rows graded
+under the earlier proxy are excluded from every figure and counted apart ("N graded under the earlier
+close-to-close proxy, excluded"); the plot axis reads "heuristic score (not a probability)". Also: a
+missing DFI (DEX curve under 3 points) was 0 and classified NEUTRAL with status "ready"; a missing pivot or
+1-day EM produced "pin pressure" / "room to trend" from nothing. models.ts now emits dfiState; the
+predictor returns INPUTS_UNAVAILABLE (own state, like GAMMA_UNKNOWN) with no candidates, zero confidence
+(so nothing is logged) and no proximity driver; the history records no sample from it. Tests:
+tests/quant/regime-grading-horizon.test.ts; regime, edge, headline, models suites pass; r3-4 fixture
+completed. Still to measure: the new grades start from zero (the old ones are not comparable).
+Review of feat/regime-grading-horizon: MERGE-READY, no MUST-FIX; three SHOULD-FIX taken: the second
+history feeder (/api/realtime-targets) still pushed a dfi=0 sample when dfiState was unavailable, and
+realtimeTargets' own detectRegime read it as a regime (both now INPUTS_UNAVAILABLE / NaN, dropped); the
+tab headline for INPUTS_UNAVAILABLE named the wrong cause (gamma / VIX) and now carries the predictor's
+own sentence; the grader used the bar containing the call (a 60 s look-ahead) and now uses the last
+COMPLETED bar at both ends, stated in the method. Reviewer verified: half days, DST, gaps, the 30-min
+grader cadence against the 2-min bar poller, old 26 h rows graded by the new method when bars exist.
