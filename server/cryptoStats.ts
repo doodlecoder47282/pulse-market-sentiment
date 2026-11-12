@@ -376,7 +376,8 @@ export function peakSampleParams(sample: number | null, basis: "fdv" | "marketCa
   return { sample, basis, now, liq, chain, pair };
 }
 export function graderMarkParams(peak: number | null, now: number, mcap: number | null, liq: number | null, outcome: string, target: number, id: string | number) {
-  return { peak, now, mcap, liq, outcome, target, id };
+  // The DOUBLED multiple is the rule book's (shared/cryptoRules.ts grading.doubledMultiple), not a literal in the SQL.
+  return { peak, now, mcap, liq, outcome, target, id, doubled: CRYPTO_RULES.grading.doubledMultiple };
 }
 export function graderNoDataParams(now: number, id: string | number, target: number) {
   return { now, id, target };
@@ -391,7 +392,8 @@ export function graderNoDataParams(now: number, id: string | number, target: num
  * of gradeSignal), a DEAD whose max peak doubled the entry -> DOUBLED.
  * graded_at follows the final outcome. Only OPEN rows are written.
  * Params (graderMarkParams): sampled peak (null = no sample), now ms, last
- * mcap, last liquidity, outcome from gradeSignal, target mcap, id.
+ * mcap, last liquidity, outcome from gradeSignal, target mcap, id, and the
+ * rule book's DOUBLED multiple (@doubled).
  */
 export const CRYPTO_GRADER_MARK_SQL = `UPDATE crypto_signals SET
   peak_at = CASE WHEN @peak IS NOT NULL AND (peak_mcap IS NULL OR @peak > peak_mcap) THEN @now ELSE peak_at END,
@@ -400,7 +402,7 @@ export const CRYPTO_GRADER_MARK_SQL = `UPDATE crypto_signals SET
   last_mcap = @mcap, last_liquidity = @liq,
   outcome = CASE
     WHEN MAX(COALESCE(peak_mcap, @peak, 0), COALESCE(@peak, peak_mcap, 0)) >= @target THEN 'HIT_5M'
-    WHEN @outcome = 'DEAD' AND mcap_at_signal > 0 AND MAX(COALESCE(peak_mcap, @peak, 0), COALESCE(@peak, peak_mcap, 0)) >= 2 * mcap_at_signal THEN 'DOUBLED'
+    WHEN @outcome = 'DEAD' AND mcap_at_signal > 0 AND MAX(COALESCE(peak_mcap, @peak, 0), COALESCE(@peak, peak_mcap, 0)) >= @doubled * mcap_at_signal THEN 'DOUBLED'
     ELSE @outcome END,
   graded_at = CASE
     WHEN MAX(COALESCE(peak_mcap, @peak, 0), COALESCE(@peak, peak_mcap, 0)) >= @target THEN @now

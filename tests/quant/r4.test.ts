@@ -363,6 +363,7 @@ test("ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server nev
 import { DatabaseSync } from "node:sqlite";
 import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats, peakSampleParams, graderMarkParams, graderNoDataParams, PEAK_SAMPLE_BASES } from "../../server/cryptoStats";
 import { capOnBasis } from "../../shared/cryptoCap";
+import { CRYPTO_RULES } from "../../shared/cryptoRules";
 
 test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair", () => {
   const db = new DatabaseSync(":memory:");
@@ -569,11 +570,21 @@ test("crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED 
   assert.equal(get("a").peak_at, 20);                // peak time kept
   assert.equal(get("a").outcome, "HIT_5M");          // re-derived from the max
   assert.equal(get("a").graded_at, 30);
-  // DEAD with a max peak >= 2x entry -> DOUBLED
+  // DEAD with a max peak >= the rule book's doubledMultiple x entry -> DOUBLED; the multiple is bound, not a literal
   ins.run("b", "P2", 100_000, 250_000, 5);
-  mark.run(graderMarkParams(150_000, 40, 50_000, 10_000, "DEAD", T, "b"));
+  const pb = graderMarkParams(150_000, 40, 50_000, 10_000, "DEAD", T, "b");
+  assert.equal(pb.doubled, CRYPTO_RULES.grading.doubledMultiple);
+  mark.run(pb);
   assert.equal(get("b").outcome, "DOUBLED");
   assert.equal(get("b").peak_mcap, 250_000);
+  // Just under the multiple stays DEAD; a different bound multiple changes the answer (so the SQL reads @doubled).
+  ins.run("b2", "P2b", 100_000, 190_000, 5);
+  mark.run(graderMarkParams(150_000, 41, 50_000, 10_000, "DEAD", T, "b2"));
+  assert.equal(get("b2").outcome, "DEAD");
+  ins.run("b3", "P2c", 100_000, 190_000, 5);
+  mark.run({ ...graderMarkParams(150_000, 42, 50_000, 10_000, "DEAD", T, "b3"), doubled: 1.5 });
+  assert.equal(get("b3").outcome, "DOUBLED");
+  assert.doesNotMatch(CRYPTO_GRADER_MARK_SQL, /2 \* mcap_at_signal/);
   // Higher sample raises the peak and its time; OPEN keeps graded_at null
   ins.run("c", "P3", 100_000, 120_000, 5);
   mark.run(graderMarkParams(180_000, 50, 180_000, 10_000, "OPEN", T, "c"));

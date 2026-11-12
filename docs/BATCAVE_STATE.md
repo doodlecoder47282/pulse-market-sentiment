@@ -2028,6 +2028,27 @@ the same path /api/chain-audit already uses for 60 DTE, and the merged chain is 
 was re-served, so the seeder skips such ticks. A change in the inputs of a stored reading, consistent
 with the audit endpoint.
 
+2026-11-11: Crypto record keeps every rule version; DOUBLED multiple bound from the book
+(feat/crypto-record-versions, the two items from review item 2 not covered by #73). exitPlanRecord
+dropped every plan not walked under CRYPTO_RULES_VERSION, so the exit-plan record reset to zero at each
+rule bump and the 50-plan gate could never be reached across a bump. shared/exitPlan.ts
+planRecordByVersion (pure, tested) partitions plans by the version they were walked under: the current
+version is the headline (unchanged semantics), earlier versions are kept and summarised each on their own,
+newest first, never pooled; allVersions counts plans on file. The Crypto desk card shows "plan record
+(rules <version>)" and a line for earlier versions. CRYPTO_GRADER_MARK_SQL hard-coded `2 *
+mcap_at_signal` for DOUBLED while gradeSignal read CRYPTO_RULES.grading.doubledMultiple; the SQL now binds
+@doubled from graderMarkParams (r4 test: at the multiple DOUBLED, just under DEAD, a different bound
+multiple changes the answer; crypto-rules-version test greps for the literal). Rule book unchanged
+(2026.11.06-1). Tests: exit-plan, r4, crypto suite, crypto-rules-version 129/129. Needs the crypto review.
+Review of feat/crypto-record-versions: MERGE-READY, no must-fix; three should-fixes taken: (1) earlier
+versions were re-priced with the current book's fees and size (not a wrong number today: cost and size
+are identical across every version so far); PlanState now snapshots pricing (dex fee, platform fee,
+priority fee, size) at plan start and planReturnPct reads it, plans from before the field use the book
+passed in, stated in the basis; test pins that a cheaper later book does not restate an old plan;
+(2) version order was a string compare that put "unversioned" first and would order -10 before -2;
+compareVersionsDesc sorts by date then numeric suffix, unversioned last, order pinned literally;
+(3) the desk card hid a version whose plans were all no-data; shown with "N no data". Also stated:
+a plan open across a bump keeps its starting label but walks on under the current levels.
 2026-11-11: Open in FOMO (feat/fomo-open-link, owner request). Beside "Copy AI prompt" on every Solana
 desk card: "Copy mint & open FOMO" copies the mint address and opens fomo.family (FOMO Labs' app; its
 universal link opens the installed app on iPhone). Checked fomo.family, its memecoin pages, the community
