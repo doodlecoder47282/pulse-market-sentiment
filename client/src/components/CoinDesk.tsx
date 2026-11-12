@@ -164,7 +164,7 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
         <a href={fomoTokenUrl(c.tokenAddress)} target="_blank" rel="noopener noreferrer" onClick={onOpenFomo}
           className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-sky-400/40 bg-sky-400/10 text-[13px] font-semibold text-sky-200" data-testid="crypto-open-fomo">
           <ExternalLink className="h-4 w-4" />
-          {fomo === "ok" ? "Opening FOMO; mint copied for its search" : fomo === "fail" ? "Opening FOMO; clipboard blocked, use Address below" : "Open in FOMO (mint copied)"}
+          {fomo === "ok" ? "Opening FOMO; mint copied for its search" : fomo === "fail" ? "Opening FOMO; clipboard blocked, use Address below" : "Open in FOMO (copies mint)"}
         </a>
       )}
       {c.chain === "solana" && c.tokenAddress && (
