@@ -248,3 +248,16 @@ of 2026-11-12), so the card states it as unverified until the owner's tap
 settles it. The desk-card button also copies the mint, so if the pattern
 lands on FOMO's home page the address is pasted into the app's search. The
 desk sends FOMO nothing and places no order.
+
+### The 1-minute tape (measurements, no rule)
+`shared/cryptoCandles.ts` reads GeckoTerminal's keyless 1-minute OHLCV for
+ENTER and WATCH pairs (8 pairs a minute, each at most every 5 min, inside the
+30/min budget the scanner shares) and measures what the desk's ~4-minute
+refresh never saw: launch high, first dip and its depth and timing, whether
+90% of the high was reclaimed and how fast, upper and lower wick share of
+range over the last 10 candles, up-close share, volume in the last 5 minutes
+against the 5 before. The card shows the sentence; the signal row records the
+numbers (`features_json.candles`) for the grader to correlate with outcomes.
+No score, verdict, trim, stop or horizon reads them. A candle feature enters
+the rule book only when the graded record shows it separates winners from
+losers, as a versioned threshold with its own review.

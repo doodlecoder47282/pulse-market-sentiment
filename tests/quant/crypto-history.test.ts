@@ -72,7 +72,7 @@ test("wiring: an observation per refresh, derived readouts on structure, raw rin
   assert.match(e, /c\.lastRefreshAt = Date\.now\(\);\s*c\.observations = appendObservation\(c\.observations, \{ at: c\.lastRefreshAt, liquidityUsd: c\.liquidityUsd, marketCap: capOf\(c\)\.cap, top10Pct: c\.top10Pct \}\);/);
   assert.match(e, /liquidityVelocity: liquidityVelocity\(c\.observations, 60 \* 60_000, Date\.now\(\)\),/);
   assert.match(e, /exitStress: exitCostStress\(c\.liquidityUsd, c\.risk \? Math\.max\(1, c\.risk\.maxPositionUsd\) : 100\),/);
-  assert.match(e, /\.map\(\(\{ observations: _obs, \.\.\.rest \}\) => \(\{ \.\.\.rest, observationCount: _obs\.length \}\)\)/);
+  assert.match(e, /\.map\(\(\{ observations: _obs, candles: _cd, \.\.\.rest \}\) => \(\{ \.\.\.rest, observationCount: _obs\.length, candleCount: _cd\.length \}\)\)/);
   const p = readFileSync(new URL("../../client/src/components/CryptoPanel.tsx", import.meta.url), "utf8");
   assert.match(p, /data-testid=\{`crypto-liq-history-/);
   assert.match(p, /\(arithmetic at each depth, not a forecast\)/);

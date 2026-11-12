@@ -35,6 +35,7 @@ import {
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
 import { VERDICT_CODE_TEXT } from "@shared/cryptoVerdict";
 import { capOf } from "@shared/cryptoCap";
+import type { CandleFeatures } from "@shared/cryptoCandles";
 import type { CryptoReplay } from "@shared/cryptoReplay";
 import type { LinePosition, MemeClass, TradeCost } from "@shared/memeStructure";
 
@@ -76,7 +77,7 @@ interface Candidate {
     /** Liquidity the size and cost were computed from (a later scan may refresh liq without re-sizing). */
     sizedOnLiquidityUsd?: number | null;
   } | null;
-  structure?: { line: LinePosition; category: MemeClass; cost: TradeCost; liquidityVelocity?: LiquidityVelocity; exitStress?: ExitCostStress } | null;
+  structure?: { line: LinePosition; category: MemeClass; cost: TradeCost; liquidityVelocity?: LiquidityVelocity; exitStress?: ExitCostStress; candles?: CandleFeatures } | null;
 }
 
 interface TradeFlow {
@@ -871,6 +872,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                   {" "}(arithmetic at each depth, not a forecast)
                 </>
               ) : ` · ${c.structure.exitStress.text}`}
+            </p>
+          )}
+          {c.structure?.candles && (c.verdict === "ENTER" || c.verdict === "WATCH") && (
+            <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-candles-${c.pairAddress.slice(0, 8)}`} title={c.structure.candles.method}>
+              {c.structure.candles.text}{c.structure.candles.state === "ok" ? " (measured on the 1-minute tape; recorded with the signal, no rule reads it yet)" : ""}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">

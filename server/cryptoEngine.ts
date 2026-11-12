@@ -68,6 +68,7 @@ import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type Launch
 import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
 import { capOf, capOnBasis, evictOverCap, MOMENTUM_CYCLE_MS } from "../shared/cryptoCap";
+import { candleFeatures, parseGtOhlcv, unavailableCandles, type Candle, type CandleFeatures } from "../shared/cryptoCandles";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -146,6 +147,10 @@ export interface Candidate {
 
   // rolling history for sustained-flow gating (whale-blink filter)
   hist: Array<{ t: number; volAccel: number | null; netBuyRatio5m: number | null; mcap: number | null }>;
+  /** 1-minute candles (oldest first, last CANDLE_KEEP) and when they were last read; ENTER/WATCH pairs only. */
+  candles: Candle[];
+  candlesReadAt: number | null;
+  candlesError: string | null;
   /** One observation per DexScreener refresh: liquidity, cap, top-10 (shared/cryptoHistory.ts; ring of 60). */
   observations: Observation[];
   /** The four ENTER gates' inputs exactly as scoreCandidate saw them (before this poll is pushed to hist). */
@@ -172,7 +177,7 @@ export interface Candidate {
 }
 
 /** A candidate as the feed serves it: everything but the in-memory observation ring. */
-export type ServedCandidate = Omit<Candidate, "observations"> & { observationCount: number };
+export type ServedCandidate = Omit<Candidate, "observations" | "candles"> & { observationCount: number; candleCount: number };
 
 export interface CandidateStructure {
   line: LinePosition;
@@ -183,6 +188,8 @@ export interface CandidateStructure {
   liquidityVelocity: LiquidityVelocity;
   /** The same round trip if liquidity were pulled 25/50/75/100% (arithmetic, not a forecast). */
   exitStress: ExitCostStress;
+  /** The 1-minute tape read as measurements (shared/cryptoCandles.ts); unavailable until the candles engine has read the pair. */
+  candles: CandleFeatures;
 }
 
 export interface RiskParams {
@@ -377,6 +384,8 @@ function persistSignal(c: Candidate): void {
         gates: c.gatesAtScore ?? null,
         // Launch-block buying, recorded for the replay to test; never a gate.
         bundle: c.bundle,
+        // The 1-minute tape at signal time (shared/cryptoCandles.ts), recorded for the grader to correlate; never a gate.
+        candles: c.candlesReadAt == null ? null : candleFeatures(c.candles, Date.now()),
       }),
       JSON.stringify(c.risk),
     );
@@ -476,6 +485,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
     socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
     hist: [],
+    candles: [], candlesReadAt: null, candlesError: null,
     observations: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
@@ -1156,7 +1166,46 @@ function scoreCandidate(c: Candidate): void {
     cost: tradeCost({ liquidityUsd: c.liquidityUsd, sizeUsd: c.risk ? Math.max(1, c.risk.maxPositionUsd) : 100 }),
     liquidityVelocity: liquidityVelocity(c.observations, 60 * 60_000, Date.now()),
     exitStress: exitCostStress(c.liquidityUsd, c.risk ? Math.max(1, c.risk.maxPositionUsd) : 100),
+    candles: c.candlesReadAt == null
+      ? unavailableCandles(c.candlesError ? `read failed (${c.candlesError})` : c.verdict === "ENTER" || c.verdict === "WATCH" ? "not read yet" : "read for ENTER and WATCH pairs only")
+      : candleFeatures(c.candles, Date.now()),
   };
+}
+
+// ─── 3c. CANDLES — the 1-minute tape for ENTER and WATCH pairs ──────────
+// GeckoTerminal's keyless OHLCV (30 requests/min shared with the scanner's 2).
+// Budget: CANDLE_BATCH pairs per tick, ENTER first then WATCH by score, each
+// pair at most once per CANDLE_REFRESH_MS. Candles are measurements recorded on
+// the signal row; they move no verdict (shared/cryptoCandles.ts).
+const CANDLES_MS = 60_000;
+const CANDLE_BATCH = 8;
+const CANDLE_REFRESH_MS = 5 * 60_000;
+const CANDLE_KEEP = 180;
+const CANDLE_LIMIT = 120;
+
+async function candlesTick(): Promise<void> {
+  const now = Date.now();
+  const rank = (c: Candidate) => (c.verdict === "ENTER" ? 2 : c.verdict === "WATCH" ? 1 : 0) * 1000 + (c.score ?? 0);
+  const due = [...tracked.values()]
+    .filter((c) => c.chain === "solana" && (c.verdict === "ENTER" || c.verdict === "WATCH"))
+    .filter((c) => c.candlesReadAt == null || now - c.candlesReadAt > CANDLE_REFRESH_MS)
+    .sort((a, b) => rank(b) - rank(a))
+    .slice(0, CANDLE_BATCH);
+  for (const c of due) {
+    try {
+      const r = await getJson(`${GT_BASE}/networks/solana/pools/${encodeURIComponent(c.pairAddress)}/ohlcv/minute?aggregate=1&limit=${CANDLE_LIMIT}&currency=usd`);
+      const fresh = parseGtOhlcv(r?.data?.attributes?.ohlcv_list);
+      // Merge by open time (GT returns the newest window; keep what we had before it).
+      const byT = new Map<number, Candle>();
+      for (const k of c.candles) byT.set(k.t, k);
+      for (const k of fresh) byT.set(k.t, k);
+      c.candles = [...byT.values()].sort((a, b) => a.t - b.t).slice(-CANDLE_KEEP);
+      c.candlesReadAt = Date.now();
+      c.candlesError = null;
+    } catch (e: any) {
+      c.candlesError = String(e?.message ?? e).slice(0, 80);
+    }
+  }
 }
 
 // ─── 4. NARRATIVES — RSS keyword heat ───────────────────────────────────
@@ -1400,7 +1449,7 @@ export function startCryptoEngines(): void {
   started = true;
   hb("scanner", SCANNER_MS); hb("momentum", MOMENTUM_MS);
   hb("narratives", NARRATIVE_MS); hb("grader", GRADER_MS);
-  hb("security", SECURITY_MS); hb("bundle", BUNDLE_MS); hb("social", SOCIAL_MS); hb("majors", MAJORS_MS); hb("watchdog", WATCHDOG_MS);
+  hb("security", SECURITY_MS); hb("bundle", BUNDLE_MS); hb("social", SOCIAL_MS); hb("candles", CANDLES_MS); hb("majors", MAJORS_MS); hb("watchdog", WATCHDOG_MS);
 
   const arm = (name: string, ms: number, fn: () => Promise<void>, initialDelay: number) => {
     setTimeout(() => {
@@ -1417,6 +1466,7 @@ export function startCryptoEngines(): void {
   startPumpListener();
   arm("bundle", BUNDLE_MS, bundleTick, 40_000);
   arm("social", SOCIAL_MS, socialTick, 30_000);
+  arm("candles", CANDLES_MS, candlesTick, 50_000);
   arm("majors", MAJORS_MS, majorsTick, 2_500);
   arm("derivs", DERIVS_MS, derivsTick, 6_000);
   timers.push(setInterval(watchdogTick, WATCHDOG_MS));
@@ -1453,7 +1503,7 @@ export function getCryptoFeed(): {
     .slice(0, 80)
     // The raw observation ring stays on the server (60 rows a coin); what it
     // says travels in structure.liquidityVelocity / exitStress.
-    .map(({ observations: _obs, ...rest }) => ({ ...rest, observationCount: _obs.length }));
+    .map(({ observations: _obs, candles: _cd, ...rest }) => ({ ...rest, observationCount: _obs.length, candleCount: _cd.length }));
   return {
     // The instant the served verdicts (freshness, desk risk) were computed; the verifier checks against it.
     asOf: nowRead,
@@ -1838,7 +1888,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
       pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null,
       socialScore: null, socialCheckedAt: null, prevPumpReplies: null, socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
-      hist: [], observations: [], ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
+      hist: [], observations: [], candles: [], candlesReadAt: null, candlesError: null, ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
       hardKill: false, score: null, verdict: null, verdictCode: null, verdictReasons: [], risk: null, structure: null,
     };
     applyDexPair(c, best);

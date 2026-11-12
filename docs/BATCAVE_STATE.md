@@ -2067,3 +2067,19 @@ agree. (2) window.open after an awaited clipboard write is refused by Safari and
 button could read "opened" over nothing; it is now an <a> that navigates inside the gesture with the copy
 best-effort beside it, and the label never claims the open. Should-fixes: claim dated in the user-facing
 copy; mint validated before it enters the path.
+
+2026-11-12: The 1-minute tape as measurements (feat/crypto-candles). The desk's ~4-minute refresh never saw
+the first dip after the launch high, whether it was bought back, wicks against bodies or volume into the
+signal: the lower-timeframe half of a top-down read. shared/cryptoCandles.ts (pure, tested) parses
+GeckoTerminal's keyless 1-minute OHLCV and measures launch high, first-dip depth and timing, reclaim
+share and minutes-to-reclaim (90% of the high), upper/lower wick share of range and up-close share over
+the last 10 candles, and the last-5-minute volume against the 5 before; fewer than 10 candles is
+"insufficient", an unread pair is "unavailable", never a number. A candles engine reads ENTER and WATCH
+Solana pairs, 8 a minute, each at most every 5 min, inside the GeckoTerminal budget; candles stay off
+the served feed (candleCount only). The card shows the sentence under the liquidity history line with
+"recorded with the signal, no rule reads it yet"; persistSignal records the numbers in
+features_json.candles for the grader to correlate. No score, verdict or exit level reads them; the rule
+book is unchanged (test greps it for "candle"). Tests: tests/quant/crypto-candles.test.ts (parse, states,
+dip/reclaim timing, wicks, volume trend, wiring, no-rule-reads-it). Next, once the record has a sample:
+correlate each feature with first-ENTER outcomes and propose any threshold as a versioned rule change
+with its own review. Needs the crypto review.
