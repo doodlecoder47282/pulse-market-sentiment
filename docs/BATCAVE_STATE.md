@@ -2049,3 +2049,21 @@ passed in, stated in the basis; test pins that a cheaper later book does not res
 compareVersionsDesc sorts by date then numeric suffix, unversioned last, order pinned literally;
 (3) the desk card hid a version whose plans were all no-data; shown with "N no data". Also stated:
 a plan open across a bump keeps its starting label but walks on under the current levels.
+2026-11-11: Open in FOMO (feat/fomo-open-link, owner request). Beside "Copy AI prompt" on every Solana
+desk card: "Copy mint & open FOMO" copies the mint address and opens fomo.family (FOMO Labs' app; its
+universal link opens the installed app on iPhone). Checked fomo.family, its memecoin pages, the community
+README and two user guides on 2026-11-11: FOMO documents no per-token URL and no URL scheme, and its own
+search takes a contract address, so the mint travels on the clipboard and the card says so. The desk sends
+FOMO nothing and places no order (standing rule). shared/fomoLink.ts fomoTokenUrl is the one place to
+change when FOMO publishes a per-token link. Tests: tests/quant/fomo-link.test.ts. Owner check: tap it on
+the phone once; if FOMO's share sheet gives a per-token URL, send one and the link becomes direct.
+Review of feat/fomo-open-link (HOLD, two must-fixes, both taken). (1) The card already carried a "fomo"
+chip (shared/coinLinks.ts, 2026-11-03) with a per-token pattern fomo.family/tokens/solana/<mint>, never
+verified, while the new button claimed FOMO has no per-token link: two affordances contradicting each
+other. One source now: shared/fomoLink.ts fomoTokenUrl (the per-token pattern, mint-validated, home page
+for anything else) read by both coinLinks and the desk card; the card and the how-to state the pattern as
+"unverified as of 2026-11-12" until the owner's tap settles it, and the test pins that both affordances
+agree. (2) window.open after an awaited clipboard write is refused by Safari and the Capacitor shell, so the
+button could read "opened" over nothing; it is now an <a> that navigates inside the gesture with the copy
+best-effort beside it, and the label never claims the open. Should-fixes: claim dated in the user-facing
+copy; mint validated before it enters the path.

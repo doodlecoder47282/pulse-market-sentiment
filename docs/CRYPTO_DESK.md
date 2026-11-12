@@ -239,3 +239,12 @@ No win rate, no edge, no probability. The desk removes trades that lose by
 construction and records the rest. "Profitable" is written on the card by
 the sample, when the sample exists, and only for the rule version it was
 measured on.
+
+Beside the prompt, "Open in FOMO" (CoinDesk.tsx) and the "fomo" chip
+(CoinLinks.tsx) both read shared/fomoLink.ts, the ONE source for FOMO links:
+`fomo.family/tokens/solana/<mint>`, a pattern on the card since 2026-11-03
+with no documentation behind it (FOMO publishes no per-token URL or scheme as
+of 2026-11-12), so the card states it as unverified until the owner's tap
+settles it. The desk-card button also copies the mint, so if the pattern
+lands on FOMO's home page the address is pasted into the app's search. The
+desk sends FOMO nothing and places no order.
