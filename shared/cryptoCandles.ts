@@ -166,7 +166,7 @@ export function candleFeatures(candles: Candle[], nowMs: number, read: CandleRea
   const recText = first == null ? "" : minutesToReclaim != null ? `, ${Math.round(RECLAIM_SHARE * 100)}% of the high reclaimed ${minutesToReclaim} min after the first dip` : `, not reclaimed (${Math.round(reclaimShare * 100)}% of the high at the last close)`;
   const wickText = upperWickShare == null ? "" : `; wicks ${Math.round(upperWickShare * 100)}% upper / ${Math.round(lowerWickShare! * 100)}% lower of range over the last ${w.length} candles`;
   const volText = volumeTrend == null ? "" : `; volume ${volumeTrend}x the prior ${VOL_WINDOW} candles`;
-  const ageText = stale ? ` STALE: last candle ${tapeAgeMinutes} min old${read.error ? `, latest read failed (${read.error})` : ""}; numbers are from the last good read` : "";
+  const ageText = stale ? ` STALE: last candle ${tapeAgeMinutes} min old${read.error ? `, latest read failed (${read.error})` : ""}; numbers are from the last good read;` : "";
   return {
     ...base, state: stale ? "stale" : "ok", candles: cs.length, spanMinutes, windowHigh, minutesSinceHigh, firstDipPct, minutesHighToFirstDip, maxDrawdownPct, minutesHighToDeepestLow,
     reclaimShare, reclaimed, minutesToReclaim, upperWickShare, lowerWickShare, upCloseShare, volumeTrend, method: CANDLE_METHOD,

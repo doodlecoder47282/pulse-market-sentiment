@@ -29,7 +29,7 @@ test("insufficient, unavailable and stale are states, never fresh numbers", () =
   const twelve = Array.from({ length: 12 }, (_, i) => mk(i, 1, 1.1, 0.9, 1.05));
   const old = candleFeatures(twelve, 42 * M, { readAt: 12 * M });
   assert.equal(old.state, "stale"); assert.equal(old.tapeAgeMinutes, 31); assert.ok(31 > TAPE_STALE_MINUTES);
-  assert.match(old.text, /STALE: last candle 31 min old; numbers are from the last good read/);
+  assert.match(old.text, /STALE: last candle 31 min old; numbers are from the last good read; high \d+ min ago/);
   const failed = candleFeatures(twelve, 13 * M, { readAt: 12 * M, error: "429 https://api.geckoterminal.com" });
   assert.equal(failed.state, "stale"); assert.match(failed.text, /latest read failed \(429/);
   assert.equal(candleFeatures(twelve, 13 * M, { readAt: 12 * M }).state, "ok");
@@ -97,7 +97,14 @@ test("back-fill SQL: the pair's FIRST ENTER/WATCH row gets the tape once, later 
   const get = (id: string) => JSON.parse((db.prepare(`SELECT features_json FROM crypto_signals WHERE id = ?`).get(id) as any).features_json);
   assert.deepEqual(get("a").candles, JSON.parse(feats), "the first ENTER/WATCH row, not the PASS row before it");
   assert.equal(get("b").candles, null); assert.equal(get("a").score, 70, "other features kept");
-  assert.equal(Number(st.run({ candles: JSON.stringify({ state: "ok", candles: 99 }), chain: "solana", pair: "P1" }).changes), 0, "never overwritten");
+  assert.equal(Number(st.run({ candles: JSON.stringify({ state: "ok", candles: 99 }), chain: "solana", pair: "P1" }).changes), 0, "a readable tape is never overwritten");
+  // A row holding only an insufficient tape (a young pool's first read) is replaced by the first readable one.
+  ins.run("d", 300, "WATCH", JSON.stringify({ candles: { state: "insufficient", candles: 3 } }));
+  const st2 = db.prepare(sql.replace("@pair", "'P2'").replace("@chain", "'solana'"));
+  db.prepare(`UPDATE crypto_signals SET pair_address = 'P2' WHERE id = 'd'`).run();
+  assert.equal(Number(st2.run({ candles: feats }).changes), 1);
+  assert.equal(get("d").candles.candles, 12);
+  assert.equal(Number(st2.run({ candles: JSON.stringify({ state: "ok", candles: 99 }) }).changes), 0);
   db.close();
 });
 
@@ -110,7 +117,7 @@ test("wiring: candles engine reads ENTER/WATCH pairs within budget, gates on the
   assert.match(e, /if \(\/\^429\\b\/\.test\(msg\)\) break;/, "rate-limited: the rest of the tick is skipped");
   assert.match(e, /ohlcv\/minute\?aggregate=1&limit=\$\{CANDLE_LIMIT\}&currency=usd/);
   assert.match(e, /candles: c\.candlesReadAt == null \? null : candleFeatures\(c\.candles, Date\.now\(\), \{ readAt: c\.candlesReadAt, error: c\.candlesError \}\),/, "recorded on the signal row with its read time and any failure");
-  assert.match(e, /if \(firstRead\) backfillFirstSignalCandles\(c, candleFeatures\(/);
+  assert.match(e, /if \(!c\.candlesBackfilled\) \{\s*const feats = candleFeatures\(c\.candles, c\.candlesReadAt, \{ readAt: c\.candlesReadAt \}\);\s*if \(feats\.state === "ok" \|\| feats\.state === "stale"\) \{ backfillFirstSignalCandles\(c, feats\); c\.candlesBackfilled = true; \}/, "back-fill waits for a readable tape and happens once");
   assert.match(e, /arm\("candles", CANDLES_MS, candlesTick, 50_000\);/);
   // No rule reads the candles: the whole scorer up to the structure assignment never references them.
   const start = e.indexOf("function scoreCandidate"); const end = e.indexOf("c.structure = {", start);

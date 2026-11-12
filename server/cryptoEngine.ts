@@ -153,6 +153,8 @@ export interface Candidate {
   /** Last read ATTEMPT (success or failure): the refresh gate uses it, so a failing pair does not hold a batch slot every tick. */
   candlesAttemptAt: number | null;
   candlesError: string | null;
+  /** The first ENTER/WATCH row has been back-filled with a readable tape (>= CANDLES_MIN candles); done once. */
+  candlesBackfilled: boolean;
   /** One observation per DexScreener refresh: liquidity, cap, top-10 (shared/cryptoHistory.ts; ring of 60). */
   observations: Observation[];
   /** The four ENTER gates' inputs exactly as scoreCandidate saw them (before this poll is pushed to hist). */
@@ -489,7 +491,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
     socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
     hist: [],
-    candles: [], candlesReadAt: null, candlesAttemptAt: null, candlesError: null,
+    candles: [], candlesReadAt: null, candlesAttemptAt: null, candlesError: null, candlesBackfilled: false,
     observations: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
@@ -1187,11 +1189,13 @@ const CANDLE_REFRESH_MS = 5 * 60_000;
 const CANDLE_KEEP = 180;
 const CANDLE_LIMIT = 120;
 
-/** Back-fill the pair's FIRST ENTER/WATCH row (the one the grader correlates) with the tape once it is read; minutesAfterSignal says how late. */
+/** Back-fill the pair's FIRST ENTER/WATCH row (the one the grader correlates) with the first READABLE tape
+ *  (>= CANDLES_MIN candles; a young pool's first read is usually shorter); minutesAfterSignal says how late.
+ *  A row holding only an insufficient tape is replaced; a readable one never is. */
 const CANDLE_BACKFILL_SQL = `
   UPDATE crypto_signals SET features_json = json_set(features_json, '$.candles', json(@candles))
   WHERE id = (SELECT id FROM crypto_signals WHERE chain = @chain AND pair_address = @pair AND verdict IN ('ENTER', 'WATCH') ORDER BY detected_at ASC LIMIT 1)
-    AND json_extract(features_json, '$.candles') IS NULL`;
+    AND (json_extract(features_json, '$.candles') IS NULL OR json_extract(features_json, '$.candles.state') IN ('insufficient', 'unavailable'))`;
 let _candleBackfill: ReturnType<typeof sqlite.prepare> | null = null;
 
 function backfillFirstSignalCandles(c: Candidate, feats: CandleFeatures): void {
@@ -1224,10 +1228,12 @@ async function candlesTick(): Promise<void> {
       for (const k of c.candles) byT.set(k.t, k);
       for (const k of fresh) byT.set(k.t, k);
       c.candles = [...byT.values()].sort((a, b) => a.t - b.t).slice(-CANDLE_KEEP);
-      const firstRead = c.candlesReadAt == null;
       c.candlesReadAt = Date.now();
       c.candlesError = null;
-      if (firstRead) backfillFirstSignalCandles(c, candleFeatures(c.candles, c.candlesReadAt, { readAt: c.candlesReadAt }));
+      if (!c.candlesBackfilled) {
+        const feats = candleFeatures(c.candles, c.candlesReadAt, { readAt: c.candlesReadAt });
+        if (feats.state === "ok" || feats.state === "stale") { backfillFirstSignalCandles(c, feats); c.candlesBackfilled = true; }
+      }
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       c.candlesError = msg.slice(0, 80);
@@ -1917,7 +1923,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
       pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null,
       socialScore: null, socialCheckedAt: null, prevPumpReplies: null, socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
-      hist: [], observations: [], candles: [], candlesReadAt: null, candlesAttemptAt: null, candlesError: null, ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
+      hist: [], observations: [], candles: [], candlesReadAt: null, candlesAttemptAt: null, candlesError: null, candlesBackfilled: false, ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
       hardKill: false, score: null, verdict: null, verdictCode: null, verdictReasons: [], risk: null, structure: null,
     };
     applyDexPair(c, best);

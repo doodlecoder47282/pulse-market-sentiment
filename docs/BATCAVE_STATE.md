@@ -2097,3 +2097,8 @@ GeckoTerminal skips quiet minutes, so the copy counts candles ("traded minutes o
 candles"); failed reads stamp candlesAttemptAt so a failing pair does not hold a batch slot every tick,
 and a 429 ends the tick; the wiring test checks the whole scorer up to the structure assignment; the method
 is inline on the card, not hover-only.
+Re-review of feat/crypto-candles: MERGE-READY; two should-fixes taken: the first-row back-fill waited for
+nothing, so a young pool's first read (usually under 10 candles) would have locked the graded row at
+"insufficient" forever; it now waits for the first readable tape (>= CANDLES_MIN) and the SQL also replaces
+a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
+with a separator.
