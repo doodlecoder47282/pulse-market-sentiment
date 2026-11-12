@@ -233,10 +233,11 @@ construction and records the rest. "Profitable" is written on the card by
 the sample, when the sample exists, and only for the rule version it was
 measured on.
 
-### Open in FOMO
-"Copy mint & open FOMO" (CoinDesk.tsx, shared/fomoLink.ts) copies the mint
-address and opens FOMO's universal link (fomo.family): FOMO publishes no
-per-token URL or app scheme as of 2026-11-11, so the person pastes the address
-into the app's search and places any order there. The desk sends FOMO nothing
-and places no order. When FOMO documents a per-token link, change
-fomoTokenUrl and nothing else.
+Beside the prompt, "Open in FOMO" (CoinDesk.tsx) and the "fomo" chip
+(CoinLinks.tsx) both read shared/fomoLink.ts, the ONE source for FOMO links:
+`fomo.family/tokens/solana/<mint>`, a pattern on the card since 2026-11-03
+with no documentation behind it (FOMO publishes no per-token URL or scheme as
+of 2026-11-12), so the card states it as unverified until the owner's tap
+settles it. The desk-card button also copies the mint, so if the pattern
+lands on FOMO's home page the address is pasted into the app's search. The
+desk sends FOMO nothing and places no order.

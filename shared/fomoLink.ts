@@ -1,19 +1,26 @@
 // shared/fomoLink.ts
 //
-// FOMO (fomo.family, FOMO Labs, Inc.) is the owner's chosen trading app. As of
-// 2026-11-11 it publishes no per-token URL and no custom URL scheme: its web
-// app's per-asset pages are readable slugs (fomo.family/prices/solana-sol),
-// its memecoin table carries no addresses, and the user guides describe
-// finding a coin by pasting the contract address into the app's search. The
-// desk therefore copies the mint and opens the app's universal link; the
-// person pastes the address. When FOMO documents a per-token link, change
-// fomoTokenUrl here and nothing else.
+// ONE source for FOMO links (fomo.family, FOMO Labs, Inc., the owner's trading
+// app). shared/coinLinks.ts and the desk card both read it.
 //
-// The desk never places orders. This is a link.
+// The per-token pattern `https://fomo.family/tokens/solana/<mint>` has been on
+// the card since 2026-11-03 but has no documentation behind it: as of
+// 2026-11-12 FOMO publishes no per-token URL and no URL scheme (fomo.family's
+// per-asset pages are readable slugs, its memecoin table carries no addresses,
+// and its user guides describe pasting the contract address into the app's
+// search). Status: UNVERIFIED until the owner taps it on the phone. If the
+// pattern is wrong, FOMO lands on its home page and the mint, copied to the
+// clipboard by the desk card's button, is pasted into search; either way the
+// person places any order themselves. The desk sends FOMO nothing.
 
-export const FOMO_OPEN_URL = "https://fomo.family";
+const SOLANA_MINT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
-/** Per-token link when FOMO documents one; until then the universal link (the mint travels on the clipboard). */
-export function fomoTokenUrl(_mint: string): string {
-  return FOMO_OPEN_URL;
+export const FOMO_HOME_URL = "https://fomo.family";
+/** What the per-token pattern is known to be, for the card's copy. */
+export const FOMO_TOKEN_LINK_STATUS = "unverified as of 2026-11-12";
+
+/** Per-token FOMO page for a Solana mint (pattern unverified, see above); the home page for anything that is not a mint. */
+export function fomoTokenUrl(mint: string): string {
+  if (!SOLANA_MINT.test(mint)) return FOMO_HOME_URL;
+  return `${FOMO_HOME_URL}/tokens/solana/${encodeURIComponent(mint)}`;
 }

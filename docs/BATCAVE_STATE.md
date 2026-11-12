@@ -2036,3 +2036,13 @@ search takes a contract address, so the mint travels on the clipboard and the ca
 FOMO nothing and places no order (standing rule). shared/fomoLink.ts fomoTokenUrl is the one place to
 change when FOMO publishes a per-token link. Tests: tests/quant/fomo-link.test.ts. Owner check: tap it on
 the phone once; if FOMO's share sheet gives a per-token URL, send one and the link becomes direct.
+Review of feat/fomo-open-link (HOLD, two must-fixes, both taken). (1) The card already carried a "fomo"
+chip (shared/coinLinks.ts, 2026-11-03) with a per-token pattern fomo.family/tokens/solana/<mint>, never
+verified, while the new button claimed FOMO has no per-token link: two affordances contradicting each
+other. One source now: shared/fomoLink.ts fomoTokenUrl (the per-token pattern, mint-validated, home page
+for anything else) read by both coinLinks and the desk card; the card and the how-to state the pattern as
+"unverified as of 2026-11-12" until the owner's tap settles it, and the test pins that both affordances
+agree. (2) window.open after an awaited clipboard write is refused by Safari and the Capacitor shell, so the
+button could read "opened" over nothing; it is now an <a> that navigates inside the gesture with the copy
+best-effort beside it, and the label never claims the open. Should-fixes: claim dated in the user-facing
+copy; mint validated before it enters the path.
