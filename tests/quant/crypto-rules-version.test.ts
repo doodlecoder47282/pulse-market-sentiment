@@ -46,6 +46,11 @@ test("the engine, stats and verdict read the book instead of carrying their own 
     /< 0\.03\)/, /< -55\)/, /> 45\)/, /< 50\)/, /mcap \* 2\)/, /> 30 \* 60_000/, /updated_at\) > 10 \* 60_000/, /deskRisk\.asOf > 10 \* 60_000/, /1M entry ceiling/, /0\.5% of pool liquidity/, /least 50 first-ENTER/]) {
     assert.doesNotMatch(eng, re, `literal threshold still in cryptoEngine.ts: ${re}`);
   }
+  // The grader SQL binds the DOUBLED multiple from the book (@doubled), not as a literal.
+  const stats = src("server/cryptoStats.ts");
+  assert.doesNotMatch(stats, /2 \* mcap_at_signal/, "literal 2x in CRYPTO_GRADER_MARK_SQL");
+  assert.match(stats, /@doubled \* mcap_at_signal/);
+  assert.match(stats, /doubled: CRYPTO_RULES\.grading\.doubledMultiple/);
   // Every NUMERIC leaf of the book is read by some module under server/ or shared/
   // (a threshold nobody reads is a hollow pin). Descriptive leaves (booleans,
   // the chain list) document the gate; their enforcement is asserted above.

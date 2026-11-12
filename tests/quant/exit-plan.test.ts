@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CRYPTO_RULES } from "../../shared/cryptoRules";
-import { advancePlan, newPlanState, planLevels, planReturnPct, planSummary, sizeFromBankroll, buildTradePrompt } from "../../shared/exitPlan";
+import { advancePlan, newPlanState, planLevels, planReturnPct, planSummary, planRecordByVersion, sizeFromBankroll, buildTradePrompt } from "../../shared/exitPlan";
 import { schwabRedirectUri, schwabConfigProblem } from "../../server/schwabOAuth";
 import { tokenKeyPolicy, wantsLocalKeyFile } from "../../server/tokenCrypto";
 import { loadLocalKey, localKeyPath, resolveTokenKeyPolicy } from "../../server/tokenKeyFile";
@@ -73,6 +73,31 @@ test("pulled pool returns -100; summary gate says INSUFFICIENT DATA under the sa
   const sum = planSummary([s]);
   assert.equal(sum.ready, false);
   assert.match(sum.label, /INSUFFICIENT DATA: 1 of 50/);
+});
+
+test("record by rule version: the current version is the headline, earlier versions are kept each on their own, nothing pooled", () => {
+  const mk = (ver: string, at: number, closeMcap: number | null) => {
+    let s = newPlanState(100_000, 20_000, at, ver)!;
+    if (closeMcap != null) s = advancePlan(s, { at: at + 60_000, mcap: closeMcap, liquidity: 20_000 });
+    return s;
+  };
+  const states = [
+    mk("2026.11.06-1", 1_000, 0), mk("2026.11.06-1", 2_000, null),
+    mk("2026.10.30-2", 3_000, 0), mk("2026.10.30-2", 4_000, 0), mk("2026.10.30-2", 5_000, null),
+    mk("", 6_000, 0),
+  ];
+  const r = planRecordByVersion(states, "2026.11.06-1", 10_000);
+  assert.equal(r.current.closed, 1); assert.equal(r.current.open, 1);
+  assert.deepEqual(r.versions.map((v) => v.version), ["unversioned", "2026.10.30-2"].sort((a, b) => (a < b ? 1 : -1)));
+  const old = r.versions.find((v) => v.version === "2026.10.30-2")!;
+  assert.equal(old.closed, 2); assert.equal(old.open, 1);
+  assert.equal(r.versions.find((v) => v.version === "unversioned")!.closed, 1);
+  assert.deepEqual(r.allVersions, { plans: 6, closed: 4, versions: 3 });
+  // A rule bump no longer erases the record: the old version's plans are still there, summarised on their own.
+  const bumped = planRecordByVersion(states, "2026.11.12-1", 10_000);
+  assert.equal(bumped.current.closed, 0); assert.equal(bumped.current.open, 0);
+  assert.equal(bumped.versions.find((v) => v.version === "2026.11.06-1")!.closed, 1);
+  assert.equal(bumped.allVersions.versions, 3, "the empty current version is not counted");
 });
 
 test("size: bankroll x risk / |stop|, capped by the pool maximum; no bankroll, no size", () => {

@@ -75,7 +75,11 @@ The engine, the grader and the verdict import it; none carries its own copy
 (tests/quant/crypto-rules-version.test.ts pins the content hash to the
 version and greps the engine for literals). Every signal row stores the
 version it was produced under. A changed number is a new version; grades
-from different versions are never pooled without saying so.
+from different versions are never pooled without saying so. The exit-plan
+record (`server/exitPlanBook.ts`, `shared/exitPlan.ts` planRecordByVersion)
+headlines the current version and keeps every earlier version summarised on
+its own, so a bump never erases the sample it was learning from; the desk card
+lists the earlier versions under the headline.
 
 Verdict path, in order: hard kills (mint or freeze authority active;
 liquidity missing, $0 or under the floor; exit door liq/mcap < 3%; 1 h

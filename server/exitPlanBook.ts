@@ -10,7 +10,7 @@
 import { sqlite } from "./storage";
 import { EXIT_PLAN_TABLE_SQL, EXIT_PLAN_UPSERT_SQL } from "./exitPlanSql";
 import { CRYPTO_RULES_VERSION } from "../shared/cryptoRules";
-import { advancePlan, newPlanState, planSummary, type PlanState, type PlanSummary } from "../shared/exitPlan";
+import { advancePlan, newPlanState, planRecordByVersion, type PlanState, type PlanSummary, type PlanVersionRecord } from "../shared/exitPlan";
 
 let ready = false;
 // Plans start only on a sample within this long of the signal: an older
@@ -53,8 +53,15 @@ export function samplePlans(chain: string, pair: string, mcap: number | null, li
   }
 }
 
-/** The plan record over the first ENTER per coin (same identity as the expectancy sample). */
-export function exitPlanRecord(): PlanSummary & { currentVersion: string; basis: string } {
+/**
+ * The plan record over the first ENTER per coin (same identity as the
+ * expectancy sample). Headline: plans graded under the CURRENT rule version
+ * (a plan walked under other levels is a different rule). The earlier versions
+ * stay on the record, each summarised on its own (`versions`), so a rule bump
+ * no longer erases the sample it was learning from; nothing is pooled across
+ * versions. `allVersions` counts every plan on file (sample size only).
+ */
+export function exitPlanRecord(): PlanSummary & { currentVersion: string; basis: string; versions: PlanVersionRecord[]; allVersions: { plans: number; closed: number; versions: number } } {
   ensure();
   const rows = sqlite.prepare(`
     WITH firsts AS (
@@ -63,10 +70,12 @@ export function exitPlanRecord(): PlanSummary & { currentVersion: string; basis:
     )
     SELECT p.state_json FROM firsts f JOIN crypto_exit_plans p ON p.signal_id = f.id WHERE f.rn = 1
   `).all() as any[];
-  // Current rule version only: a plan graded under other levels is a different rule.
-  const states = rows.map((r) => JSON.parse(r.state_json) as PlanState).filter((s) => s.rulesVersion === CRYPTO_RULES_VERSION);
+  const all = rows.map((r) => JSON.parse(r.state_json) as PlanState);
+  const { current, versions, allVersions } = planRecordByVersion(all, CRYPTO_RULES_VERSION, Date.now());
   return {
-    ...planSummary(states, Date.now()), currentVersion: CRYPTO_RULES_VERSION,
-    basis: "first ENTER per coin; the rule-book plan walked on the desk's own price samples: trims and the target fill at their level when a sample reaches it, stops at the sample that breached them, the time stop at the first sample past the hold horizon; net of pool fees, priority fees and constant-product impact on every leg, per $100. Spikes between samples are missed. Plans start only on a sample within 15 min of the signal; a plan still open a day past its time stop counts as no data, and over a 20% no-data share the record reads INSUFFICIENT DATA. Bookkeeping, not a forecast.",
+    ...current, currentVersion: CRYPTO_RULES_VERSION,
+    versions,
+    allVersions,
+    basis: "first ENTER per coin; the rule-book plan walked on the desk's own price samples: trims and the target fill at their level when a sample reaches it, stops at the sample that breached them, the time stop at the first sample past the hold horizon; net of pool fees, priority fees and constant-product impact on every leg, per $100. Spikes between samples are missed. Plans start only on a sample within 15 min of the signal; a plan still open a day past its time stop counts as no data, and over a 20% no-data share the record reads INSUFFICIENT DATA. Plans walked under earlier rule versions are kept and summarised per version, never pooled with the current one. Bookkeeping, not a forecast.",
   };
 }

@@ -272,3 +272,34 @@ export function buildTradePrompt(c: PromptCoin, sizeText: string, rules: Rules =
     `Then give me: verdict (take / wait / skip), the one thing that would change your mind, your trim and stop levels compared with the plan above, and what to watch in the next 15 minutes and the next 4 hours.`,
   ].join("\n");
 }
+
+/** One rule version's plans summarised on their own. */
+export interface PlanVersionRecord extends PlanSummary {
+  version: string;
+}
+
+/**
+ * Partition plans by the rule version they were walked under. The headline is
+ * the current version only (a plan walked under other levels is a different
+ * rule); earlier versions are kept and summarised each on their own, newest
+ * first, never pooled with the current one. `allVersions` is a count of every
+ * plan on file (sample size), not a merged score.
+ */
+export function planRecordByVersion(states: PlanState[], currentVersion: string, now: number = Date.now(), rules: Rules = CRYPTO_RULES): {
+  current: PlanSummary; versions: PlanVersionRecord[]; allVersions: { plans: number; closed: number; versions: number };
+} {
+  const current = states.filter((s) => s.rulesVersion === currentVersion);
+  const byVersion = new Map<string, PlanState[]>();
+  for (const s of states) {
+    if (s.rulesVersion === currentVersion) continue;
+    const k = s.rulesVersion || "unversioned";
+    byVersion.set(k, [...(byVersion.get(k) ?? []), s]);
+  }
+  const versions: PlanVersionRecord[] = [...byVersion.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([version, st]) => ({ version, ...planSummary(st, now, rules) }));
+  return {
+    current: planSummary(current, now, rules),
+    versions,
+    allVersions: { plans: states.length, closed: states.filter((s) => s.closedAt != null).length, versions: byVersion.size + (current.length ? 1 : 0) },
+  };
+}

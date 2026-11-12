@@ -2027,3 +2027,16 @@ branch). Stated here as the reviewer asked: killbox gradient rows now come from 
 the same path /api/chain-audit already uses for 60 DTE, and the merged chain is stale when ANY segment
 was re-served, so the seeder skips such ticks. A change in the inputs of a stored reading, consistent
 with the audit endpoint.
+
+2026-11-11: Crypto record keeps every rule version; DOUBLED multiple bound from the book
+(feat/crypto-record-versions, the two items from review item 2 not covered by #73). exitPlanRecord
+dropped every plan not walked under CRYPTO_RULES_VERSION, so the exit-plan record reset to zero at each
+rule bump and the 50-plan gate could never be reached across a bump. shared/exitPlan.ts
+planRecordByVersion (pure, tested) partitions plans by the version they were walked under: the current
+version is the headline (unchanged semantics), earlier versions are kept and summarised each on their own,
+newest first, never pooled; allVersions counts plans on file. The Crypto desk card shows "plan record
+(rules <version>)" and a line for earlier versions. CRYPTO_GRADER_MARK_SQL hard-coded `2 *
+mcap_at_signal` for DOUBLED while gradeSignal read CRYPTO_RULES.grading.doubledMultiple; the SQL now binds
+@doubled from graderMarkParams (r4 test: at the multiple DOUBLED, just under DEAD, a different bound
+multiple changes the answer; crypto-rules-version test greps for the literal). Rule book unchanged
+(2026.11.06-1). Tests: exit-plan, r4, crypto suite, crypto-rules-version 129/129. Needs the crypto review.
