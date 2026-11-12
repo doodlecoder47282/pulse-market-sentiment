@@ -248,3 +248,26 @@ of 2026-11-12), so the card states it as unverified until the owner's tap
 settles it. The desk-card button also copies the mint, so if the pattern
 lands on FOMO's home page the address is pasted into the app's search. The
 desk sends FOMO nothing and places no order.
+
+### The 1-minute tape (measurements, no rule)
+`shared/cryptoCandles.ts` reads GeckoTerminal's keyless 1-minute OHLCV for
+ENTER and WATCH pairs (8 pairs a minute, each attempted at most every 5 min
+whether the read succeeds or fails, a 429 ends the tick, inside the 30/min
+budget the scanner shares) and measures what the desk's ~4-minute refresh
+never saw: the window high (the launch high only when the window reaches the
+launch), the FIRST local dip after it and the DEEPEST low after it (two
+different things, both recorded), whether 90% of the high was reclaimed and
+how many minutes after the first dip, upper and lower wick share of range over
+the last 10 candles, up-close share, volume over the last 5 candles against
+the 5 before. GeckoTerminal skips minutes with no swaps, so a candle is a
+traded minute and the span is stated beside the count. A tape whose last
+candle is over 15 min old, or whose latest read failed after a good one, is
+STALE: the numbers stay, labelled as the last good read. The card shows the
+sentence with the method inline; the pair's FIRST ENTER/WATCH row (the one
+the grader correlates) is back-filled with the tape when the first read lands,
+with `minutesAfterSignal` recorded, since that row is written in the same pass
+the pair becomes eligible for a read; later rows record the tape as of the
+refresh.
+No score, verdict, trim, stop or horizon reads them. A candle feature enters
+the rule book only when the graded record shows it separates winners from
+losers, as a versioned threshold with its own review.

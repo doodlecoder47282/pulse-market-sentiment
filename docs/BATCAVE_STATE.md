@@ -2067,3 +2067,38 @@ agree. (2) window.open after an awaited clipboard write is refused by Safari and
 button could read "opened" over nothing; it is now an <a> that navigates inside the gesture with the copy
 best-effort beside it, and the label never claims the open. Should-fixes: claim dated in the user-facing
 copy; mint validated before it enters the path.
+
+2026-11-12: The 1-minute tape as measurements (feat/crypto-candles). The desk's ~4-minute refresh never saw
+the first dip after the launch high, whether it was bought back, wicks against bodies or volume into the
+signal: the lower-timeframe half of a top-down read. shared/cryptoCandles.ts (pure, tested) parses
+GeckoTerminal's keyless 1-minute OHLCV and measures launch high, first-dip depth and timing, reclaim
+share and minutes-to-reclaim (90% of the high), upper/lower wick share of range and up-close share over
+the last 10 candles, and the last-5-minute volume against the 5 before; fewer than 10 candles is
+"insufficient", an unread pair is "unavailable", never a number. A candles engine reads ENTER and WATCH
+Solana pairs, 8 a minute, each at most every 5 min, inside the GeckoTerminal budget; candles stay off
+the served feed (candleCount only). The card shows the sentence under the liquidity history line with
+"recorded with the signal, no rule reads it yet"; persistSignal records the numbers in
+features_json.candles for the grader to correlate. No score, verdict or exit level reads them; the rule
+book is unchanged (test greps it for "candle"). Tests: tests/quant/crypto-candles.test.ts (parse, states,
+dip/reclaim timing, wicks, volume trend, wiring, no-rule-reads-it). Next, once the record has a sample:
+correlate each feature with first-ENTER outcomes and propose any threshold as a versioned rule change
+with its own review. Needs the crypto review.
+Review of feat/crypto-candles (HOLD, one must-fix, taken, plus the should-fixes). Must-fix: after one
+good read, every later failed read left the old tape served and recorded as current with no age or error;
+CandleFeatures now carries readAt, lastCandleAt and tapeAgeMinutes, a tape whose last candle is over 15 min
+old or whose latest read failed is state "stale" with the reason in the text (amber on the card), and
+persistSignal passes the read time and error. Should-fixes: the first ENTER/WATCH row (the one the grader
+correlates) is written in the same pass the pair becomes eligible, so it was always candles: null; it is
+back-filled once when the first read lands, with minutesAfterSignal (SQL tested on node:sqlite: first
+ENTER/WATCH row only, never overwritten, PASS rows untouched); "first dip" was the deepest low after the
+high, erasing a dip-and-reclaim followed by a crash; it is now the first local low before any reclaim,
+with maxDrawdownPct recorded separately and both in the text; windowHigh replaces launchHigh in name;
+GeckoTerminal skips quiet minutes, so the copy counts candles ("traded minutes over N min", "prior 5
+candles"); failed reads stamp candlesAttemptAt so a failing pair does not hold a batch slot every tick,
+and a 429 ends the tick; the wiring test checks the whole scorer up to the structure assignment; the method
+is inline on the card, not hover-only.
+Re-review of feat/crypto-candles: MERGE-READY; two should-fixes taken: the first-row back-fill waited for
+nothing, so a young pool's first read (usually under 10 candles) would have locked the graded row at
+"insufficient" forever; it now waits for the first readable tape (>= CANDLES_MIN) and the SQL also replaces
+a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
+with a separator.
