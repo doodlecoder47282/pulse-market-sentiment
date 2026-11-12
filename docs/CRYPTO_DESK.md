@@ -79,7 +79,10 @@ from different versions are never pooled without saying so. The exit-plan
 record (`server/exitPlanBook.ts`, `shared/exitPlan.ts` planRecordByVersion)
 headlines the current version and keeps every earlier version summarised on
 its own, so a bump never erases the sample it was learning from; the desk card
-lists the earlier versions under the headline.
+lists the earlier versions under the headline. Each plan is priced with the
+fees and size it started under (PlanState.pricing); the no-data cutoff and the
+sample gate are the current book's; a plan still open across a bump keeps its
+starting label but walks on under the current levels.
 
 Verdict path, in order: hard kills (mint or freeze authority active;
 liquidity missing, $0 or under the floor; exit door liq/mcap < 3%; 1 h

@@ -69,7 +69,7 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
   type PlanRecord = PlanSummary & { currentVersion?: string; versions?: Array<PlanSummary & { version: string }> };
   const sig = useQuery<{ exitPlan?: PlanRecord | null }>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000 });
   const rec = sig.data?.exitPlan ?? null;
-  const earlier = (rec?.versions ?? []).filter((v) => v.closed > 0 || v.open > 0);
+  const earlier = (rec?.versions ?? []).filter((v) => v.closed > 0 || v.open > 0 || v.noData > 0);
 
   const b = c.bundle;
   // The same cap the server scored and recorded the entry on (marketCap, else FDV): the plan levels and the liq/cap read stay on that number.
@@ -145,7 +145,7 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
           </div>
           {earlier.length > 0 && (
             <div className="text-[11px] text-muted-foreground" data-testid="crypto-plan-record-earlier">
-              earlier rule versions, kept separately: {earlier.map((v) => `${v.version}: ${v.closed} closed, ${v.open} open${v.ready && v.medianPct != null ? `, median ${pct(v.medianPct, 1)}` : ""}`).join(" · ")}
+              earlier rule versions, kept separately: {earlier.map((v) => `${v.version}: ${v.closed} closed, ${v.open} open${v.noData > 0 ? `, ${v.noData} no data` : ""}${v.ready && v.medianPct != null ? `, median ${pct(v.medianPct, 1)}` : ""}`).join(" · ")}
             </div>
           )}
         </div>

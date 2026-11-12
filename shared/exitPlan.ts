@@ -109,12 +109,27 @@ export interface PlanState {
   closedAt: number | null;
   lastSampleAt: number | null;
   samples: number;
+  /** The book's pricing inputs at plan start, so an earlier version's return is never re-priced with a later book.
+   *  Absent on plans from before this field: those are priced with the current book (the record says so). */
+  pricing?: PlanPricing;
+}
+
+export interface PlanPricing {
+  dexFeePct: number;
+  platformFeePct: number;
+  priorityFeeUsd: number;
+  sizeUsd: number;
+}
+
+export function pricingOf(rules: Rules = CRYPTO_RULES): PlanPricing {
+  return { dexFeePct: rules.cost.dexFeePct, platformFeePct: rules.cost.platformFeePct, priorityFeeUsd: rules.cost.priorityFeeUsd, sizeUsd: rules.grading.sizeUsd };
 }
 
 export function newPlanState(entryMcap: number, entryLiq: number, entryAt: number, rulesVersion: string, rules: Rules = CRYPTO_RULES): PlanState | null {
   if (!(entryMcap > 0) || !(entryLiq > 0) || !Number.isFinite(entryAt)) return null;
   return { v: 1, rulesVersion, entryMcap, entryLiq, entryAt, remaining: 1, trimsDone: 0,
-    stopMultiple: 1 + rules.sizing.suggestedStopPct / 100, fills: [], closedAt: null, lastSampleAt: null, samples: 0 };
+    stopMultiple: 1 + rules.sizing.suggestedStopPct / 100, fills: [], closedAt: null, lastSampleAt: null, samples: 0,
+    pricing: pricingOf(rules) };
 }
 
 /** Walk one price sample through the plan. Returns a new state (input untouched). */
@@ -157,12 +172,16 @@ export function advancePlan(prev: PlanState, sample: { at: number; mcap: number 
   return s;
 }
 
-/** Net return of a closed plan on `sizeUsd`, percent, with constant-product legs and the book's fees. */
-export function planReturnPct(s: PlanState, sizeUsd: number = CRYPTO_RULES.grading.sizeUsd, rules: Rules = CRYPTO_RULES): number | null {
-  if (s.closedAt == null || !(sizeUsd > 0)) return null;
-  const feeFrac = Math.min(1, (rules.cost.dexFeePct + rules.cost.platformFeePct) / 100);
-  const prio = rules.cost.priorityFeeUsd;
-  const x = sizeUsd * (1 - feeFrac) - prio;
+/** Net return of a closed plan, percent, with constant-product legs and the fees and size the plan was
+ *  started under (`s.pricing`); plans from before that field use the book passed in. `sizeUsd` overrides
+ *  the size only when given explicitly. */
+export function planReturnPct(s: PlanState, sizeUsd?: number, rules: Rules = CRYPTO_RULES): number | null {
+  const pr = s.pricing ?? pricingOf(rules);
+  const size = sizeUsd ?? pr.sizeUsd;
+  if (s.closedAt == null || !(size > 0)) return null;
+  const feeFrac = Math.min(1, (pr.dexFeePct + pr.platformFeePct) / 100);
+  const prio = pr.priorityFeeUsd;
+  const x = size * (1 - feeFrac) - prio;
   if (!(x > 0)) return -100;
   const Q1 = s.entryLiq / 2;
   const v0 = (Q1 * x) / (Q1 + x);
@@ -174,7 +193,7 @@ export function planReturnPct(s: PlanState, sizeUsd: number = CRYPTO_RULES.gradi
     const v = v0 * f.share * f.multiple;
     proceeds += Math.max(0, ((Q2 * v) / (Q2 + v)) * (1 - feeFrac) - prio);
   }
-  return Math.max(-100, (100 * (proceeds - sizeUsd)) / sizeUsd);
+  return Math.max(-100, (100 * (proceeds - size)) / size);
 }
 
 export interface PlanSummary {
@@ -197,7 +216,7 @@ export function planSummary(states: PlanState[], now: number = Date.now(), rules
   // Open a day past the time stop: the samples stopped (pair gone, likely a rug). No data, never a win.
   const staleAfter = (rules.sizing.holdHorizonHours + 24) * 3600_000;
   const noData = states.filter((s) => s.closedAt == null && now - s.entryAt > staleAfter).length;
-  const rets = closed.map((s) => planReturnPct(s, rules.grading.sizeUsd, rules)).filter((r): r is number => r != null).sort((a, b) => a - b);
+  const rets = closed.map((s) => planReturnPct(s, undefined, rules)).filter((r): r is number => r != null).sort((a, b) => a - b);
   const byExit: Record<string, number> = {};
   for (const s of closed) { const k = s.fills[s.fills.length - 1]?.kind ?? "none"; byExit[k] = (byExit[k] ?? 0) + 1; }
   const n = rets.length, min = rules.grading.minSample;
@@ -273,6 +292,19 @@ export function buildTradePrompt(c: PromptCoin, sizeText: string, rules: Rules =
   ].join("\n");
 }
 
+/** Newest first: "YYYY.MM.DD-n" by date then numeric suffix; "unversioned" (pre-2026-10-27 rows) last. */
+export function compareVersionsDesc(a: string, b: string): number {
+  const parse = (v: string): [string, number] | null => {
+    const m = /^(\d{4}\.\d{2}\.\d{2})-(\d+)$/.exec(v);
+    return m ? [m[1], Number(m[2])] : null;
+  };
+  const pa = parse(a), pb = parse(b);
+  if (pa && pb) return pa[0] === pb[0] ? pb[1] - pa[1] : (pa[0] < pb[0] ? 1 : -1);
+  if (pa) return -1;
+  if (pb) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** One rule version's plans summarised on their own. */
 export interface PlanVersionRecord extends PlanSummary {
   version: string;
@@ -283,7 +315,9 @@ export interface PlanVersionRecord extends PlanSummary {
  * the current version only (a plan walked under other levels is a different
  * rule); earlier versions are kept and summarised each on their own, newest
  * first, never pooled with the current one. `allVersions` is a count of every
- * plan on file (sample size), not a merged score.
+ * plan on file (sample size), not a merged score. Each plan is priced with the
+ * fees and size it was started under (PlanState.pricing); the no-data cutoff
+ * and the sample gate are the current book's.
  */
 export function planRecordByVersion(states: PlanState[], currentVersion: string, now: number = Date.now(), rules: Rules = CRYPTO_RULES): {
   current: PlanSummary; versions: PlanVersionRecord[]; allVersions: { plans: number; closed: number; versions: number };
@@ -295,7 +329,7 @@ export function planRecordByVersion(states: PlanState[], currentVersion: string,
     const k = s.rulesVersion || "unversioned";
     byVersion.set(k, [...(byVersion.get(k) ?? []), s]);
   }
-  const versions: PlanVersionRecord[] = [...byVersion.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1))
+  const versions: PlanVersionRecord[] = [...byVersion.entries()].sort((a, b) => compareVersionsDesc(a[0], b[0]))
     .map(([version, st]) => ({ version, ...planSummary(st, now, rules) }));
   return {
     current: planSummary(current, now, rules),

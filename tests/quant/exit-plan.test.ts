@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CRYPTO_RULES } from "../../shared/cryptoRules";
-import { advancePlan, newPlanState, planLevels, planReturnPct, planSummary, planRecordByVersion, sizeFromBankroll, buildTradePrompt } from "../../shared/exitPlan";
+import { advancePlan, newPlanState, planLevels, planReturnPct, planSummary, planRecordByVersion, compareVersionsDesc, pricingOf, sizeFromBankroll, buildTradePrompt } from "../../shared/exitPlan";
 import { schwabRedirectUri, schwabConfigProblem } from "../../server/schwabOAuth";
 import { tokenKeyPolicy, wantsLocalKeyFile } from "../../server/tokenCrypto";
 import { loadLocalKey, localKeyPath, resolveTokenKeyPolicy } from "../../server/tokenKeyFile";
@@ -88,7 +88,9 @@ test("record by rule version: the current version is the headline, earlier versi
   ];
   const r = planRecordByVersion(states, "2026.11.06-1", 10_000);
   assert.equal(r.current.closed, 1); assert.equal(r.current.open, 1);
-  assert.deepEqual(r.versions.map((v) => v.version), ["unversioned", "2026.10.30-2"].sort((a, b) => (a < b ? 1 : -1)));
+  assert.deepEqual(r.versions.map((v) => v.version), ["2026.10.30-2", "unversioned"], "dated versions newest first, unversioned last");
+  assert.deepEqual(["2026.11.06-1", "unversioned", "2026.11.06-10", "2026.10.27-2", "2026.11.06-2"].sort(compareVersionsDesc),
+    ["2026.11.06-10", "2026.11.06-2", "2026.11.06-1", "2026.10.27-2", "unversioned"], "numeric suffix, not lexical");
   const old = r.versions.find((v) => v.version === "2026.10.30-2")!;
   assert.equal(old.closed, 2); assert.equal(old.open, 1);
   assert.equal(r.versions.find((v) => v.version === "unversioned")!.closed, 1);
@@ -98,6 +100,24 @@ test("record by rule version: the current version is the headline, earlier versi
   assert.equal(bumped.current.closed, 0); assert.equal(bumped.current.open, 0);
   assert.equal(bumped.versions.find((v) => v.version === "2026.11.06-1")!.closed, 1);
   assert.equal(bumped.allVersions.versions, 3, "the empty current version is not counted");
+});
+
+test("an earlier version's return is priced with the fees and size it started under, not a later book", () => {
+  const rules = CRYPTO_RULES;
+  let s = newPlanState(100_000, 20_000, 0, "2026.10.30-2", rules)!;
+  s = advancePlan(s, { at: 60_000, mcap: 250_000, liquidity: 20_000 }); // trims
+  s = advancePlan(s, { at: 120_000, mcap: 60_000, liquidity: 20_000 });  // stop
+  assert.ok(s.closedAt != null);
+  assert.deepEqual(s.pricing, pricingOf(rules));
+  const under = planReturnPct(s)!;
+  const cheaper = { ...rules, cost: { ...rules.cost, platformFeePct: 0 }, grading: { ...rules.grading, sizeUsd: 1000 } };
+  assert.equal(planReturnPct(s, undefined, cheaper), under, "a later book's fees and size do not restate the old plan");
+  assert.equal(planRecordByVersion([s], "2026.11.12-1", 200_000, cheaper).versions[0].medianPct, under);
+  // A plan from before pricing was recorded is priced with the book passed in, as the record says.
+  const legacy = { ...s, pricing: undefined };
+  assert.notEqual(planReturnPct(legacy, undefined, cheaper), under);
+  // An explicit size still overrides.
+  assert.notEqual(planReturnPct(s, 1000), under);
 });
 
 test("size: bankroll x risk / |stop|, capped by the pool maximum; no bankroll, no size", () => {
