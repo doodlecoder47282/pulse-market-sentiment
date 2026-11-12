@@ -875,8 +875,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             </p>
           )}
           {c.structure?.candles && (c.verdict === "ENTER" || c.verdict === "WATCH") && (
-            <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-candles-${c.pairAddress.slice(0, 8)}`} title={c.structure.candles.method}>
-              {c.structure.candles.text}{c.structure.candles.state === "ok" ? " (measured on the 1-minute tape; recorded with the signal, no rule reads it yet)" : ""}
+            <p className={`text-[11px] leading-snug ${c.structure.candles.state === "stale" ? "text-amber-300/90" : "text-muted-foreground"}`} data-testid={`crypto-candles-${c.pairAddress.slice(0, 8)}`}>
+              {c.structure.candles.text}
+              {(c.structure.candles.state === "ok" || c.structure.candles.state === "stale") && (
+                <> (high = highest high in the candles read, dip = first local low after it, reclaim = latest close against that high; a candle is a traded minute; recorded with the signal, no rule reads it yet)</>
+              )}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">

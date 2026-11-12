@@ -2083,3 +2083,17 @@ book is unchanged (test greps it for "candle"). Tests: tests/quant/crypto-candle
 dip/reclaim timing, wicks, volume trend, wiring, no-rule-reads-it). Next, once the record has a sample:
 correlate each feature with first-ENTER outcomes and propose any threshold as a versioned rule change
 with its own review. Needs the crypto review.
+Review of feat/crypto-candles (HOLD, one must-fix, taken, plus the should-fixes). Must-fix: after one
+good read, every later failed read left the old tape served and recorded as current with no age or error;
+CandleFeatures now carries readAt, lastCandleAt and tapeAgeMinutes, a tape whose last candle is over 15 min
+old or whose latest read failed is state "stale" with the reason in the text (amber on the card), and
+persistSignal passes the read time and error. Should-fixes: the first ENTER/WATCH row (the one the grader
+correlates) is written in the same pass the pair becomes eligible, so it was always candles: null; it is
+back-filled once when the first read lands, with minutesAfterSignal (SQL tested on node:sqlite: first
+ENTER/WATCH row only, never overwritten, PASS rows untouched); "first dip" was the deepest low after the
+high, erasing a dip-and-reclaim followed by a crash; it is now the first local low before any reclaim,
+with maxDrawdownPct recorded separately and both in the text; windowHigh replaces launchHigh in name;
+GeckoTerminal skips quiet minutes, so the copy counts candles ("traded minutes over N min", "prior 5
+candles"); failed reads stamp candlesAttemptAt so a failing pair does not hold a batch slot every tick,
+and a 429 ends the tick; the wiring test checks the whole scorer up to the structure assignment; the method
+is inline on the card, not hover-only.

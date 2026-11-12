@@ -150,6 +150,8 @@ export interface Candidate {
   /** 1-minute candles (oldest first, last CANDLE_KEEP) and when they were last read; ENTER/WATCH pairs only. */
   candles: Candle[];
   candlesReadAt: number | null;
+  /** Last read ATTEMPT (success or failure): the refresh gate uses it, so a failing pair does not hold a batch slot every tick. */
+  candlesAttemptAt: number | null;
   candlesError: string | null;
   /** One observation per DexScreener refresh: liquidity, cap, top-10 (shared/cryptoHistory.ts; ring of 60). */
   observations: Observation[];
@@ -385,7 +387,9 @@ function persistSignal(c: Candidate): void {
         // Launch-block buying, recorded for the replay to test; never a gate.
         bundle: c.bundle,
         // The 1-minute tape at signal time (shared/cryptoCandles.ts), recorded for the grader to correlate; never a gate.
-        candles: c.candlesReadAt == null ? null : candleFeatures(c.candles, Date.now()),
+        // The first ENTER/WATCH row is written in the same pass the pair becomes eligible for a read, so it is
+        // null here and back-filled by candlesTick when the first read lands (with minutesAfterSignal).
+        candles: c.candlesReadAt == null ? null : candleFeatures(c.candles, Date.now(), { readAt: c.candlesReadAt, error: c.candlesError }),
       }),
       JSON.stringify(c.risk),
     );
@@ -485,7 +489,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
     socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
     hist: [],
-    candles: [], candlesReadAt: null, candlesError: null,
+    candles: [], candlesReadAt: null, candlesAttemptAt: null, candlesError: null,
     observations: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
@@ -1168,7 +1172,7 @@ function scoreCandidate(c: Candidate): void {
     exitStress: exitCostStress(c.liquidityUsd, c.risk ? Math.max(1, c.risk.maxPositionUsd) : 100),
     candles: c.candlesReadAt == null
       ? unavailableCandles(c.candlesError ? `read failed (${c.candlesError})` : c.verdict === "ENTER" || c.verdict === "WATCH" ? "not read yet" : "read for ENTER and WATCH pairs only")
-      : candleFeatures(c.candles, Date.now()),
+      : candleFeatures(c.candles, Date.now(), { readAt: c.candlesReadAt, error: c.candlesError }),
   };
 }
 
@@ -1183,15 +1187,35 @@ const CANDLE_REFRESH_MS = 5 * 60_000;
 const CANDLE_KEEP = 180;
 const CANDLE_LIMIT = 120;
 
+/** Back-fill the pair's FIRST ENTER/WATCH row (the one the grader correlates) with the tape once it is read; minutesAfterSignal says how late. */
+const CANDLE_BACKFILL_SQL = `
+  UPDATE crypto_signals SET features_json = json_set(features_json, '$.candles', json(@candles))
+  WHERE id = (SELECT id FROM crypto_signals WHERE chain = @chain AND pair_address = @pair AND verdict IN ('ENTER', 'WATCH') ORDER BY detected_at ASC LIMIT 1)
+    AND json_extract(features_json, '$.candles') IS NULL`;
+let _candleBackfill: ReturnType<typeof sqlite.prepare> | null = null;
+
+function backfillFirstSignalCandles(c: Candidate, feats: CandleFeatures): void {
+  try {
+    _candleBackfill ??= sqlite.prepare(CANDLE_BACKFILL_SQL);
+    const row = sqlite.prepare(`SELECT detected_at FROM crypto_signals WHERE chain = ? AND pair_address = ? AND verdict IN ('ENTER', 'WATCH') ORDER BY detected_at ASC LIMIT 1`).get(c.chain, c.pairAddress) as { detected_at: number } | undefined;
+    if (!row) return;
+    const minutesAfterSignal = Math.round(((feats.readAt ?? Date.now()) - row.detected_at) / 60_000);
+    _candleBackfill.run({ candles: JSON.stringify({ ...feats, backfilled: true, minutesAfterSignal }), chain: c.chain, pair: c.pairAddress });
+  } catch (e: any) {
+    console.warn(`[crypto:candles] backfill ${e?.message ?? e}`);
+  }
+}
+
 async function candlesTick(): Promise<void> {
   const now = Date.now();
   const rank = (c: Candidate) => (c.verdict === "ENTER" ? 2 : c.verdict === "WATCH" ? 1 : 0) * 1000 + (c.score ?? 0);
   const due = [...tracked.values()]
     .filter((c) => c.chain === "solana" && (c.verdict === "ENTER" || c.verdict === "WATCH"))
-    .filter((c) => c.candlesReadAt == null || now - c.candlesReadAt > CANDLE_REFRESH_MS)
+    .filter((c) => c.candlesAttemptAt == null || now - c.candlesAttemptAt > CANDLE_REFRESH_MS)
     .sort((a, b) => rank(b) - rank(a))
     .slice(0, CANDLE_BATCH);
   for (const c of due) {
+    c.candlesAttemptAt = Date.now();
     try {
       const r = await getJson(`${GT_BASE}/networks/solana/pools/${encodeURIComponent(c.pairAddress)}/ohlcv/minute?aggregate=1&limit=${CANDLE_LIMIT}&currency=usd`);
       const fresh = parseGtOhlcv(r?.data?.attributes?.ohlcv_list);
@@ -1200,10 +1224,15 @@ async function candlesTick(): Promise<void> {
       for (const k of c.candles) byT.set(k.t, k);
       for (const k of fresh) byT.set(k.t, k);
       c.candles = [...byT.values()].sort((a, b) => a.t - b.t).slice(-CANDLE_KEEP);
+      const firstRead = c.candlesReadAt == null;
       c.candlesReadAt = Date.now();
       c.candlesError = null;
+      if (firstRead) backfillFirstSignalCandles(c, candleFeatures(c.candles, c.candlesReadAt, { readAt: c.candlesReadAt }));
     } catch (e: any) {
-      c.candlesError = String(e?.message ?? e).slice(0, 80);
+      const msg = String(e?.message ?? e);
+      c.candlesError = msg.slice(0, 80);
+      // Rate-limited: the rest of this tick would be too. Next tick in a minute.
+      if (/^429\b/.test(msg)) break;
     }
   }
 }
@@ -1888,7 +1917,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
       bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
       pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null,
       socialScore: null, socialCheckedAt: null, prevPumpReplies: null, socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
-      hist: [], observations: [], candles: [], candlesReadAt: null, candlesError: null, ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
+      hist: [], observations: [], candles: [], candlesReadAt: null, candlesAttemptAt: null, candlesError: null, ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
       hardKill: false, score: null, verdict: null, verdictCode: null, verdictReasons: [], risk: null, structure: null,
     };
     applyDexPair(c, best);
