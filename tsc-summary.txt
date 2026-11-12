@@ -1,0 +1,3 @@
+tsc errors: head=0 base=0
+--- files with MORE errors on head (file head base) ---
+--- file-less tsc errors new on head ---

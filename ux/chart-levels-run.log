@@ -1,0 +1,36 @@
+PASS desktop/lightweight SPY: SPY call wall drawn on SPY candles · wall 690, last close 685.2
+PASS desktop/lightweight SPY: banner distance uses SPY price (+4.80 · +0.70%) · POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0.
+PASS desktop/lightweight index: candles present · last close 6834.4
+PASS desktop/lightweight index: no levels drawn · data-gamma-callwall=""
+PASS desktop/lightweight index: reason shown · not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw
+PASS desktop/lightweight rapid switch: no level ever shown on another symbol · 69 samples, 0 wrong
+PASS desktop/lightweight rapid switch: settles on NVDA's own levels · wall 190
+PASS desktop/svg SPY: SPY call wall drawn on SPY candles · wall 690, last close 685.2
+PASS desktop/svg SPY: banner distance uses SPY price (+4.80 · +0.70%) · POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0.
+PASS desktop/svg index: candles present · last close 6834.4
+PASS desktop/svg index: no levels drawn · data-gamma-callwall=""
+PASS desktop/svg index: reason shown · not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw
+PASS desktop/svg rapid switch: no level ever shown on another symbol · 69 samples, 0 wrong
+PASS desktop/svg rapid switch: settles on NVDA's own levels · wall 190
+PASS desktop: no page errors
+PASS phone-402/lightweight SPY: SPY call wall drawn on SPY candles · wall 690, last close 685.2
+PASS phone-402/lightweight SPY: banner distance uses SPY price (+4.80 · +0.70%) · POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0.
+PASS phone-402/lightweight index: candles present · last close 6834.4
+PASS phone-402/lightweight index: no levels drawn · data-gamma-callwall=""
+PASS phone-402/lightweight index: reason shown · not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw
+PASS phone-402/lightweight 402px: no sideways page scroll · overflow 0px
+PASS phone-402/lightweight 402px: reason inside the screen · x 38 w 326
+PASS phone-402/lightweight rapid switch: no level ever shown on another symbol · 66 samples, 0 wrong
+PASS phone-402/lightweight rapid switch: settles on NVDA's own levels · wall 190
+PASS phone-402/svg SPY: SPY call wall drawn on SPY candles · wall 690, last close 685.2
+PASS phone-402/svg SPY: banner distance uses SPY price (+4.80 · +0.70%) · POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0.
+PASS phone-402/svg index: candles present · last close 6834.4
+PASS phone-402/svg index: no levels drawn · data-gamma-callwall=""
+PASS phone-402/svg index: reason shown · not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw
+PASS phone-402/svg 402px: no sideways page scroll · overflow 0px
+PASS phone-402/svg 402px: reason inside the screen · x 38 w 326
+PASS phone-402/svg rapid switch: no level ever shown on another symbol · 69 samples, 0 wrong
+PASS phone-402/svg rapid switch: settles on NVDA's own levels · wall 190
+PASS phone-402: no page errors
+PASS server: index route answers unsupported with no levels and a reason · {"symbol":"^GSPC","supported":false,"spot":null,"levels":null,"reason":"Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not drawn on S&P 500 index candles. S
+CHART LEVELS: all 35 checks pass

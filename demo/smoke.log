@@ -1,0 +1,36 @@
+PASS health edition demo
+PASS open without a key
+PASS status demo
+PASS sign-in link refused (403)
+PASS visitor write refused (403)
+PASS token paste refused (403)
+PASS config change refused (403)
+PASS oauth callback refused
+PASS crypto replay: 3 first signals, would enter 0
+PASS live verify blocked on sample data
+--- data endpoints on sample data (status, first 300 bytes) ---
+/api/schwab/selftest -> 200 {"version":1,"connected":false,"realDataChecked":false,"marketInputsValid":false,"checkedAt":1794471914650,"expiresAt":1794471944650,"cached":false,"scope":"Sampled Schwab input checks only. Not a calibration, execution, full-chain or prediction-accuracy certificate.","items":[{"name":"Real-data val
+/api/snapshot -> 200 {"capturedAt":1794471868,"spy":{"price":734.64,"prevClose":734.64,"changePct":0,"stale":false,"ageMs":41065221,"prevCloseSource":"schwab_quote_net_change"},"vol":{"vix":{"symbol":"^VIX","name":"VIX (30-day implied vol)","value":12.69,"prev":12.69,"changePct":0,"stale":false},"vvix":{"symbol":"^VVIX"
+/api/trade-environment -> 200 {"state":"LOADED","score":58,"headline":"several conditions associated with larger moves are present at once (heuristic composite).","instructions":["the drivers below name the levels involved (flip, walls); check them against your own plan","context only: hand-set points, not a forecast; no entry o
+/api/regime -> 200 {"capturedAt":1794471916,"window":"w4","headline":"No dominant rotation","narrative":"All four axes are sitting close to their 2-year baselines. Leadership is balanced across risk, style, sector cohort, and size. Wait for a catalyst before assuming a new regime.","axes":[{"axis":"risk","label":"Risk
+/api/gamma-levels -> 200 {"symbol":"SPY","supported":true,"spot":734.64,"levels":{"callWall":750,"callWallGex":12076823440.016613,"putWall":720,"putWallGex":-16623602911.777866,"zeroGamma":735.9259958698792,"flip":735.9259958698792,"maxPain":734,"totalGex":-6324206335.065517,"regime":"negative","profile":[{"strike":675,"gex
+/api/models -> 200 {"asOf":1794471916,"session":"live","horizons":{"daily":{"horizon":"daily","label":"SPX DAILY MODEL","symbol":"^GSPC","displaySymbol":"SPX","spot":7367.62,"spotAnchorDate":"THU 11/12","targetDate":"THU 11/12 CLOSE","targetDateLong":"THU NOV 12, 2026","priceRange":[7257.1057,7478.134299999999],"range
+/api/heatseeker -> 200 {"symbol":"$SPX","spot":7367.62,"expiry":"2026-11-12","dte":0,"asOf":1794471921715,"strikes":[{"strike":7000,"distancePct":-4.989671019949453,"netGex":82974.89626720164,"callGex":582539.471522737,"putGex":499564.5752555353,"netDex":60249047.669518165,"dexMissingContracts":0,"netVanna":949.3302927367
+/api/iv-rv -> 200 {"symbol":"SPY","asOf":"2026-11-12","rv":{"rv5":0.10105670379224957,"rv10":0.14399650048397084,"rv20":0.1525593030074477,"rv30":0.1342938726923931,"rv60":0.1339759797262021},"iv":{"iv30":null,"iv60":null,"iv90":null},"ratio":{"iv30_rv20":null,"iv30_rv30":null,"iv60_rv60":null},"verdict":"insufficien
+/api/chain-audit -> 200 {"symbol":"$SPX","requestedSymbol":"$SPX","spot":7367.62,"asOf":1794430800000,"chainAsOfMs":1794430800000,"chainStale":false,"chainLastSession":true,"chainMaxAgeMs":1800000,"chainSource":"schwab","audit":{"dex":{"profile":[{"strike":6620,"callDex":9289511566.529999,"putDex":-1311229329.8779998,"netD
+/api/edgelab/briefing -> 200 {"asOf":1794471928196,"symbol":"SPY","spot":734.64,"verdict":"strong bull","verdictColor":"emerald","confidence":75,"oneLiner":"strong bull · 4 of 5 inputs · no dominant rotation · vix 12.7 · spy w1 +1.41%","regime":{"headline":"No dominant rotation","narrative":"All four axes are sitting close 
+/api/heatmap/thermal?symbol=%24SPX&greek=gex -> 200 {"symbol":"$SPX","asOf":1794430800000,"spot":7367.62,"greek":"gex","weightMode":"oi","strikes":[6620,6625,6630,6635,6640,6645,6650,6655,6660,6665,6670,6675,6680,6685,6690,6695,6700,6705,6710,6715,6720,6725,6730,6735,6740,6745,6750,6755,6760,6765,6770,6775,6780,6785,6790,6795,6800,6805,6810,6815,6820
+/api/heatmap/thermal?symbol=%24SPX&greek=charm -> 200 {"symbol":"$SPX","asOf":1794430800000,"spot":7367.62,"greek":"charm","weightMode":"oi","strikes":[6620,6625,6630,6635,6640,6645,6650,6655,6660,6665,6670,6675,6680,6685,6690,6695,6700,6705,6710,6715,6720,6725,6730,6735,6740,6745,6750,6755,6760,6765,6770,6775,6780,6785,6790,6795,6800,6805,6810,6815,68
+PASS thermal heatmap: state ok, 3600 cells, 19200 priced, 0 no IV, put wall 7250 < spot 7367.62 < call wall 7500, flip 7380.039702520492
+PASS community watch: 3 sample rows, reclaimed dips 1/1/0, $1k trips 2.69/3.12/5.21%, top-10 18.4/31.2/, mint active false/false/true
+PASS crypto expectancy: graded n=0 INSUFFICIENT DATA, hold n=0, peak n=0, desk risk on (BTC -0.77% vs its Kraken 24 h VWAP (Kraken mid)), 3 rows
+PASS decision support: 200, 5 lines, spot 7367.62
+PASS whale flow preview: state ok, 15 tickers, 0 contracts, 0 whales (pre-open: none expected)
+PASS ticker scan: SPY states unavailable/ok/ok/ok/no_data last 734.64 rel 0 contracts 0; ZZZZQ states unavailable/ok/ok/ok/no_data last 451.5; bad symbol 400
+PASS research events rejects a bad symbol (400)
+PASS research: events state partial, 252 bars, 19/20 past sessions priced, NFP n=10 FOMC n=7 CPI n=1 PCE n=1; snapshots no_data
+PASS setup log: edition demo, state no_data, 28 rules v2026.10.21-1, calendar known, next PCE 2026-11-25 08:30 ET
+PASS security headers
+PASS rate limit: 7 x 400 then 7 x 429 in a 14-call scan burst (Retry-After: 5)
+PASS community write refused (403)
+schwab network lines in log: 1

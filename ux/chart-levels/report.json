@@ -1,0 +1,303 @@
+{
+ "base": "http://127.0.0.1:5071",
+ "startedAt": "2026-11-12T08:33:53.145Z",
+ "commit": "d60d647f1b570e949b633c7638207db6a5616503",
+ "checks": [
+  {
+   "name": "desktop/lightweight SPY: SPY call wall drawn on SPY candles",
+   "ok": true,
+   "detail": "wall 690, last close 685.2"
+  },
+  {
+   "name": "desktop/lightweight SPY: banner distance uses SPY price (+4.80 · +0.70%)",
+   "ok": true,
+   "detail": "POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0."
+  },
+  {
+   "name": "desktop/lightweight index: candles present",
+   "ok": true,
+   "detail": "last close 6834.4"
+  },
+  {
+   "name": "desktop/lightweight index: no levels drawn",
+   "ok": true,
+   "detail": "data-gamma-callwall=\"\""
+  },
+  {
+   "name": "desktop/lightweight index: reason shown",
+   "ok": true,
+   "detail": "not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw"
+  },
+  {
+   "name": "desktop/lightweight rapid switch: no level ever shown on another symbol",
+   "ok": true,
+   "detail": "69 samples, 0 wrong"
+  },
+  {
+   "name": "desktop/lightweight rapid switch: settles on NVDA's own levels",
+   "ok": true,
+   "detail": "wall 190"
+  },
+  {
+   "name": "desktop/svg SPY: SPY call wall drawn on SPY candles",
+   "ok": true,
+   "detail": "wall 690, last close 685.2"
+  },
+  {
+   "name": "desktop/svg SPY: banner distance uses SPY price (+4.80 · +0.70%)",
+   "ok": true,
+   "detail": "POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0."
+  },
+  {
+   "name": "desktop/svg index: candles present",
+   "ok": true,
+   "detail": "last close 6834.4"
+  },
+  {
+   "name": "desktop/svg index: no levels drawn",
+   "ok": true,
+   "detail": "data-gamma-callwall=\"\""
+  },
+  {
+   "name": "desktop/svg index: reason shown",
+   "ok": true,
+   "detail": "not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw"
+  },
+  {
+   "name": "desktop/svg rapid switch: no level ever shown on another symbol",
+   "ok": true,
+   "detail": "69 samples, 0 wrong"
+  },
+  {
+   "name": "desktop/svg rapid switch: settles on NVDA's own levels",
+   "ok": true,
+   "detail": "wall 190"
+  },
+  {
+   "name": "desktop: no page errors",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "phone-402/lightweight SPY: SPY call wall drawn on SPY candles",
+   "ok": true,
+   "detail": "wall 690, last close 685.2"
+  },
+  {
+   "name": "phone-402/lightweight SPY: banner distance uses SPY price (+4.80 · +0.70%)",
+   "ok": true,
+   "detail": "POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0."
+  },
+  {
+   "name": "phone-402/lightweight index: candles present",
+   "ok": true,
+   "detail": "last close 6834.4"
+  },
+  {
+   "name": "phone-402/lightweight index: no levels drawn",
+   "ok": true,
+   "detail": "data-gamma-callwall=\"\""
+  },
+  {
+   "name": "phone-402/lightweight index: reason shown",
+   "ok": true,
+   "detail": "not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw"
+  },
+  {
+   "name": "phone-402/lightweight 402px: no sideways page scroll",
+   "ok": true,
+   "detail": "overflow 0px"
+  },
+  {
+   "name": "phone-402/lightweight 402px: reason inside the screen",
+   "ok": true,
+   "detail": "x 38 w 326"
+  },
+  {
+   "name": "phone-402/lightweight rapid switch: no level ever shown on another symbol",
+   "ok": true,
+   "detail": "66 samples, 0 wrong"
+  },
+  {
+   "name": "phone-402/lightweight rapid switch: settles on NVDA's own levels",
+   "ok": true,
+   "detail": "wall 190"
+  },
+  {
+   "name": "phone-402/svg SPY: SPY call wall drawn on SPY candles",
+   "ok": true,
+   "detail": "wall 690, last close 685.2"
+  },
+  {
+   "name": "phone-402/svg SPY: banner distance uses SPY price (+4.80 · +0.70%)",
+   "ok": true,
+   "detail": "POS GAMMA · mean-revert SPY · 1D Net GEX +2.00B Spot 685.20 · chain as of 8:33:53 AM CALL WALL · 1000M Γ 690.00 +4.80 · +0.70% 0Γ FLIP · REGIME PIVOT 684.90 -0."
+  },
+  {
+   "name": "phone-402/svg index: candles present",
+   "ok": true,
+   "detail": "last close 6834.4"
+  },
+  {
+   "name": "phone-402/svg index: no levels drawn",
+   "ok": true,
+   "detail": "data-gamma-callwall=\"\""
+  },
+  {
+   "name": "phone-402/svg index: reason shown",
+   "ok": true,
+   "detail": "not drawn for ^GSPC: Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not draw"
+  },
+  {
+   "name": "phone-402/svg 402px: no sideways page scroll",
+   "ok": true,
+   "detail": "overflow 0px"
+  },
+  {
+   "name": "phone-402/svg 402px: reason inside the screen",
+   "ok": true,
+   "detail": "x 38 w 326"
+  },
+  {
+   "name": "phone-402/svg rapid switch: no level ever shown on another symbol",
+   "ok": true,
+   "detail": "69 samples, 0 wrong"
+  },
+  {
+   "name": "phone-402/svg rapid switch: settles on NVDA's own levels",
+   "ok": true,
+   "detail": "wall 190"
+  },
+  {
+   "name": "phone-402: no page errors",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "server: index route answers unsupported with no levels and a reason",
+   "ok": true,
+   "detail": "{\"symbol\":\"^GSPC\",\"supported\":false,\"spot\":null,\"levels\":null,\"reason\":\"Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not drawn on S&P 500 index candles. S"
+  }
+ ],
+ "replies": [
+  {
+   "viewport": 1280,
+   "url": "/api/gamma-levels?symbol=SPY&tf=1D",
+   "status": 200,
+   "body": {
+    "symbol": "SPY",
+    "supported": true,
+    "spot": 685.2,
+    "levels": {
+     "callWall": 690,
+     "callWallGex": 1000000000,
+     "putWall": 680,
+     "putWallGex": -1000000000,
+     "zeroGamma": 684.9,
+     "flip": 684.9,
+     "maxPain": 684.9,
+     "totalGex": 2000000000,
+     "regime": "positive",
+     "profile": []
+    },
+    "asOf": 1794472433
+   }
+  },
+  {
+   "viewport": 1280,
+   "url": "/api/gamma-levels?symbol=%5EGSPC&tf=1D",
+   "status": 200,
+   "body": {
+    "symbol": "^GSPC",
+    "supported": false,
+    "spot": null,
+    "levels": null,
+    "reason": "Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not drawn on S&P 500 index candles. Switch the chart to SPY to see them.",
+    "asOf": null
+   }
+  },
+  {
+   "viewport": 1280,
+   "url": "/api/gamma-levels?symbol=NVDA&tf=1D",
+   "status": 200,
+   "body": {
+    "symbol": "NVDA",
+    "supported": true,
+    "spot": 186,
+    "levels": {
+     "callWall": 190,
+     "callWallGex": 1000000000,
+     "putWall": 180,
+     "putWallGex": -1000000000,
+     "zeroGamma": 185,
+     "flip": 185,
+     "maxPain": 185,
+     "totalGex": 2000000000,
+     "regime": "positive",
+     "profile": []
+    },
+    "asOf": "2026-11-12T08:33:53.145Z"
+   }
+  },
+  {
+   "viewport": 402,
+   "url": "/api/gamma-levels?symbol=SPY&tf=1D",
+   "status": 200,
+   "body": {
+    "symbol": "SPY",
+    "supported": true,
+    "spot": 685.2,
+    "levels": {
+     "callWall": 690,
+     "callWallGex": 1000000000,
+     "putWall": 680,
+     "putWallGex": -1000000000,
+     "zeroGamma": 684.9,
+     "flip": 684.9,
+     "maxPain": 684.9,
+     "totalGex": 2000000000,
+     "regime": "positive",
+     "profile": []
+    },
+    "asOf": 1794472433
+   }
+  },
+  {
+   "viewport": 402,
+   "url": "/api/gamma-levels?symbol=%5EGSPC&tf=1D",
+   "status": 200,
+   "body": {
+    "symbol": "^GSPC",
+    "supported": false,
+    "spot": null,
+    "levels": null,
+    "reason": "Dealer levels on this chart come from the SPY option chain, on SPY's price scale; they are not drawn on S&P 500 index candles. Switch the chart to SPY to see them.",
+    "asOf": null
+   }
+  },
+  {
+   "viewport": 402,
+   "url": "/api/gamma-levels?symbol=NVDA&tf=1D",
+   "status": 200,
+   "body": {
+    "symbol": "NVDA",
+    "supported": true,
+    "spot": 186,
+    "levels": {
+     "callWall": 190,
+     "callWallGex": 1000000000,
+     "putWall": 180,
+     "putWallGex": -1000000000,
+     "zeroGamma": 185,
+     "flip": 185,
+     "maxPain": 185,
+     "totalGex": 2000000000,
+     "regime": "positive",
+     "profile": []
+    },
+    "asOf": "2026-11-12T08:33:53.145Z"
+   }
+  }
+ ],
+ "finishedAt": "2026-11-12T08:34:11.637Z"
+}
