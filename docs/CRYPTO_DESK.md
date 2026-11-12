@@ -232,3 +232,11 @@ No win rate, no edge, no probability. The desk removes trades that lose by
 construction and records the rest. "Profitable" is written on the card by
 the sample, when the sample exists, and only for the rule version it was
 measured on.
+
+### Open in FOMO
+"Copy mint & open FOMO" (CoinDesk.tsx, shared/fomoLink.ts) copies the mint
+address and opens FOMO's universal link (fomo.family): FOMO publishes no
+per-token URL or app scheme as of 2026-11-11, so the person pastes the address
+into the app's search and places any order there. The desk sends FOMO nothing
+and places no order. When FOMO documents a per-token link, change
+fomoTokenUrl and nothing else.

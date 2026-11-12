@@ -2027,3 +2027,12 @@ branch). Stated here as the reviewer asked: killbox gradient rows now come from 
 the same path /api/chain-audit already uses for 60 DTE, and the merged chain is stale when ANY segment
 was re-served, so the seeder skips such ticks. A change in the inputs of a stored reading, consistent
 with the audit endpoint.
+
+2026-11-11: Open in FOMO (feat/fomo-open-link, owner request). Beside "Copy AI prompt" on every Solana
+desk card: "Copy mint & open FOMO" copies the mint address and opens fomo.family (FOMO Labs' app; its
+universal link opens the installed app on iPhone). Checked fomo.family, its memecoin pages, the community
+README and two user guides on 2026-11-11: FOMO documents no per-token URL and no URL scheme, and its own
+search takes a contract address, so the mint travels on the clipboard and the card says so. The desk sends
+FOMO nothing and places no order (standing rule). shared/fomoLink.ts fomoTokenUrl is the one place to
+change when FOMO publishes a per-token link. Tests: tests/quant/fomo-link.test.ts. Owner check: tap it on
+the phone once; if FOMO's share sheet gives a per-token URL, send one and the link becomes direct.

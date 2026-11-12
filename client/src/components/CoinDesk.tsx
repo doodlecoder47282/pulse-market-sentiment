@@ -3,12 +3,13 @@
 // Rendered outside the card's toggle button (it holds an input and buttons).
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Check, Target } from "lucide-react";
+import { Copy, Check, Target, ExternalLink } from "lucide-react";
 import type { CardBundle } from "@shared/cryptoBundle";
 import { bundleLine } from "@shared/cryptoBundle";
 import { CRYPTO_RULES } from "@shared/cryptoRules";
 import { planLevels, sizeFromBankroll, buildTradePrompt, type PlanSummary, type PromptCoin } from "@shared/exitPlan";
 import { capOf } from "@shared/cryptoCap";
+import { fomoTokenUrl } from "@shared/fomoLink";
 
 export type DeskCoin = PromptCoin & {
   fdv?: number | null;
@@ -66,6 +67,18 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
+  const [fomo, setFomo] = useState<"ok" | "fail" | null>(null);
+  // FOMO (fomo.family, FOMO Labs) publishes no per-token URL or app scheme as of
+  // 2026-11-11 (checked: fomo.family, its memecoin pages, the community README
+  // and user guides; the app's own search takes a contract address). So this
+  // copies the mint and opens the app's universal link; the person pastes it.
+  // A link, not an order: the desk never executes.
+  const onOpenFomo = async () => {
+    const ok = await copyText(c.tokenAddress);
+    setFomo(ok ? "ok" : "fail");
+    setTimeout(() => setFomo(null), 4000);
+    window.open(fomoTokenUrl(c.tokenAddress), "_blank", "noopener,noreferrer");
+  };
   const sig = useQuery<{ exitPlan?: PlanSummary | null }>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000 });
   const rec = sig.data?.exitPlan ?? null;
 
@@ -150,6 +163,17 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
         {copied === "ok" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         {copied === "ok" ? "Copied. Paste it into your AI" : copied === "fail" ? "Copy blocked by the browser" : "Copy AI prompt"}
       </button>
+      {c.chain === "solana" && c.tokenAddress && (
+        <button onClick={onOpenFomo} className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-sky-400/40 bg-sky-400/10 text-[13px] font-semibold text-sky-200" data-testid="crypto-open-fomo">
+          <ExternalLink className="h-4 w-4" />
+          {fomo === "ok" ? "Mint copied. Paste it into FOMO's search" : fomo === "fail" ? "Copy blocked; FOMO opened" : "Copy mint & open FOMO"}
+        </button>
+      )}
+      {c.chain === "solana" && c.tokenAddress && (
+        <div className="text-[11px] text-muted-foreground">
+          Opens the FOMO app (or its web app) with the mint address on your clipboard; FOMO has no documented per-token link, so you paste it into search. Any order is yours to place there; the desk places none.
+        </div>
+      )}
     </div>
   );
 }
