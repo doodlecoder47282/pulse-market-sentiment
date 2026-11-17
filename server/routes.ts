@@ -3662,7 +3662,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.json({
         ...out,
         asOf: chain.asOfMs ?? out.asOf,
-        chain: { asOfMs: chain.asOfMs, ageMs: chain.ageMs, servedFromCache: chain.servedFromCache, stale: chain.stale, staleReason: chain.staleReason ?? null },
+        chain: { asOfMs: chain.asOfMs, ageMs: chain.ageMs, servedFromCache: chain.servedFromCache, stale: chain.stale, staleReason: chain.staleReason ?? null, lastSession: chain.lastSession === true, maxAgeMs: chain.maxAgeMs ?? null },
         oiState: chain.oiState ?? null,
       });
     } catch (e: any) {
@@ -4069,6 +4069,8 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       result.chainAsOfMs = chain.asOfMs;
       result.chainStale = chain.stale;
       result.chainMaxAgeMs = chain.maxAgeMs;
+      // Read by the Heatseeker chip: a closed-market chain is the last session's, not stale and not live.
+      result.chainLastSession = chain.lastSession === true;
       result.oiState = chain.oiState ?? null;
       result.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }

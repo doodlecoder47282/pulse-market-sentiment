@@ -2102,3 +2102,37 @@ nothing, so a young pool's first read (usually under 10 candles) would have lock
 "insufficient" forever; it now waits for the first readable tape (>= CANDLES_MIN) and the SQL also replaces
 a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
 with a separator.
+
+2026-11-16: Audit batch, Models / Heatseeker / Regime (feat/models-audit; audit items M2, M5, M6, M7, M8, M9,
+M11, M12, M13, M15, M17). NOT in this batch, owner decisions: M1 (DFI saturates at +-5: see below) and the
+date logic of M3/M4.
+M5: the VIX-derived daily sigma in percent (about 0.22 for a 4-point VIX day) was read as VIX points by the
+MM matrix's "VIX moved over 1 pt" rule and by the "Vol Bid Up / Vol Offered" label (0.25), so neither fired
+short of an ~18-point (or ~4.5-point) VIX day; termStructureDoD now carries vixDeltaPts and both read points;
+the row is labelled "1D sigma (from VIX)". M6: the models payload said session "live" on every successful
+build, so a weekend build on Friday's chain read "LIVE"; live now needs the regular session open and no
+horizon on a last-session chain copy; a stored build reads "STORED BUILD"; three hard-coded "LIVE {spot}"
+labels read "SPOT". M7: the Heatseeker route never set chainLastSession and the thermal route sent no
+lastSession, so neither could show "last session"; both set, Thermal's chip reads it. M9: Canary scaled
+sigma by the wall clock with no closed-market check, so a Saturday 10:00 read as 30 minutes into a session
+and inflated z by up to 2x; a closed market is compared with a full day's sigma. M17: a missing VIX gave an
+MM-matrix move of 0 ("+-0", "~0pt move"); null with a dash. M12: unknown gamma ("y?") read "POS gamma";
+three states now. M13: with no charm zero the Double Zero line always read "KNIFE EDGE"; it now says no
+zone exists, and the gamma sign comes from the audit's zone. M15: "Sell zone / Buy zone / Chop" are "Above
+call wall / Below put wall / Between the walls"; "NEG-gamma ENTRY" rail label is "NEG-gamma LEVEL". M11:
+"(FIRST FLIP)" / "FLIP" on DFI meant spot within 0.3% of the charm zero; labelled "near charm zero". M8:
+every TREND regime mapped to the "bull" tone (green, up-arrow) on the tab headlines although TREND is the
+short-gamma state and has no direction; regime tone is neutral, the Heatseeker subline no longer claims
+"price has been pinning" (not measured) and its bullets describe what the tab shows. M2: the documented
+"nearest structural resistance / support capped to EM" never happened (the filter read `side`, a field
+added to the levels later), so scenario targets have always been spot +- 1 EM of the horizon; the dead
+filter is removed and the code and type comments say what the targets are. The graded event is unchanged
+on purpose: a structural version would move the target to the nearest of a dozen level kinds and change
+what every calibration row so far was a forecast of. OWNER DECISIONS OPEN: (a) DFI: (dDEX/dS)/|GEX| x 1e9 is
+about 1e8 and always clamps to +-5.00, so "DFI +5.00 BULLISH" carries only a sign (close to the gamma
+sign), the regime predictor can only return CHOP_WEAK or TREND_STRONG from it, and the MM matrix always
+applies its maximum tilt. A unit-less version is about +-1 plus DEX/(100 GEX), still close to a sign; the
+regime thresholds (1.0 / 2.0 / 3.5) were set for a spread that never existed. Options: retire DFI and key
+the regime on the gamma zone it already equals, or define a real flow measure and re-grade. (b) whether
+scenario targets should become structural.
+Tests: tests/quant/audit-models.test.ts. Needs a quant review.
