@@ -46,6 +46,8 @@ export interface CalibrationBucket {
   wilsonHi: number | null;
   fitted: number | null;        // isotonic-fitted probability
   prior: number;                // legacy linear map at bucket center
+  /** True only when getWinProb actually serves `fitted` for this bucket (MIN_TOTAL fires overall and MIN_BUCKET here); otherwise the prior is served and `fitted` is a small-sample curiosity. */
+  fittedInUse?: boolean;
 }
 
 export interface CalibrationReport {
@@ -144,6 +146,7 @@ export function getCalibrationReport(force = false): CalibrationReport {
   } catch { /* noop */ }
 
   const source: "fitted" | "prior" = total >= MIN_TOTAL ? "fitted" : "prior";
+  for (const b of bucketStats as CalibrationBucket[]) b.fittedInUse = source === "fitted" && b.n >= MIN_BUCKET && b.fitted != null;
   const report: CalibrationReport = {
     asOf: now,
     source,

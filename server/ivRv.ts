@@ -13,6 +13,7 @@
 // The verdict is a relative-value read, not a tested trading edge.
 
 import { sqlite } from "./storage";
+import { isTradingDay } from "./exchangeCalendar";
 import { getOptionChain } from "./schwab";
 import { harVolForecast, spreadVerdict, spreadZScore, SPREAD_MIN_HISTORY, SPREAD_Z_CUT, type SpreadZ } from "./harRv";
 
@@ -62,7 +63,9 @@ function loadIv30History(symbol: string, beforeDate: string, limit = 252): { dat
     const rows = sqlite.prepare(
       `SELECT date, iv_30 AS iv30 FROM iv_rv_daily WHERE symbol = ? AND iv_30 IS NOT NULL AND date < ? ORDER BY date DESC LIMIT ?`
     ).all(symbol.toUpperCase(), beforeDate, limit) as { date: string; iv30: number }[];
-    return rows.reverse().filter((r) => Number.isFinite(r.iv30) && r.iv30 > 0);
+    // Rows written on a weekend or holiday (before 2026-11-16 every GET wrote one) repeat the prior session
+    // and are not observations.
+    return rows.reverse().filter((r) => Number.isFinite(r.iv30) && r.iv30 > 0 && tradingDate(r.date));
   } catch {
     return [];
   }
@@ -197,13 +200,31 @@ function ratio(iv: number | null, rv: number | null): number | null {
   return iv / rv;
 }
 
-function persist(symbol: string, snap: IvRvSnapshot): void {
-  try {
-    sqlite.prepare(`
-      INSERT OR REPLACE INTO iv_rv_daily
+function tradingDate(date: string): boolean {
+  try { return isTradingDay(date); } catch { return false; }
+}
+
+/**
+ * One row per symbol per TRADING day. A weekend or holiday request writes nothing (it would store the prior
+ * session's numbers again under a date with no session, and every such row entered the percentile cones and
+ * the spread history). A later read the same day updates the row, but a value that is missing now never
+ * erases one already stored (a failed chain read at 15:00 used to null the 10:00 implied vol).
+ */
+export const IV_RV_UPSERT_SQL = `
+      INSERT INTO iv_rv_daily
         (symbol, date, rv_5, rv_10, rv_20, rv_30, rv_60, iv_30, iv_60, iv_90, captured_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)
-    `).run(
+      ON CONFLICT(symbol, date) DO UPDATE SET
+        rv_5 = COALESCE(excluded.rv_5, rv_5), rv_10 = COALESCE(excluded.rv_10, rv_10), rv_20 = COALESCE(excluded.rv_20, rv_20),
+        rv_30 = COALESCE(excluded.rv_30, rv_30), rv_60 = COALESCE(excluded.rv_60, rv_60),
+        iv_30 = COALESCE(excluded.iv_30, iv_30), iv_60 = COALESCE(excluded.iv_60, iv_60), iv_90 = COALESCE(excluded.iv_90, iv_90),
+        captured_at = excluded.captured_at
+    `;
+
+function persist(symbol: string, snap: IvRvSnapshot): void {
+  if (!tradingDate(snap.asOf)) return;
+  try {
+    sqlite.prepare(IV_RV_UPSERT_SQL).run(
       symbol.toUpperCase(),
       snap.asOf,
       snap.rv.rv5, snap.rv.rv10, snap.rv.rv20, snap.rv.rv30, snap.rv.rv60,
@@ -217,9 +238,9 @@ function rvConePercentiles(symbol: string, windowDays: number): { p10: number | 
   const col = `rv_${windowDays}`;
   try {
     const rows = sqlite.prepare(
-      `SELECT ${col} as v FROM iv_rv_daily WHERE symbol = ? AND ${col} IS NOT NULL ORDER BY date DESC LIMIT 252`
-    ).all(symbol.toUpperCase()) as { v: number }[];
-    const xs = rows.map(r => r.v).filter(Number.isFinite).sort((a, b) => a - b);
+      `SELECT date, ${col} as v FROM iv_rv_daily WHERE symbol = ? AND ${col} IS NOT NULL ORDER BY date DESC LIMIT 252`
+    ).all(symbol.toUpperCase()) as { date: string; v: number }[];
+    const xs = rows.filter((r) => tradingDate(r.date)).map(r => r.v).filter(Number.isFinite).sort((a, b) => a - b);
     if (xs.length < 30) return { p10: null, p50: null, p90: null };
     const pick = (p: number) => xs[Math.min(xs.length - 1, Math.floor(xs.length * p))];
     return { p10: pick(0.1), p50: pick(0.5), p90: pick(0.9) };
