@@ -49,6 +49,7 @@ import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
 import { readDerivs, lastDerivs } from "./sources/cryptoDerivs";
 import { derivsRecord, type DerivsSnapshot } from "../shared/cryptoFunding";
 import { volumeAcceleration } from "../shared/cryptoFlow";
+import { candidatesReadout } from "../shared/cryptoCandidates";
 import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type JupState } from "./sources/dexCross";
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
@@ -1778,7 +1779,8 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
       },
     };
   });
-  const data = buildReplay(like, now);
+  // Candidate rule sets over the same rows (shared/cryptoCandidates.ts): a what-if readout, never a verdict.
+  const data = { ...buildReplay(like, now), candidates: candidatesReadout(like) };
   replayCache = { at: now, data };
   return data;
 }

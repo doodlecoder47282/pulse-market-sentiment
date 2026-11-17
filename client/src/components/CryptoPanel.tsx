@@ -1246,6 +1246,52 @@ function ReplayCard() {
             <div className="mt-0.5 text-muted-foreground">{r.reeval.gateEvidence ? `Decision-time gate evidence recorded on ${r.reeval.gateEvidence.recorded} of ${r.reeval.gateEvidence.of} first signals. ` : ""}{r.reeval.unchecked.length ? `Still unchecked on older rows: ${r.reeval.unchecked.join("; ")}. ` : r.reeval.gateEvidence.of > 0 ? "The four recorded gates (sustained flow, Jupiter, 1 h sells, desk risk) were re-checked on every first signal; other rule differences are not covered. " : "No first signals yet. "}{r.reeval.lookAhead}</div>
           </section>
 
+          {r.candidates && (
+            <section data-testid="crypto-replay-candidates">
+              <div className="text-[11px] font-medium text-muted-foreground">5 · Candidate rule sets on the same record ({r.candidates.version})</div>
+              <p className="mt-0.5 text-muted-foreground">
+                {r.reeval.originallyEnter === 0 ? "The live rules have not passed a coin in this record, so there is nothing to judge them by. " : ""}Each set below was fixed before it was run and is asked of the same {r.candidates.considered} graded first signals: which would have passed, and what those coins did. None is a live rule.
+              </p>
+              <div className="mt-1 space-y-1.5">
+                {r.candidates.sets.map((s) => (
+                  <div key={s.id} className="rounded border border-border/40 p-2" data-testid={`crypto-candidate-${s.id}`}>
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                      <span className="font-medium text-foreground">{s.name}</span>
+                      <span className="font-mono tabular-nums text-muted-foreground">passed <span className="text-foreground">{s.passed}</span> of {s.considered}{s.notEvaluable > 0 ? ` · ${s.notEvaluable} not evaluable (an input was not recorded)` : ""}</span>
+                    </div>
+                    <div className="text-muted-foreground">{s.why}</div>
+                    {s.insufficient ? (
+                      <div className="mt-1 font-mono tabular-nums text-amber-300/90" data-testid={`crypto-candidate-${s.id}-insufficient`}>
+                        INSUFFICIENT DATA · {s.all.n} priced, {s.all.wins} touched the target or 2x · counts only under 50
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mt-1 grid grid-cols-1 gap-1 font-mono tabular-nums sm:grid-cols-3">
+                          {[s.inSample, s.outOfSample, s.all].map((x) => (
+                            <div key={x.label} className="rounded border border-border/30 p-1.5">
+                              <div className="text-foreground">{x.label}</div>
+                              <div>n {x.n} · wins {x.wins} ({pct(x.winShare)}{x.winLo != null ? `, CI ${x.winLo}–${x.winHi}` : ""})</div>
+                              <div>mean net {pct(x.meanNetGradedPct)} · median {pct(x.medianNetGradedPct)}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-1 font-mono tabular-nums text-muted-foreground">held to the 72 h mark: mean net {pct(s.meanNetHoldPct)} over {s.holdN} priced</div>
+                      </>
+                    )}
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                      {s.rules.map((rule) => (
+                        <li key={rule.id}>{rule.text} <span className="font-mono tabular-nums">· pass {rule.pass}{rule.passUnread > 0 ? ` (${rule.passUnread} with nothing recorded)` : ""} · fail {rule.fail}{rule.unread > 0 ? ` · not recorded ${rule.unread}` : ""}</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                {r.candidates.caveats.map((c, i) => <li key={i}>{c}</li>)}
+              </ul>
+            </section>
+          )}
+
           <p className="text-muted-foreground">{r.samplingLimit}</p>
           <p className="text-muted-foreground/80">{r.scope}</p>
         </div>

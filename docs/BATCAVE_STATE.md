@@ -2418,3 +2418,22 @@ table so the last 30 seconds may be missing, and a deployer can use a fresh wall
 table gains two indexed columns (symbol_norm, deployer), filled once for existing rows from their stored
 records. Not built yet from item 2: graduation as the entry universe, curve progress, dev-wallet sells,
 unique buyers.
+2026-11-17: Owner asked for items 1 to 6 of the next-steps list. Item 1, candidate rule sets on the record
+(feat/crypto-candidate-rules; shared/cryptoCandidates.ts, version candidates-2026.11.17-1). The live rules
+have never passed a coin, so the replay gains a fifth section: five rule sets declared in advance (structure
+only; two-sided tape; attention; past the first minutes; combined) are asked of the same graded first
+signals, each showing how many would have passed, wins, mean and median net of cost in the older and newer
+half, the hold-to-horizon mean, and per rule how many rows passed, failed or had no recorded input. A rule
+whose input was not recorded does not pass a row. Nothing here moves a live verdict, score or exit level;
+the parameters are the candidates', not the desk's thresholds, and are versioned in that file. Stated on
+screen: five sets on one record bias the best one upward; the record keeps only each coin's first signal
+(about minute 2), so rules about a later state pass few rows, which is a limit of the record; no candidate
+is a claim of edge. The owner picks a set from this readout before any rule-book change.
+Review of the candidate sets: HOLD, taken. The readout said a rule with no recorded input never passes a
+row, but the three structure rules do pass on absence (they block only on a recorded objection); the copy
+now says so and each rule's tally shows how many passes had nothing recorded. Also taken: the sets were
+"fixed before being run", not out-of-sample (their parameters came from this record; the clean evidence is
+rows after 2026-11-17); a set under 50 priced rows shows counts only; the hold mean shows its n; the "live
+rules have not passed a coin" sentence is conditional on the data; a whitespace symbol is unread; the
+parameters and set ids are hash-pinned to the version string and a test checks that only the replay imports
+the module.
