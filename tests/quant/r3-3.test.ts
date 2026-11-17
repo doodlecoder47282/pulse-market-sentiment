@@ -358,7 +358,11 @@ test("crypto checks: missing sells is not ZERO sells; Jupiter fail-closed; holde
   const { honeypotRead, jupiterAllowsEnter, momentumPoints, holderConcentration } = await import("../../server/cryptoStats");
   assert.equal(honeypotRead(40, 0), "honeypot");          // observed 0 sells
   assert.equal(honeypotRead(40, null), "sells_missing");  // missing: unverifiable, not a honeypot
-  assert.equal(honeypotRead(10, 0), "ok");
+  assert.equal(honeypotRead(10, 0), "no_sells");          // observed 0 with few buys: not the kill, but "at least one sell observed" is not met
+  assert.equal(honeypotRead(null, 0), "no_sells");
+  assert.equal(honeypotRead(24, 0), "no_sells");
+  assert.equal(honeypotRead(25, 0), "honeypot");
+  assert.equal(honeypotRead(10, 1), "ok");
   assert.equal(honeypotRead(40, 3), "ok");
   for (const s of ["agree", "watch"]) assert.equal(jupiterAllowsEnter(s), true);
   for (const s of ["failed", "unchecked", "diverge", "no-reliable-price", null]) assert.equal(jupiterAllowsEnter(s as any), false);

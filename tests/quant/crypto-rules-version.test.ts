@@ -27,6 +27,11 @@ const PINNED: Record<string, string> = {
   // (stale_data) between the top-10 and desk-risk gates, the served feed re-applies it, and a re-score on
   // stale data (security / social ticks) records no row. No score or other threshold changed.
   "2026.11.06-1": "5aaf5185dfc1258433f954604eb4c593ab698c4633be47660f0cdaccea04bf63",
+  // 2026.11.16-1: no number changed (same hash). The stated gate enter.requireSellsObserved ("at least one sell
+  // observed in the last hour") was not enforced when sells1h was an observed 0 with under 25 buys (or buys
+  // unread): honeypotRead returned "ok" and the pair could reach ENTER. It now returns "no_sells" and holds at
+  // WATCH (code no_sells). Graded outcomes differ from here, so the version moves and the records partition.
+  "2026.11.16-1": "5aaf5185dfc1258433f954604eb4c593ab698c4633be47660f0cdaccea04bf63",
 };
 
 test("crypto rule book content is pinned to its version", () => {
@@ -75,7 +80,7 @@ test("the engine, stats and verdict read the book instead of carrying their own 
   assert.match(dx, /JUP_DIVERGE_PCT = CRYPTO_RULES\.jupiter\.divergePct/);
   const ms = src("shared/memeStructure.ts");
   assert.match(ms, /DEFAULT_DEX_FEE_PCT = CRYPTO_RULES\.cost\.dexFeePct/);
-  assert.match(st, /honeypotMinBuys1h && sells1h === 0/);
+  assert.match(st, /if \(sells1h <= 0\) return \(buys1h \?\? 0\) >= CRYPTO_RULES\.hardKills\.honeypotMinBuys1h \? "honeypot" : "no_sells";/);
   // Hard kill is PASS, never WATCH; the 55 floor is the retrace watch above the cap ceiling.
   assert.match(eng, /CRYPTO_RULES\.mcapCeiling\.watchMinScore \? "WATCH" : "PASS"/);
   assert.doesNotMatch(src("shared/cryptoRules.ts"), /minScoreWithKill/);

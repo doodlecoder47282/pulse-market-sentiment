@@ -166,6 +166,14 @@ test("prompt dates the market data from the pair read and flags data older than 
   // 9.6 min: under the limit, no flag; 10.3 min: flagged, and never printed as "10 min".
   assert.match(buildTradePrompt({ ...base, lastRefreshAt: now - 576_000 }, "$1", CRYPTO_RULES, now), /\(pair read 9\.6 min before this prompt was copied\)/);
   assert.match(buildTradePrompt({ ...base, lastRefreshAt: now - 618_000 }, "$1", CRYPTO_RULES, now), /pair read 10\.3 min before this prompt was copied; OLDER than/);
+  // FDV-only coin: the prompt carries the same cap and levels the card shows, with the basis named (it used to say "market cap unread" and drop every cap level).
+  const fdvOnly = buildTradePrompt({ ...base, marketCap: null, fdv: 400_000, lastRefreshAt: now - 60_000 }, "$1", CRYPTO_RULES, now);
+  assert.match(fdvOnly, /market cap \(FDV basis; no market cap reported\) \$400,000/);
+  assert.doesNotMatch(fdvOnly, /market cap unread/);
+  assert.match(fdvOnly, /sell 50% at 2x \(\$800K cap\)/, "the 2x trim level is printed from the FDV cap");
+  const withCap = buildTradePrompt({ ...base, marketCap: 300_000, fdv: 900_000, lastRefreshAt: now - 60_000 }, "$1", CRYPTO_RULES, now);
+  assert.match(withCap, /MARKET: price [^,]+, market cap \$300,000/);
+  assert.equal(buildTradePrompt({ ...base, marketCap: null, fdv: null, lastRefreshAt: now - 60_000 }, "$1", CRYPTO_RULES, now).includes("market cap unread"), true);
 });
 
 test("Railway: callback defaults from the public domain; an explicit value wins", () => {

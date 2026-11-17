@@ -299,7 +299,7 @@ export function wouldEnterNow(r: ReplayRow, rules: CryptoRules = CRYPTO_RULES): 
     else if (!sustainedFlow(g.flowReadings, rules).sustained) b.push("flow not sustained");
     if (g.jupState !== "agree" && g.jupState !== "watch") b.push(`Jupiter ${g.jupState ?? "unread"}`);
     if (g.sells1h == null) b.push("1 h sells unread");
-    else if ((g.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h && g.sells1h === 0) b.push("honeypot pattern");
+    else if (g.sells1h <= 0) b.push((g.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h ? "honeypot pattern" : "no sell observed in the last hour");
     if (g.deskRisk !== "on") b.push(`desk risk ${g.deskRisk ?? "unread"}`);
   }
   return { enter: b.length === 0, blockers: b, unchecked };
