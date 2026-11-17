@@ -69,6 +69,7 @@ interface Candidate {
   jupPriceUsd?: number | null; jupGapPct?: number | null; jupCheckedAt?: number | null;
   jupState?: "agree" | "watch" | "diverge" | "no-reliable-price" | "failed" | "unchecked";
   bundle?: CardBundle | null;
+  launchCtx?: import("@shared/launchContext").LaunchContext | null;
   score: number | null; verdict: Verdict; verdictCode?: string | null; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
@@ -912,6 +913,12 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             )}
           </div>
           {c.chain === "solana" && <BundleRow bundle={c.bundle} />}
+          {c.chain === "solana" && c.launchCtx && (
+            <div className="text-[11px] text-muted-foreground" data-testid={`crypto-launch-context-${c.pairAddress}`} title={c.launchCtx.method}>
+              <span className="text-foreground/80">name and deployer · </span>
+              <span className={c.launchCtx.state === "ok" && ((c.launchCtx.sameSymbol24h ?? 0) >= 2 || (c.launchCtx.deployerOutcomes?.rugged ?? 0) > 0) ? "text-amber-300" : undefined}>{c.launchCtx.text}</span>
+            </div>
+          )}
           {c.socialCheckedAt != null && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span>
