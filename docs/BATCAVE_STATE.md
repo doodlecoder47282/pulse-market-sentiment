@@ -2282,3 +2282,29 @@ Review (MERGE-READY), copy should-fixes taken: the 1 sigma line names the stradd
 before the open the sentence says the session has not started instead of "390 minutes left"; the "price
 outside the bands" line is replaced (the bands restart from the current price on each refresh, so the chart
 cannot show that); "shrinks" is "normally shrinks".
+
+2026-11-17: Practitioner review, options batch 1 (feat/pro-review-options; review items O2, O3 in part, O4,
+O5; see docs/PRO_REVIEW_2026-11-17.md on the crypto branch). O2: a whale position's entry mark was the day's
+average traded price (premium / (volume x 100)) while its entry ask was the quote at detection, so "% mid"
+and "% if sold at bid" started from different entries and the bid-exit figure could exceed the mid-to-mid
+one (seen live: +33.3% mid, +53.2% at bid); entry.mark is the quote mid at detection and the day's average
+is kept as entry.avgTraded. Positions stored before this keep their old entry mark. O3 (part): the closed
+list asked for terminal positions without expired ones, so an expired whale could never appear in it; it
+asks for both. Still open under O3: expiry is stamped only inside the next session's scan, and whether
+positions survive a restart on the deployed volume is unverified. O4: before the open and on non-trading
+days the put/call baseline compared at minute 1440, which no stored point reaches, so every stored session
+was dropped ("0/20 sessions"); it compares each day's last point when that point was recorded from session
+minute 195 on, the recorder starts at boot instead of on the first panel request, and the message says how
+many sessions are stored against how many have a reading at this clock time. The "0/20" seen live at 12:19
+ET in session is NOT explained by this (in session the comparison was already by clock time); the new
+stored-versus-usable wording will show which it is. O5: flow volumes printed raw when negative or under
+1,000 (-5107.666666666667); they are rounded with their sign. Open from the review: O1 (whale direction
+basis), O6-O16.
+Review of options batch 1: HOLD, one must-fix taken: the panel still filtered the closed list to CLOSED
+after the request was widened, so O3 had no effect; the list and its count are closed or expired. Should-
+fixes taken: a stored day counts as full only when its last point is within 15 minutes of that date's own
+close (a recording that stopped mid-session is not a full day); outside the session the newest stored
+session is left out of the baseline, because the chain still reports that session's volume and it would be
+compared with itself; the wording says "near its close" outside the session; the entry.premium comment names
+the day's average price; a minus glyph and no "1000". Known and left: positions stored before this keep the
+day-average entry mark (no avgTraded field marks them), so the tracking list mixes bases until they expire.

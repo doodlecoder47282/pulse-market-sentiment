@@ -76,7 +76,7 @@ import {
 import * as fs from "fs";
 import * as path from "path";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
-import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
+import { buildFlowSnapshot, buildIntradayFlowSnapshot, startPcrRecorder, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
 import type { UnusualFlowResponse } from "./unusualFlow";
 import { CASH_INDEX_TO_SCHWAB } from "./schwabSymbols";
@@ -5208,6 +5208,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   // Crypto degen desk — GeckoTerminal/DexScreener/RSS engines + watchdog.
   // Free public APIs, no keys, independent of the Schwab data path.
   try { startCryptoEngines(); } catch (e: any) { console.warn(`[crypto] failed to start: ${e?.message ?? e}`); }
+  try { startPcrRecorder(); } catch (e: any) { console.warn(`[flow] P/C recorder failed to start: ${e?.message ?? e}`); }
   try { startCommunityEngine(); } catch (e: any) { console.warn(`[community] failed to start: ${e?.message ?? e}`); }
   try { startSetupEngine(); } catch (e: any) { console.warn(`[setups] failed to start: ${e?.message ?? e}`); }
   try { startResearchStore(); } catch (e: any) { console.warn(`[research] failed to start: ${e?.message ?? e}`); }
