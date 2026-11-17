@@ -711,6 +711,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     };
     return { cached, entry, args, gate: modelsCacheGate(entry, args) };
   }
+  /** The session flag is decided when a build is made; a cached "live" build served after the close is the last session's. */
+  const atServeSession = (d: ModelsResponse): ModelsResponse =>
+    d.session === "live" && !isRegularSessionOpen(Date.now()) ? { ...d, session: "last-close" } : d;
   /**
    * Read-only: the cached build when it would be served, else the reason
    * there is none. Never starts or joins a build, and makes no Schwab
@@ -719,14 +722,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   function peekModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): { data: ModelsResponse; reason: null } | { data: null; reason: string } {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     const { cached, entry, args, gate } = modelsGateFor(cacheKey);
-    if (gate.serve && cached) return { data: cached.data, reason: null };
+    if (gate.serve && cached) return { data: atServeSession(cached.data), reason: null };
     return { data: null, reason: modelsPeekReason({ inFlight: modelsInFlight.has(cacheKey), entry, miss: gate.serve ? null : gate.miss }, args) };
   }
   /** Build (or serve) the models snapshot. */
   async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     const { cached, gate } = modelsGateFor(cacheKey);
-    if (gate.serve && cached) return cached.data;
+    if (gate.serve && cached) return atServeSession(cached.data);
     // Existing build in flight
     const pending = modelsInFlight.get(cacheKey);
     if (pending) return pending;
@@ -3662,7 +3665,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.json({
         ...out,
         asOf: chain.asOfMs ?? out.asOf,
-        chain: { asOfMs: chain.asOfMs, ageMs: chain.ageMs, servedFromCache: chain.servedFromCache, stale: chain.stale, staleReason: chain.staleReason ?? null },
+        chain: { asOfMs: chain.asOfMs, ageMs: chain.ageMs, servedFromCache: chain.servedFromCache, stale: chain.stale, staleReason: chain.staleReason ?? null, lastSession: chain.lastSession === true, maxAgeMs: chain.maxAgeMs ?? null },
         oiState: chain.oiState ?? null,
       });
     } catch (e: any) {
@@ -4069,6 +4072,8 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       result.chainAsOfMs = chain.asOfMs;
       result.chainStale = chain.stale;
       result.chainMaxAgeMs = chain.maxAgeMs;
+      // Read by the Heatseeker chip: a closed-market chain is the last session's, not stale and not live.
+      result.chainLastSession = chain.lastSession === true;
       result.oiState = chain.oiState ?? null;
       result.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }

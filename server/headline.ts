@@ -54,11 +54,14 @@ function regimeWord(r: string): string {
   }
 }
 
-function regimeTone(r: string): "bull" | "bear" | "neutral" | "warning" {
-  if (r.startsWith("TREND")) return "bull";
-  if (r.startsWith("CHOP")) return "warning";
+// A regime has no direction: TREND is "moves tend to extend", up or down, and it is the short-gamma state.
+// It used to map to the "bull" tone (green, up-arrow) on every tab. Both regimes are neutral in tone now;
+// the copy below still branches on the regime itself.
+function regimeTone(_r: string): "bull" | "bear" | "neutral" | "warning" {
   return "neutral";
 }
+const isTrend = (r: string) => r.startsWith("TREND");
+const isChop = (r: string) => r.startsWith("CHOP");
 
 export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const { tab, port } = args;
@@ -119,8 +122,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         bullets: [
           "Whale criteria: $2.5M+ premium on one contract, volume/OI 15x, bought above the ask, 1–3 days to expiry.",
           known
-            ? (tone === "bull" ? "Trend regime: one-sided whale flow has tended to line up with the move (descriptive)." :
-               tone === "warning" ? "Chop regime: whale flow is noisier; closing-line value is the better yardstick than P&L." :
+            ? (isTrend(currentRegime) ? "Trend regime: one-sided whale flow has tended to line up with the move (descriptive)." :
+               isChop(currentRegime) ? "Chop regime: whale flow is noisier; closing-line value is the better yardstick than P&L." :
                "Neutral regime: no dominant dealer-hedging pressure.")
             : regimeMissing,
         ],
@@ -163,17 +166,17 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         tab,
         tone,
         topLine: levels ? `0DTE · ${levels}` : `0DTE · ${levelsMissing}`,
-        subLine: tone === "warning"
-          ? "Heavy chop: price has been pinning around strikes (descriptive, not a trade call)."
-          : tone === "bull"
-          ? "Trend regime: estimated dealer hedging tends to add to moves (descriptive, no edge claimed)."
+        subLine: isChop(currentRegime)
+          ? `${cap(regimeWord(currentRegime))} regime: in the model, estimated dealer hedging leans against moves (descriptive, not a trade call; pinning is not measured here).`
+          : isTrend(currentRegime)
+          ? `${cap(regimeWord(currentRegime))} regime: in the model, estimated dealer hedging tends to add to moves, in either direction (descriptive, no edge claimed).`
           : currentRegime === "NEUTRAL"
           ? "Neutral regime: no dominant estimated hedging pressure."
           : regimeMissing,
         bullets: [
-          "Live Greeks across ATM ±20 strikes, refreshed every 4s.",
-          "Hot zones = strike clusters with rising volume + Greek velocity.",
-          "0DTE alerts fire to Discord 9:45-15:45 ET on level breaks + gamma flips.",
+          "Dealer exposure by strike for the selected expiry (GEX, DEX, vanna, charm), from the Schwab chain.",
+          "The 0DTE map: 1-sigma bands to the close from the same-day straddle, with the chain's implied close beside it.",
+          "0DTE alerts post to Discord 9:45-15:45 ET on level breaks and gamma flips.",
         ],
         asOf: Date.now(),
         whatThisIs: "Live 0DTE option scanner — Greeks, hot strikes, sticky zones, real-time.",
