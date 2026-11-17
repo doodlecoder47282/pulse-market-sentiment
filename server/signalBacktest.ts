@@ -119,7 +119,8 @@ function maxDrawdown(equity: number[]): number {
   return mdd * 100;
 }
 
-const DEFAULT_COST_BPS = 3; // ~1-2 ticks one-way + commission
+/** Round-trip cost in bps (entry + exit), deducted ONCE per trade. The input is labelled round-trip; it used to be doubled. */
+const DEFAULT_COST_BPS = 6;
 
 export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS): BacktestResult {
   const bars = loadBars(spec.symbol, 1500);
@@ -134,6 +135,9 @@ export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS):
   const dates = bars.map(b => b.date);
   const hold = Math.max(1, spec.holdDays ?? 1);
   const sideDirective = spec.side ?? "long";
+  // The selected side applies to EVERY kind (four kinds used to trade long whatever was selected).
+  // "both" trades the signal's own direction: up-kinds (above / breakout up) long, down-kinds short.
+  const sideFor = (natural: "long" | "short"): "long" | "short" => (sideDirective === "both" ? natural : sideDirective);
   const trades: BacktestTrade[] = [];
 
   // Build entry signal mask
@@ -147,11 +151,11 @@ export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS):
       if (m[i] == null || m[i - 1] == null) continue;
       if (spec.kind === "price_above_sma") {
         if (closes[i] > (m[i] as number) && closes[i - 1] <= (m[i - 1] as number)) {
-          entry[i] = true; sideArr[i] = "long";
+          entry[i] = true; sideArr[i] = sideFor("long");
         }
       } else {
         if (closes[i] < (m[i] as number) && closes[i - 1] >= (m[i - 1] as number)) {
-          entry[i] = true; sideArr[i] = sideDirective === "short" ? "short" : "long";
+          entry[i] = true; sideArr[i] = sideFor("short");
         }
       }
     }
@@ -163,10 +167,10 @@ export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS):
       if (r[i] == null) continue;
       const rv = r[i] as number;
       if (spec.kind === "rsi_below") {
-        if (rv < t && (r[i - 1] ?? t) >= t) { entry[i] = true; sideArr[i] = "long"; }
+        if (rv < t && (r[i - 1] ?? t) >= t) { entry[i] = true; sideArr[i] = sideFor("long"); }
       } else {
         if (rv > t && (r[i - 1] ?? t) <= t) {
-          entry[i] = true; sideArr[i] = sideDirective === "short" ? "short" : "long";
+          entry[i] = true; sideArr[i] = sideFor("short");
         }
       }
     }
@@ -181,10 +185,10 @@ export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS):
       const upperPrev = (mean[i - 1] as number) + k * (std[i - 1] as number);
       const lowerPrev = (mean[i - 1] as number) - k * (std[i - 1] as number);
       if (spec.kind === "bbands_breakout_up") {
-        if (closes[i] > upper && closes[i - 1] <= upperPrev) { entry[i] = true; sideArr[i] = "long"; }
+        if (closes[i] > upper && closes[i - 1] <= upperPrev) { entry[i] = true; sideArr[i] = sideFor("long"); }
       } else {
         if (closes[i] < lower && closes[i - 1] >= lowerPrev) {
-          entry[i] = true; sideArr[i] = sideDirective === "short" ? "short" : "long";
+          entry[i] = true; sideArr[i] = sideFor("short");
         }
       }
     }
@@ -198,9 +202,9 @@ export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS):
       if (mean[i] == null || std[i] == null) continue;
       const zs = ((rets[i] - (mean[i] as number)) / (std[i] as number));
       if (spec.kind === "ret_zscore_below") {
-        if (zs < -z) { entry[i] = true; sideArr[i] = "long"; }
+        if (zs < -z) { entry[i] = true; sideArr[i] = sideFor("long"); }
       } else {
-        if (zs > z) { entry[i] = true; sideArr[i] = sideDirective === "short" ? "short" : "long"; }
+        if (zs > z) { entry[i] = true; sideArr[i] = sideFor("short"); }
       }
     }
   }
@@ -215,7 +219,7 @@ export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS):
     if (!Number.isFinite(e0) || !Number.isFinite(e1)) continue;
     const dir = sideArr[i] === "short" ? -1 : 1;
     const grossBps = ((e1 - e0) / e0) * 10000 * dir;
-    const netBps = grossBps - costBps * 2; // round-trip costs
+    const netBps = grossBps - costBps; // costBps is the round trip
     trades.push({
       entryDate: dates[i], exitDate: dates[exitIdx], side: sideArr[i],
       entry: e0, exit: e1, retPct: grossBps / 100, retBpsAfterCosts: netBps,

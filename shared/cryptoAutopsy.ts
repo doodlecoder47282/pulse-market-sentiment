@@ -109,9 +109,9 @@ export function autopsyGates(f: AutopsyFacts, rules: CryptoRules = CRYPTO_RULES)
   });
   const hpMin = rules.hardKills.honeypotMinBuys1h;
   add({
-    id: "honeypot", severity: "kill", label: "Sells observed", rule: `not ${hpMin}+ buys with zero sells in the last hour`,
-    ...(f.sells1h == null ? { value: "sell count not reported", state: "unread" as const, detail: "the honeypot check cannot run; the desk holds ENTER at WATCH" }
-      : (f.buys1h ?? 0) >= hpMin && f.sells1h === 0 ? { value: `${f.buys1h} buys, 0 sells`, state: "fail" as const, detail: "the honeypot pattern" }
+    id: "honeypot", severity: "kill", label: "Honeypot pattern", rule: `not ${hpMin}+ buys with zero sells in the last hour`,
+    ...(f.sells1h == null ? { value: "sell count not reported", state: "unread" as const, detail: "the pattern cannot be tested; the desk holds ENTER at WATCH" }
+      : (f.buys1h ?? 0) >= hpMin && f.sells1h <= 0 ? { value: `${f.buys1h} buys, 0 sells`, state: "fail" as const, detail: "the honeypot pattern" }
       : { value: `${f.buys1h == null ? "buys not reported" : `${f.buys1h} buys`}, ${f.sells1h} sells`, state: "pass" as const, detail: null }),
   });
   const rug = rules.hardKills.midRugChg1hPct;
@@ -180,6 +180,14 @@ export function autopsyGates(f: AutopsyFacts, rules: CryptoRules = CRYPTO_RULES)
   });
 
   // ── entry context ──
+  // The entry gate the rule book states (enter.requireSellsObserved): an observed zero is not the kill
+  // above with under hpMin buys, but nobody has been seen getting out, so the desk holds ENTER at WATCH.
+  if (rules.enter.requireSellsObserved) add({
+    id: "sells_observed", severity: "entry", label: "Sell observed, last hour", rule: "at least one sell in the last hour",
+    ...(f.sells1h == null ? { value: "sell count not reported", state: "unread" as const, detail: "the desk holds ENTER at WATCH" }
+      : f.sells1h <= 0 ? { value: "0 sells observed", state: "fail" as const, detail: "the desk holds ENTER at WATCH (no_sells)" }
+      : { value: `${f.sells1h} sell${f.sells1h === 1 ? "" : "s"}`, state: "pass" as const, detail: null }),
+  });
   const ceil = rules.universe.enterMcapMaxUsd;
   add({
     id: "mcap_ceiling", severity: "entry", label: "Market cap", rule: `at most ${usd(ceil)} for an ENTER`,

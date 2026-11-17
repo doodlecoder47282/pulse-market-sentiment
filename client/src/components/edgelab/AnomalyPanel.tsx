@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 
 interface AnomalyResult {
   date: string;
-  features: { name: string; value: number; z: number }[];
+  features: { name: string; value: number | null; z: number }[];
   nearestNeighborDistance: number;
   meanDistance: number;
   pctileVsHistory: number;
@@ -53,7 +53,7 @@ export default function AnomalyPanel() {
         <>
           <div className="rounded border border-border p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">today's anomaly score</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">anomaly score, latest stored day ({anomaly.date})</div>
               <Badge
                 variant="outline"
                 className={`text-xs ${isHot ? "bg-rose-500/15 text-rose-500 border-rose-500/30" : "bg-emerald-500/15 text-emerald-500 border-emerald-500/30"}`}
@@ -90,7 +90,7 @@ export default function AnomalyPanel() {
               {anomaly.features.map(f => (
                 <div key={f.name} className="rounded border border-border/60 bg-muted/20 p-2">
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{f.name}</div>
-                  <div className="text-sm font-semibold tabular-nums">{f.value.toFixed(2)}</div>
+                  <div className="text-sm font-semibold tabular-nums">{f.value == null ? "—" : f.name === "spy_ret_5d_z" ? `${(f.value * 100).toFixed(2)}%` : f.value.toFixed(2)}</div>
                   <div className={`text-[11px] font-mono ${Math.abs(f.z) >= 2 ? "text-rose-500 font-semibold" : "text-muted-foreground"}`}>
                     z = {f.z >= 0 ? "+" : ""}{f.z.toFixed(2)}
                   </div>
@@ -130,9 +130,9 @@ export default function AnomalyPanel() {
           ) : (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <Tile label="recent 30" value={`MAE ${d.recent30.meanAbsPctReturn?.toFixed(2) ?? "—"}%`} hint={`hit ${d.recent30.meanHit50?.toFixed(0) ?? "—"}%`} />
-                <Tile label="prior 90" value={`MAE ${d.prior90.meanAbsPctReturn?.toFixed(2) ?? "—"}%`} hint={`hit ${d.prior90.meanHit50?.toFixed(0) ?? "—"}%`} />
-                <Tile label="MAE drift" value={d.driftPctMae == null ? "—" : `${d.driftPctMae >= 0 ? "+" : ""}${d.driftPctMae.toFixed(1)}%`} positive={-(d.driftPctMae ?? 0)} />
+                <Tile label="recent 30" value={`mean |return| ${d.recent30.meanAbsPctReturn != null ? (d.recent30.meanAbsPctReturn * 100).toFixed(0) : "—"}%`} hint={`closed at +50% or better: ${d.recent30.meanHit50 != null ? (d.recent30.meanHit50 * 100).toFixed(0) : "—"}%`} />
+                <Tile label={`prior ${d.prior90.count}`} value={`mean |return| ${d.prior90.meanAbsPctReturn != null ? (d.prior90.meanAbsPctReturn * 100).toFixed(0) : "—"}%`} hint={`closed at +50% or better: ${d.prior90.meanHit50 != null ? (d.prior90.meanHit50 * 100).toFixed(0) : "—"}%`} />
+                <Tile label="|return| change" value={d.driftPctMae == null ? "—" : `${d.driftPctMae >= 0 ? "+" : ""}${d.driftPctMae.toFixed(1)}%`} />
                 <Tile label="hit drift" value={d.driftPctHit == null ? "—" : `${d.driftPctHit >= 0 ? "+" : ""}${d.driftPctHit.toFixed(1)}%`} positive={d.driftPctHit} />
               </div>
               <p className="text-[11px] text-muted-foreground mt-2 leading-snug">{d.note}</p>

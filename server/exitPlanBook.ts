@@ -9,6 +9,7 @@
 
 import { sqlite } from "./storage";
 import { EXIT_PLAN_TABLE_SQL, EXIT_PLAN_UPSERT_SQL } from "./exitPlanSql";
+import { capOnBasis } from "../shared/cryptoCap";
 import { CRYPTO_RULES_VERSION } from "../shared/cryptoRules";
 import { advancePlan, newPlanState, planRecordByVersion, type PlanState, type PlanSummary, type PlanVersionRecord } from "../shared/exitPlan";
 
@@ -26,13 +27,22 @@ function ensure(): void {
   ready = true;
 }
 
-/** Advance every open plan on this pair with one sample (creates plans for new ENTER rows). */
-export function samplePlans(chain: string, pair: string, mcap: number | null, liq: number | null, at: number): void {
+/**
+ * Advance every open plan on this pair with one sample (creates plans for new
+ * ENTER rows). `caps` is the pair's marketCap and FDV as read; each plan is
+ * sampled on the basis ITS entry row was recorded on (features_json.mcapBasis,
+ * shared/cryptoCap.ts capOnBasis), the same rule the peak sampler and the
+ * grader use. Before this, plans were sampled on marketCap-else-FDV whatever
+ * the entry basis, so an FDV entry of $500k read a later marketCap of $250k as
+ * a 0.5x move and closed at the stop with a loss that never happened.
+ */
+export function samplePlans(chain: string, pair: string, caps: { marketCap: number | null; fdv: number | null }, liq: number | null, at: number): void {
   try {
     ensure();
     const rows = sqlite.prepare(`
       SELECT s.id, s.token_address, s.mcap_at_signal, s.liquidity_at_signal, s.detected_at,
              COALESCE(json_extract(s.features_json, '$.rulesVersion'), 'unversioned') AS rules_version,
+             json_extract(s.features_json, '$.mcapBasis') AS mcap_basis,
              p.state_json, p.closed
       FROM crypto_signals s LEFT JOIN crypto_exit_plans p ON p.signal_id = s.id
       WHERE s.verdict = 'ENTER' AND s.chain = ? AND s.pair_address = ? AND COALESCE(p.closed, 0) = 0
@@ -44,7 +54,7 @@ export function samplePlans(chain: string, pair: string, mcap: number | null, li
       if (!r.state_json && at - Number(r.detected_at) > START_WITHIN_MS) continue;
       const st: PlanState | null = r.state_json ? JSON.parse(r.state_json) : newPlanState(Number(r.mcap_at_signal), Number(r.liquidity_at_signal), Number(r.detected_at), String(r.rules_version));
       if (!st) continue;
-      const next = advancePlan(st, { at, mcap, liquidity: liq });
+      const next = advancePlan(st, { at, mcap: capOnBasis(caps, r.mcap_basis ?? null), liquidity: liq });
       if (next === st && r.state_json) continue;
       up.run({ id: r.id, tok: r.token_address ?? null, json: JSON.stringify(next), closed: next.closedAt != null ? 1 : 0, now: Date.now() });
     }

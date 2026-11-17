@@ -9,7 +9,7 @@
  * orders. See docs/CRYPTO_DESK.md for the charter and the method.
  */
 
-export const CRYPTO_RULES_VERSION = "2026.11.06-1";
+export const CRYPTO_RULES_VERSION = "2026.11.16-1";
 
 export const CRYPTO_RULES = {
   universe: {
