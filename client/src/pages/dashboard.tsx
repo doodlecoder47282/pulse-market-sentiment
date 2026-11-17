@@ -1,8 +1,9 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Snapshot_Public, Composite, GammaStructure, SocialSentiment } from "@shared/schema";
+import { etDate, isTradingDay, sessionOpenMs, sessionCloseMs } from "@shared/exchangeCalendar";
 import { parseUnavailableError } from "@shared/unavailable";
-import { gexDteShares } from "@shared/gammaBasis";
+import { gexDteShares, GEX_DTE_SPLIT_TEXT } from "@shared/gammaBasis";
 import GammaBasisStamp from "@/components/GammaBasisStamp";
 import DataStateChip from "@/components/DataStateChip";
 import UnavailablePanel from "@/components/UnavailablePanel";
@@ -105,27 +106,24 @@ function CompositeDeltaChip({ score }: { score: number }) {
   );
 }
 
-function getMarketStatus(): MarketStatus {
-  // Convert to Eastern Time
-  const now = new Date();
-  const etStr = now.toLocaleString("en-US", { timeZone: "America/New_York" });
-  const et = new Date(etStr);
-  const day = et.getDay(); // 0=Sun, 6=Sat
-  const hours = et.getHours();
-  const minutes = et.getMinutes();
-  const totalMins = hours * 60 + minutes;
-
-  // Weekend
-  if (day === 0 || day === 6) return "CLOSED";
-
-  // Regular trading hours: 9:30 AM – 4:00 PM ET
-  if (totalMins >= 9 * 60 + 30 && totalMins < 16 * 60) return "OPEN";
-  // Pre-market: 4:00 AM – 9:30 AM ET
-  if (totalMins >= 4 * 60 && totalMins < 9 * 60 + 30) return "PRE-MARKET";
-  // After-hours: 4:00 PM – 8:00 PM ET
-  if (totalMins >= 16 * 60 && totalMins < 20 * 60) return "AFTER-HOURS";
-
+/**
+ * Session state from the exchange calendar (holidays and 13:00 half days), the same clock the server
+ * uses. The old version knew weekends only, so it read OPEN on Thanksgiving and until 16:00 on a half day.
+ * Pre-market is 5.5 hours before the open (04:00 ET); after-hours is 4 hours after the close.
+ */
+export function marketStatusAt(nowMs: number): MarketStatus {
+  let date = "";
+  try { date = etDate(nowMs); if (!isTradingDay(date)) return "CLOSED"; } catch { return "CLOSED"; }
+  const open = sessionOpenMs(date), close = sessionCloseMs(date);
+  if (open == null || close == null) return "CLOSED";
+  if (nowMs >= open && nowMs < close) return "OPEN";
+  if (nowMs >= open - 5.5 * 3_600_000 && nowMs < open) return "PRE-MARKET";
+  if (nowMs >= close && nowMs < close + 4 * 3_600_000) return "AFTER-HOURS";
   return "CLOSED";
+}
+
+function getMarketStatus(): MarketStatus {
+  return marketStatusAt(Date.now());
 }
 
 function MarketStatusPill({ status }: { status: MarketStatus }) {
@@ -906,16 +904,16 @@ export default function Dashboard() {
                     if (byDte.length === 0) return null;
                     const shares = gexDteShares(byDte);
                     return (
-                      <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-testid="signals-gex-by-dte"
-                        title="Net GEX split by calendar days to expiry: same formula and open-interest weight as the total. The three add up to Net GEX. The share is each bucket's part of the three buckets' combined absolute size.">
+                      <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-testid="signals-gex-by-dte">
                         <span className="uppercase tracking-wider">Net GEX by days to expiry</span>
                         {byDte.map((b, i) => (
                           <span key={b.label} className="font-mono tabular-nums" data-testid={`signals-gex-dte-${b.label}`}>
                             <span className="text-muted-foreground">{b.label} </span>
-                            <span className="text-foreground">{b.netGex == null ? "no contracts" : fmt.bn(b.netGex)}</span>
+                            <span className="text-foreground">{b.netGex == null ? "no priced contracts" : fmt.bn(b.netGex)}</span>
                             {shares[i] != null ? <span className="text-muted-foreground"> ({Math.round((shares[i] ?? 0) * 100)}% of gross)</span> : null}
                           </span>
                         ))}
+                        <span className="basis-full" data-testid="signals-gex-by-dte-note">{GEX_DTE_SPLIT_TEXT}</span>
                       </div>
                     );
                   })()}

@@ -15,7 +15,7 @@
 // Pure: imports only the exchange calendar, so the client and the tests can
 // use it. Nothing here changes a number.
 
-import { etDate, isTradingDay, prevTradingDay } from "./exchangeCalendar";
+import { etDate, isCovered, isTradingDay, prevTradingDay, sessionOpenMs } from "./exchangeCalendar";
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -23,57 +23,106 @@ export interface OiBasis {
   /** Trading date ("YYYY-MM-DD", ET) whose end-of-day open interest the figures use; null when unknown. */
   sessionDate: string | null;
   note: string;
+  /** true = read on a trading day before its regular open: that day's posting is not assumed, so sessionDate is the earlier session. */
+  postingPending?: boolean;
 }
 
 export const OI_BASIS_TOOLTIP = "Open interest is posted once a day. Today's trading is not in these figures.";
+/** Short visible form of the tooltip (phones have no hover). */
+export const OI_BASIS_SHORT = "today's trading is not in these figures";
+export const OI_POSTING_PENDING_TEXT = "today's posting may not be in yet";
 
 /** The trading day whose posting a chain read on `readDate` carries (same rule as oiHold.postedSession). */
 export function oiPostingDate(readDate: string): string {
   return isTradingDay(readDate) ? readDate : prevTradingDay(readDate);
 }
 
+/** Every date is inside the exchange calendar's verified years (outside them holidays are unknown). */
+function covered(...dates: string[]): boolean {
+  return dates.every((d) => isCovered(d));
+}
+
 /**
- * Trading date whose closing open interest a chain carries.
+ * Trading date whose closing open interest a chain carries, by date alone
+ * (the posting of the read day is taken as made; buildOiBasis applies the
+ * pre-open rule).
  *   readDate           ET calendar date the chain was read from Schwab
  *   heldPostingDate    when the open interest was filled from the saved
  *                      store (oiState.source "held"), the posting day of the
  *                      saved figures (oiState.sessionDate)
- * null when no usable date is given.
+ * null when no usable date is given or the exchange calendar does not cover it.
  */
 export function oiSessionDate(readDate: string | null | undefined, heldPostingDate?: string | null): string | null {
   const held = typeof heldPostingDate === "string" && ISO.test(heldPostingDate) ? heldPostingDate : null;
-  if (held) return prevTradingDay(oiPostingDate(held));
-  if (typeof readDate !== "string" || !ISO.test(readDate)) return null;
-  return prevTradingDay(oiPostingDate(readDate));
+  const from = held ?? (typeof readDate === "string" && ISO.test(readDate) ? readDate : null);
+  if (from == null) return null;
+  const posting = oiPostingDate(from);
+  const session = prevTradingDay(posting);
+  return covered(from, posting, session) ? session : null;
 }
 
 /**
- * ET calendar date a chain was read from Schwab: the receive time when the
+ * Instant a chain was read from Schwab (epoch ms): the receive time when the
  * response carries one, else its data time. null when it carries neither.
  */
-export function chainReadDate(chain: { receivedAtMs?: number | null; asOfMs?: number | null } | null | undefined): string | null {
+export function chainReadMs(chain: { receivedAtMs?: number | null; asOfMs?: number | null } | null | undefined): number | null {
   for (const ms of [chain?.receivedAtMs, chain?.asOfMs]) {
-    if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) return etDate(ms);
+    if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) return ms;
   }
   return null;
 }
 
+/** ET calendar date of chainReadMs. */
+export function chainReadDate(chain: { receivedAtMs?: number | null; asOfMs?: number | null } | null | undefined): string | null {
+  const ms = chainReadMs(chain);
+  return ms == null ? null : etDate(ms);
+}
+
 export type OiStateLike = { source?: "live" | "held" | "none" | string; sessionDate?: string | null } | null | undefined;
 
-/** The uniform payload object. `readDate` is the chain's ET read date, or null when unknown. */
-export function buildOiBasis(readDate: string | null | undefined, oiState?: OiStateLike): OiBasis {
+/**
+ * The uniform payload object. `readMs` is the instant the chain was read
+ * (chainReadMs), or null when unknown.
+ *
+ * Pre-open rule: Schwab's chain does not say when the day's open interest
+ * posted. A chain with Schwab's own open interest read on a trading day
+ * before that day's regular open (sessionOpenMs) is therefore not assumed to
+ * carry the new posting: sessionDate is the EARLIER session (the one the
+ * previous posting counted) and postingPending is true. From the open onward
+ * the day's posting is taken as made. Held open interest names its own
+ * posting day and is unaffected.
+ */
+export function buildOiBasis(readMs: number | null | undefined, oiState?: OiStateLike): OiBasis {
   if (oiState?.source === "none") {
     return { sessionDate: null, note: "No open interest was available for this chain, so its date is unknown." };
   }
-  const held = oiState?.source === "held" ? oiState.sessionDate ?? null : null;
-  const sessionDate = oiSessionDate(readDate, held);
-  if (sessionDate == null) return { sessionDate: null, note: `${OI_BASIS_TOOLTIP} The chain's date is unknown, so the open-interest date is not stated.` };
-  return {
-    sessionDate,
-    note: held
-      ? `${OI_BASIS_TOOLTIP} New open interest had not posted when this chain was read; the last posted figures are used.`
-      : OI_BASIS_TOOLTIP,
-  };
+  const held = oiState?.source === "held" && typeof oiState.sessionDate === "string" && ISO.test(oiState.sessionDate) ? oiState.sessionDate : null;
+  const ms = typeof readMs === "number" && Number.isFinite(readMs) && readMs > 0 ? readMs : null;
+  const readDate = ms == null ? null : etDate(ms);
+  if (held == null && readDate == null) {
+    return { sessionDate: null, note: `${OI_BASIS_TOOLTIP} The chain's date is unknown, so the open-interest date is not stated.` };
+  }
+  const uncovered: OiBasis = { sessionDate: null, note: `${OI_BASIS_TOOLTIP} The date is outside the exchange calendar's verified years, so the open-interest date is not stated.` };
+  if (held != null) {
+    const sessionDate = oiSessionDate(null, held);
+    if (sessionDate == null) return uncovered;
+    return { sessionDate, note: `${OI_BASIS_TOOLTIP} New open interest had not posted when this chain was read; the last posted figures are used.` };
+  }
+  const date = readDate as string;
+  const openMs = isCovered(date) && isTradingDay(date) ? sessionOpenMs(date) : null;
+  if (openMs != null && (ms as number) < openMs) {
+    // Before the open: the previous trading day's posting is the latest that is certain.
+    const sessionDate = oiSessionDate(prevTradingDay(date));
+    if (sessionDate == null) return uncovered;
+    return {
+      sessionDate,
+      postingPending: true,
+      note: `${OI_BASIS_TOOLTIP} This chain was read before the regular open, so today's posting may not be in yet; the date shown is the session the previous posting counted.`,
+    };
+  }
+  const sessionDate = oiSessionDate(date);
+  if (sessionDate == null) return uncovered;
+  return { sessionDate, note: OI_BASIS_TOOLTIP };
 }
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -88,9 +137,10 @@ export function formatSessionDate(date: string | null | undefined): string | nul
 }
 
 /** The stamp text every gamma panel shows. */
-export function oiStampText(basis: Pick<OiBasis, "sessionDate"> | null | undefined): string {
+export function oiStampText(basis: Pick<OiBasis, "sessionDate" | "postingPending"> | null | undefined): string {
   const f = formatSessionDate(basis?.sessionDate ?? null);
-  return f ? `OI as of the close of ${f}` : "OI date unknown";
+  if (!f) return "OI date unknown";
+  return basis?.postingPending ? `OI as of the close of ${f}; ${OI_POSTING_PENDING_TEXT}` : `OI as of the close of ${f}`;
 }
 
 // ─── Weighting ────────────────────────────────────────────────────────────
@@ -120,6 +170,8 @@ export interface GammaWeighting {
   kind: GammaWeightingKind;
   /** One line for the screen. */
   label: string;
+  /** Killbox only: the full switching rule, one short line. */
+  detail?: string;
   /** Killbox only: the weight this response actually used. */
   active?: KillboxWeightMode;
 }
@@ -129,10 +181,16 @@ const n = (x: number) => x.toLocaleString("en-US");
 export const GAMMA_WEIGHTING_LABELS: Readonly<Record<GammaWeightingKind, string>> = Object.freeze({
   oi: "weight: open interest",
   oi_plus_quarter_volume: `weight: open interest + ${HYBRID_VOLUME_WEIGHT} x today's volume`,
-  killbox_adaptive:
-    `weight: open interest, volume or both (open interest + ${HYBRID_VOLUME_WEIGHT} x volume when volume exceeds ${KILLBOX_HYBRID_VOLUME_TO_OI} x OI; ` +
-    `volume alone when OI is under ${n(KILLBOX_VOLUME_ONLY_MAX_OI)} contracts and volume is over ${n(KILLBOX_VOLUME_ONLY_MIN_VOLUME)})`,
+  killbox_adaptive: "weight: open interest, volume or both",
 });
+
+/** The Killbox rule in one short line, from the constants. */
+export const KILLBOX_WEIGHTING_RULE =
+  `rule: OI + ${HYBRID_VOLUME_WEIGHT} x volume when volume exceeds ${KILLBOX_HYBRID_VOLUME_TO_OI} x OI; ` +
+  `volume alone when OI is under ${n(KILLBOX_VOLUME_ONLY_MAX_OI)} and volume over ${n(KILLBOX_VOLUME_ONLY_MIN_VOLUME)}; otherwise OI`;
+
+/** Visible reminder that the tabs differ on purpose. */
+export const WEIGHTING_DIFFERS_TEXT = "differs by tab";
 
 const ACTIVE_LABEL: Record<KillboxWeightMode, string> = {
   oi: "open interest",
@@ -141,8 +199,10 @@ const ACTIVE_LABEL: Record<KillboxWeightMode, string> = {
 };
 
 export function gammaWeighting(kind: GammaWeightingKind, active?: KillboxWeightMode): GammaWeighting {
-  if (kind === "killbox_adaptive" && active) {
-    return { kind, label: `${GAMMA_WEIGHTING_LABELS[kind]}; this read: ${ACTIVE_LABEL[active]}`, active };
+  if (kind === "killbox_adaptive") {
+    return active
+      ? { kind, label: `weight this read: ${ACTIVE_LABEL[active]}`, detail: KILLBOX_WEIGHTING_RULE, active }
+      : { kind, label: GAMMA_WEIGHTING_LABELS[kind], detail: KILLBOX_WEIGHTING_RULE };
   }
   return { kind, label: GAMMA_WEIGHTING_LABELS[kind] };
 }
@@ -188,6 +248,9 @@ export function bucketGexByDte(
   }
   return out;
 }
+
+/** Visible one-line explanation of the Signals DTE split. */
+export const GEX_DTE_SPLIT_TEXT = "the three add up to Net GEX; % = share of their combined absolute size";
 
 /** Each bucket's share of the buckets' combined absolute size (0-1); null when the bucket is empty or nothing is priced. */
 export function gexDteShares(buckets: ReadonlyArray<Pick<GexDteBucket, "netGex">>): Array<number | null> {

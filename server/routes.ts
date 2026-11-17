@@ -48,7 +48,7 @@ import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
 import { schwabNum } from "./schwabChainRows";
-import { buildOiBasis, chainReadDate, gammaWeighting, HYBRID_VOLUME_WEIGHT, killboxWeightMode } from "../shared/gammaBasis";
+import { buildOiBasis, chainReadMs, gammaWeighting, HYBRID_VOLUME_WEIGHT, killboxWeightMode } from "../shared/gammaBasis";
 
 /** Flip weight label for the killbox / thermal weight modes. */
 function flipWeightOf(mode: string): FlipWeight {
@@ -3973,7 +3973,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         spot,
         weightMode,
         // Which session's open interest, and the weighting rule with the mode this read used (shared/gammaBasis.ts).
-        oiBasis: buildOiBasis(chainReadDate(chain), chain.oiState),
+        oiBasis: buildOiBasis(chainReadMs(chain), chain.oiState),
         weighting: gammaWeighting("killbox_adaptive", weightMode),
         totalOI,
         totalVolume: totalVol,
@@ -4082,7 +4082,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       result.chainLastSession = chain.lastSession === true;
       result.oiState = chain.oiState ?? null;
       // Which session's open interest the map uses, and the weight (open interest only; shared/gammaBasis.ts).
-      result.oiBasis = buildOiBasis(chainReadDate(chain), chain.oiState);
+      result.oiBasis = buildOiBasis(chainReadMs(chain), chain.oiState);
       result.weighting = gammaWeighting("oi");
       result.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }

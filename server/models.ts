@@ -39,7 +39,7 @@ import { storage } from "./storage";
 import { getQuotes as schwabGetQuotes, getOptionChainLadder } from "./schwab";
 import { cdfAt, type ImpliedDistribution } from "./breedenLitzenberger";
 import { isRegularSessionOpen } from "./exchangeCalendar";
-import { buildOiBasis, chainReadDate, gammaWeighting } from "../shared/gammaBasis";
+import { buildOiBasis, chainReadMs, gammaWeighting } from "../shared/gammaBasis";
 import {
   etNowParts,
   horizonTargetIso,
@@ -1533,7 +1533,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     chainLastSession: chain.lastSession === true,
     chainMaxAgeMs: chain.maxAgeMs,
     chainCoverageComplete: chain.strikeCoverage?.complete ?? null,
-    oiBasis: buildOiBasis(chainReadDate(chain), chain.oiState),
+    oiBasis: buildOiBasis(chainReadMs(chain), chain.oiState),
     weighting: gammaWeighting("oi"),
   };
 

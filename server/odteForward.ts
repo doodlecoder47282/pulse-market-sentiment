@@ -19,7 +19,7 @@ import { compareCloseDistributions, impliedClose } from "../shared/impliedClose"
 import { estimateVarianceProfile, flatProfile, remainingVarianceTimeChange, type VarianceProfile } from "../shared/intradayVariance";
 import { etDayMod } from "./spxMinuteBars";
 import { strikeSpacing } from "../shared/odteMap";
-import { buildOiBasis, chainReadDate, gammaWeighting, HYBRID_VOLUME_WEIGHT } from "../shared/gammaBasis";
+import { buildOiBasis, chainReadMs, gammaWeighting, HYBRID_VOLUME_WEIGHT } from "../shared/gammaBasis";
 
 export interface OdteForwardResult { status: number; body: any }
 
@@ -399,7 +399,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     flipInputs: flipInputs({ weight: "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
     weightTotals: { oi: totalOI, volume: totalVol },
     // Which session's open interest the weight uses, and the weight itself (shared/gammaBasis.ts).
-    oiBasis: buildOiBasis(chainReadDate(chain as any), (chain as any).oiState),
+    oiBasis: buildOiBasis(chainReadMs(chain as any), (chain as any).oiState),
     weighting: gammaWeighting("oi_plus_quarter_volume"),
     path,
     // The path above is the dealer-positioning overlay (pin pull, charm tilt,
