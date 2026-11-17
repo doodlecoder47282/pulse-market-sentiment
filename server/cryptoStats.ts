@@ -665,3 +665,32 @@ export function countMentions(
   }
   return { m10, byAddress10m, m1h, capped, byAddress1h };
 }
+
+// ─── Successor pool: a coin whose original pair is gone from the feed ──────
+/**
+ * The pool to grade a row on when DexScreener no longer returns the pair it was logged on. A pump.fun coin
+ * that graduates leaves its bonding-curve pair for a new pool; the grader asked for the original pair only,
+ * got nothing, left the row OPEN and marked it NO_DATA at the horizon, so the coins that did best were the
+ * ones most likely to lose their outcome (59% of resolved coins had none on 2026-11-17). The successor is
+ * the same token's deepest pool on the same chain, never the original pair and never a pool of another
+ * token, and never a pool thinner than `minLiquidityUsd` (the caller passes the larger of the desk's liquidity
+ * floor and the row's own entry liquidity). The depth test is what keeps a wrong answer out: an empty pair
+ * answer looks the same whether the pair is delisted or the feed hiccupped, and without it a $3k side pool
+ * would grade a $40k entry RUGGED for good, or a dust pool at an off-market price would report a cap above
+ * the target. A pool at least as deep as the entry pool cannot trip the liquidity-RUGGED test and prices the
+ * token on real depth. Null when no pool qualifies: the row keeps its missing outcome rather than a wrong one.
+ */
+export function pickSuccessorPool(pairs: unknown, chain: string, tokenAddress: string, originalPair: string, minLiquidityUsd: number): any | null {
+  if (!Array.isArray(pairs) || !tokenAddress || !Number.isFinite(minLiquidityUsd)) return null;
+  let best: any = null, bestLiq = -1;
+  for (const p of pairs) {
+    if (String(p?.chainId ?? "") !== chain) continue;
+    if (String(p?.baseToken?.address ?? "") !== tokenAddress) continue;
+    if (!p?.pairAddress || String(p.pairAddress) === originalPair) continue;
+    const liq = Number(p?.liquidity?.usd);
+    if (!Number.isFinite(liq) || liq < minLiquidityUsd) continue; // not reported, or thinner than the floor: not chosen
+    if (liq > bestLiq) { best = p; bestLiq = liq; }
+  }
+  return best;
+}
+

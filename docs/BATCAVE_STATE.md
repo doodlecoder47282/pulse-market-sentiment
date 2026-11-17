@@ -2381,3 +2381,26 @@ client/src/pages/method.tsx, which carried the same inverted sentence on main. (
 describes the direction basis from options batch 2, so this batch merges after it. Also: the per-bucket
 tooltip no longer says "Net bias" in green or red; "higher-priced contracts dominate" replaces
 "in-the-money".
+2026-11-17: Crypto grader, successor pool (feat/crypto-grader-successor; practitioner review item C11). The
+grader and the 72 h horizon pass asked DexScreener for the pair a row was logged on and nothing else. A
+pump.fun coin that graduates leaves its bonding-curve pair for a new pool, so the read came back empty, the
+row stayed OPEN and became NO_DATA at the horizon: the coins that did best were the likeliest to lose their
+outcome (59% of resolved coins had none on 2026-11-17). When the pair is absent, both passes now read the
+same token's deepest other pool on the same chain (cryptoStats.pickSuccessorPool; never the original pair,
+another token's pool, another chain, or a pool with no liquidity figure) and grade on it, on the row's own
+cap basis. A coin with no other pool is still NO_DATA. Not changed, and stated: rows already marked NO_DATA
+are not re-opened (recovering them needs an OHLCV backfill); a tracked coin's peak samples are still keyed
+on its original pair; the RUGGED liquidity test compares the successor pool's liquidity with the entry
+pool's. Unverified from the sandbox: that DexScreener drops a bonding-curve pair after graduation (the
+fallback only acts when the pair is absent, so it is inert if that is wrong). No threshold changed.
+Review of the successor pool: HOLD, taken. An empty pair answer looks the same for a delisted pair and for a
+feed hiccup, and the fallback had no depth test: a $3k side pool would have graded a $40k entry RUGGED for
+good (the mark is written once), and a dust pool at an off-market price could report a cap over the target.
+A successor must now be at least as deep as the desk's liquidity floor AND as the pool the row was logged
+on; otherwise there is no successor and the row keeps its missing outcome. A pool that deep cannot trip the
+liquidity-RUGGED test. The unused read counter is gone. Not recorded yet: which rows were graded on a
+successor.
+Second review: HOLD, taken. The depth floor comes from the row being graded, but the grader then walked
+every open exit plan on that pair with the successor read, so a later ENTER logged at $60k could be
+liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
+now grades its own row only; exit plans are not sampled on it.

@@ -57,7 +57,7 @@ import {
   CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, PEAK_SAMPLE_BASES, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
   peakSampleParams, graderMarkParams, graderNoDataParams,
   countMentions, socialCoverage, type DexPool,
-  momentumPoints, honeypotRead, jupiterAllowsEnter,
+  momentumPoints, honeypotRead, jupiterAllowsEnter, pickSuccessorPool,
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
 import { appendObservation, exitCostStress, liquidityVelocity, type ExitCostStress, type LiquidityVelocity, type Observation } from "../shared/cryptoHistory";
@@ -1359,9 +1359,15 @@ async function narrativeTick(): Promise<void> {
 const GRADE_HORIZON_MS = CRYPTO_RULES.grading.horizonHours * 3600_000;
 const NO_DATA_AFTER_ERRORS_MS = 7 * 24 * 3600_000; // fetch errors this long after detection → stop retrying
 
+/** A successor pool must be at least as deep as the desk's floor and as the pool the row was logged on. */
+function successorFloor(entryLiquidity: unknown): number {
+  const e = Number(entryLiquidity);
+  return Math.max(LIQ_FLOOR_USD, Number.isFinite(e) && e > 0 ? e : 0);
+}
+
 async function graderTick(): Promise<void> {
   const open = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT ?`,
+    `SELECT id, pair_address, token_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT ?`,
   ).all(CRYPTO_GRADER_BATCH) as any[];
   if (open.length === 0) return;
 
@@ -1375,6 +1381,11 @@ async function graderTick(): Promise<void> {
     const age = now - Number(row.detected_at);
     let mcap: number | null = null;
     let liq: number | null = null;
+    // True when this pass read a successor pool. Its depth floor comes from THIS row's entry liquidity, so the
+    // read is used for this row's grade only, never to walk the exit plans of other rows on the same pair
+    // (a later ENTER logged at $60k would be liquidity-stopped for good by a $30k successor that passed an
+    // earlier row's $20k floor).
+    let fromSuccessor = false;
     // Both readings of this pass, so the plans on this pair are each sampled on their own entry basis.
     let caps: { marketCap: number | null; fdv: number | null } = { marketCap: null, fdv: null };
     const live = tracked.get(key);
@@ -1389,7 +1400,14 @@ async function graderTick(): Promise<void> {
     } else {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
-        const p = resp?.pairs?.[0] ?? resp?.pair;
+        let p = resp?.pairs?.[0] ?? resp?.pair;
+        // The pair is gone from the feed (a graduated pump.fun coin leaves its bonding-curve pair): grade on
+        // the same token's deepest pool instead of losing the outcome (cryptoStats.pickSuccessorPool).
+        if (!p && row.token_address) {
+          const byToken = await getJson(`${DS_BASE}/latest/dex/tokens/${row.token_address}`);
+          p = pickSuccessorPool(byToken?.pairs, String(row.chain), String(row.token_address), String(row.pair_address), successorFloor(row.liquidity_at_signal));
+          fromSuccessor = !!p;
+        }
         // observed 0 stays 0: a full liquidity pull must grade RUGGED
         caps = { marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) };
         mcap = capOnBasis(caps, basis);
@@ -1417,7 +1435,7 @@ async function graderTick(): Promise<void> {
     if (g.outcome === "NO_DATA") { markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP)); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
     mark.run(graderMarkParams(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id));
-    if (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000) samplePlans(row.chain, row.pair_address, caps, liq, now);
+    if (!fromSuccessor && (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000)) samplePlans(row.chain, row.pair_address, caps, liq, now);
   }
 }
 
@@ -1445,7 +1463,7 @@ sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = NULL, horizon_liquidity
 async function horizonTick(): Promise<void> {
   const now = Date.now();
   const due = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
+    `SELECT id, pair_address, token_address, chain, detected_at, liquidity_at_signal, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
   ).all(HORIZON_PASS_SINCE_MS, GRADE_HORIZON_MS, now, HORIZON_BATCH * 3) as any[];
   if (!due.length) return;
   const mark = sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = @mcap, horizon_liquidity = @liq, horizon_at = @now WHERE id = @id AND horizon_at IS NULL`);
@@ -1465,7 +1483,12 @@ async function horizonTick(): Promise<void> {
     else {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
-        const p = resp?.pairs?.[0] ?? resp?.pair;
+        let p = resp?.pairs?.[0] ?? resp?.pair;
+        // Same successor rule as the grader: the 72 h mark of a graduated coin is read on its current pool.
+        if (!p && row.token_address) {
+          const byToken = await getJson(`${DS_BASE}/latest/dex/tokens/${row.token_address}`);
+          p = pickSuccessorPool(byToken?.pairs, String(row.chain), String(row.token_address), String(row.pair_address), successorFloor(row.liquidity_at_signal));
+        }
         mcap = capOnBasis({ marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) }, hBasis);
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
