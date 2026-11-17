@@ -38,8 +38,8 @@ export interface AsymmetrySummary {
   negativeGexBelow: number;
   netAbove: number;
   netBelow: number;
-  asymmetryRatio: number;     // netAbove / |netBelow| — >1 means dealers more "long gamma" up
-  bias: "compression-up" | "compression-down" | "balanced" | "vacuum-up" | "vacuum-down";
+  asymmetryRatio: number | null;     // netAbove / |netBelow| — >1 means dealers more "long gamma" up
+  bias: "damping-above" | "amplifying-below" | "balanced" | "amplifying-above" | "damping-below";
   biasNote: string;
 }
 
@@ -137,24 +137,28 @@ export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult 
   const netAbove = posAbove + negAbove;
   const netBelow = posBelow + negBelow;
   const denom = Math.abs(netBelow);
-  const asymmetryRatio = denom > 0 ? netAbove / denom : (netAbove > 0 ? Infinity : 0);
+  // Infinity does not survive JSON (it became null and the client's toFixed threw): no ratio when there is no net gamma below.
+  const asymmetryRatio: number | null = denom > 0 ? netAbove / denom : null;
 
+  // Names say what the gamma is, in the model's terms: positive dealer gamma damps moves into it,
+  // negative amplifies them. (The old "compression-down" named heavy NEGATIVE gamma below spot, which the
+  // model describes as amplifying, and "vacuum-down" named POSITIVE gamma below, which it describes as damping.)
   let bias: AsymmetrySummary["bias"] = "balanced";
   let biasNote = "";
   if (Math.abs(netAbove) > 2 * Math.abs(netBelow) && netAbove > 0) {
-    bias = "compression-up";
-    biasNote = "heavy positive gamma above spot — dealers will sell rallies, expect grind/cap";
+    bias = "damping-above";
+    biasNote = "heavy positive gamma above spot: in the model, dealer hedging damps moves up into it";
   } else if (Math.abs(netBelow) > 2 * Math.abs(netAbove) && netBelow < 0) {
-    bias = "compression-down";
-    biasNote = "heavy negative gamma below spot — dealers force-sell on weakness, downside accelerates";
+    bias = "amplifying-below";
+    biasNote = "heavy negative gamma below spot: in the model, dealer hedging amplifies moves down into it";
   } else if (netAbove < 0 && Math.abs(netAbove) > Math.abs(netBelow)) {
-    bias = "vacuum-up";
-    biasNote = "negative gamma above spot — upside breakouts get amplified by dealer hedging";
+    bias = "amplifying-above";
+    biasNote = "negative gamma above spot: in the model, dealer hedging amplifies moves up into it";
   } else if (netBelow > 0 && Math.abs(netBelow) > Math.abs(netAbove)) {
-    bias = "vacuum-down";
-    biasNote = "positive gamma below spot — pullbacks get bought / floor support";
+    bias = "damping-below";
+    biasNote = "positive gamma below spot: in the model, dealer hedging damps moves down into it";
   } else {
-    biasNote = "roughly balanced gamma — no strong dealer-flow tilt";
+    biasNote = "roughly balanced gamma above and below spot";
   }
 
   return {

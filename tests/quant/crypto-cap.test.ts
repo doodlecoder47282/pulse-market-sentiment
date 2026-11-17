@@ -70,7 +70,11 @@ test("wiring: engine uses capOf at the entry row, the peak and plan samplers, th
   assert.match(e, /mcapBasis: capOf\(c\)\.basis,/);
   assert.match(e, /const \{ cap \} = capOf\(c\);/);
   assert.match(e, /for \(const basis of PEAK_SAMPLE_BASES\) \{\s*_peakStmt\.run\(peakSampleParams\(capOnBasis\(c, basis\), basis, at,/);
-  assert.match(e, /samplePlans\(c\.chain, c\.pairAddress, cap, c\.liquidityUsd/);
+  // Plans are sampled on each entry row's own basis (the sampler takes both readings and picks per row).
+  assert.match(e, /samplePlans\(c\.chain, c\.pairAddress, \{ marketCap: c\.marketCap, fdv: c\.fdv \}, c\.liquidityUsd, at\);/);
+  const book = readFileSync(new URL("../../server/exitPlanBook.ts", import.meta.url), "utf8");
+  assert.match(book, /json_extract\(s\.features_json, '\$\.mcapBasis'\) AS mcap_basis/);
+  assert.match(book, /advancePlan\(st, \{ at, mcap: capOnBasis\(caps, r\.mcap_basis \?\? null\), liquidity: liq \}\)/);
   assert.match(e, /const mcap = capOf\(c\)\.cap \?\? 0;/);
   assert.match(e, /mcap = capOnBasis\(live, basis\); liq = live\.liquidityUsd;/);
   assert.match(e, /mcap = capOnBasis\(live, hBasis\); liq = live\.liquidityUsd;/, "horizon live path grades on the entry basis too");

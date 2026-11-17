@@ -73,7 +73,7 @@ export function candidateChecks(cands: CandidateLike[] | null, desk: { state: st
       if (!fin(c.priceUsd) || c.priceUsd <= 0) why.push("no price");
       if (rules.enter.requireSellsObserved) {
         if (!fin(c.sells1h)) why.push("1 h sells missing");
-        else if (c.sells1h === 0 && (c.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h) why.push("honeypot pattern (buys, zero sells)");
+        else if (c.sells1h <= 0) why.push((c.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h ? "honeypot pattern (buys, zero sells)" : "no sell observed in the last hour");
       }
       if (rules.enter.requireTop10Read && !fin(c.top10Pct)) why.push("top-10 unread");
       if (c.jupState !== "agree" && c.jupState !== "watch") why.push(`Jupiter ${c.jupState ?? "unchecked"}`);

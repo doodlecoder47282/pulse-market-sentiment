@@ -2103,6 +2103,66 @@ nothing, so a young pool's first read (usually under 10 candles) would have lock
 a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
 with a separator.
 
+2026-11-16: Audit batch, Edge Lab and Trade Desk numbers (fix/audit-edgelab; audit items T1-T6, T17).
+T1: the Anomaly sub-tab crashed the whole Edge Lab tab once 30 history rows existed: "spy_ret_5d" is computed,
+not a snapshot_history column, so the feature value was undefined, vanished from the JSON, and the client
+called toFixed on it. The server sends the computed 5-day return or null; the client prints a dash for null
+and the return as percent. T4: the drift monitor printed fractions as percent ("MAE 0.45%" for 45%), called
+the mean absolute realized option return an error ("model degrading, retrain or distrust" on a run of large
+winners) and gave a verdict before its own sample gate; now fractions x100, labelled "mean |return|", the
+30-prior gate first, and a change in outcome size is reported as that, not as degradation. T2: the
+backtest deducted the cost twice under a "round-trip" label (gross +50 bps with 6 entered showed +38); the
+input is the round trip, deducted once, default 6 (same default behaviour); a cost of 0 is now sent as 0.
+T3: four signal kinds ignored the side selector and always traded long; every kind honours it, and "both"
+is relabelled "signal direction". T17: the gamma-curve asymmetry ratio was Infinity when there was no net
+gamma below spot, became null in JSON and crashed the panel; null with a dash; the bias names said the
+opposite of the model's own description ("compression-down" for heavy negative gamma below): now damping-
+above / amplifying-below / amplifying-above / damping-below with descriptive notes. T5: playbook scenario
+levels could sit on the wrong side of the entry with a positive R:R from the absolute distance (short
+under the put wall with the flip above as "L1", R:R 3.67); wrong-side levels are dropped, the next takes
+their place, R:R is read on signed distances and is null without a valid level or stop. T6: Camarilla
+and classic pivots are filed under Resistance or Support by their side of spot, not by name. Max drawdown
+no longer coloured as a gain. Tests: tests/quant/audit-edgelab.test.ts (buildLevels behaviour, wiring);
+full quant suite 1039 pass, 4 known local package failures. Needs review.
+Review of feat/audit-edgelab (HOLD, one must-fix, taken): the server feature type still said value: number
+while the function now returns null (a new tsc error the CI type gate rejects); typed number | null.
+Should-fixes taken: the "Downside Break" target sentence no longer names the flip when the flip is above
+the entry; an "either" scenario takes its direction from its stop (stop above entry = short), so it keeps
+its R:R (tested); the backtest side label says it applies to every signal; a negative cost is refused;
+drift wording in the brief corrected. Behaviour changes stated: "short" on up-signals now shorts (was
+long); "signal direction" (was "both") trades up-signals long and down-signals short (was long everywhere).
+2026-11-16: Tab-by-tab accuracy audit (owner request) and its first fixes. Four independent read-only audits
+over every tab plus Settings at d60d647 (trace: component -> route -> server module; labels, math, data
+states, client/server contract, copy, dead controls; confirmed defects only). Confirmed: 14 on Crypto and
+Settings, 20 on Models/Heatseeker/Regime, 24 on Signals/Chart/News and the shell; Trade Desk / Take Five /
+Edge Lab / Cosmos pending at the time of writing. The full list is being worked in bounded PRs, most
+severe first; each PR's entry below names the items it closes.
+fix/crypto-audit-gates (crypto items 1, 4, 5):
+(1) The rule book states "at least one sell observed in the last hour" (enter.requireSellsObserved) but
+honeypotRead returned "ok" for an OBSERVED zero sell count with under 25 buys (or buys unread), so such a
+pair could reach ENTER (and its 5-minute net-buy ratio of 100% helped it). It now returns "no_sells" and the
+scorer holds at WATCH (code no_sells, flag on the card); the verifier's ENTER-gates check and the replay's
+wouldEnterNow apply the same test. No number changed (hash identical) but graded outcomes differ, so the
+rule version is 2026.11.16-1 and the records partition there (the plan record keeps earlier versions).
+(4) The exit-plan sampler read marketCap-else-FDV whatever basis the entry was recorded on, so an FDV entry
+of $500k saw a later marketCap of $250k as 0.5x and closed at the stop with a loss that never happened;
+samplePlans now takes both readings and samples each plan with capOnBasis on its own row's mcapBasis
+(same rule as the peak sampler and the grader), on both the refresh path and the grader's fetch path.
+(5) The AI prompt printed "market cap unread" and dropped every cap level on an FDV-only coin while the
+card showed "cap (FDV) $400K" with levels; the prompt now uses capOf and names the basis.
+Tests: r3-3 honeypotRead cases, crypto-replay blocker, crypto-verdict no_sells wiring and version, crypto-cap
+sampler wiring, exit-plan prompt FDV cases, rules-version pin. 206/206. Needs the crypto review.
+Review of fix/crypto-audit-gates (HOLD, one must-fix, taken): the autopsy still showed "Sells observed: pass"
+on an observed zero under the kill threshold while the desk line on the same card read WATCH no_sells. The
+kill gate is relabelled "Honeypot pattern" and an entry gate "Sell observed, last hour" (unread / fail /
+pass) is added (tested). Should-fixes: stated here that the new flag costs 5 structure points, as the
+missing-sells flag always has, so a zero-sell pair scores 5 lower (a would-be ENTER at 70-74 lands as WATCH
+forming; a 50-54 WATCH becomes PASS): "no number changed" is true of the rule book, not of every score.
+requireSellsObserved is honoured consistently by the scorer and the replay. Plans already closed by the
+wrong-basis sample before this change stay on the plan record as recorded (stop or liquidity-stop closes on
+FDV-entry rows under versions up to 2026.11.06-1); the sample that closed them was not retained, so they
+cannot be re-walked. Those versions' plan summaries include them; the 2026.11.16-1 headline does not.
+Plans still open at the change keep their starting version label and are sampled on their entry basis from here.
 2026-11-16: Verify live data covers the Jupiter cross-check and the candle feed (feat/verify-crypto-feeds).
 The engine counts real calls per source; sourceHealthCheck: untried is unavailable (never a pass), a recent
 success passes, the latest call failing fails, a long quiet with work waiting fails. Review (HOLD, one

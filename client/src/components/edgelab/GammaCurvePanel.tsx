@@ -15,8 +15,8 @@ interface GammaCurveResult {
   asymmetry: {
     netAbove: number;
     netBelow: number;
-    asymmetryRatio: number;
-    bias: "compression-up" | "compression-down" | "balanced" | "vacuum-up" | "vacuum-down";
+    asymmetryRatio: number | null;
+    bias: "damping-above" | "amplifying-below" | "balanced" | "amplifying-above" | "damping-below";
     biasNote: string;
   };
   zeroGamma: number | null;
@@ -32,10 +32,10 @@ const fmtGex = (n: number) => {
 };
 
 const biasColor = (b: string) => {
-  if (b === "compression-up") return "bg-emerald-500/15 text-emerald-500 border-emerald-500/30";
-  if (b === "compression-down") return "bg-rose-500/15 text-rose-500 border-rose-500/30";
-  if (b === "vacuum-up") return "bg-cyan-500/15 text-cyan-500 border-cyan-500/30";
-  if (b === "vacuum-down") return "bg-orange-500/15 text-orange-500 border-orange-500/30";
+  if (b === "damping-above") return "bg-emerald-500/15 text-emerald-500 border-emerald-500/30";
+  if (b === "amplifying-below") return "bg-rose-500/15 text-rose-500 border-rose-500/30";
+  if (b === "amplifying-above") return "bg-cyan-500/15 text-cyan-500 border-cyan-500/30";
+  if (b === "damping-below") return "bg-orange-500/15 text-orange-500 border-orange-500/30";
   return "bg-muted text-muted-foreground border-border";
 };
 
@@ -121,7 +121,7 @@ export default function GammaCurvePanel() {
             <div className="grid grid-cols-3 gap-2 mt-2">
               <Tile label="net γ above" value={fmtGex(data.asymmetry.netAbove)} />
               <Tile label="net γ below" value={fmtGex(data.asymmetry.netBelow)} />
-              <Tile label="asym ratio" value={data.asymmetry.asymmetryRatio.toFixed(2)} />
+              <Tile label="asym ratio" value={data.asymmetry.asymmetryRatio == null ? "—" : data.asymmetry.asymmetryRatio.toFixed(2)} />
             </div>
           </div>
 
