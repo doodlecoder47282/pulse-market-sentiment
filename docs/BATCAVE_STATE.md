@@ -2404,3 +2404,71 @@ Second review: HOLD, taken. The depth floor comes from the row being graded, but
 every open exit plan on that pair with the successor read, so a later ENTER logged at $60k could be
 liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
 now grades its own row only; exit plans are not sampled on it.
+2026-11-17: DFI retired as a magnitude; the regime is keyed on the gamma zone (feat/retire-dfi-impl; audit
+item M1, owner decision of 2026-11-16). The "Delta Flow Indicator" was (dDEX/dS) / |GEX| x 1e9 clamped to
+[-5, 5]. The scale pinned it at the clamp, so it was always +5.00 or -5.00 when available: the sign of the
+dealer delta-exposure (DEX) slope, which is close to the sign of net gamma. It was not a flow measure.
+What changed:
+(1) Payload. audit.dexSlopeSign = "positive" | "negative" | "flat" | "unavailable" (flat only at a slope of
+exactly 0; unavailable with fewer than 3 curve points). The legacy fields stay for stored rows and older
+clients: audit.dfi is the sign as +1 / -1 / 0, audit.dfiLabel is "POSITIVE SLOPE" / "NEGATIVE SLOPE" /
+"FLAT" / "UNAVAILABLE", dfiState is unchanged. The 1e9 scale and the clamp are gone. New: audit.gammaFlip
+(the zero-gamma spot) and audit.flipDistanceEM = (spot - gammaFlip) / 1-day expected move, signed, null
+when either is missing. No database column renamed: model_recal.dfi now receives +1 / -1 / 0 (rows before
+this date hold +5 / -5; lastRecal reads every row through its sign, and "since open" now says whether the
+sign changed).
+(2) Regime bucket (shared/gammaRegime.ts, used by realtimeTargets.detectRegime and regimePredictor).
+Positive gamma ("y+") reads CHOP, negative gamma ("y-") reads TREND. STRONG when spot is at least
+FLIP_DISTANCE_STRONG_EM = 0.5 one-day expected moves from the gamma flip, WEAK when closer or when the
+flip or the expected move is missing. The 0.5 is one exported constant, hand-set, not fit to outcomes.
+"y?" is GAMMA_UNKNOWN as before; an audit with no gamma zone at all is INPUTS_UNAVAILABLE. A missing DEX
+slope no longer blocks the regime (it is not an input any more). NEUTRAL is no longer produced by the raw
+classification (it stays a predictor candidate and keeps its weights).
+  Before, for every live reading: outside the pocket (y-) TREND_STRONG, inside it (y+) CHOP_WEAK, always.
+  After: y-, 0.5 EM or more from the flip TREND_STRONG, closer TREND_WEAK; y+, 0.5 EM or more from the
+  flip CHOP_STRONG, closer CHOP_WEAK; no flip level: the WEAK bucket of the zone.
+(3) regimePredictor. The DFI boundaries (1 / 2 / 3.5), the DFI slope per minute and the projected DFI are
+removed (they could not move). The rolling history now keeps the signed flip distance; the what-if regime
+is the bucket at the flip distance carried forward at its recent rate over the horizon (a sign change is
+a zone change), and a projected change of bucket takes the bonus the "boundary one step away" rule gave.
+With no flip level, no expected move or fewer than 2 samples there is no projection: the current regime
+is carried forward with the other drivers' adjustments, and a driver note says so. The other drivers (VIX
+change, pivot distance, charm zero, session time, flip rate, slope, vanna, VIX term, whale flow) are
+unchanged. Response: drivers.dexSlopeSign, flipDistanceEM, flipDistanceSlopePerMin and
+projectedFlipDistanceEM are new; drivers.dfi is the sign or null; drivers.dfiSlopePerMin is always null;
+boundaryDistance and nextBoundary are deleted (nothing read them). No "DFI ... /min toward ..." note.
+(4) computeScenarioProb. The DFI boost 0.10 x tanh(dfi / 3) is removed: with DFI pinned it was a constant
+0.093 toward bull (positive slope) or bear (negative slope), a second count of the gamma term. The
+heuristic split moves by up to about 10 points: in y+ with a positive slope bull 31.0 -> 22.2, bear 21.5
+-> 27.8, base 47.5 -> 50.0; in y- with a negative slope bear 43.6 -> 33.8, bull 19.5 -> 27.0, base 36.9
+-> 39.2 (no term or wall adjustment in either). Checked in the code: this split is the fallback only. In
+buildAudit the implied (risk-neutral) odds overwrite it whenever the implied CDF exists, and
+scenarioProbSource then reads "risk-neutral-implied"; the heuristic is shown and logged only as
+"hand-set-heuristic".
+(5) mmMatrix. The DFI tilt (pUp / pDown moved by min(6, |dfi| x 5), so a constant 6 points toward the
+slope sign in all 25 cells before renormalisation) is removed, not replaced: the gamma regime is already
+the row and the position against the gamma flip is already the column, so it only counted gamma twice.
+(6) Display. ModelsPanel, RegimePredictPanel, the Discord daily card, the level-break alerts, the 0DTE
+score reasons and the tab headline bullets no longer print "DFI +5.00" (or "+499") or BULLISH / BEARISH
+for it. They show "DEX slope: positive / negative / flat / unavailable" as a secondary fact, with a note
+that it is a sign only, and the flip distance in expected moves where the regime is explained. The
+level-break alerts used to print "DFI +5 (NEUTRAL)" because their BULLISH threshold was 200.
+Record breaks from this date (not like-for-like with earlier rows):
+- regime calls (regime predictions and their grades in the outcome log, the regime snapshot that
+  decorates flow alerts): the STRONG / WEAK suffix and the what-if candidate now vary with the flip
+  distance; before they were constant within a gamma zone.
+- intraday close targets (realtimeTargets blend, shown on the Discord card and read by the exit score in
+  exitBrain): the blend weights follow the regime bucket, so y- near the flip now uses the TREND_WEAK
+  weights and y+ far from it the CHOP_STRONG weights.
+- MM predictions (data/mm-predictions): pUp / pDown no longer carry the 6-point tilt; the logged dfi
+  field is +1 / -1 / 0, where it was +5 / -5.
+- fallback scenario probabilities (calibration rows with probSource "hand-set-heuristic" only); rows
+  with "risk-neutral-implied" are unchanged.
+- model_recal.dfi: +1 / -1 / 0 from this date.
+Left reading the legacy sign field, for the owner: (a) the 0DTE alert score (odteAlertEngine). Its
+momentum gate and its 10 AM tilt use the sign only, so they are unchanged; the aligned-sign bonus
+min(15, |dfi| / 30) was 0.17 points and is now 0.03 (it was written for a scale DFI never had). The score
+is a graded series, so the term was not removed or re-scaled here; only its reason text changed. (b) the
+experimental particle filter (/api/experimental/particle-dfi): a shadow forecaster that feeds nothing; it
+now observes +1 / -1 / 0 instead of +5 / -5. Keep or retire. Not changed: gamma, expected move, Wiener,
+implied scenario odds, crypto. No threshold changed other than the one new constant.

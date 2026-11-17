@@ -153,7 +153,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         topLine: known ? `${cap(regimeWord(currentRegime))} regime. Composite score and forward path follow.` : regimeMissing,
         subLine: "ML Lab (under More detail on phones) shows forward path scenarios (bull q90, base q50, bear q10).",
         bullets: [
-          "Composite score blends DFI, gamma zone, IV term, vanna bias, charm pin, flow.",
+          "Composite score blends gamma zone, IV term, vanna bias, charm pin, flow.",
           "ML Lab projects the next 60-240 minutes with confidence bands.",
           "Model D (morning anchor) blends in 9:45-16:00 ET when opening fingerprint is set.",
         ],
@@ -189,7 +189,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         topLine: known ? `${cap(regimeWord(currentRegime))} regime now; the 20-minute outlook (heuristic, uncalibrated) is on the desk.` : regimeMissing,
         subLine: "Trade Desk: 20-minute regime outlook, edge tracking and position tools. Heuristic weights, not calibrated probabilities.",
         bullets: [
-          "Predictor uses DFI slope, gamma flip, vanna, charm, IV term, VIX term, whale pressure.",
+          "Predictor uses gamma flip distance, vanna, charm, IV term, VIX term, whale pressure.",
           "Heuristic score 70+/100 = strong transition reading, under 40 = weak; uncalibrated.",
           "Warming-up state means <5 samples collected: the reading is not formed yet.",
         ],

@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { gradeRegimeCallOnPath, horizonThreshold, bucketOf, DAILY_PROXY_PCT } from "../../shared/regimeGrade";
-import { predictTransition } from "../../server/regimePredictor";
+import { predictTransition, _resetPredictorHistory } from "../../server/regimePredictor";
 
 const OPEN = Date.parse("2026-11-06T14:30:00Z"); // 09:30 ET
 const CLOSE = OPEN + 390 * 60_000;
@@ -74,30 +74,42 @@ test("wiring: the logger grades on minute bars over the horizon; edge stats excl
   assert.match(c, /graded under the earlier close-to-close proxy, excluded/);
 });
 
-test("predictor: missing DFI, pivot or EM is 'inputs unavailable' with no candidates, no confidence, no proximity driver", () => {
+test("predictor: a missing pivot or EM is degraded with no candidates, no confidence, no proximity driver; the DEX slope sign is not a regime input", () => {
   const base = { spot: 6000, horizonMinutes: 20, nowMs: Date.parse("2026-11-06T16:00:00Z") };
-  // DFI present but the curve could not produce it (dfiState unavailable): no read.
-  const a = predictTransition({ ...base, audit: { dfi: 0, dfiState: "unavailable", gammaZone: "y", slope: "UP 0.2 -> 0.3", mainPivot: 6010, scenarioTargets: { oneDayEM: 40 } } } as any);
-  assert.equal(a.currentRegime, "INPUTS_UNAVAILABLE");
-  assert.equal(a.status, "degraded");
-  assert.deepEqual(a.candidates, []);
-  assert.equal(a.confidence, 0, "below the logger's 0.3 floor: nothing is recorded");
-  assert.match(a.headline, /no regime call: DFI \(no DEX slope\) not available/);
-  // DFI present but no pivot and no EM: degraded, and no "pin pressure" / "room to trend" from nothing.
-  const b = predictTransition({ ...base, audit: { dfi: 1.2, dfiState: "ok", gammaZone: "y", slope: "UP 0.2 -> 0.3" } } as any);
+  _resetPredictorHistory();
+  // The DEX slope could not be read (dfiState unavailable). DFI is retired: the regime is keyed on the
+  // gamma zone, so there is still a reading, and the sign is reported as unavailable, not as a zero.
+  const a = predictTransition({ ...base, audit: { dfi: 0, dfiState: "unavailable", gammaZone: "y+", slope: "UP 0.2 -> 0.3", mainPivot: 6010, gammaFlip: 6010, scenarioTargets: { oneDayEM: 40 } } } as any);
+  assert.equal(a.currentRegime, "CHOP_WEAK");
+  assert.equal(a.drivers.dexSlopeSign, "unavailable");
+  assert.equal(a.drivers.dfi, null);
+  assert.equal(a.drivers.dfiSlopePerMin, null);
+  assert.ok(a.candidates.length > 0);
+  assert.doesNotMatch(a.headline, /DFI/);
+  // No gamma zone in the audit at all: inputs unavailable, no candidates, nothing for the logger.
+  const none = predictTransition({ ...base, audit: { mainPivot: 6010, scenarioTargets: { oneDayEM: 40 } } } as any);
+  assert.equal(none.currentRegime, "INPUTS_UNAVAILABLE");
+  assert.equal(none.status, "degraded");
+  assert.deepEqual(none.candidates, []);
+  assert.equal(none.confidence, 0, "below the logger's 0.3 floor: nothing is recorded");
+  // No pivot and no EM: degraded, and no "pin pressure" / "room to trend" from nothing.
+  const b = predictTransition({ ...base, audit: { dfi: 1, dfiState: "ok", gammaZone: "y+", slope: "UP 0.2 -> 0.3" } } as any);
   assert.equal(b.status, "degraded");
   assert.deepEqual(b.candidates, []);
+  assert.equal(b.confidence, 0);
   assert.match(b.headline, /main pivot, 1-day expected move not available/);
   assert.ok(!b.driverNotes.some((n) => /pin pressure|trend has room/.test(n)), b.driverNotes.join(" | "));
-  // The other caller that feeds the history: an unavailable DFI is NaN, which recordRawRegime drops.
+  // The callers that feed the history pass the signed flip distance (null when the flip or EM is missing),
+  // never a DFI number.
   const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
-  assert.equal((r.match(/daily\.audit\?\.dfiState === "unavailable" \|\| daily\.audit\?\.dfi == null \? NaN : Number\(daily\.audit\.dfi\)/g) ?? []).length, 2);
-  assert.doesNotMatch(r, /Number\(daily\.audit\?\.dfi \?\? 0\)/);
-  assert.match(readFileSync(new URL("../../server/realtimeTargets.ts", import.meta.url), "utf8"), /return "INPUTS_UNAVAILABLE";/);
+  assert.match(r, /recordRawRegime\(out\.diag\.regimeRaw as any, flipDistanceEM\(daily\.spot, daily\.audit\?\.gammaFlip, daily\.audit\?\.scenarioTargets\?\.oneDayEM\)\);/);
+  assert.match(r, /if \(rawNow\) recordRawRegime\(rawNow, out\.drivers\.flipDistanceEM\);/);
+  assert.doesNotMatch(r, /Number\(daily\.audit\?\.dfi \?\? 0\)|Number\(daily\.audit\.dfi\)/);
+  assert.match(readFileSync(new URL("../../shared/gammaRegime.ts", import.meta.url), "utf8"), /if \(gammaZone == null\) return "INPUTS_UNAVAILABLE";/);
   assert.match(readFileSync(new URL("../../server/headline.ts", import.meta.url), "utf8"), /currentRegime === "INPUTS_UNAVAILABLE" && typeof \(models as any\)\?\.headline === "string"/);
   assert.ok(Number.isNaN(b.drivers.gammaFlipProxFrac));
   // All inputs present: a reading as before.
-  const c = predictTransition({ ...base, audit: { dfi: 1.2, dfiState: "ok", gammaZone: "y", slope: "UP 0.2 -> 0.3", mainPivot: 6010, scenarioTargets: { oneDayEM: 40 } } } as any);
-  assert.notEqual(c.currentRegime, "INPUTS_UNAVAILABLE");
+  const c = predictTransition({ ...base, audit: { dfi: 1, dfiState: "ok", gammaZone: "y+", slope: "UP 0.2 -> 0.3", mainPivot: 6010, gammaFlip: 6010, scenarioTargets: { oneDayEM: 40 } } } as any);
+  assert.equal(c.currentRegime, "CHOP_WEAK");
   assert.ok(c.candidates.length > 0);
 });

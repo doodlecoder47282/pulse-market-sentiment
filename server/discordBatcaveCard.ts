@@ -4,7 +4,7 @@
 //
 // Mirrors the user's reference print verbatim:
 //
-//   **SPX DAILY MODEL  |  YYYY-MM-DD  |  HH:MM ET  |  SPOT N  |  DFI ±N (LABEL)**
+//   **SPX DAILY MODEL  |  YYYY-MM-DD  |  HH:MM ET  |  SPOT N  |  DEX slope: positive / negative**
 //   ```
 //   CLOSE TARGETS
 //     BULL P%  →  ~T
@@ -34,6 +34,7 @@
 import { recordPrediction } from "./calibration";
 import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 import { computeRealtimeTargets } from "./realtimeTargets";
+import { dexSlopeSignFromAudit } from "@shared/gammaRegime";
 import { getTodayEventContext } from "./volCalendar";
 import { webhookOrWarn, safeErrorSummary } from "./webhookConfig";
 import { internalJson, isInternalRoute } from "./internalApi";
@@ -274,11 +275,8 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
   const audit = daily.audit ?? {};
   const sp = audit.scenarioProb ?? { bull: 0, base: 0, bear: 0 };
   const st = audit.scenarioTargets ?? { bull: spot, base: spot, bear: spot, oneDayEM: spot * 0.005 };
-  // DFI: audit.dfi is normalized to [-5, +5]-ish. Multiply by 100 for display
-  // but cap at ±499 so we don't pin at the visual ceiling on every print.
-  const dfiRaw = (audit.dfi ?? 0) * 100;
-  const dfi = Math.max(-499, Math.min(499, dfiRaw));
-  const dfiLabel = dfi >= 100 ? "BULLISH" : dfi <= -100 ? "BEARISH" : "NEUTRAL";
+  // Sign of the dealer delta-exposure slope. A sign only (the old "DFI +499 (BULLISH)" was this sign at a display ceiling).
+  const dexSlope = dexSlopeSignFromAudit(audit);
   const rb = daily.rangeBox;
   const rbStatus = rb?.status ?? "contained";
   const rbStatusLabel =
@@ -486,11 +484,11 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
 
   // ─── format the print ────────────────────────────────────────────────
   const header =
-    `**SPX DAILY MODEL  |  ${etDate()}  |  ${etTime()}  |  SPOT ${fmt0(spot)}  |  DFI ${dfi >= 0 ? "+" : ""}${fmt0(dfi)} (${dfiLabel})**`;
+    `**SPX DAILY MODEL  |  ${etDate()}  |  ${etTime()}  |  SPOT ${fmt0(spot)}  |  DEX slope: ${dexSlope}**`;
 
   // Real-time CLOSE TARGETS compression — collapses bull/bear toward base as
   // session ages. Blended (sqrt-time decay + spot reanchor + range-aware HOD/LOD),
-  // regime-weighted via dfi/gammaZone/slope. Falls back to raw EOD on any error.
+  // regime-weighted via the gamma zone and the flip distance. Falls back to raw EOD on any error.
   let liveTargets = { bull: st.bull as number, base: st.base as number, bear: st.bear as number };
   let liveDiagLine = "";
   try {

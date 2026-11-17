@@ -6,7 +6,8 @@
 //
 // Existing system (do not touch):
 //   - detectRegime(audit) in realtimeTargets.ts maps current audit to a
-//     RegimeBucket via dfi + gammaZone + slope.
+//     RegimeBucket via the gamma zone and the distance of spot from the
+//     gamma flip (shared/gammaRegime.ts).
 //   - applyRegimeHysteresis() requires STABILITY_TICKS=3 of the same raw
 //     regime before _appliedRegime switches.
 //
@@ -17,8 +18,11 @@
 //     candidates[] sorted by probability, drivers, confidence.
 //
 // Drivers (each contributes a signed pressure toward a regime):
-//   1. DFI distance to nearest boundary (0/1/2/3.5 thresholds) and slope.
-//      Movement TOWARD a boundary that flips bucket increases transition prob.
+//   1. Distance of spot from the gamma flip in 1-day expected moves, and its
+//      rate of change over the recent samples. Movement toward the flip (a
+//      zone change) or across the STRONG / WEAK line raises the transition
+//      score. (Until 2026-11-17 this was a "DFI" boundary / slope / projected
+//      DFI; DFI was pinned at +5 / -5, so none of it could move. Removed.)
 //   2. IV term DoD (iv1d delta). Negative = vol bleed = chop drift. Positive
 //      vol expansion = trend pressure.
 //   3. Gamma flip proximity. Spot near mainPivot/charmZero (zero-gamma)
@@ -31,6 +35,7 @@
 // All math is bounded, fail-soft, and independent of any LLM.
 
 import { gammaZoneEffect } from "./gammaZone";
+import { FLIP_DISTANCE_STRONG_EM, dexSlopeSignFromAudit, dexSlopeSignValue, flipDistanceEM, regimeBucketFor, type DexSlopeSign } from "@shared/gammaRegime";
 
 type RegimeBucket =
   | "TREND_STRONG"
@@ -41,8 +46,7 @@ type RegimeBucket =
   // Round 4: GEX missing or immaterial ("y?"). Its own state, never NEUTRAL:
   // the buckets below are defined by the gamma sign, so none applies.
   | "GAMMA_UNKNOWN"
-  // The DFI (no DEX slope), the main pivot or the 1-day EM is missing: no
-  // regime is read from a zero that was never observed.
+  // No gamma zone in the audit at all: no regime is read from nothing.
   | "INPUTS_UNAVAILABLE";
 
 const ALL_REGIMES: RegimeBucket[] = [
@@ -58,18 +62,20 @@ const ALL_REGIMES: RegimeBucket[] = [
 interface RawSample {
   ts: number;
   raw: RegimeBucket;
-  dfi: number;
+  /** Signed distance of spot from the gamma flip in 1-day expected moves; null when not available. */
+  flipDistEM: number | null;
 }
 
 const HISTORY_CAP = 32;
 const _history: RawSample[] = [];
 
 /** Public observer hook — call from any place that has a fresh audit. */
-export function recordRawRegime(raw: RegimeBucket, dfi: number, ts: number = Date.now()): void {
-  // A regime read from missing inputs, or a non-finite DFI, is not a sample.
-  if (raw === "INPUTS_UNAVAILABLE" || !Number.isFinite(dfi)) return;
+export function recordRawRegime(raw: RegimeBucket, flipDistEM: number | null, ts: number = Date.now()): void {
+  // A regime read from missing inputs is not a sample. A missing flip distance
+  // is kept as null (the regime still counts for the flip rate).
+  if (raw === "INPUTS_UNAVAILABLE") return;
   try {
-    _history.push({ ts, raw, dfi });
+    _history.push({ ts, raw, flipDistEM: flipDistEM != null && Number.isFinite(flipDistEM) ? flipDistEM : null });
     if (_history.length > HISTORY_CAP) _history.shift();
   } catch {
     // fail-soft
@@ -101,14 +107,18 @@ function softmax(scores: Record<RegimeBucket, number>): Record<RegimeBucket, num
   return out as Record<RegimeBucket, number>;
 }
 
-function dfiSlopeFromHistory(): { slope: number; samples: number } {
-  if (_history.length < 2) return { slope: 0, samples: _history.length };
-  // Use last 6 samples or fewer for short-term slope (DFI per minute)
-  const window = _history.slice(-6);
+/**
+ * Rate of change of the signed flip distance (expected moves per minute) over
+ * the last 6 samples that carry one. null with fewer than 2 such samples.
+ */
+function flipDistSlopeFromHistory(): { slope: number | null; samples: number } {
+  const samples = Math.min(6, _history.length);
+  const window = _history.slice(-6).filter((x) => x.flipDistEM != null);
+  if (window.length < 2) return { slope: null, samples };
   const first = window[0];
   const last = window[window.length - 1];
   const dtMin = Math.max(0.0167, (last.ts - first.ts) / 60_000);
-  return { slope: (last.dfi - first.dfi) / dtMin, samples: window.length };
+  return { slope: ((last.flipDistEM as number) - (first.flipDistEM as number)) / dtMin, samples };
 }
 
 /**
@@ -131,22 +141,14 @@ function flipRateFromHistory(): { rate: number; flips: number; samples: number }
 }
 
 /**
- * Same regime mapping logic as detectRegime() in realtimeTargets.ts, replicated
- * locally so we can score WHAT-IF regimes for each candidate dfi shift without
- * touching the locked module. Keep behavior identical.
+ * The what-if regime for a projected flip distance. A projected distance on
+ * the other side of the flip (sign change) is a gamma-zone change, so the
+ * family swaps; otherwise the zone holds and only STRONG / WEAK can change.
  */
-function rawRegimeFor(dfi: number, gZone: string, slopeMag: number): RegimeBucket {
-  const inGammaPocket = gZone === "y" || gZone === "y+";
-  // Gamma unknown ("y?" / missing GEX): the trend/chop split below rests on
-  // the gamma regime, so make no regime claim at all (own state).
-  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "GAMMA_UNKNOWN";
-  const adfi = Math.abs(dfi);
-  if (adfi >= 3.5 && !inGammaPocket) return "TREND_STRONG";
-  if (adfi >= 2.0 && !inGammaPocket) return "TREND_WEAK";
-  if (adfi >= 1.0 && inGammaPocket && slopeMag < 1.5) return "CHOP_WEAK";
-  if (adfi < 1.0 && inGammaPocket) return "CHOP_STRONG";
-  if (adfi >= 2.0 && inGammaPocket) return "CHOP_WEAK";
-  return "NEUTRAL";
+function projectedRegimeFor(gZone: string, flipDistNow: number, flipDistProjected: number): RegimeBucket {
+  const crossed = flipDistNow !== 0 && flipDistProjected !== 0 && Math.sign(flipDistNow) !== Math.sign(flipDistProjected);
+  const zone = !crossed ? gZone : gZone === "y-" || gZone === "y\u2212" ? "y+" : gZone === "y+" || gZone === "y" ? "y-" : gZone;
+  return regimeBucketFor(zone, flipDistProjected);
 }
 
 // ─── Public types ──────────────────────────────────────────────────────
@@ -199,11 +201,18 @@ export interface RegimePredictorOutput {
   /** Plain-English bullets explaining the top drivers right now. */
   driverNotes: string[];
   drivers: {
-    dfi: number;
-    dfiSlopePerMin: number;
-    /** Distance (signed) from current dfi to nearest boundary in the slope direction */
-    boundaryDistance: number;
-    nextBoundary: number | null;
+    /** Sign of the dealer delta-exposure slope at spot. A sign only, shown as a secondary fact; it does not score any regime. */
+    dexSlopeSign: DexSlopeSign;
+    /** @deprecated The same sign as +1 / -1 / 0; null when unavailable. Was the pinned "DFI". */
+    dfi: number | null;
+    /** @deprecated Always null: the "DFI slope" could never move and is removed. */
+    dfiSlopePerMin: null;
+    /** Signed distance of spot from the gamma flip in 1-day expected moves (+ above the flip); null when the flip or the EM is missing. */
+    flipDistanceEM: number | null;
+    /** Rate of change of flipDistanceEM per minute over the recent samples; null with fewer than 2 samples. */
+    flipDistanceSlopePerMin: number | null;
+    /** flipDistanceEM projected over the horizon at that rate; null when either is missing (the current regime is then carried forward). */
+    projectedFlipDistanceEM: number | null;
     ivTermDelta: number;
     ivTermLabel: string;
     /** Spot distance to mainPivot, fraction of one-day expected move */
@@ -241,7 +250,6 @@ function sessionFracRemaining(nowMs: number): number {
   return 1 - minsFromOpen / 390;
 }
 
-const DFI_BOUNDARIES = [-3.5, -2.0, -1.0, 1.0, 2.0, 3.5];
 /** A day-over-day VIX move of at least this many points counts as vol expanding or bleeding (the label threshold in models.ts). */
 const IV_TERM_MOVE_PTS = 1.0;
 
@@ -254,46 +262,29 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const horizonMinutes = input.horizonMinutes ?? 20;
 
   const audit = input.audit ?? {};
-  // Missing inputs are missing, not zero: a null DFI (no DEX slope), pivot or
-  // 1-day EM makes the call "degraded" with no candidates, instead of a NEUTRAL
-  // regime, "pin pressure" or "room to trend" read from nothing.
-  const dfiMissing = audit.dfi == null || !Number.isFinite(Number(audit.dfi)) || audit.dfiState === "unavailable";
-  const dfi = dfiMissing ? NaN : Number(audit.dfi);
+  // Missing inputs are missing, not zero: a null pivot or 1-day EM makes the
+  // call "degraded" with no candidates, instead of "pin pressure" or "room to
+  // trend" read from nothing. The DEX slope sign is reported, not scored.
+  const dexSlopeSign = dexSlopeSignFromAudit(audit);
   const pivotMissing = audit.mainPivot == null || !Number.isFinite(Number(audit.mainPivot));
   const emMissing = audit.scenarioTargets?.oneDayEM == null || !Number.isFinite(Number(audit.scenarioTargets.oneDayEM)) || Number(audit.scenarioTargets.oneDayEM) <= 0;
-  const missingInputs = [dfiMissing ? "DFI (no DEX slope)" : null, pivotMissing ? "main pivot" : null, emMissing ? "1-day expected move" : null].filter(Boolean) as string[];
-  const gZone = String(audit.gammaZone ?? "").toLowerCase();
+  const missingInputs = [audit.gammaZone == null ? "gamma zone" : null, pivotMissing ? "main pivot" : null, emMissing ? "1-day expected move" : null].filter(Boolean) as string[];
+  const gZone = String(audit.gammaZone ?? "").trim().toLowerCase();
   const slopeText = String(audit.slope ?? "");
   // Slope text e.g. "DN 0.31° → -0.61"; second number is signed magnitude
   const matches = slopeText.match(/-?\d+(\.\d+)?/g) ?? [];
   const slopeMag = Math.abs(parseFloat(matches[1] ?? "0") || 0);
   const slopeSigned = parseFloat(matches[1] ?? "0") || 0;
 
-  const currentRaw: RegimeBucket = dfiMissing ? "INPUTS_UNAVAILABLE" : rawRegimeFor(dfi, gZone, slopeMag);
+  // Gamma flip distance: spot vs the zero-gamma level, in 1-day expected moves.
+  const spot = Number(input.spot ?? audit.spot ?? 0);
+  const flipDist = flipDistanceEM(spot, audit.gammaFlip, audit.scenarioTargets?.oneDayEM);
+
+  const currentRaw: RegimeBucket = regimeBucketFor(audit.gammaZone, flipDist);
 
   // Drivers
-  const { slope: dfiSlopePerMin, samples: histSamples } = dfiSlopeFromHistory();
+  const { slope: flipDistSlopePerMin, samples: histSamples } = flipDistSlopeFromHistory();
   const { rate: flipRate, flips } = flipRateFromHistory();
-
-  // Find next DFI boundary in slope direction (or nearest if slope ~0)
-  let nextBoundary: number | null = null;
-  let boundaryDistance = 0;
-  if (Math.abs(dfiSlopePerMin) > 0.001) {
-    const dir = Math.sign(dfiSlopePerMin);
-    const candidates = DFI_BOUNDARIES.filter((b) => (dir > 0 ? b > dfi : b < dfi));
-    if (candidates.length) {
-      nextBoundary = dir > 0 ? Math.min(...candidates) : Math.max(...candidates);
-      boundaryDistance = nextBoundary - dfi;
-    }
-  } else {
-    // No slope info — pick nearest boundary either side
-    const nearest = DFI_BOUNDARIES.reduce(
-      (best, b) => (Math.abs(b - dfi) < Math.abs(best - dfi) ? b : best),
-      DFI_BOUNDARIES[0],
-    );
-    nextBoundary = nearest;
-    boundaryDistance = nearest - dfi;
-  }
 
   // IV term DoD
   const term = audit.termStructureDoD ?? {};
@@ -303,7 +294,6 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const ivTermLabel = String(term.label ?? "Flat");
 
   // Gamma flip proximity — spot vs mainPivot, normalized by oneDayEM
-  const spot = Number(input.spot ?? audit.spot ?? 0);
   const pivot = pivotMissing ? NaN : Number(audit.mainPivot);
   const oneDayEM = emMissing ? NaN : Math.max(0.5, Number(audit.scenarioTargets.oneDayEM));
   // NaN when any input is missing: no proximity driver fires from it.
@@ -312,9 +302,14 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const sessionFrac = sessionFracRemaining(nowMs);
 
   // ─── Score each candidate regime ───
-  // Base score = match to current raw regime + projected dfi shift
-  const projectedDfi = dfi + dfiSlopePerMin * horizonMinutes;
-  const projectedSlope = slopeMag; // we don't model slope evolution; conservative
+  // Base score = match to current raw regime + the regime at the projected flip distance.
+  // The projection is the flip distance carried forward at its recent rate (bounded to
+  // +/-5 expected moves). With no flip level, no expected move or fewer than 2 samples
+  // there is no projection: the current regime is carried forward.
+  const knownGamma = currentRaw !== "GAMMA_UNKNOWN" && currentRaw !== "INPUTS_UNAVAILABLE";
+  const projectedFlipDist = flipDist != null && flipDistSlopePerMin != null
+    ? clamp(flipDist + flipDistSlopePerMin * horizonMinutes, -5, 5)
+    : null;
 
   const scores: Record<RegimeBucket, number> = {
     TREND_STRONG: 0,
@@ -327,7 +322,9 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   };
 
   // 1) projected raw regime gets the largest base bump
-  const projectedRaw = rawRegimeFor(projectedDfi, gZone, projectedSlope);
+  const projectedRaw: RegimeBucket = knownGamma && flipDist != null && projectedFlipDist != null
+    ? projectedRegimeFor(gZone, flipDist, projectedFlipDist)
+    : currentRaw;
   scores[projectedRaw] += 2.5;
 
   // 2) current raw regime stays as the strong prior (hysteresis bias)
@@ -386,14 +383,10 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     scores.NEUTRAL -= 0.2;
   }
 
-  // 8) Boundary proximity — if a flip is one slope-step away, boost the
-  //    receiving regime
-  if (nextBoundary != null && Math.abs(dfiSlopePerMin) > 0.001) {
-    const minutesToBoundary = Math.abs(boundaryDistance / dfiSlopePerMin);
-    if (minutesToBoundary < horizonMinutes) {
-      // cross-over imminent — projected raw regime gets extra weight
-      scores[projectedRaw] += 0.8;
-    }
+  // 8) Boundary proximity — if the projected flip distance crosses the flip
+  //    or the STRONG / WEAK line within the horizon, boost the receiving regime
+  if (projectedRaw !== currentRaw) {
+    scores[projectedRaw] += 0.8;
   }
 
   // 9) Vanna bias — positive vanna stabilizes trend continuation, negative destabilizes
@@ -499,9 +492,18 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   })();
 
   const driverNotes: string[] = [];
-  if (Math.abs(dfiSlopePerMin) > 0.05) {
-    const dir = dfiSlopePerMin > 0 ? "rising" : "falling";
-    driverNotes.push(`DFI ${dir} ${Math.abs(dfiSlopePerMin).toFixed(2)}/min toward ${nextBoundary ?? "—"}.`);
+  if (flipDist != null) {
+    driverNotes.push(`spot ${Math.abs(flipDist).toFixed(2)} expected moves ${flipDist >= 0 ? "above" : "below"} the gamma flip (${Math.abs(flipDist) >= FLIP_DISTANCE_STRONG_EM ? "at or beyond" : "inside"} the ${FLIP_DISTANCE_STRONG_EM} line).`);
+  }
+  if (flipDist != null && projectedFlipDist != null && flipDistSlopePerMin != null) {
+    if (projectedRaw !== currentRaw) {
+      const toward = Math.abs(projectedFlipDist) < Math.abs(flipDist) || Math.sign(projectedFlipDist) !== Math.sign(flipDist);
+      driverNotes.push(`flip distance moving ${toward ? "toward" : "away from"} the gamma flip (${Math.abs(flipDistSlopePerMin).toFixed(3)} expected moves/min): ${prettyRegime(projectedRaw)} at this rate.`);
+    }
+  } else {
+    driverNotes.push(flipDist == null
+      ? "no flip-distance projection (gamma flip or expected move not available): current regime carried forward, adjusted by the other drivers."
+      : "no flip-distance projection (fewer than 2 samples): current regime carried forward, adjusted by the other drivers.");
   }
   if (gammaFlipProxFrac < 0.25) driverNotes.push(`spot near gamma flip (${(gammaFlipProxFrac * 100).toFixed(0)}% of 1-day EM) — pin pressure.`);
   else if (gammaFlipProxFrac > 1.0) driverNotes.push(`spot far from pivot — trend has room.`);
@@ -535,12 +537,14 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
       : missingInputs.length
         ? `no regime call: ${missingInputs.join(", ")} not available in this build.`
         : headline,
-    driverNotes: noRead ? driverNotes.filter((n) => !/gamma flip|far from pivot|^DFI /.test(n)) : driverNotes,
+    driverNotes: noRead ? driverNotes.filter((n) => !/gamma flip|far from pivot|flip distance|flip-distance/.test(n)) : driverNotes,
     drivers: {
-      dfi,
-      dfiSlopePerMin,
-      boundaryDistance,
-      nextBoundary,
+      dexSlopeSign,
+      dfi: dexSlopeSign === "unavailable" ? null : dexSlopeSignValue(dexSlopeSign),
+      dfiSlopePerMin: null,
+      flipDistanceEM: flipDist,
+      flipDistanceSlopePerMin: flipDistSlopePerMin,
+      projectedFlipDistanceEM: projectedFlipDist,
       ivTermDelta,
       ivTermLabel,
       gammaFlipProxFrac,

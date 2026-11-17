@@ -356,7 +356,8 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
   // Level status transitions — collect all meaningful transitions in this tick,
   // then either coalesce (≥2 levels within 5 SPX pts) or fire individually.
   const levels = (daily.levels ?? []) as any[];
-  const dfi = audit.dfi ?? daily.dfi ?? null;
+  // Legacy sign field (+1 / -1 / 0); an unavailable slope is not passed as a zero.
+  const dfi = audit.dfiState === "unavailable" ? null : audit.dfi ?? daily.dfi ?? null;
   const allLevels = levels.map((l: any) => ({
     name: l.name, kind: l.kind, price: l.price, side: l.side,
     status: l.status, tag: l.tag,
@@ -829,7 +830,7 @@ async function maybeFireWeeklyCalibration(): Promise<void> {
 
 // ─── 2e. 10:00 ET regime snapshot ───────────────────────────────────────────
 //
-// Once-per-trading-day at 10:00 ET, capture the model's DFI / gammaZone /
+// Once-per-trading-day at 10:00 ET, capture the model's DEX slope sign (legacy dfi field) / gammaZone /
 // vannaBias / spot / mainPivot from /api/models and hand it to the 0DTE
 // engine via setTenAmRegime(). The engine's Upgrade 3 (Vilkov tilt) consumes
 // this from 10:00–11:30 ET to bias scoreSetup ±5/±7 based on alignment.
@@ -876,7 +877,7 @@ async function maybeFireTenAmRegime(): Promise<void> {
       spot: Number(spot),
       mainPivot: Number(mainPivot),
     });
-    console.log(`[discordScheduler] 10AM regime snapshot set: dfi=${audit.dfi} gammaZone=${audit.gammaZone} vannaBias=${audit.vannaBias} spot=${spot} pivot=${mainPivot}`);
+    console.log(`[discordScheduler] 10AM regime snapshot set: dexSlopeSign=${audit.dexSlopeSign ?? "n/a"} gammaZone=${audit.gammaZone} vannaBias=${audit.vannaBias} spot=${spot} pivot=${mainPivot}`);
   } catch (e: any) {
     console.warn(`[discordScheduler] 10AM regime setTenAmRegime threw: ${e?.message ?? e}`);
   }

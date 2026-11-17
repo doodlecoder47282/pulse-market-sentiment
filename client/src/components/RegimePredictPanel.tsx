@@ -10,6 +10,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import UnavailablePanel from "@/components/UnavailablePanel";
+import { FLIP_DISTANCE_STRONG_EM, dexSlopeSignFromAudit, flipDistanceText } from "@shared/gammaRegime";
 import { Activity, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 type RegimeBucket =
@@ -40,13 +41,19 @@ interface RegimePredictPayload {
   headline: string;
   driverNotes: string[];
   drivers: {
-    dfi: number;
-    dfiSlopePerMin: number;
-    boundaryDistance: number;
-    nextBoundary: number | null;
+    /** Sign of the dealer delta-exposure slope. A sign only. Absent on older servers. */
+    dexSlopeSign?: "positive" | "negative" | "flat" | "unavailable";
+    /** @deprecated the same sign as +1 / -1 / 0, null when unavailable */
+    dfi: number | null;
+    /** @deprecated always null */
+    dfiSlopePerMin: number | null;
+    /** Signed distance of spot from the gamma flip in 1-day expected moves; null when not available. */
+    flipDistanceEM?: number | null;
+    flipDistanceSlopePerMin?: number | null;
+    projectedFlipDistanceEM?: number | null;
     ivTermDelta: number;
     ivTermLabel: string;
-    gammaFlipProxFrac: number;
+    gammaFlipProxFrac: number | null;
     charmZeroProxFrac: number | null;
     sessionFracRemaining: number;
     flipRatePerMin: number;
@@ -316,14 +323,28 @@ export default function RegimePredictPanel() {
 
             {/* Raw driver chips, mobile-friendly grid */}
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <DriverChip label="DFI" value={data.drivers.dfi.toFixed(2)} />
               <DriverChip
-                label="DFI slope"
-                value={`${data.drivers.dfiSlopePerMin >= 0 ? "+" : ""}${data.drivers.dfiSlopePerMin.toFixed(3)}/min`}
+                label="flip distance"
+                value={flipDistanceText(data.drivers.flipDistanceEM)}
+                title={`Distance of spot from the gamma flip in 1-day expected moves. The regime reads strong at ${FLIP_DISTANCE_STRONG_EM} or more and weak when closer or when the distance is not available. The ${FLIP_DISTANCE_STRONG_EM} line is hand-set, not fit to outcomes.`}
               />
               <DriverChip
-                label="γ-flip dist"
-                value={`${data.drivers.gammaFlipProxFrac.toFixed(2)}× EM (expected move)`}
+                label="flip dist. rate"
+                value={data.drivers.flipDistanceSlopePerMin != null
+                  ? `${data.drivers.flipDistanceSlopePerMin >= 0 ? "+" : ""}${data.drivers.flipDistanceSlopePerMin.toFixed(3)} EM/min`
+                  : "not available"}
+                title="Change in the flip distance per minute over the recent samples. Not available with fewer than two samples; the current regime is then carried forward."
+              />
+              <DriverChip
+                label="pivot dist"
+                value={data.drivers.gammaFlipProxFrac != null
+                  ? `${data.drivers.gammaFlipProxFrac.toFixed(2)}× EM (expected move)`
+                  : "not available"}
+              />
+              <DriverChip
+                label="DEX slope"
+                value={dexSlopeSignFromAudit(data.drivers)}
+                title="Sign of the dealer delta-exposure (DEX) slope at spot. A sign only: it has no magnitude, it is not a flow measure and it does not score any regime."
               />
               {data.drivers.charmZeroProxFrac != null && (
                 <DriverChip
@@ -366,9 +387,9 @@ export default function RegimePredictPanel() {
   );
 }
 
-function DriverChip({ label, value }: { label: string; value: string }) {
+function DriverChip({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="rounded-sm border border-border bg-card/40 px-2 py-1.5">
+    <div className="rounded-sm border border-border bg-card/40 px-2 py-1.5" title={title}>
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="font-mono text-xs tabular-nums text-foreground">{value}</div>
     </div>

@@ -2,6 +2,13 @@
 //
 // Tier 3 experiment #4 — Particle filter on the DFI signal.
 //
+// NOTE (2026-11-17): DFI is retired as a magnitude. The legacy `dfi` field
+// this filter observes is now the SIGN of the dealer delta-exposure slope
+// (+1 / -1 / 0); before, it was pinned at +5 / -5. Either way the observation
+// carries a sign only, so the "DFI range" below is not a real range. The
+// filter is a shadow and feeds nothing; it is left as is for the owner to
+// keep or retire.
+//
 // Brier-gated: this module is a pure shadow forecaster. It runs alongside
 // the existing scenario probability calc, never replaces it. Once 30 days
 // of paired (existing prob, particle prob) data exists, the cusumWatchdog
