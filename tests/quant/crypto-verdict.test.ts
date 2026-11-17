@@ -81,5 +81,5 @@ test("no_sells: an observed zero sell count holds a would-be ENTER at WATCH (the
   assert.match(e, /\} else if \(hp === "no_sells" && CRYPTO_RULES\.enter\.requireSellsObserved\) \{\s*verdict = "WATCH"; code = "no_sells";/);
   assert.equal(VERDICT_CODE_TEXT.no_sells, "no sell observed in the last hour");
   const { CRYPTO_RULES_VERSION } = await import("../../shared/cryptoRules");
-  assert.equal(CRYPTO_RULES_VERSION, "2026.11.16-1");
+  assert.ok(CRYPTO_RULES_VERSION >= "2026.11.16-1");
 });

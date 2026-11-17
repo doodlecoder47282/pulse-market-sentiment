@@ -196,8 +196,10 @@ export function autopsyGates(f: AutopsyFacts, rules: CryptoRules = CRYPTO_RULES)
       : { value: usd(mcap), state: "pass" as const, detail: null }),
   });
   add({
-    id: "flow_accel", severity: "entry", label: "Volume acceleration", rule: `at least ${rules.enter.minVolAccel}x (5 min pace vs 1 h pace)`,
-    ...(f.volAccel == null ? { value: "not reported", state: "unread" as const, detail: null }
+    id: "flow_accel", severity: "entry", label: "Volume acceleration", rule: `at least ${rules.enter.minVolAccel}x (5 min pace vs the pace of the last hour, or of the pair's life when younger)`,
+    ...(f.volAccel == null ? (f.ageMinutes != null && f.ageMinutes < rules.flow.accelMinAgeMinutes
+        ? { value: "not read", state: "unread" as const, detail: `the pair is under ${rules.flow.accelMinAgeMinutes} minutes old: there is no baseline to compare the last 5 minutes with` }
+        : { value: "not reported", state: "unread" as const, detail: null })
       : f.volAccel < rules.enter.minVolAccel ? { value: `${f.volAccel.toFixed(1)}x`, state: "fail" as const, detail: null }
       : { value: `${f.volAccel.toFixed(1)}x`, state: "pass" as const, detail: null }),
   });
