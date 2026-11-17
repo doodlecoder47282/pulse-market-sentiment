@@ -1355,9 +1355,11 @@ async function narrativeTick(): Promise<void> {
 const GRADE_HORIZON_MS = CRYPTO_RULES.grading.horizonHours * 3600_000;
 const NO_DATA_AFTER_ERRORS_MS = 7 * 24 * 3600_000; // fetch errors this long after detection → stop retrying
 
-/** Grader reads taken from a successor pool since boot (shown in the engine health note). */
-let successorReads = 0;
-export function getGraderSuccessorReads(): number { return successorReads; }
+/** A successor pool must be at least as deep as the desk's floor and as the pool the row was logged on. */
+function successorFloor(entryLiquidity: unknown): number {
+  const e = Number(entryLiquidity);
+  return Math.max(LIQ_FLOOR_USD, Number.isFinite(e) && e > 0 ? e : 0);
+}
 
 async function graderTick(): Promise<void> {
   const open = sqlite.prepare(
@@ -1394,8 +1396,7 @@ async function graderTick(): Promise<void> {
         // the same token's deepest pool instead of losing the outcome (cryptoStats.pickSuccessorPool).
         if (!p && row.token_address) {
           const byToken = await getJson(`${DS_BASE}/latest/dex/tokens/${row.token_address}`);
-          p = pickSuccessorPool(byToken?.pairs, String(row.chain), String(row.token_address), String(row.pair_address));
-          if (p) successorReads++;
+          p = pickSuccessorPool(byToken?.pairs, String(row.chain), String(row.token_address), String(row.pair_address), successorFloor(row.liquidity_at_signal));
         }
         // observed 0 stays 0: a full liquidity pull must grade RUGGED
         caps = { marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) };
@@ -1452,7 +1453,7 @@ sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = NULL, horizon_liquidity
 async function horizonTick(): Promise<void> {
   const now = Date.now();
   const due = sqlite.prepare(
-    `SELECT id, pair_address, token_address, chain, detected_at, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
+    `SELECT id, pair_address, token_address, chain, detected_at, liquidity_at_signal, json_extract(features_json, '$.mcapBasis') AS mcap_basis FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
   ).all(HORIZON_PASS_SINCE_MS, GRADE_HORIZON_MS, now, HORIZON_BATCH * 3) as any[];
   if (!due.length) return;
   const mark = sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = @mcap, horizon_liquidity = @liq, horizon_at = @now WHERE id = @id AND horizon_at IS NULL`);
@@ -1476,7 +1477,7 @@ async function horizonTick(): Promise<void> {
         // Same successor rule as the grader: the 72 h mark of a graduated coin is read on its current pool.
         if (!p && row.token_address) {
           const byToken = await getJson(`${DS_BASE}/latest/dex/tokens/${row.token_address}`);
-          p = pickSuccessorPool(byToken?.pairs, String(row.chain), String(row.token_address), String(row.pair_address));
+          p = pickSuccessorPool(byToken?.pairs, String(row.chain), String(row.token_address), String(row.pair_address), successorFloor(row.liquidity_at_signal));
         }
         mcap = capOnBasis({ marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) }, hBasis);
         liq = observedNumber(p?.liquidity?.usd);

@@ -2341,3 +2341,10 @@ are not re-opened (recovering them needs an OHLCV backfill); a tracked coin's pe
 on its original pair; the RUGGED liquidity test compares the successor pool's liquidity with the entry
 pool's. Unverified from the sandbox: that DexScreener drops a bonding-curve pair after graduation (the
 fallback only acts when the pair is absent, so it is inert if that is wrong). No threshold changed.
+Review of the successor pool: HOLD, taken. An empty pair answer looks the same for a delisted pair and for a
+feed hiccup, and the fallback had no depth test: a $3k side pool would have graded a $40k entry RUGGED for
+good (the mark is written once), and a dust pool at an off-market price could report a cap over the target.
+A successor must now be at least as deep as the desk's liquidity floor AND as the pool the row was logged
+on; otherwise there is no successor and the row keeps its missing outcome. A pool that deep cannot trip the
+liquidity-RUGGED test. The unused read counter is gone. Not recorded yet: which rows were graded on a
+successor.
