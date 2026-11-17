@@ -13,6 +13,7 @@ import { toSchwabSymbol } from "./schwabSymbols";
 import { flattenSchwabChain, chainSpot, type SchwabChainLike } from "./schwabChainRows";
 import { timeToExpiry, type SettlementStyle } from "./timeToExpiry";
 import { etDate, sessionCloseMs } from "./exchangeCalendar";
+import { bucketGexByDte, buildOiBasis, chainReadDate, gammaWeighting } from "../shared/gammaBasis";
 import { fetchMarketHeadlineFeed, type HeadlineFeed } from "./news";
 
 const UA = "Mozilla/5.0 (compatible; SentimentDash/1.0)";
@@ -265,6 +266,10 @@ export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date
     pcrByBucket,
     gexCrossoverStrike,
     gammaProfile: gammaProfile.curve,
+    oiBasis: buildOiBasis(chainReadDate(chain), chain.oiState),
+    weighting: gammaWeighting("oi"),
+    // The same per-contract terms totalGex sums, split by calendar days to expiry.
+    gexByDte: bucketGexByDte(chainGex.gexByDteDay ?? []),
   };
 }
 

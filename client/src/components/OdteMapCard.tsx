@@ -15,6 +15,7 @@ import { Map as MapIcon, Copy, Check, AlertTriangle, ChevronRight } from "lucide
 import { parseUnavailableError } from "@shared/unavailable";
 import { renderOdteMapText, fmtMoney, type OdteMap, type MapStrike } from "@shared/odteMap";
 import type { SettleTally } from "@shared/odteSettle";
+import GammaBasisStamp from "@/components/GammaBasisStamp";
 
 type MapResp = OdteMap & { ledger: { kept: boolean; why: string }; forwardAsOf: string; source: string };
 interface LedgerResp {
@@ -128,6 +129,7 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
         )}
         {m && (
           <>
+            <GammaBasisStamp oiBasis={m.oiBasis ?? null} weighting={m.weighting ?? null} testId="odte-map-gamma-basis" />
             {m.dataState !== "ok" && (
               <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-300" data-testid="odte-map-state">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {m.reason}

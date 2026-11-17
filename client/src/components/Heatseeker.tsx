@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import LivenessBadge from "@/components/LivenessBadge";
 import DataAgeChip from "@/components/DataAgeChip";
+import GammaBasisStamp from "@/components/GammaBasisStamp";
 import Killbox from "@/components/Killbox";
 import { useMemo, useState, useEffect } from "react";
 import {
@@ -862,6 +863,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                   HEATSEEKER · {symbol} · {dte}DTE · exp {expiry}
                   <EdgeInfo id="heatseeker-map" className="h-6 w-6" />
                 </div>
+                <GammaBasisStamp oiBasis={(data as any).oiBasis ?? null} weighting={(data as any).weighting ?? null} testId="heatseeker-gamma-basis" className="mt-1" />
                 <div className="mt-0.5 font-mono text-2xl font-bold tabular-nums">
                   {Number.isFinite(spot) && spot > 0 ? spot.toFixed(2) : "—"}
                 </div>

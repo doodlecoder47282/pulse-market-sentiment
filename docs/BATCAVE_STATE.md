@@ -2404,3 +2404,24 @@ Second review: HOLD, taken. The depth floor comes from the row being graded, but
 every open exit plan on that pair with the successor read, so a later ENTER logged at $60k could be
 liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
 now grades its own row only; exit plans are not sampled on it.
+2026-11-17: Gamma "OI as of" stamp, weighting label and Signals DTE split (feat/gamma-oi-stamp-impl;
+practitioner review items O7, O8 and "missing" item 3). Descriptive only: no GEX figure, wall, flip, regime
+or weighting changed. (1) Every gamma payload (Signals, Models, Heatseeker, 0DTE forward and map, Killbox)
+now carries oiBasis { sessionDate, note }: the trading date whose end-of-day open interest the figures use.
+Rule (shared/gammaBasis.ts, same posting rule as oiHold.postedSession): a chain read on a trading day
+carries that morning's posting, which counts positions as of the previous trading day's close; a weekend or
+holiday read carries the last posting; when the open interest was filled from the saved store, the saved
+posting day is used instead of the read day; with no chain date or no open interest the date is null and
+the screen says "OI date unknown". The read date is the chain's receive time (else its data time) in New
+York. Each panel shows "OI as of the close of Mon 16 Nov" (formatted from the field) with the tooltip
+"Open interest is posted once a day. Today's trading is not in these figures." (2) Each payload carries
+weighting { kind, label }: Signals, Models and Heatseeker "open interest"; the 0DTE forward and map "open
+interest + 0.25 x today's volume"; the Killbox "open interest, volume or both" with its rule (hybrid when
+volume exceeds 5 x OI; volume alone when OI is under 1,000 contracts and volume over 1,000) and the mode the
+read used. The 0.25, 5 and 1,000 are now named constants read by both the code and the labels; the values
+are the ones the code already used. (3) Signals gamma adds gexByDte: Net GEX split into 0DTE, 1-7 and 8-45
+calendar days to expiry, summed from the same per-contract terms as the total (they add up to it); a bucket
+with no contract is null, not 0. Shown under the tiles with each bucket's share of the three buckets'
+combined absolute size. Known limit, stated: between midnight ET and the morning posting on a trading day
+the chain still carries the previous posting while the rule names the newer session (the posting time is
+not in Schwab's chain); the three weightings still differ by tab, now labelled rather than reconciled.

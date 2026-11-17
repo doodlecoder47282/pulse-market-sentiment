@@ -20,6 +20,10 @@ export interface SchwabChainLike {
   callExpDateMap?: ExpMap;
   putExpDateMap?: ExpMap;
   underlying?: { last?: number | null; bid?: number | null; ask?: number | null } | null;
+  /** Chain provenance when the caller has it (schwab.OptionChainOk): data time, receive time, open-interest state. */
+  asOfMs?: number | null;
+  receivedAtMs?: number | null;
+  oiState?: { source: "live" | "held" | "none"; sessionDate: string | null } | null;
 }
 
 export interface FlatContract {

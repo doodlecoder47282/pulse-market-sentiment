@@ -19,6 +19,7 @@ import { compareCloseDistributions, impliedClose } from "../shared/impliedClose"
 import { estimateVarianceProfile, flatProfile, remainingVarianceTimeChange, type VarianceProfile } from "../shared/intradayVariance";
 import { etDayMod } from "./spxMinuteBars";
 import { strikeSpacing } from "../shared/odteMap";
+import { buildOiBasis, chainReadDate, gammaWeighting, HYBRID_VOLUME_WEIGHT } from "../shared/gammaBasis";
 
 export interface OdteForwardResult { status: number; body: any }
 
@@ -188,7 +189,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
         const ivPct = sigmaClock > 0 ? sigmaClock * 100 : 0; // calendar-clock IV, %
         if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; row.T = T; }
         else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; row.T = T; }
-        const weight = oi + vol * 0.25; // hybrid: 0DTE OI is stale by design, volume carries intraday info
+        const weight = oi + vol * HYBRID_VOLUME_WEIGHT; // hybrid: 0DTE OI is stale by design, volume carries intraday info
         if (weight <= 0) continue;
         const sigma = sigmaClock;
         const sign = side === "C" ? 1 : -1;
@@ -233,7 +234,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     r: FLIP_RATE,
     q: FLIP_DIV_YIELD,
     expiryKeys: [nearestKey],
-    weight: (c: any) => (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+    weight: (c: any) => (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * HYBRID_VOLUME_WEIGHT,
     lowPct: 0.95,
     highPct: 1.05,
     nLevels: 101,
@@ -397,6 +398,9 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     levels: gexValid ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin } : { callWall: null, putWall: null, gammaFlip: null, pin: null },
     flipInputs: flipInputs({ weight: "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
     weightTotals: { oi: totalOI, volume: totalVol },
+    // Which session's open interest the weight uses, and the weight itself (shared/gammaBasis.ts).
+    oiBasis: buildOiBasis(chainReadDate(chain as any), (chain as any).oiState),
+    weighting: gammaWeighting("oi_plus_quarter_volume"),
     path,
     // The path above is the dealer-positioning overlay (pin pull, charm tilt,
     // 15% wider in short gamma): rules of thumb, not part of the Wiener baseline.
