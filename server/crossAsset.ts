@@ -166,11 +166,14 @@ export function buildCrossAssetMatrix(): CrossAssetMatrix {
     notes.push("no clean cross-asset confluence — defer to fundamentals/regime tab");
   }
 
-  // A missing leg means "no data", not "0.0% move" — downgrade rather than
-  // let a silent zero masquerade as confirmation.
+  // A missing leg means "no data", not "0.0% move". The rules above read it as 0, which can satisfy a
+  // condition ("HYG flat/down") on its own, so with any of the four legs missing no pattern is named.
   if (missingLegs.length > 0) {
+    risk = "mixed";
+    label = "not read: missing data";
     confidence = "low";
-    notes.push(`missing data for ${missingLegs.join(", ")} — verdict downgraded`);
+    notes.length = 0;
+    notes.push(`no day change for ${missingLegs.join(", ")}: the cross-asset pattern needs SPY, TLT, HYG and UUP, so none is named`);
   }
 
   if (gldD > 0.5 && tipD > 0.2) notes.push("gold + TIPS bid → inflation re-pricing input");

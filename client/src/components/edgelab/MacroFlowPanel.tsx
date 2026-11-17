@@ -87,7 +87,7 @@ export default function MacroFlowPanel() {
                   <span className={(s.change ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"}>
                     Δ {fmtSigned(s.change, 3)}
                   </span>
-                  <span className={(s.weekChange ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"}>
+                  <span className={s.weekChange == null ? "text-muted-foreground" : s.weekChange >= 0 ? "text-emerald-500" : "text-rose-500"} title="Change from the latest observation dated at least 7 calendar days before the newest one">
                     1w {fmtSigned(s.weekChange, 3)}
                   </span>
                 </div>

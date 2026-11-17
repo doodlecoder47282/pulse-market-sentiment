@@ -2102,3 +2102,19 @@ nothing, so a young pool's first read (usually under 10 candles) would have lock
 "insufficient" forever; it now waits for the first readable tape (>= CANDLES_MIN) and the SQL also replaces
 a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
 with a separator.
+
+2026-11-16: Audit batch, desk data (feat/audit-desk-data; audit items T9, T13, T14, T18, T19, T22). T9: every
+GET of the IV/RV panel wrote today's row with INSERT OR REPLACE, so a weekend or holiday request stored the
+prior session's numbers under a date with no session (each such row entered the RV percentile cones and the
+IV30 spread history), and a failed chain read later in the day nulled an implied vol stored earlier; rows are
+written on trading days only, a missing value never erases a stored one, and the readers skip rows dated on
+non-trading days (the stored rows are not deleted). T18: the cross-asset rules read a missing leg as a 0.0%
+move, which can satisfy a condition by itself ("HYG flat/down"), and still printed the pattern with a
+"downgraded" note; with SPY, TLT, HYG or UUP missing no pattern is named. T19: FRED "1w" and month changes
+were five and 22 rows back, a week only on a daily series (five weeks on a weekly one); they are by calendar
+date (the latest observation at least 7 / 30 days before the newest), null when none is that old, and a null
+is grey, not green. T22: a failed event-replay price read was cached for six hours like a good one; a failed
+or empty read is retried after two minutes. T13: the grade calibration card described the option ledger as
+net of fees while the request it makes deducts none; the copy says before fees. T14: the "fitted" column
+printed an isotonic value for every bucket with data, including buckets under the sample gates where the
+prior is what is served; the report marks fittedInUse and the column shows a dash elsewhere.

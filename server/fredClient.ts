@@ -134,6 +134,15 @@ function ageInDays(isoDate: string | null): number | null {
   return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86_400_000)) : null;
 }
 
+/** The newest row dated at least `days` calendar days before `latestDate` (rows newest first), with a value. */
+export function rowAtOrBefore<T extends { date: string; value: number | null }>(rows: T[], latestDate: string | null, days: number): T | undefined {
+  if (!latestDate) return undefined;
+  const t = Date.parse(`${latestDate}T00:00:00Z`);
+  if (!Number.isFinite(t)) return undefined;
+  const cut = new Date(t - days * 86_400_000).toISOString().slice(0, 10);
+  return rows.find((r) => r.date <= cut && r.value != null);
+}
+
 export function getFredSnapshot(): FredObservation[] {
   const out: FredObservation[] = [];
   for (const [id, label] of Object.entries(FRED_SERIES)) {
@@ -154,8 +163,10 @@ export function getFredSnapshot(): FredObservation[] {
     const prevDate = rows[1]?.date ?? null;
     const change = (latest != null && prev != null) ? latest - prev : null;
     const changePct = (latest != null && prev != null && prev !== 0) ? ((latest - prev) / prev) * 100 : null;
-    const wkRow = rows.find((_, i) => i >= 5);
-    const moRow = rows.find((_, i) => i >= 22);
+    // By calendar date, not by row count: "5 rows back" is a week only for a daily series (it is five
+    // weeks on a weekly one and five months on a monthly one). Null when no observation is that old.
+    const wkRow = rowAtOrBefore(rows, latestDate, 7);
+    const moRow = rowAtOrBefore(rows, latestDate, 30);
     const weekChange = (latest != null && wkRow?.value != null) ? latest - wkRow.value : null;
     const monthChange = (latest != null && moRow?.value != null) ? latest - moRow.value : null;
     out.push({
