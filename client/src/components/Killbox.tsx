@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import LivenessBadge from "@/components/LivenessBadge";
 import DataAgeChip from "@/components/DataAgeChip";
+import GammaBasisStamp from "@/components/GammaBasisStamp";
 
 type Greek = "gex" | "vanna" | "charm" | "vomma" | "zomma";
 
@@ -151,6 +152,10 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
           <LivenessBadge feedName="options" value={data?.asOf ?? undefined} requiresSchwab={true} stale={(data as any)?.chainStale ?? null} lastSession={(data as any)?.chainLastSession ?? null} asOfMs={(data as any)?.chainAsOfMs ?? null} />
         </div>
       </div>
+
+      {data && (
+        <GammaBasisStamp oiBasis={(data as any).oiBasis ?? null} weighting={(data as any).weighting ?? null} testId="killbox-gamma-basis" />
+      )}
 
       {/* Key levels strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 rounded border border-border bg-card/40 p-2">

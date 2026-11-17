@@ -48,6 +48,7 @@ import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
 import { schwabNum } from "./schwabChainRows";
+import { buildOiBasis, chainReadMs, gammaWeighting, HYBRID_VOLUME_WEIGHT, killboxWeightMode } from "../shared/gammaBasis";
 
 /** Flip weight label for the killbox / thermal weight modes. */
 function flipWeightOf(mode: string): FlipWeight {
@@ -3821,8 +3822,8 @@ Describe the above in the JSON schema specified in the system prompt: what the n
           }
         }
       }
-      const useVolume = totalOI < 1000 && totalVol > 1000;
-      const weightMode: "oi" | "volume" | "hybrid" = useVolume ? "volume" : (totalOI > 0 && totalVol > totalOI * 5 ? "hybrid" : "oi");
+      // Same rule as before, named in shared/gammaBasis.ts so the screen's weighting label reads the same constants.
+      const weightMode: "oi" | "volume" | "hybrid" = killboxWeightMode(totalOI, totalVol);
 
       const SQRT_2PI = Math.sqrt(2 * Math.PI);
       const phi = (x: number) => Math.exp(-0.5 * x * x) / SQRT_2PI;
@@ -3886,7 +3887,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
               let weight = 0;
               if (weightMode === "oi") weight = oi;
               else if (weightMode === "volume") weight = vol;
-              else weight = oi + vol * 0.25;
+              else weight = oi + vol * HYBRID_VOLUME_WEIGHT;
               if (weight <= 0) continue;
 
               const sign = side === "C" ? 1 : -1;
@@ -3939,7 +3940,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
           q: FLIP_DIV_YIELD,
           weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
             : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
-            : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+            : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * HYBRID_VOLUME_WEIGHT,
         }).zeroGamma;
       }
 
@@ -3971,6 +3972,9 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         chainSource: "schwab",
         spot,
         weightMode,
+        // Which session's open interest, and the weighting rule with the mode this read used (shared/gammaBasis.ts).
+        oiBasis: buildOiBasis(chainReadMs(chain), chain.oiState),
+        weighting: gammaWeighting("killbox_adaptive", weightMode),
         totalOI,
         totalVolume: totalVol,
         profiles,
@@ -4077,6 +4081,9 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       // Read by the Heatseeker chip: a closed-market chain is the last session's, not stale and not live.
       result.chainLastSession = chain.lastSession === true;
       result.oiState = chain.oiState ?? null;
+      // Which session's open interest the map uses, and the weight (open interest only; shared/gammaBasis.ts).
+      result.oiBasis = buildOiBasis(chainReadMs(chain), chain.oiState);
+      result.weighting = gammaWeighting("oi");
       result.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;

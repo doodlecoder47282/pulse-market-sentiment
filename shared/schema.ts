@@ -137,6 +137,12 @@ export interface GammaStructure {
   pcrByBucket: { label: string; dteMax: number; pcrOi: number | null; pcrVol: number | null; callOi: number; putOi: number }[];  // rolling DTE buckets for PCR selector
   gexCrossoverStrike: number | null;       // legacy metric — strike where cumulative per-strike GEX flips sign
   gammaProfile: { spot: number; gex: number }[];  // 60-pt Perfiliev curve, 0.9 · S → 1.1 · S
+  /** Trading date whose end-of-day open interest these figures use (shared/gammaBasis.ts). */
+  oiBasis?: import("./gammaBasis").OiBasis;
+  /** What gamma is multiplied by on this tab: open interest only. */
+  weighting?: import("./gammaBasis").GammaWeighting;
+  /** totalGex split by calendar days to expiry (0DTE, 1-7, 8-45); the three sum to totalGex. An empty bucket is null, not 0. */
+  gexByDte?: Array<{ label: string; dteMin: number; dteMax: number; netGex: number | null; contracts: number }>;
 }
 
 // ---- Whale alert history: every detection logged for auditability + /api/flow/history ----

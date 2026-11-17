@@ -3,6 +3,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Snapshot_Public, Composite, GammaStructure, SocialSentiment } from "@shared/schema";
 import { etDate, isTradingDay, sessionOpenMs, sessionCloseMs } from "@shared/exchangeCalendar";
 import { parseUnavailableError } from "@shared/unavailable";
+import { gexDteShares, GEX_DTE_SPLIT_TEXT } from "@shared/gammaBasis";
+import GammaBasisStamp from "@/components/GammaBasisStamp";
 import DataStateChip from "@/components/DataStateChip";
 import UnavailablePanel from "@/components/UnavailablePanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -896,6 +898,25 @@ export default function Dashboard() {
                       );
                     })()}
                   </div>
+                  <GammaBasisStamp oiBasis={gamma.oiBasis} weighting={gamma.weighting} testId="signals-gamma-basis" className="mb-2" />
+                  {(() => {
+                    const byDte = gamma.gexByDte ?? [];
+                    if (byDte.length === 0) return null;
+                    const shares = gexDteShares(byDte);
+                    return (
+                      <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-testid="signals-gex-by-dte">
+                        <span className="uppercase tracking-wider">Net GEX by days to expiry</span>
+                        {byDte.map((b, i) => (
+                          <span key={b.label} className="font-mono tabular-nums" data-testid={`signals-gex-dte-${b.label}`}>
+                            <span className="text-muted-foreground">{b.label} </span>
+                            <span className="text-foreground">{b.netGex == null ? "no priced contracts" : fmt.bn(b.netGex)}</span>
+                            {shares[i] != null ? <span className="text-muted-foreground"> ({Math.round((shares[i] ?? 0) * 100)}% of gross)</span> : null}
+                          </span>
+                        ))}
+                        <span className="basis-full" data-testid="signals-gex-by-dte-note">{GEX_DTE_SPLIT_TEXT}</span>
+                      </div>
+                    );
+                  })()}
                   <ErrorBoundary compact label="GexChart">
                     <Suspense fallback={<Skeleton className="h-40 w-full" />}>
                       <GexChart gamma={gamma} />

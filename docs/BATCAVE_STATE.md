@@ -2444,3 +2444,29 @@ for four hours after the close, so 17:00 on a half day). S5: the news calendar b
 00:00 UTC and printed the label in New York time, so every header read "Week of Sun" and a Sunday-evening
 ET event was filed under the next week; weeks are now the ET calendar's Monday. S22: the SVG chart's axis
 and hover time used the viewer's time zone; they use New York time and the hover says ET.
+2026-11-17: Gamma "OI as of" stamp, weighting label and Signals DTE split (feat/gamma-oi-stamp-impl;
+practitioner review items O7, O8 and "missing" item 3). Descriptive only: no GEX figure, wall, flip, regime
+or weighting changed. (1) Every gamma payload (Signals, Models, Heatseeker, 0DTE forward and map, Killbox)
+now carries oiBasis { sessionDate, note }: the trading date whose end-of-day open interest the figures use.
+Rule (shared/gammaBasis.ts, same posting rule as oiHold.postedSession): a chain read on a trading day
+carries that morning's posting, which counts positions as of the previous trading day's close; a weekend or
+holiday read carries the last posting; when the open interest was filled from the saved store, the saved
+posting day is used instead of the read day; with no chain date or no open interest the date is null and
+the screen says "OI date unknown". The read date is the chain's receive time (else its data time) in New
+York. Each panel shows "OI as of the close of Mon 16 Nov" (formatted from the field) with the tooltip
+"Open interest is posted once a day. Today's trading is not in these figures." (2) Each payload carries
+weighting { kind, label }: Signals, Models and Heatseeker "open interest"; the 0DTE forward and map "open
+interest + 0.25 x today's volume"; the Killbox "open interest, volume or both" with its rule (hybrid when
+volume exceeds 5 x OI; volume alone when OI is under 1,000 contracts and volume over 1,000) and the mode the
+read used. The 0.25, 5 and 1,000 are now named constants read by both the code and the labels; the values
+are the ones the code already used. (3) Signals gamma adds gexByDte: Net GEX split into 0DTE, 1-7 and 8-45
+calendar days to expiry, summed from the same per-contract terms as the total (they add up to it); a bucket
+with no contract is null, not 0. Shown under the tiles with each bucket's share of the three buckets'
+combined absolute size. Pre-open rule: Schwab's chain does not say when the day's
+open interest posted, so a live-source chain read on a trading day before that day's regular open (09:30
+ET, exchange calendar) is not assumed to carry the new posting: the stamp names the earlier session
+(two trading days before the read date), sets postingPending and reads "OI as of the close of <date>;
+today's posting may not be in yet". From the open onward it names the previous trading day. Held open
+interest is unaffected. Dates outside the exchange calendar's verified years give "OI date unknown". The
+explanations are visible text, not hover-only. The three weightings still differ by tab, now labelled
+rather than reconciled.
