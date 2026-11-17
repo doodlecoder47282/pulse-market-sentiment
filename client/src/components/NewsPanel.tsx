@@ -567,13 +567,17 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
 }
 
 // Week bucketing: ISO week-year string (e.g. "Week of Mon 4/21")
-function weekStart(epoch: number): number {
-  const d = new Date(epoch * 1000);
-  // Snap to Monday in local/UTC terms. Use ET by computing in UTC then pulling back.
-  const day = d.getUTCDay(); // 0=Sun..6=Sat
+/**
+ * The Monday of the event's week ON THE ET CALENDAR, as an epoch at 12:00 UTC of that date (so formatting
+ * it in ET prints that Monday). It was Monday 00:00 UTC, which is Sunday evening in New York: every header
+ * read "Week of Sun", and an event on a Sunday evening ET was filed under the following week.
+ */
+export function weekStart(epoch: number): number {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(epoch * 1000)).split("-").map(Number);
+  const et = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12));
+  const day = et.getUTCDay(); // 0=Sun..6=Sat, of the ET calendar date
   const offset = day === 0 ? -6 : 1 - day; // shift to Monday
-  const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + offset));
-  return Math.floor(monday.getTime() / 1000);
+  return Math.floor(Date.UTC(parts[0], parts[1] - 1, parts[2] + offset, 12) / 1000);
 }
 
 function weekLabel(epoch: number): string {

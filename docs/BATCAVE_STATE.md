@@ -2437,3 +2437,10 @@ rows after 2026-11-17); a set under 50 priced rows shows counts only; the hold m
 rules have not passed a coin" sentence is conditional on the data; a whitespace symbol is unread; the
 parameters and set ids are hash-pinned to the version string and a test checks that only the replay imports
 the module.
+2026-11-17: Item 6, audit batch on dates and clocks (feat/audit-dates; audit items S5, S15, S22). S15: the
+header's market status pill knew weekends only, so it read OPEN on an exchange holiday and until 16:00 on a
+13:00 half day; it now reads the exchange calendar the server uses (pre-market from 04:00 ET, after-hours
+for four hours after the close, so 17:00 on a half day). S5: the news calendar bucketed weeks at Monday
+00:00 UTC and printed the label in New York time, so every header read "Week of Sun" and a Sunday-evening
+ET event was filed under the next week; weeks are now the ET calendar's Monday. S22: the SVG chart's axis
+and hover time used the viewer's time zone; they use New York time and the hover says ET.
