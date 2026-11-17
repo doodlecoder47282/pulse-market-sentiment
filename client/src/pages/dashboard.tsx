@@ -904,9 +904,10 @@ export default function Dashboard() {
                     </Suspense>
                   </ErrorBoundary>
                   <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                    Bars above zero = dealers long gamma at that strike (stabilizing). Bars below zero = short gamma
-                    (amplifying). Computed from the Schwab SPY options chain (0-45 DTE); calls contribute +, puts contribute − weighted by
-                    Γ × OI × 100 × S² × 1%.
+                    Under the usual convention (customers long calls, short puts), bars above zero = dealers long gamma at that
+                    strike (stabilizing) and bars below zero = short gamma (amplifying). Computed from the Schwab SPY options chain
+                    (0-45 DTE); calls contribute +, puts contribute − weighted by Γ × OI × 100 × S² × 1%. Open interest is posted
+                    once a day, so intraday bars use the prior session's OI: today's trading is not in them.
                   </p>
                 </>
                 )}
@@ -1112,7 +1113,7 @@ export default function Dashboard() {
 }
 
 const KEY_STAT_TOOLTIPS: Record<string, string> = {
-  "Net GEX": "Net Gamma Exposure: total dealer gamma in dollars per 1% move. Positive = dealers long gamma (stabilizing); negative = short gamma (amplifying moves).",
+  "Net GEX": "Net Gamma Exposure: total dealer gamma in dollars per 1% move, under the usual convention that customers are long calls and short puts. Positive = dealers long gamma (stabilizing); negative = short gamma (amplifying moves). Uses the prior session's open interest.",
   "Regime": "Gamma regime based on net dealer positioning. Positive gamma → mean-reversion / range-bound. Negative gamma → trend-following / breakout potential.",
   "Call Wall": "Strike with the largest positive gamma exposure (call concentration). Acts as a ceiling — dealers sell rallies above this level to hedge.",
   "Put Wall": "Strike with the largest negative gamma exposure (put concentration). Acts as a floor — dealers buy dips below this level.",

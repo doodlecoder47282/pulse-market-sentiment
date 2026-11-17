@@ -639,9 +639,9 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <StatBox
-            label="Net Bias"
-            value={sideUnavailable ? "—" : `${ticker.netAggressorPrem >= 0 ? "+" : ""}${fmtDollar(ticker.netAggressorPrem)} ${ticker.netAggressorPrem >= 0 ? "BULL" : "BEAR"}`}
-            tone={sideUnavailable ? "neutral" : ticker.netAggressorPrem >= 0 ? "up" : "down"}
+            label="Last-print net premium"
+            value={sideUnavailable ? "—" : `${ticker.netAggressorPrem >= 0 ? "+" : ""}${fmtDollar(ticker.netAggressorPrem)}`}
+            tone="neutral"
           />
           <StatBox
             label="Overall Vol"
@@ -658,6 +658,12 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
             tone="neutral"
           />
         </div>
+        <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground" data-testid="flow-net-premium-note">
+          Last-print net premium = (calls ask-side + puts bid-side) − (calls bid-side + puts ask-side), in dollars. Each contract's whole
+          day volume is assigned by its latest print, so one print can move a day of premium between sides, and a bid-side put may be a
+          closing sale. It is dollar-weighted (in-the-money contracts dominate) and is a different measure from the put/call volume ratio
+          (contracts, whole day) and from dominance (delta volume since sampling began); they can point different ways.
+        </p>
       </div>
 
       {/* ─── TRADE-LEVEL SIDE: Lee-Ready on streamed option trade blocks (streamed contracts only) ─── */}

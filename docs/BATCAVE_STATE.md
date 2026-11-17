@@ -2328,3 +2328,15 @@ not started again on top of itself (the momentum tick's worst case moved close t
 mint's Jupiter check is stamped with its own call's time. Left open and unverified: "pumpswap" as the dex id
 GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
 replay pools old-meaning and new-meaning graduate rows without a marker.
+
+2026-11-17: Practitioner review, options batch 3, copy only (feat/pro-review-options-3; items O6, O7, O9, O10
+and the copy follow-ups from the review of batch 2). O6: the "Net Bias +$X BULL" tile is "Last-print net
+premium" with no BULL/BEAR verdict and a note on how it is built (each contract's whole day volume assigned
+by its latest print, dollar-weighted, a bid-side put may be a closing sale) and why it can point a different
+way from the put/call volume ratio and from dominance. O7: the Signals gamma chart, the Net GEX tooltip and
+the Exposure footnote say that open interest is posted once a day and intraday values use the prior
+session's. O9: "dealers long gamma" is stated as the usual convention (customers long calls, short puts),
+an assumption. O10: the Exposure footnote said "262 trading days/yr"; the code uses calendar time. The whale
+help text and the trade-environment note describe the direction basis now in use. No calculation changed.
+Still open from the options review: O8 (three gamma weightings across tabs), O11-O16, and the "missing"
+list (graded signal record first).

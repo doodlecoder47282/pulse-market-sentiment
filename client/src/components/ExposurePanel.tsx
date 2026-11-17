@@ -324,10 +324,10 @@ function Footnote() {
   return (
     <div className="mt-3 rounded-md bg-muted/40 p-2 text-[11px] leading-relaxed text-muted-foreground">
       <span className="font-semibold text-foreground">Read:</span>{" "}
-      Green = dealers long that Greek at that spot (stabilizing). Red = short (amplifying).
+      Under the usual convention (customers long calls, short puts; dealers the other side), green = dealers long that Greek at that spot (stabilizing), red = short (amplifying). The convention is an assumption, not an observation.
       GEX flip level is where dealer hedging regime inverts — above it, rallies get sold; below, sell-offs get chased.
       VEX and Charm flips are less well-known but drive vol-crush (VEX) and EOD pinning (Charm) behavior.
-      Math: Black-Scholes with continuous dividend · 262 trading days/yr · OI weighted.
+      Math: Black-Scholes with continuous dividend · calendar time to expiry · weighted by open interest, which is posted once a day: intraday values use the prior session's OI.
     </div>
   );
 }
