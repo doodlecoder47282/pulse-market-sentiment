@@ -4745,6 +4745,18 @@ Describe the above in the JSON schema specified in the system prompt: what the n
     }
   });
 
+  // GET /api/record/signals: one read-only record of what each signal source has logged and graded, each on
+  // its own basis (server/signalRecord.ts). Never pooled into one figure. Behind the /api access gate like its neighbours.
+  app.get("/api/record/signals", async (_req, res) => {
+    try {
+      const { getSignalRecord } = await import("./signalRecord");
+      res.setHeader("Cache-Control", "no-store");
+      res.json(await getSignalRecord());
+    } catch (e: any) {
+      res.status(500).json({ error: "signal_record_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   // MISSION FIX #2 — POST /api/edge/survival
   // Does the edge survive costs? Evidence = the realized option ledger the
   // sizer uses (net of the fee); theta repriced when contract inputs are sent.

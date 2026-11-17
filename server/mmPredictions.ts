@@ -25,6 +25,8 @@ import { fitMasterAlphaWeights, type MasterAlphaFit, type MasterAlphaFitSample }
 
 const LOG_DIR = path.resolve(process.cwd(), "data", "mm-predictions");
 const LOG_FILE = path.join(LOG_DIR, "predictions.jsonl");
+/** The log file, for a read-only existence probe (server/signalRecord.ts). */
+export const MM_PREDICTIONS_LOG_FILE = LOG_FILE;
 
 const PIN_THRESHOLD_PCT = 0.15; // < 0.15% forward move = pinned
 

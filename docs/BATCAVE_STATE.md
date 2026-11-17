@@ -2404,3 +2404,26 @@ Second review: HOLD, taken. The depth floor comes from the row being graded, but
 every open exit plan on that pair with the successor read, so a later ENTER logged at $60k could be
 liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
 now grades its own row only; exit plans are not sampled on it.
+2026-11-17: Signal record (feat/signal-record-impl; practitioner review, options "missing" item 1). One
+read-only record of what each signal source has logged and graded, each on its own basis: GET
+/api/record/signals (server/signalRecord.ts, rules in shared/signalRecord.ts) and a "Signal record" card at
+the top of Edge Lab > Truth. No grading rule, threshold, stored row or existing endpoint changed: every
+figure is read through the source's existing summary function, and the only new SQL is counts. Ten rows:
+whale follow-through (ask in, bid out, fees; getPerformanceSnapshot, 90 days), whale alerts held to expiry
+(ask in, bid at the expiry close, win = +30%, no fees; computeEdgeStats), tracked signals (mid to mid, in
+memory, no summary function: counts only), 0DTE T1 before stop (getCalibrationReport, gate 40), 0DTE option
+ledger (getOptionLedgerSummary, gate 385, net of the configured index fee or stated as before fees), regime
+calls (one per ET session; computeEdgeStats), scenario odds (rollingBrier, gate 20 days), the Wiener morning
+odds scorecard (calibration, gate 50 days), MM matrix predictions (calibration, counts) and the crypto desk
+(first ENTER per coin; getCryptoSignals, gate from the rule book). Rules: under a source's own minimum
+sample (or 30 graded where it defines none: DEFAULT_MIN_GRADED, hand-set) the row is INSUFFICIENT DATA with
+counts only; a store that cannot be read is UNAVAILABLE with the reason and dashes, never zero; a win share
+is only printed with its Wilson 95% interval (validationMath.wilsonInterval) and n; there is no overall
+figure, because the rows are graded on different bases. Not built, and stated: this is not the single entry
+basis and single expiry rule the review asked for (that needs a new grading rule, which this task excluded);
+the two whale rows grade the same detections twice under different exits; the ML direction card and the
+user's own trade log (CLV) are not rows (the first grades on read from a Schwab price fetch and stores no
+outcome, the second is the user's trades, not emitted signals); the master alpha composite shares the MM
+matrix log and its existing summary rounds its hit rates, so no win count is rebuilt from it. Unverified
+from the sandbox: the route against a live database (no SQLite binary here); the count queries were checked
+against the table definitions only.
