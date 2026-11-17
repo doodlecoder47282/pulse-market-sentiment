@@ -134,13 +134,14 @@ function ageInDays(isoDate: string | null): number | null {
   return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86_400_000)) : null;
 }
 
-/** The newest row dated at least `days` calendar days before `latestDate` (rows newest first), with a value. */
-export function rowAtOrBefore<T extends { date: string; value: number | null }>(rows: T[], latestDate: string | null, days: number): T | undefined {
+/** The newest row with a value dated at least `days` and at most `maxDays` calendar days before `latestDate` (rows newest first). */
+export function rowAtOrBefore<T extends { date: string; value: number | null }>(rows: T[], latestDate: string | null, days: number, maxDays: number = Infinity): T | undefined {
   if (!latestDate) return undefined;
   const t = Date.parse(`${latestDate}T00:00:00Z`);
   if (!Number.isFinite(t)) return undefined;
   const cut = new Date(t - days * 86_400_000).toISOString().slice(0, 10);
-  return rows.find((r) => r.date <= cut && r.value != null);
+  const floor = Number.isFinite(maxDays) ? new Date(t - maxDays * 86_400_000).toISOString().slice(0, 10) : "";
+  return rows.find((r) => r.date <= cut && r.date >= floor && r.value != null);
 }
 
 export function getFredSnapshot(): FredObservation[] {
@@ -165,8 +166,10 @@ export function getFredSnapshot(): FredObservation[] {
     const changePct = (latest != null && prev != null && prev !== 0) ? ((latest - prev) / prev) * 100 : null;
     // By calendar date, not by row count: "5 rows back" is a week only for a daily series (it is five
     // weeks on a weekly one and five months on a monthly one). Null when no observation is that old.
-    const wkRow = rowAtOrBefore(rows, latestDate, 7);
-    const moRow = rowAtOrBefore(rows, latestDate, 30);
+    // Each has a window: a "week" comparison is 7 to 13 days back (a monthly series has none, so no 1w figure
+    // is shown for it rather than its month-over-month change), a "month" one 28 to 45 days back.
+    const wkRow = rowAtOrBefore(rows, latestDate, 7, 13);
+    const moRow = rowAtOrBefore(rows, latestDate, 28, 45);
     const weekChange = (latest != null && wkRow?.value != null) ? latest - wkRow.value : null;
     const monthChange = (latest != null && moRow?.value != null) ? latest - moRow.value : null;
     out.push({

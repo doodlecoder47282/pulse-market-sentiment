@@ -2118,3 +2118,7 @@ or empty read is retried after two minutes. T13: the grade calibration card desc
 net of fees while the request it makes deducts none; the copy says before fees. T14: the "fitted" column
 printed an isotonic value for every bucket with data, including buckets under the sample gates where the
 prior is what is served; the report marks fittedInUse and the column shows a dash elsewhere.
+Review (MERGE-READY), three should-fixes taken: the Edge Lab brief wrote "regime in transition" / "regime
+persists" sentences around the new missing-data label; it now says the matrix was not read. The week
+comparison is windowed (7 to 13 days back), so a monthly series shows a dash instead of its month-over-month
+change under "1w", and the month comparison is 28 to 45 days back (30 skipped February).

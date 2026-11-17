@@ -40,10 +40,10 @@ test("T18: with a leg missing the cross-asset rules name no pattern", () => {
 test("T19: FRED week and month changes are by calendar date, not row count", async () => {
   const src = read("server/fredClient.ts");
   assert.doesNotMatch(src, /rows\.find\(\(_, i\) => i >= (5|22)\)/);
-  assert.match(src, /const wkRow = rowAtOrBefore\(rows, latestDate, 7\);\s*const moRow = rowAtOrBefore\(rows, latestDate, 30\);/);
+  assert.match(src, /const wkRow = rowAtOrBefore\(rows, latestDate, 7, 13\);\s*const moRow = rowAtOrBefore\(rows, latestDate, 28, 45\);/);
   // The helper, evaluated from source (the module opens the database on import).
-  const body = /export function rowAtOrBefore<T[^>]*>\(rows: T\[\], latestDate: string \| null, days: number\): T \| undefined \{([\s\S]*?)\n\}/.exec(src)![1];
-  const fn = new Function("rows", "latestDate", "days", body) as (rows: any[], d: string | null, n: number) => any;
+  const body = /export function rowAtOrBefore<T[^>]*>\(rows: T\[\], latestDate: string \| null, days: number, maxDays: number = Infinity\): T \| undefined \{([\s\S]*?)\n\}/.exec(src)![1];
+  const fn = new Function("rows", "latestDate", "days", "maxDays = Infinity", body) as (rows: any[], d: string | null, n: number, m?: number) => any;
   const weekly = [{ date: "2026-11-11", value: 5 }, { date: "2026-11-04", value: 4 }, { date: "2026-10-28", value: 3 }, { date: "2026-10-21", value: 2 }, { date: "2026-10-14", value: 1 }, { date: "2026-10-07", value: 0 }];
   assert.equal(fn(weekly, "2026-11-11", 7).date, "2026-11-04", "a weekly series: one week back is the previous row, not five rows back");
   assert.equal(fn(weekly, "2026-11-11", 30).date, "2026-10-07");
@@ -51,6 +51,13 @@ test("T19: FRED week and month changes are by calendar date, not row count", asy
   assert.equal(fn(daily, "2026-11-13", 7).date, "2026-11-05", "a row without a value is skipped");
   assert.equal(fn([{ date: "2026-11-13", value: 1 }], "2026-11-13", 7), undefined);
   assert.equal(fn(daily, null, 7), undefined);
+  const monthly = [{ date: "2027-03-01", value: 3 }, { date: "2027-02-01", value: 2 }, { date: "2027-01-01", value: 1 }];
+  assert.equal(fn(monthly, "2027-03-01", 7, 13), undefined, "a monthly series has no 1w figure (it would be its month-over-month change)");
+  assert.equal(fn(monthly, "2027-03-01", 28, 45).date, "2027-02-01", "February: the month comparison is the previous month, not two back");
+  assert.equal(fn(weekly, "2026-11-11", 7, 13).date, "2026-11-04");
+  const brief = read("server/edgeLabBrief.ts");
+  assert.match(brief, /cross-asset matrix not read: a day change is missing/);
+  assert.match(brief, /note: notRead \? "not read: a leg has no data"/);
   assert.match(read("client/src/components/edgelab/MacroFlowPanel.tsx"), /s\.weekChange == null \? "text-muted-foreground"/);
 });
 
