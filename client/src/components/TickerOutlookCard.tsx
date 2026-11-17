@@ -730,7 +730,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             href={e.url}
                             target="_blank"
                             rel="noreferrer"
-                            className="line-clamp-2 min-w-0 flex-1 [overflow-wrap:anywhere] text-foreground hover:text-cyan-300"
+                            className="line-clamp-2 min-h-[24px] min-w-0 flex-1 py-1 [overflow-wrap:anywhere] text-foreground hover:text-cyan-300"
                           >
                             {e.title}
                           </a>
