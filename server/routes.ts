@@ -2913,7 +2913,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         return res.status(400).json({ error: "spec.kind and spec.symbol required" });
       }
       const costBps = Number(req.body?.costBps);
-      const out = runSignal(spec, Number.isFinite(costBps) ? costBps : undefined);
+      const out = runSignal(spec, Number.isFinite(costBps) && costBps >= 0 ? costBps : undefined);
       res.json(out);
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "backtest failed" });
