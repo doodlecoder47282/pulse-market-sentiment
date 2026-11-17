@@ -2363,3 +2363,21 @@ hour), so a pair 10 to 20 minutes old can earn at most 20 to 40 of the 40 accele
 the reachable score further in that window. The autopsy says "not read" (with the reason) for a young pair
 instead of "not reported". Open: the replay applies the current floor to earlier versions' stored 12x
 figures, so those rows pass "vol accel"; version counts are shown but the rows are not marked.
+2026-11-17: Practitioner review, options batch 3, copy only (feat/pro-review-options-3; items O6, O7, O9, O10
+and the copy follow-ups from the review of batch 2). O6: the "Net Bias +$X BULL" tile is "Last-print net
+premium" with no BULL/BEAR verdict and a note on how it is built (each contract's whole day volume assigned
+by its latest print, dollar-weighted, a bid-side put may be a closing sale) and why it can point a different
+way from the put/call volume ratio and from dominance. O7: the Signals gamma chart, the Net GEX tooltip and
+the Exposure footnote say that open interest is posted once a day and intraday values use the prior
+session's. O9: "dealers long gamma" is stated as the usual convention (customers long calls, short puts),
+an assumption. O10: the Exposure footnote said "262 trading days/yr"; the code uses calendar time. The whale
+help text and the trade-environment note describe the direction basis now in use. No calculation changed.
+Still open from the options review: O8 (three gamma weightings across tabs), O11-O16, and the "missing"
+list (graded signal record first).
+Review of options batch 3: HOLD, two false statements, both corrected. (1) The new copy stated the dealer
+convention backwards ("customers long calls, short puts"); the code signs calls + and puts -, which is
+dealers long calls and short puts (customers sell calls and buy puts). Fixed in the three new places and in
+client/src/pages/method.tsx, which carried the same inverted sentence on main. (2) The whale help text
+describes the direction basis from options batch 2, so this batch merges after it. Also: the per-bucket
+tooltip no longer says "Net bias" in green or red; "higher-priced contracts dominate" replaces
+"in-the-money".

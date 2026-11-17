@@ -22,9 +22,9 @@ const INFO: Record<string, InfoEntry> = {
   "whale-flow": {
     title: "Whale Flow",
     what: "A live detector for heavy contracts: $2.5M+ of cumulative day premium (volume x mid) on one contract, 15x volume vs open interest or a brand-new strike, last print at or above the ask, 1\u20133 days to expiry. The chain snapshot has no trade sizes, so a heavy contract can be thousands of small trades \u2014 it is not a block print.",
-    how: "Expand a ticker to see each heavy contract's strike, last-print side, and premium. CONFLUX means several heavy contracts on adjacent strikes lean the same way. Side comes from the latest print vs the quote, not from each trade.",
+    how: "Expand a ticker to see each heavy contract's strike, last-print side, and premium. CONFLUX means several heavy contracts on adjacent strikes lean the same way. Direction comes from the basis the gate passed the contract on: the day's ask-side share once prints have been attributed across scans, or the latest print vs the quote on a first scan. An ask-side call is labelled bullish and an ask-side put bearish; whether the trade opened or closed a position is not known.",
     edge: "Large same-direction premium in contracts that expire in days is worth a look. Treat it as a lead to check against price and positioning, not as proof of informed money.",
-    risk: "The last-print side tags the whole day's volume by one print; the print and the current quote can be from different moments. A heavy contract can be one leg of a spread or a closing trade. Never size off one contract.",
+    risk: "On a first scan the side is one print against the current quote, which can be from different moments; the expanded row says which basis was used. A heavy contract can be one leg of a spread or a closing trade. Never size off one contract.",
   },
   "tracked-signals": {
     title: "Tracked Signals",

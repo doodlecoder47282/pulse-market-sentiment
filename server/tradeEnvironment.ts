@@ -311,7 +311,7 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
     note: !wc
       ? "whale alert history unavailable — not scored, not a quiet read."
       : confluxN >= 2.5
-        ? `${confluxN.toFixed(1)} score-weighted same-direction heavy contracts (${wc.bull >= wc.bear ? "call-side" : "put-side"} by last-print side) in the last hour. Heavy day premium can be hedges, spread legs or closing trades; it is not evidence of informed positioning.`
+        ? `${confluxN.toFixed(1)} score-weighted same-direction heavy contracts (${wc.bull >= wc.bear ? "call-side" : "put-side"} by the whale gate's ask-side basis) in the last hour. Heavy day premium can be hedges, spread legs or closing trades; it is not evidence of informed positioning.`
         : confluxN >= 1.5
           ? "some same-direction heavy-contract premium in the last hour."
           : "no meaningful heavy-contract clustering in the last hour.",
