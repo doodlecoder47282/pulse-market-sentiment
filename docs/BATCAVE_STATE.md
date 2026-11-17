@@ -2308,3 +2308,39 @@ session is left out of the baseline, because the chain still reports that sessio
 compared with itself; the wording says "near its close" outside the session; the entry.premium comment names
 the day's average price; a minus glyph and no "1000". Known and left: positions stored before this keep the
 day-average entry mark (no avgTraded field marks them), so the tracking list mixes bases until they expire.
+2026-11-17: Practitioner review (docs/PRO_REVIEW_2026-11-17.md): two independent read-only reviews, as an
+options trader and as a meme-coin trader, with the live record read from the deployed site. Headline: the
+crypto desk has logged 4,170 coins and never issued an ENTER, and the whale record is never graded either.
+Owner decisions taken the same day (the owner delegated them): retire DFI and key the regime on the gamma
+zone; keep scenario targets at spot +- 1 expected move; crypto alpha feed per coin first; one top-to-bottom
+order per coin on the crypto tab. None of those four is built yet.
+First crypto batch (feat/pro-review-fixes; review items C3, C7): the Jupiter cross-check makes two spaced
+calls per momentum tick (2.5 s apart, inside the keyless 0.5 req/s) so every mint refreshed in a tick is
+checked against the price read in that tick; with one call the 40 lowest-scored mints of a 90-mint batch
+were never asked, were reset to "unchecked" on every refresh, lost 5 score points for it and stayed at the
+back (2,621 of 3,008 first signals were "Jupiter unchecked"); a failed call fails only its own mints and the
+tick stays a failure for the health check. pumpfunGraduate is true only for a pair trading on PumpSwap; it
+was true for any dex id containing "pump", so the card, the AI prompt and the replay's graduate split all
+described pump vs non-pump. Rows stored before this date keep the old meaning. No threshold changed, so the
+rule version is unchanged; more mints being checked can change scores (the "unchecked" flag costs 5).
+Review of the first crypto batch: MERGE-READY; should-fixes taken: an engine tick that is still running is
+not started again on top of itself (the momentum tick's worst case moved close to its 75 s period); each
+mint's Jupiter check is stamped with its own call's time. Left open and unverified: "pumpswap" as the dex id
+GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
+replay pools old-meaning and new-meaning graduate rows without a marker.
+
+2026-11-17: Practitioner review, options batch 2 (feat/pro-review-options-2; items O1 and the rest of O3).
+O1: a whale's direction label came from the latest print against the current quote, re-read on every 30 s
+scan, while the gate passes on the day's ask-side share, so a call that passed as ask-side read BEARISH
+whenever its latest print sat at the bid and the label flipped between polls (seen live). The alert, the
+preview and the stored tracking side now take the direction from the gate's own basis (ask-side call
+BULLISH, ask-side put BEARISH); only a config that does not require the ask side falls back to the last
+print. Opening versus closing is still unknown and the label does not claim it. O3: expiry was stamped only
+inside the regular-hours scan, so a position expiring at the close stayed OPEN until the next session's
+first scan and carried that morning's time; an expiry pass now runs while the market is closed (no chain
+read) and stamps the expiry close itself. Still unverified: whether tracked positions survive a restart on
+the deployed volume (boot line "[whaleFollowThrough] hydrated N positions"). Review follow-ups from batch 1
+taken here: outside the session the previous trading day is left out of the put/call baseline by date (not
+"the newest stored session", which is an ordinary baseline day when the last session was not recorded); a
+malformed stored date is never a full day and cannot fail the response; the per-ticker closed group says
+"closed or expired".
