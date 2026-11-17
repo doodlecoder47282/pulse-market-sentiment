@@ -929,7 +929,7 @@ export default function WhaleFlowPanel() {
   });
   const terminalQuery = useQuery<FollowupsResponse>({
     queryKey: ["/api/flow/followups", "TERMINAL"],
-    queryFn: async () => { const r = await apiRequest("GET", "/api/flow/followups?status=TERMINAL"); return r.json(); },
+    queryFn: async () => { const r = await apiRequest("GET", "/api/flow/followups?status=TERMINAL&includeExpired=true"); return r.json(); },
     refetchInterval: 30_000,
     staleTime: 15_000,
   });

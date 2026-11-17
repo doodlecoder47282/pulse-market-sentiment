@@ -72,6 +72,8 @@ export interface FollowPosition {
     /** Quote at detection, $ per share (additive; older rows fall back to whale_alert_quotes). */
     bid?: number | null;
     ask?: number | null;
+    /** The day's average traded price at detection (premium / (volume x 100)); `mark` is the quote mid at detection since 2026-11-17. */
+    avgTraded?: number | null;
   };
   /** Live-updated position state */
   live: {
@@ -157,7 +159,12 @@ export function registerWhale(hit: WhaleHit): void {
     if (oldest) positions.delete(oldest.key);
   }
   const sentiment = (hit.sentiment as FollowPosition["side"]) ?? "NEUTRAL";
-  const entryMark = hit.volume > 0 ? hit.premium / (hit.volume * 100) : 0;
+  // The quote's mid at detection, the same moment as entry.bid / entry.ask. It was premium / (volume x 100),
+  // the DAY'S average traded price, so "% mid" and "% if sold at bid" started from different entries and the
+  // bid-exit return could exceed the mid-to-mid one. The day's average is kept as entry.avgTraded.
+  const avgTraded = hit.volume > 0 ? hit.premium / (hit.volume * 100) : 0;
+  const hb = Number(hit.bid), ha = Number(hit.ask);
+  const entryMark = Number.isFinite(hb) && Number.isFinite(ha) && hb >= 0 && ha > 0 && ha >= hb ? (hb + ha) / 2 : avgTraded;
   positions.set(hit.occ, {
     occ: hit.occ,
     symbol: hit.symbol,
@@ -174,6 +181,7 @@ export function registerWhale(hit: WhaleHit): void {
       detectedAt: hit.detectedAt,
       bid: Number.isFinite(hit.bid as number) ? (hit.bid as number) : null,
       ask: Number.isFinite(hit.ask as number) ? (hit.ask as number) : null,
+      avgTraded,
     },
     live: {
       mark: entryMark,

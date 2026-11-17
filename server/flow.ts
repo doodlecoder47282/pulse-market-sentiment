@@ -513,7 +513,9 @@ export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now())
   const today = etDate(nowMs);
   // Minute of today's session; outside the session the full-day value is compared.
   const at = sessionMinuteOf(nowMs);
-  const minute = at && at.date === today ? at.minute : 24 * 60;
+  // It was 24 * 60, which no stored point reaches (the last is the session length, 390), so before the open
+  // and on non-trading days every stored session was dropped and the card read "0/20 sessions".
+  const minute = at && at.date === today ? at.minute : Infinity;
   const readFor = (key: string, putVol: number, callVol: number, observed: boolean): PcrRead => {
     if (observed) recordPcrSnapshot({ symbol: key, putVol, callVol, provider: resp.provider, capturedAtMs: nowMs });
     return pcrReadAtClock(observed ? { putVol, callVol } : null, minute, loadPcrSessions(key, today), { today });
@@ -543,6 +545,8 @@ export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now())
 // open: a deterministic timer (no AI) rebuilds the snapshot every 10 minutes
 // from the open to 15 minutes after the close on trading days.
 let pcrRecorder: ReturnType<typeof setInterval> | null = null;
+/** Started at boot (routes.ts) so a session is recorded even if nobody opens the panel after a restart. */
+export function startPcrRecorder(): void { ensurePcrCloseRecorder(); }
 function ensurePcrCloseRecorder(): void {
   if (pcrRecorder) return;
   pcrRecorder = setInterval(() => {
