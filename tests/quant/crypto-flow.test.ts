@@ -30,8 +30,25 @@ test("acceleration: the old artifact is gone; a young coin is not read; a coin u
 
 test("wiring: the engine has one acceleration formula, from the shared module", () => {
   const e = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
-  assert.match(e, /c\.volAccel = volumeAcceleration\(c\.vol5m, c\.vol1h, c\.ageMinutes\);/);
+  assert.match(e, /c\.volAccel = volumeAcceleration\(c\.vol5m, c\.vol1h, accelAgeMinutes\(c\.pairCreatedAt, c\.lastRefreshAt, now\)\);/);
+  // Review must-fix: the age is the data's (the last pair refresh), so a re-score without a refresh cannot
+  // move the figure. The reviewer's case: vol5m 6000, vol1h 10000 read at age 12.0.
+  const body = /export function accelAgeMinutes\(pairCreatedAt: number \| null, lastRefreshAt: number \| null, now: number\): number \| null \{([\s\S]*?)\n\}/.exec(e)![1];
+  const accelAge = new Function("pairCreatedAt", "lastRefreshAt", "now", body) as (a: number | null, b: number | null, c: number) => number | null;
+  const created = 1_800_000_000_000, refreshed = created + 12 * 60_000;
+  const atRefresh = volumeAcceleration(6000, 10_000, accelAge(created, refreshed, refreshed));
+  const aMinuteLater = volumeAcceleration(6000, 10_000, accelAge(created, refreshed, refreshed + 60_000));
+  assert.equal(atRefresh, aMinuteLater);
+  assert.ok(Math.abs((atRefresh as number) - 1.44) < 1e-9);
+  // A 9.5-minute read stays unread however long ago it was made.
+  assert.equal(volumeAcceleration(6000, 10_000, accelAge(created, created + 9.5 * 60_000, created + 30 * 60_000)), null);
+  assert.equal(accelAge(null, refreshed, refreshed), null);
   assert.doesNotMatch(e, /c\.vol1h \/ 60/);
   // Age is computed before the acceleration that depends on it.
-  assert.ok(e.indexOf("c.ageMinutes = c.pairCreatedAt ?") < e.indexOf("c.volAccel = volumeAcceleration("));
+  // The ceiling by age (all volume in the last 5 minutes) is age / 5: 2x at 10, 4x at 20, 12x from an hour.
+  assert.equal(volumeAcceleration(1000, 1000, 10), 2);
+  assert.equal(volumeAcceleration(1000, 1000, 20), 4);
+  assert.equal(volumeAcceleration(1000, 1000, 90), 12);
+  const a = readFileSync(new URL("../../shared/cryptoAutopsy.ts", import.meta.url), "utf8");
+  assert.match(a, /value: "not read", state: "unread" as const, detail: `the pair is under \$\{rules\.flow\.accelMinAgeMinutes\} minutes old/);
 });

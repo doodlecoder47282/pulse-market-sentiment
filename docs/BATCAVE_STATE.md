@@ -2340,3 +2340,11 @@ no acceleration points and cannot meet the ENTER acceleration floor or count tow
 so fewer minute-2 launches reach WATCH and the log starts later in a coin's life. This does not make ENTER
 reachable (the score ceiling, C1, is still open); it removes a number that carried no information. Rows
 stored under earlier versions keep the old figure and the records partition at the version.
+Review of 2026.11.17-1: HOLD, one must-fix taken: the age was taken at the clock while the volumes date from
+the last pair refresh, so a security or social re-score (no refresh) raised the figure by itself (1.44x at
+age 12.0 read 1.56x a minute later, across the ENTER floor); the age is now the pair's age when its volumes
+were read. Also stated: the most the figure can be is age / 5 (2x at 10 minutes, 4x at 20, 12x from an
+hour), so a pair 10 to 20 minutes old can earn at most 20 to 40 of the 40 acceleration points, which lowers
+the reachable score further in that window. The autopsy says "not read" (with the reason) for a young pair
+instead of "not reported". Open: the replay applies the current floor to earlier versions' stored 12x
+figures, so those rows pass "vol accel"; version counts are shown but the rows are not marked.

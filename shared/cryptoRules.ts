@@ -55,7 +55,7 @@ export const CRYPTO_RULES = {
   enter: {
     /** Composite score floor (heuristic, hand-set features, not fitted to outcomes). */
     minScore: 70,
-    /** 5-minute volume pace over the hour's pace. */
+    /** 5-minute volume pace over the pace of the last hour, or of the pair's own life when younger (shared/cryptoFlow.ts). */
     minVolAccel: 1.5,
     /** Whale-blink filter: volAccel at the floor on at least `need` of the last `window` refreshes. */
     sustainedPolls: { window: 3, need: 2 },

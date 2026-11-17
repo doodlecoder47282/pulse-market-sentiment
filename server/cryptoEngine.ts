@@ -164,7 +164,7 @@ export interface Candidate {
 
   // derived
   ageMinutes: number | null;
-  volAccel: number | null;        // m5 volume annualized vs h1 baseline
+  volAccel: number | null;        // 5 m volume pace over the pace of the last hour or of the pair's own life (shared/cryptoFlow.ts); null when not read
   netBuyRatio5m: number | null;   // buys/(buys+sells)
   fomoScore: number | null;       // 0-100
   memeScore: number | null;       // 0-100 name heuristic (hand-set features, no measured link to outcomes)
@@ -1025,6 +1025,12 @@ function scoreMeme(nameIn: string, symbolIn: string): { score: number; tags: str
   return { score: Math.min(100, score * 2.2), tags: [...new Set(tags)] };
 }
 
+/** The pair's age, in minutes, when its volumes were read; null when the pair's creation time is unknown. */
+export function accelAgeMinutes(pairCreatedAt: number | null, lastRefreshAt: number | null, now: number): number | null {
+  if (!pairCreatedAt) return null;
+  return Math.max(0, ((lastRefreshAt ?? now) - pairCreatedAt) / 60_000);
+}
+
 function scoreCandidate(c: Candidate): void {
   const now = Date.now();
   // Captured before anything below and before the caller pushes this poll onto
@@ -1044,7 +1050,10 @@ function scoreCandidate(c: Candidate): void {
 
   // flow: volume acceleration (shared/cryptoFlow.ts): 5-minute pace over the pace of the last hour or of the
   // coin's own life; null when volume is missing or the coin is too young to have a baseline.
-  c.volAccel = volumeAcceleration(c.vol5m, c.vol1h, c.ageMinutes);
+  // Age AT THE DATA'S OWN TIME (the last pair refresh), not now: the security and social ticks re-score
+  // without a refresh, and with the clock's age the same two volumes gave a figure that rose by itself
+  // (1.44x at age 12.0 became 1.56x a minute later and crossed the ENTER floor).
+  c.volAccel = volumeAcceleration(c.vol5m, c.vol1h, accelAgeMinutes(c.pairCreatedAt, c.lastRefreshAt, now));
   const t5 = c.buys5m != null && c.sells5m != null ? c.buys5m + c.sells5m : 0;
   c.netBuyRatio5m = t5 > 0 ? (c.buys5m ?? 0) / t5 : null;
 
