@@ -200,3 +200,41 @@ export function derivsChecks(d: DerivsSnapshot | null, now: number): Check[] {
   if (okRows === 0) return [mk(id, "funding and open interest", "stale", `${d.rows.length} rows, none fresh`, null, "every row is stale or unavailable")];
   return [mk(id, "funding and open interest", bad.length ? "fail" : "pass", `${okRows} fresh row${okRows === 1 ? "" : "s"}, state ${d.state}`, "signs, per-8h arithmetic and units consistent", bad.length ? bad.slice(0, 4).join("; ") : d.state === "partial" ? "partial: at least one asset has no fresh venue" : null)];
 }
+
+// ─── Source health: feeds the desk depends on that the checks above do not exercise ───
+// (Jupiter price cross-check: an ENTER requires it; GeckoTerminal 1-minute
+// candles: the tape recorded on each graded signal.) Each is a counter the
+// engine keeps on every call, so "pass" means a real call succeeded recently,
+// never that nothing was tried.
+
+export interface SourceHealth {
+  /** Last successful call and last failed call, epoch ms. */
+  lastOkAt: number | null;
+  lastFailAt: number | null;
+  lastError: string | null;
+  okCount: number;
+  failCount: number;
+}
+
+export const emptySourceHealth = (): SourceHealth => ({ lastOkAt: null, lastFailAt: null, lastError: null, okCount: 0, failCount: 0 });
+
+/** A source is expected to answer at least this often while the desk is running. */
+export const JUPITER_MAX_QUIET_MS = 10 * 60_000;
+export const CANDLES_MAX_QUIET_MS = 20 * 60_000;
+
+function ago(ms: number | null, now: number): string {
+  return ms == null ? "never" : `${Math.max(0, Math.round((now - ms) / 60_000))} min ago`;
+}
+
+export function sourceHealthCheck(id: string, name: string, h: SourceHealth | null, now: number, maxQuietMs: number, opts: { demand?: number | null; extra?: string } = {}): Check {
+  if (!h) return mk(id, name, "unavailable", "no health record", null, "the engine has not reported this source");
+  const obs = `ok ${h.okCount} (last ${ago(h.lastOkAt, now)}), failed ${h.failCount} (last ${ago(h.lastFailAt, now)})${opts.extra ? `; ${opts.extra}` : ""}`;
+  // Nothing was asked of it (no ENTER/WATCH pair to read, no mint to price): not a pass, not a failure.
+  if (h.okCount === 0 && h.failCount === 0) return mk(id, name, "unavailable", obs, null, opts.demand === 0 ? "nothing has needed this source yet" : "no call has been made yet");
+  const failingNow = h.lastFailAt != null && (h.lastOkAt == null || h.lastFailAt > h.lastOkAt);
+  if (failingNow) return mk(id, name, "fail", obs, "the latest call succeeds", h.lastError ?? "latest call failed");
+  if (h.lastOkAt != null && now - h.lastOkAt > maxQuietMs && opts.demand !== 0) {
+    return mk(id, name, "fail", obs, `a successful call within ${Math.round(maxQuietMs / 60_000)} min`, "no successful call recently while the desk has work for it");
+  }
+  return mk(id, name, "pass", obs, "the latest call succeeds", null);
+}
