@@ -96,7 +96,7 @@ export default function BacktestPanel() {
             </datalist>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">side</Label>
+            <Label className="text-xs" title="long or short is traded on every signal of the chosen kind, whatever the signal points to; signal direction trades up-signals long and down-signals short">side (applies to every signal)</Label>
             <Select value={side} onValueChange={(v: any) => setSide(v)}>
               <SelectTrigger data-testid="select-bt-side" className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>

@@ -362,9 +362,12 @@ export function buildLevels(
   // The flip often sits between the put wall and spot, so "short below the put wall, first level the flip"
   // put the level above the entry and still printed a positive R:R from the absolute distance. Such a
   // level is dropped (the next one takes its place) and R:R is read on the signed distance.
+  // Direction of the levels: the scenario's side, or for an "either" scenario the side the stop implies
+  // (a stop above the entry is a short's stop).
+  const dir: "long" | "short" | null = side === "long" || side === "short" ? side : e != null && s != null && s !== e ? (s > e ? "short" : "long") : null;
   const beyond = (x: number | null): number | null => {
-    if (x == null || e == null || side === "either") return x;
-    return side === "long" ? (x > e ? x : null) : (x < e ? x : null);
+    if (x == null || e == null || dir == null) return x;
+    return dir === "long" ? (x > e ? x : null) : (x < e ? x : null);
   };
   const r1 = beyond(target1 != null ? roundToTick(target1, t) : null);
   const r2 = beyond(target2 != null ? roundToTick(target2, t) : null);
@@ -372,8 +375,8 @@ export function buildLevels(
   const t2 = r1 != null ? r2 : null;
   let rr1: number | null = null;
   if (e != null && s != null && t1 != null) {
-    const risk = side === "short" ? s - e : e - s;
-    const reward = side === "short" ? e - t1 : t1 - e;
+    const risk = dir === "short" ? s - e : e - s;
+    const reward = dir === "short" ? e - t1 : t1 - e;
     rr1 = risk > 0 && reward > 0 ? +(reward / risk).toFixed(2) : null;
   }
   const verb = side === "long" ? "BUY" : side === "short" ? "SELL" : "WAIT";
@@ -531,7 +534,8 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     scenarios.push({
       name: "Downside Break — Put Wall Fail",
       trigger: `If 15-min closes below ${fmtPrice(pw, tk)} (failed put wall)`,
-      target: zg != null ? `Test zero-gamma ${fmtPrice(zg, tk)} then ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}` : `Extend ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}`,
+      // The flip is named only when it lies below the entry (it usually sits above the put wall, where it is not a level of this scenario).
+      target: zg != null && zg < pw - tk ? `Test zero-gamma ${fmtPrice(zg, tk)} then ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}` : `Extend ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}`,
       invalidation: `Reclaim above ${fmtPrice(pw, tk)}`,
       odds: "tail",
       levels: buildLevels(

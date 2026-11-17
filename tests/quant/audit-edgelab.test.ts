@@ -23,6 +23,9 @@ test("playbook levels: a target on the wrong side of the entry is dropped and R:
   assert.equal(none.target1, null); assert.equal(none.rr1, null);
   // A stop on the wrong side gives no ratio either.
   assert.equal(buildLevels("long", 600, 601, 605, null, 600).rr1, null);
+  // An "either" scenario takes its direction from the stop: a stop above the entry is a short's.
+  const either = buildLevels("either", 599.5, 601, 595, 592, 596);
+  assert.equal(either.target1, 595); assert.equal(either.rr1, 3);
   // Unchanged when the levels are where they should be.
   const ok = buildLevels("long", 600, 598, 604, 608, 600);
   assert.equal(ok.target1, 604); assert.equal(ok.target2, 608); assert.equal(ok.rr1, 2);

@@ -2124,3 +2124,10 @@ their place, R:R is read on signed distances and is null without a valid level o
 and classic pivots are filed under Resistance or Support by their side of spot, not by name. Max drawdown
 no longer coloured as a gain. Tests: tests/quant/audit-edgelab.test.ts (buildLevels behaviour, wiring);
 full quant suite 1039 pass, 4 known local package failures. Needs review.
+Review of feat/audit-edgelab (HOLD, one must-fix, taken): the server feature type still said value: number
+while the function now returns null (a new tsc error the CI type gate rejects); typed number | null.
+Should-fixes taken: the "Downside Break" target sentence no longer names the flip when the flip is above
+the entry; an "either" scenario takes its direction from its stop (stop above entry = short), so it keeps
+its R:R (tested); the backtest side label says it applies to every signal; a negative cost is refused;
+drift wording in the brief corrected. Behaviour changes stated: "short" on up-signals now shorts (was
+long); "signal direction" (was "both") trades up-signals long and down-signals short (was long everywhere).

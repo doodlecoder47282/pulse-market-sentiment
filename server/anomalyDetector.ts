@@ -73,7 +73,7 @@ function euclid(a: number[], b: number[]): number {
 
 export interface AnomalyResult {
   date: string;
-  features: { name: string; value: number; z: number }[];
+  features: { name: string; value: number | null; z: number }[];
   nearestNeighborDistance: number;
   meanDistance: number;
   pctileVsHistory: number;          // 0-100; 99 = today is in 1% most-anomalous
@@ -138,9 +138,9 @@ export function scoreAnomalyToday(): AnomalyResult | { error: string } {
 // across the last 30 vs prior 90 trades. If degrades > 25%, flag drift.
 
 export interface DriftResult {
+  /** meanAbsPctReturn and meanHit50 are fractions (0.45 = 45%), as stored in prediction_outcomes; the client multiplies by 100. */
   recent30: { count: number; meanAbsPctReturn: number | null; meanHit50: number | null };
   prior90: { count: number; meanAbsPctReturn: number | null; meanHit50: number | null };
-  /** Fractions (0.45 = 45%), as stored in prediction_outcomes; the client multiplies by 100. */
   driftPctMae: number | null;       // % change in mean |realized return| (recent 30 vs prior 90); not an error measure
   driftPctHit: number | null;
   status: "stable" | "drifting" | "n/a";
