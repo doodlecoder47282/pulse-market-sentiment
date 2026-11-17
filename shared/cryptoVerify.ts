@@ -214,6 +214,8 @@ export interface SourceHealth {
   lastError: string | null;
   okCount: number;
   failCount: number;
+  /** Last call that answered but could not be judged (a small batch that priced nothing), epoch ms. */
+  lastInconclusiveAt?: number | null;
 }
 
 export const emptySourceHealth = (): SourceHealth => ({ lastOkAt: null, lastFailAt: null, lastError: null, okCount: 0, failCount: 0 });
@@ -229,6 +231,12 @@ function ago(ms: number | null, now: number): string {
 export function sourceHealthCheck(id: string, name: string, h: SourceHealth | null, now: number, maxQuietMs: number, opts: { demand?: number | null; extra?: string } = {}): Check {
   if (!h) return mk(id, name, "unavailable", "no health record", null, "the engine has not reported this source");
   const obs = `ok ${h.okCount} (last ${ago(h.lastOkAt, now)}), failed ${h.failCount} (last ${ago(h.lastFailAt, now)})${opts.extra ? `; ${opts.extra}` : ""}`;
+  // The source's latest answers could not be judged either way (after any failure, and with no success inside
+  // the quiet window): not a pass, not a failure.
+  const inc = h.lastInconclusiveAt ?? null;
+  if (inc != null && now - inc <= maxQuietMs && (h.lastFailAt == null || inc > h.lastFailAt) && (h.lastOkAt == null || now - h.lastOkAt > maxQuietMs)) {
+    return mk(id, name, "unavailable", `${obs}; inconclusive ${ago(inc, now)}`, null, "the source answered, but the batch was too small to tell a broken feed from unlisted tokens");
+  }
   // Nothing was asked of it (no ENTER/WATCH pair to read, no mint to price): not a pass, not a failure.
   if (h.okCount === 0 && h.failCount === 0) return mk(id, name, "unavailable", obs, null, opts.demand === 0 ? "nothing has needed this source yet" : "no call has been made yet");
   const failingNow = h.lastFailAt != null && (h.lastOkAt == null || h.lastFailAt > h.lastOkAt);

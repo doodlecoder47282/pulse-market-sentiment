@@ -41,3 +41,21 @@ test("wiring: the engine counts real calls, a 200 that prices nothing is a failu
   assert.match(v, /sourceHealthCheck\("crypto\.jupiter", "Jupiter price cross-check", h\.jupiter, now, JUPITER_MAX_QUIET_MS,/);
   assert.match(v, /sourceHealthCheck\("crypto\.candles", "1-minute candles \(GeckoTerminal\)", h\.candles, now, CANDLES_MAX_QUIET_MS, \{ demand: h\.candlePairsWanted,/);
 });
+
+test("a small tracked set that keeps answering inconclusively reads unavailable, never a quiet-window failure; a later failure still fails", () => {
+  const now = 1_800_000_000_000;
+  const min = 60_000;
+  const quietOk = { ...emptySourceHealth(), lastOkAt: now - 30 * min, okCount: 5, lastInconclusiveAt: now - 1 * min };
+  assert.equal(sourceHealthCheck("crypto.jupiter", "Jupiter", quietOk, now, JUPITER_MAX_QUIET_MS, { demand: 3 }).state, "unavailable");
+  const onlyInc = { ...emptySourceHealth(), lastInconclusiveAt: now - 2 * min };
+  const c = sourceHealthCheck("crypto.jupiter", "Jupiter", onlyInc, now, JUPITER_MAX_QUIET_MS, { demand: 3 });
+  assert.equal(c.state, "unavailable"); assert.match(JSON.stringify(c), /too small to tell/);
+  const failThenInc = { ...emptySourceHealth(), lastFailAt: now - 5 * min, failCount: 1, lastError: "HTTP 500", lastInconclusiveAt: now - 1 * min };
+  assert.equal(sourceHealthCheck("crypto.jupiter", "Jupiter", failThenInc, now, JUPITER_MAX_QUIET_MS, { demand: 3 }).state, "unavailable");
+  const incThenFail = { ...emptySourceHealth(), lastFailAt: now - 1 * min, failCount: 1, lastError: "HTTP 500", lastInconclusiveAt: now - 5 * min };
+  assert.equal(sourceHealthCheck("crypto.jupiter", "Jupiter", incThenFail, now, JUPITER_MAX_QUIET_MS, { demand: 3 }).state, "fail");
+  const recentOk = { ...emptySourceHealth(), lastOkAt: now - 2 * min, okCount: 5, lastInconclusiveAt: now - 1 * min };
+  assert.equal(sourceHealthCheck("crypto.jupiter", "Jupiter", recentOk, now, JUPITER_MAX_QUIET_MS, { demand: 3 }).state, "pass");
+  const oldInc = { ...emptySourceHealth(), lastOkAt: now - 30 * min, okCount: 5, lastInconclusiveAt: now - 25 * min };
+  assert.equal(sourceHealthCheck("crypto.jupiter", "Jupiter", oldInc, now, JUPITER_MAX_QUIET_MS, { demand: 3 }).state, "fail");
+});

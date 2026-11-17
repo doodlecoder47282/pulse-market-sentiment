@@ -2112,3 +2112,8 @@ batch (under 10 mints) pricing none is inconclusive, since Jupiter omits brand-n
 batch pricing none is a failure; an old failure with no work since reads unavailable instead of a standing
 red. The ticker-outlook headline link is a 24 px tap target (a one-line title was 16 px tall and failed
 the phone UX audit on a day's headline). Tests: tests/quant/crypto-source-health.test.ts.
+Second review (MERGE-READY), one should-fix taken: an inconclusive small Jupiter batch did not count as
+activity, so a tracked set under 10 unpriced mints turned the check red after the 10-minute quiet window;
+the engine now records lastInconclusiveAt and the check reads "unavailable" while the latest answers are
+inconclusive (a later failure still fails; tested). Left as is: a brief red (up to 75 s Jupiter, 60 s
+candles) when demand resumes after a long idle.

@@ -645,6 +645,7 @@ async function momentumTick(): Promise<void> {
       // none is inconclusive, not a failure; a full batch pricing none is what a moved or reshaped endpoint looks like.
       if (r.prices.size > 0) markOk(jupHealth);
       else if (jupMints.length >= JUP_INCONCLUSIVE_UNDER) markFail(jupHealth, `answered but priced 0 of ${jupMints.length} mints`);
+      else jupHealth.lastInconclusiveAt = Date.now();
     } catch (e) {
       jup = { prices: new Map(), omitted: new Set(), failed: true, at: Date.now() };
       markFail(jupHealth, e);
