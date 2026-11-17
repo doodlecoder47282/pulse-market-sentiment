@@ -2163,3 +2163,17 @@ wrong-basis sample before this change stay on the plan record as recorded (stop 
 FDV-entry rows under versions up to 2026.11.06-1); the sample that closed them was not retained, so they
 cannot be re-walked. Those versions' plan summaries include them; the 2026.11.16-1 headline does not.
 Plans still open at the change keep their starting version label and are sampled on their entry basis from here.
+2026-11-16: Verify live data covers the Jupiter cross-check and the candle feed (feat/verify-crypto-feeds).
+The engine counts real calls per source; sourceHealthCheck: untried is unavailable (never a pass), a recent
+success passes, the latest call failing fails, a long quiet with work waiting fails. Review (HOLD, one
+must-fix, taken): candle rows that do not parse (a changed row shape) counted as ok because the list was
+still an array; ok now needs parsed candles or a genuinely empty list. Should-fixes taken: a small Jupiter
+batch (under 10 mints) pricing none is inconclusive, since Jupiter omits brand-new mints, while a full
+batch pricing none is a failure; an old failure with no work since reads unavailable instead of a standing
+red. The ticker-outlook headline link is a 24 px tap target (a one-line title was 16 px tall and failed
+the phone UX audit on a day's headline). Tests: tests/quant/crypto-source-health.test.ts.
+Second review (MERGE-READY), one should-fix taken: an inconclusive small Jupiter batch did not count as
+activity, so a tracked set under 10 unpriced mints turned the check red after the 10-minute quiet window;
+the engine now records lastInconclusiveAt and the check reads "unavailable" while the latest answers are
+inconclusive (a later failure still fails; tested). Left as is: a brief red (up to 75 s Jupiter, 60 s
+candles) when demand resumes after a long idle.

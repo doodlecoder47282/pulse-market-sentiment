@@ -67,6 +67,7 @@ import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
+import { emptySourceHealth, type SourceHealth } from "../shared/cryptoVerify";
 import { capOf, capOnBasis, evictOverCap, MOMENTUM_CYCLE_MS } from "../shared/cryptoCap";
 import { candleFeatures, parseGtOhlcv, unavailableCandles, type Candle, type CandleFeatures } from "../shared/cryptoCandles";
 
@@ -246,6 +247,19 @@ const GRADER_MS = 10 * 60_000;
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
 const DS_BASE = "https://api.dexscreener.com";
 const JUP_BASE = "https://api.jup.ag/price/v3"; // keyless tier, 0.5 req/s
+// Per-source health, counted on every real call (shared/cryptoVerify.ts sourceHealthCheck reads it on
+// Settings -> Verify live data): the Jupiter cross-check an ENTER depends on, and the 1-minute candle feed.
+const jupHealth: SourceHealth = emptySourceHealth();
+/** Under this many mints, a response pricing none of them is inconclusive (new mints have no route yet). */
+const JUP_INCONCLUSIVE_UNDER = 10;
+const candleHealth: SourceHealth = emptySourceHealth();
+function markOk(h: SourceHealth): void { h.lastOkAt = Date.now(); h.okCount++; h.lastError = null; }
+function markFail(h: SourceHealth, e: unknown): void { h.lastFailAt = Date.now(); h.failCount++; h.lastError = String((e as any)?.message ?? e).slice(0, 120); }
+/** Source health plus what the desk currently needs from each source. */
+export function getCryptoSourceHealth(): { jupiter: SourceHealth; candles: SourceHealth; candlePairsWanted: number; candlePairsRead: number; jupiterBase: string } {
+  const want = [...tracked.values()].filter((c) => c.chain === "solana" && (c.verdict === "ENTER" || c.verdict === "WATCH"));
+  return { jupiter: { ...jupHealth }, candles: { ...candleHealth }, candlePairsWanted: want.length, candlePairsRead: want.filter((c) => c.candlesReadAt != null).length, jupiterBase: JUP_BASE };
+}
 
 // Meme lexicon for the catchy-name scorer. Weighted by how reliably the theme
 // has carried runners. This is a heuristic, not a model — disclosed as such.
@@ -626,8 +640,15 @@ async function momentumTick(): Promise<void> {
       const j = await getJson(`${JUP_BASE}?ids=${jupMints.join(",")}`);
       const r = parseJupiterPrices(j, jupMints);
       jup = { prices: r.prices, omitted: new Set(r.omitted), failed: false, at: Date.now() };
-    } catch {
+      // A 200 that prices none of the mints asked for is not a working feed (a moved or reshaped endpoint looks like this).
+      // Jupiter legitimately omits mints it has no route for (brand-new pump mints), so a small batch pricing
+      // none is inconclusive, not a failure; a full batch pricing none is what a moved or reshaped endpoint looks like.
+      if (r.prices.size > 0) markOk(jupHealth);
+      else if (jupMints.length >= JUP_INCONCLUSIVE_UNDER) markFail(jupHealth, `answered but priced 0 of ${jupMints.length} mints`);
+      else jupHealth.lastInconclusiveAt = Date.now();
+    } catch (e) {
       jup = { prices: new Map(), omitted: new Set(), failed: true, at: Date.now() };
+      markFail(jupHealth, e);
     }
   }
   for (let i = 0; i < addrs.length; i += 30) {
@@ -1234,6 +1255,10 @@ async function candlesTick(): Promise<void> {
       c.candles = [...byT.values()].sort((a, b) => a.t - b.t).slice(-CANDLE_KEEP);
       c.candlesReadAt = Date.now();
       c.candlesError = null;
+      // A 200 with no parsable candle is a failure of the feed's shape, not a quiet pair, unless the list is genuinely empty.
+      const rawList = r?.data?.attributes?.ohlcv_list;
+      if (fresh.length > 0 || (Array.isArray(rawList) && rawList.length === 0)) markOk(candleHealth);
+      else markFail(candleHealth, Array.isArray(rawList) ? `answered ${rawList.length} rows, none parsable (row shape changed?)` : "answered without data.attributes.ohlcv_list");
       if (!c.candlesBackfilled) {
         const feats = candleFeatures(c.candles, c.candlesReadAt, { readAt: c.candlesReadAt });
         if (feats.state === "ok" || feats.state === "stale") { backfillFirstSignalCandles(c, feats); c.candlesBackfilled = true; }
@@ -1241,6 +1266,7 @@ async function candlesTick(): Promise<void> {
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       c.candlesError = msg.slice(0, 80);
+      markFail(candleHealth, e);
       // Rate-limited: the rest of this tick would be too. Next tick in a minute.
       if (/^429\b/.test(msg)) break;
     }

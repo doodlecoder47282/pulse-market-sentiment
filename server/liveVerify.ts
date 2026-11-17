@@ -32,8 +32,8 @@ import { isRegularSessionOpen } from "./exchangeCalendar";
 import { etParts } from "./validationMath";
 import { editionFromEnv } from "../shared/edition";
 import { dailyBarEtDate } from "../shared/macroCalendar";
-import { getCryptoFeed, getCryptoSignals } from "./cryptoEngine";
-import { candidateChecks, deskRiskCheck, derivsChecks, expectancyChecks } from "../shared/cryptoVerify";
+import { getCryptoFeed, getCryptoSignals, getCryptoSourceHealth } from "./cryptoEngine";
+import { candidateChecks, deskRiskCheck, derivsChecks, expectancyChecks, sourceHealthCheck, JUPITER_MAX_QUIET_MS, CANDLES_MAX_QUIET_MS } from "../shared/cryptoVerify";
 import {
   type Check, type VerifySummary, quoteCheck, spotAgreement, spreadCheck, forwardLevelsChecks, mapLandmarkChecks,
   flowContractChecks, pcrChecks, termChecks, relativeVolumeCheck, chainSanityChecks, summarize, unavailable, skipped, classifyReach,
@@ -203,6 +203,15 @@ function cryptoChecks(now: number): Check[] {
   out.push(...derivsChecks(feed ? (feed.derivs ?? null) : null, now));
   out.push(...expectancyChecks(sig ? (sig.expectancy as any) : null));
   if (sig) out.push({ id: "crypto.rules", panel: "Crypto", name: "rule book version", state: sig.rules?.version ? "pass" : "fail", observed: sig.rules?.version ?? "missing", expected: "present on the payload", detail: null });
+  // The two feeds no check above exercises: the Jupiter price cross-check (an ENTER requires it) and the
+  // GeckoTerminal 1-minute candles (the tape recorded on each graded signal). Counted on real calls.
+  try {
+    const h = getCryptoSourceHealth();
+    out.push(sourceHealthCheck("crypto.jupiter", "Jupiter price cross-check", h.jupiter, now, JUPITER_MAX_QUIET_MS, { demand: feed ? feed.trackedCount : null, extra: h.jupiterBase }));
+    out.push(sourceHealthCheck("crypto.candles", "1-minute candles (GeckoTerminal)", h.candles, now, CANDLES_MAX_QUIET_MS, { demand: h.candlePairsWanted, extra: `${h.candlePairsRead} of ${h.candlePairsWanted} ENTER/WATCH pairs have a tape` }));
+  } catch (e: any) {
+    out.push({ id: "crypto.sources", panel: "Crypto", name: "source health", state: "unavailable", observed: "threw", expected: null, detail: String(e?.message ?? e).slice(0, 120) });
+  }
   return out;
 }
 
