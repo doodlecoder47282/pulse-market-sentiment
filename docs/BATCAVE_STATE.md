@@ -2340,3 +2340,10 @@ an assumption. O10: the Exposure footnote said "262 trading days/yr"; the code u
 help text and the trade-environment note describe the direction basis now in use. No calculation changed.
 Still open from the options review: O8 (three gamma weightings across tabs), O11-O16, and the "missing"
 list (graded signal record first).
+Review of options batch 3: HOLD, two false statements, both corrected. (1) The new copy stated the dealer
+convention backwards ("customers long calls, short puts"); the code signs calls + and puts -, which is
+dealers long calls and short puts (customers sell calls and buy puts). Fixed in the three new places and in
+client/src/pages/method.tsx, which carried the same inverted sentence on main. (2) The whale help text
+describes the direction basis from options batch 2, so this batch merges after it. Also: the per-bucket
+tooltip no longer says "Net bias" in green or red; "higher-priced contracts dominate" replaces
+"in-the-money".

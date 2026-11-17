@@ -12,6 +12,7 @@ test("O6: the net-premium tile is named for what it is, carries no BULL/BEAR ver
   assert.match(f, /label="Last-print net premium"/);
   assert.match(f, /data-testid="flow-net-premium-note"/);
   assert.match(f, /one print can move a day of premium between sides/);
+  assert.doesNotMatch(f, /Net bias \$/);
 });
 
 test("O7/O9/O10: gamma copy states the dealer convention as a convention, the prior-session open interest, and calendar time", () => {
@@ -21,7 +22,12 @@ test("O7/O9/O10: gamma copy states the dealer convention as a convention, the pr
   assert.match(e, /intraday values use the prior session's OI/);
   assert.match(e, /The convention is an assumption, not an observation\./);
   const d = read("client/src/pages/dashboard.tsx");
-  assert.match(d, /Under the usual convention \(customers long calls, short puts\)/);
+  // The convention matches the sign the code applies (calls +, puts -): dealers long calls, short puts.
+  assert.match(d, /customers sell calls and buy puts, so dealers are long calls and short puts/);
+  for (const f of ["client/src/components/ExposurePanel.tsx", "client/src/pages/dashboard.tsx", "client/src/pages/method.tsx"]) {
+    assert.doesNotMatch(read(f), /customers (are )?long calls,? (and )?short puts/, `${f} states the dealer convention backwards`);
+  }
+  assert.match(read("server/exposureProfile.ts"), /dealers? (are )?long calls?/i);
   assert.match(d, /intraday bars use the prior session's OI/);
   assert.match(d, /"Net GEX": "[^"]*Uses the prior session's open interest\."/);
 });
