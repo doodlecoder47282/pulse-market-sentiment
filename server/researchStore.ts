@@ -113,6 +113,9 @@ export function readSnapshot(symbol: string, dateEt: string): { rows: Row[]; asO
 
 const replayCache = new Map<string, { at: number; data: EventReplay }>();
 const REPLAY_CACHE_MS = 6 * 3600_000;
+/** A failed or empty price read is retried after this, not held for the six hours a good replay is. */
+const REPLAY_FAIL_CACHE_MS = 2 * 60_000;
+const replayTtl = (d: EventReplay): number => (d.dataState === "unavailable" || d.dataState === "no_data" ? REPLAY_FAIL_CACHE_MS : REPLAY_CACHE_MS);
 
 export interface EventReplay {
   symbol: string;
@@ -133,8 +136,8 @@ export async function getEventReplay(symbol = "$SPX"): Promise<EventReplay> {
   if (!bare) throw new Error("symbol must be 1-10 characters: letters, digits, dot or dash");
   const key = /^(SPX|NDX|RUT|VIX)$/.test(bare) ? `$${bare}` : bare;
   const hit = replayCache.get(key);
-  if (hit && Date.now() - hit.at < REPLAY_CACHE_MS) return hit.data;
-  for (const [k, v] of replayCache) if (Date.now() - v.at >= REPLAY_CACHE_MS) replayCache.delete(k);
+  if (hit && Date.now() - hit.at < replayTtl(hit.data)) return hit.data;
+  for (const [k, v] of replayCache) if (Date.now() - v.at >= replayTtl(v.data)) replayCache.delete(k);
   const now = Date.now();
   // A release dated today is priced on a partial bar until the close: treat it as future until 16:10 ET.
   const p = etParts(now);

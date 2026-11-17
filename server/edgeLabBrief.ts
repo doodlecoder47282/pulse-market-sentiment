@@ -307,11 +307,16 @@ function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
       const rows = ctx?.rows ?? [];
       const isRisk = /risk-?on/i.test(verdictLabel);
       const isOff = /risk-?off/i.test(verdictLabel);
+      // A leg without data: nothing was read, so no regime sentence is written about it.
+      const notRead = /missing data/i.test(verdictLabel);
       base.verdict = verdictLabel;
       base.verdictColor = isRisk ? "emerald" : isOff ? "rose" : "amber";
       base.edgeType = "environmental";
-      base.summary = `cross-asset matrix reads ${verdictLabel}. ${isRisk ? "stocks, credit and cyclicals are moving together." : isOff ? "bonds, dollar and gold are bid while equities and credit lag." : "correlations are decoupled: the regime is in transition."}`;
-      cases(`${verdictLabel} regime persists near-term`, "correlations tighten in the current direction", "regime flips on the next macro print or liquidity event");
+      base.summary = notRead
+        ? "cross-asset matrix not read: a day change is missing for at least one of SPY, TLT, HYG, UUP."
+        : `cross-asset matrix reads ${verdictLabel}. ${isRisk ? "stocks, credit and cyclicals are moving together." : isOff ? "bonds, dollar and gold are bid while equities and credit lag." : "correlations are decoupled: the regime is in transition."}`;
+      if (notRead) cases("no read until all four legs have data", "no read until all four legs have data", "no read until all four legs have data");
+      else cases(`${verdictLabel} regime persists near-term`, "correlations tighten in the current direction", "regime flips on the next macro print or liquidity event");
       base.actionable = "watch: whether the matrix verdict holds for 3+ sessions.";
       base.invalidation = "matrix flips verdict and holds 3+ sessions.";
       base.counterargument = "correlation is path-dependent. one liquidity event can rewrite the matrix.";
@@ -578,7 +583,8 @@ async function buildEdgeSynthesisContext(symbol: string): Promise<any> {
     const isRisk = /risk-?on/i.test(verdictLabel);
     const isOff = /risk-?off/i.test(verdictLabel);
     const bias = isRisk ? "risk-on" : isOff ? "risk-off" : "mixed";
-    signals.push({ key: "cross-asset", label: "cross-asset", bias, value: verdictLabel, note: isRisk ? "stocks/credit/cyclicals confirming" : isOff ? "safe-haven bid, equities lagging" : "correlations decoupled — regime in transition" });
+    const notRead = /missing data/i.test(verdictLabel);
+    signals.push({ key: "cross-asset", label: "cross-asset", bias, value: verdictLabel, note: notRead ? "not read: a leg has no data" : isRisk ? "stocks/credit/cyclicals confirming" : isOff ? "safe-haven bid, equities lagging" : "correlations decoupled — regime in transition" });
   } catch {}
 
   // 4) Skew — behavioral fear/greed

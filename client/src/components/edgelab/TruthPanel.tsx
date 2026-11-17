@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-interface CalBucket { label: string; n: number; wins: number; winRate: number | null; wilsonLo: number | null; wilsonHi: number | null; fitted: number | null; prior: number }
+interface CalBucket { label: string; n: number; wins: number; winRate: number | null; wilsonLo: number | null; wilsonHi: number | null; fitted: number | null; prior: number; fittedInUse?: boolean }
 interface CalReport { source: "fitted" | "prior"; totalGradedFires: number; buckets: CalBucket[]; rejectedCounterfactual: { n: number; winRate: number | null; note: string }; note: string }
 
 interface WfRow { horizon: string; levelKind: string; pooledN: number; pooledTouchRate: number; wfN: number; wfTouchRate: number | null; wfTouchWilsonLo?: number | null; wfTouchWilsonHi?: number | null; wfHoldRate: number | null }
@@ -42,7 +42,7 @@ function CalibrationCard() {
           )}
         </div>
         <p className="text-xs text-muted-foreground leading-snug">
-          a grade is a hand-weighted heuristic score, not a probability. "realized" = underlying reached T1 before the plan's stop. "option ledger" columns: realized option P&amp;L of the published plan (what the sizer bets on), win = net return &gt; 0, where net return = (sale proceeds − premium paid − fees) / premium paid and premium paid = entry ask × 100 × contracts (T1 sells floor(n/2) of n contracts), with Wilson 95% interval and n. a bucket stays "heuristic" until it has {lq.data?.buckets?.[0]?.minFiresForLedgerBacked ?? 385} option-graded fires.
+          a grade is a hand-weighted heuristic score, not a probability. "realized" = underlying reached T1 before the plan's stop. "option ledger" columns: realized option P&amp;L of the published plan (what the sizer bets on), win = return &gt; 0 before fees (this table deducts none), where return = (sale proceeds − premium paid) / premium paid and premium paid = entry ask × 100 × contracts (T1 sells floor(n/2) of n contracts), with Wilson 95% interval and n. a bucket stays "heuristic" until it has {lq.data?.buckets?.[0]?.minFiresForLedgerBacked ?? 385} option-graded fires.
         </p>
       </CardHeader>
       <CardContent className="pt-0 space-y-2">
@@ -74,7 +74,8 @@ function CalibrationCard() {
                       <td className="text-right py-1 px-2 font-mono tabular-nums text-muted-foreground">
                         {b.wilsonLo != null ? `${pctFmt(b.wilsonLo)}–${pctFmt(b.wilsonHi)}` : "—"}
                       </td>
-                      <td className="text-right py-1 px-2 font-mono tabular-nums">{pctFmt(b.fitted)}</td>
+                      {/* The fitted value is shown only where it is the number actually served; under the sample gates the prior is, and a fit on a handful of fires is not printed beside it. */}
+                      <td className="text-right py-1 px-2 font-mono tabular-nums" title={b.fittedInUse ? "isotonic fit, in use for this grade" : "under the sample gate: the prior is used for this grade"} data-testid={`text-cal-fitted-${b.label}`}>{b.fittedInUse ? pctFmt(b.fitted) : "—"}</td>
                       <td className="text-right py-1 px-2 font-mono tabular-nums text-muted-foreground">{pctFmt(b.prior)}</td>
                       {(() => {
                         const l = ledger.get(b.label);
