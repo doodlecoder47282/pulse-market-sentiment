@@ -2329,6 +2329,58 @@ mint's Jupiter check is stamped with its own call's time. Left open and unverifi
 GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
 replay pools old-meaning and new-meaning graduate rows without a marker.
 
+2026-11-17: Practitioner review, options batch 2 (feat/pro-review-options-2; items O1 and the rest of O3).
+O1: a whale's direction label came from the latest print against the current quote, re-read on every 30 s
+scan, while the gate passes on the day's ask-side share, so a call that passed as ask-side read BEARISH
+whenever its latest print sat at the bid and the label flipped between polls (seen live). The alert, the
+preview and the stored tracking side now take the direction from the gate's own basis (ask-side call
+BULLISH, ask-side put BEARISH); only a config that does not require the ask side falls back to the last
+print. Opening versus closing is still unknown and the label does not claim it. O3: expiry was stamped only
+inside the regular-hours scan, so a position expiring at the close stayed OPEN until the next session's
+first scan and carried that morning's time; an expiry pass now runs while the market is closed (no chain
+read) and stamps the expiry close itself. Still unverified: whether tracked positions survive a restart on
+the deployed volume (boot line "[whaleFollowThrough] hydrated N positions"). Review follow-ups from batch 1
+taken here: outside the session the previous trading day is left out of the put/call baseline by date (not
+"the newest stored session", which is an ordinary baseline day when the last session was not recorded); a
+malformed stored date is never a full day and cannot fail the response; the per-ticker closed group says
+"closed or expired".
+2026-11-17: Crypto rule version 2026.11.17-1 (feat/crypto-accel-age; practitioner review item C2). Volume
+acceleration was (5-minute volume / 5) over (1-hour volume / 60) for every coin. For a coin under 5 minutes
+old the "1-hour volume" is its 5-minute volume, so the figure was exactly 12 whatever the tape: the live
+record showed a median of 12.00 for winners and for losers, and every minute-2 coin collected the full flow
+points for it. It now compares the 5-minute pace with the pace of the coin's own life when younger than an
+hour and is not read (null, never a number) under flow.accelMinAgeMinutes = 10; an unknown age keeps the
+hour. Consequences, stated plainly: scores of coins under an hour old fall; a coin under 10 minutes old gets
+no acceleration points and cannot meet the ENTER acceleration floor or count toward the sustained-flow polls,
+so fewer minute-2 launches reach WATCH and the log starts later in a coin's life. This does not make ENTER
+reachable (the score ceiling, C1, is still open); it removes a number that carried no information. Rows
+stored under earlier versions keep the old figure and the records partition at the version.
+Review of 2026.11.17-1: HOLD, one must-fix taken: the age was taken at the clock while the volumes date from
+the last pair refresh, so a security or social re-score (no refresh) raised the figure by itself (1.44x at
+age 12.0 read 1.56x a minute later, across the ENTER floor); the age is now the pair's age when its volumes
+were read. Also stated: the most the figure can be is age / 5 (2x at 10 minutes, 4x at 20, 12x from an
+hour), so a pair 10 to 20 minutes old can earn at most 20 to 40 of the 40 acceleration points, which lowers
+the reachable score further in that window. The autopsy says "not read" (with the reason) for a young pair
+instead of "not reported". Open: the replay applies the current floor to earlier versions' stored 12x
+figures, so those rows pass "vol accel"; version counts are shown but the rows are not marked.
+2026-11-17: Practitioner review, options batch 3, copy only (feat/pro-review-options-3; items O6, O7, O9, O10
+and the copy follow-ups from the review of batch 2). O6: the "Net Bias +$X BULL" tile is "Last-print net
+premium" with no BULL/BEAR verdict and a note on how it is built (each contract's whole day volume assigned
+by its latest print, dollar-weighted, a bid-side put may be a closing sale) and why it can point a different
+way from the put/call volume ratio and from dominance. O7: the Signals gamma chart, the Net GEX tooltip and
+the Exposure footnote say that open interest is posted once a day and intraday values use the prior
+session's. O9: "dealers long gamma" is stated as the usual convention (customers long calls, short puts),
+an assumption. O10: the Exposure footnote said "262 trading days/yr"; the code uses calendar time. The whale
+help text and the trade-environment note describe the direction basis now in use. No calculation changed.
+Still open from the options review: O8 (three gamma weightings across tabs), O11-O16, and the "missing"
+list (graded signal record first).
+Review of options batch 3: HOLD, two false statements, both corrected. (1) The new copy stated the dealer
+convention backwards ("customers long calls, short puts"); the code signs calls + and puts -, which is
+dealers long calls and short puts (customers sell calls and buy puts). Fixed in the three new places and in
+client/src/pages/method.tsx, which carried the same inverted sentence on main. (2) The whale help text
+describes the direction basis from options batch 2, so this batch merges after it. Also: the per-bucket
+tooltip no longer says "Net bias" in green or red; "higher-priced contracts dominate" replaces
+"in-the-money".
 2026-11-17: Crypto grader, successor pool (feat/crypto-grader-successor; practitioner review item C11). The
 grader and the 72 h horizon pass asked DexScreener for the pair a row was logged on and nothing else. A
 pump.fun coin that graduates leaves its bonding-curve pair for a new pool, so the read came back empty, the

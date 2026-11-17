@@ -30,10 +30,11 @@ test("O4: outside the session each stored day's last point is its full-day value
   assert.equal(e.zone, "insufficient_history"); assert.equal(e.n, 0);
   assert.match(e.reason ?? "", /25 sessions are stored, 0 have a reading at or after this clock time/);
   const f = read("server/flow.ts");
-  assert.match(f, /const minute = inSession \? at!\.minute : Infinity;/);
+  assert.match(f, /const minute = onSessionDay \? at!\.minute : Infinity;/);
   // Outside the session the last session is the value being read, so it is not in its own baseline; full day is per date.
-  assert.match(f, /const baseline = inSession \? stored : stored\.filter\(\(s\) => s\.date !== newest\);/);
-  assert.match(f, /return o != null && c != null \? \(c - o\) \/ 60_000 - 15 : Infinity;/);
+  assert.match(f, /const baseline = onSessionDay \? stored : stored\.filter\(\(s\) => s\.date !== lastSession\);/);
+  assert.match(f, /lastSession = prevTradingDay\(today\);/);
+  assert.match(f, /return o != null && c != null \? \(c - o\) \/ 60_000 - 15 : Infinity;\s*\} catch \{ return Infinity; \}/);
   const out = pcrReadAtClock({ putVol: 120, callVol: 100 }, Infinity, early, { today: "2026-11-17" });
   assert.match(out.reason ?? "", /a reading near its close/);
   assert.match(read("server/routes.ts"), /try \{ startPcrRecorder\(\); \}/);

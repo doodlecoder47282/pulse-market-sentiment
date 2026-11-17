@@ -9,7 +9,7 @@
  * orders. See docs/CRYPTO_DESK.md for the charter and the method.
  */
 
-export const CRYPTO_RULES_VERSION = "2026.11.16-1";
+export const CRYPTO_RULES_VERSION = "2026.11.17-1";
 
 export const CRYPTO_RULES = {
   universe: {
@@ -48,10 +48,14 @@ export const CRYPTO_RULES = {
     /** Within this gap: "watch" (ENTER still allowed); beyond it: "diverge" (no entry). */
     divergePct: 15,
   },
+  flow: {
+    /** Under this age volume acceleration is not read: the 5-minute window is most of the coin's life, so there is no baseline. */
+    accelMinAgeMinutes: 10,
+  },
   enter: {
     /** Composite score floor (heuristic, hand-set features, not fitted to outcomes). */
     minScore: 70,
-    /** 5-minute volume pace over the hour's pace. */
+    /** 5-minute volume pace over the pace of the last hour, or of the pair's own life when younger (shared/cryptoFlow.ts). */
     minVolAccel: 1.5,
     /** Whale-blink filter: volAccel at the floor on at least `need` of the last `window` refreshes. */
     sustainedPolls: { window: 3, need: 2 },
@@ -172,7 +176,8 @@ export function describeCryptoRules(r: CryptoRules = CRYPTO_RULES): CryptoRuleIt
     { path: "universe.liquidityFloorUsd", value: usd(r.universe.liquidityFloorUsd), text: "pool liquidity floor; under it the position cannot be exited (hard kill)" },
     { path: "hardKills", value: `mint or freeze active; liquidity missing, $0 or under the floor; liq/mcap < ${pct(r.hardKills.exitDoorMinLiqToMcap)}; 1 h change <= ${r.hardKills.midRugChg1hPct}%; >= ${r.hardKills.honeypotMinBuys1h} buys with zero sells`, text: "any one of these is PASS (code hard_kill) whatever the score" },
     { path: "enter.minScore", value: String(r.enter.minScore), text: "composite score floor (heuristic; hand-set, not fitted to outcomes)" },
-    { path: "enter.minVolAccel", value: `${r.enter.minVolAccel}x`, text: "5-minute volume pace over the hour's pace" },
+    { path: "flow.accelMinAgeMinutes", value: `${r.flow.accelMinAgeMinutes} min`, text: "volume acceleration is not read on a coin younger than this (no baseline to compare with)" },
+    { path: "enter.minVolAccel", value: `${r.enter.minVolAccel}x`, text: "5-minute volume pace over the pace of the last hour, or of the coin's own life when it is younger than an hour" },
     { path: "enter.sustainedPolls", value: `${r.enter.sustainedPolls.need} of last ${r.enter.sustainedPolls.window}`, text: "whale-blink filter: the accel floor must hold on this many recent refreshes" },
     { path: "enter.minNetBuyRatio5m", value: pct(r.enter.minNetBuyRatio5m), text: "buys over buys plus sells in the last 5 minutes" },
     { path: "jupiter", value: `agree <= ${r.jupiter.agreePct}%, watch <= ${r.jupiter.divergePct}%`, text: "pool price vs Jupiter; ENTER needs agree or watch; failed, skipped or diverged blocks" },
