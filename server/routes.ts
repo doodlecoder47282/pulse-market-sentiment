@@ -711,6 +711,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     };
     return { cached, entry, args, gate: modelsCacheGate(entry, args) };
   }
+  /** The session flag is decided when a build is made; a cached "live" build served after the close is the last session's. */
+  const atServeSession = (d: ModelsResponse): ModelsResponse =>
+    d.session === "live" && !isRegularSessionOpen(Date.now()) ? { ...d, session: "last-close" } : d;
   /**
    * Read-only: the cached build when it would be served, else the reason
    * there is none. Never starts or joins a build, and makes no Schwab
@@ -719,14 +722,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   function peekModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): { data: ModelsResponse; reason: null } | { data: null; reason: string } {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     const { cached, entry, args, gate } = modelsGateFor(cacheKey);
-    if (gate.serve && cached) return { data: cached.data, reason: null };
+    if (gate.serve && cached) return { data: atServeSession(cached.data), reason: null };
     return { data: null, reason: modelsPeekReason({ inFlight: modelsInFlight.has(cacheKey), entry, miss: gate.serve ? null : gate.miss }, args) };
   }
   /** Build (or serve) the models snapshot. */
   async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     const { cached, gate } = modelsGateFor(cacheKey);
-    if (gate.serve && cached) return cached.data;
+    if (gate.serve && cached) return atServeSession(cached.data);
     // Existing build in flight
     const pending = modelsInFlight.get(cacheKey);
     if (pending) return pending;

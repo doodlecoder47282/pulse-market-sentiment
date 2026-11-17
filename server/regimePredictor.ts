@@ -242,6 +242,8 @@ function sessionFracRemaining(nowMs: number): number {
 }
 
 const DFI_BOUNDARIES = [-3.5, -2.0, -1.0, 1.0, 2.0, 3.5];
+/** A day-over-day VIX move of at least this many points counts as vol expanding or bleeding (the label threshold in models.ts). */
+const IV_TERM_MOVE_PTS = 1.0;
 
 /**
  * Predict the most likely applied regime over the next horizon minutes.
@@ -295,7 +297,9 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
 
   // IV term DoD
   const term = audit.termStructureDoD ?? {};
-  const ivTermDelta = Number(term.iv1dDelta ?? 0);
+  // Day-over-day change in VIX POINTS. iv1dDelta is a daily sigma in percent (about 18x smaller) and was
+  // tested here against a vol-point threshold, so the vol driver needed a ~4.5-point VIX day.
+  const ivTermDelta = Number(term.vixDeltaPts ?? 0);
   const ivTermLabel = String(term.label ?? "Flat");
 
   // Gamma flip proximity — spot vs mainPivot, normalized by oneDayEM
@@ -330,15 +334,14 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   scores[currentRaw] += 1.8;
 
   // 3) IV term direction
-  // iv1dDelta is in VOL POINTS (models.ts convention: |Δ| >= 0.25 is a real move).
-  // The old 0.02 threshold fired on tick noise.
-  if (ivTermDelta > 0.25) {
+  // Same 1.0 VIX point as the "Vol Bid Up / Vol Offered" label printed beside it (models.ts).
+  if (ivTermDelta >= IV_TERM_MOVE_PTS) {
     // vol expansion → favor TREND
     scores.TREND_STRONG += 0.6;
     scores.TREND_WEAK += 0.4;
     scores.CHOP_STRONG -= 0.4;
     scores.CHOP_WEAK -= 0.2;
-  } else if (ivTermDelta < -0.25) {
+  } else if (ivTermDelta <= -IV_TERM_MOVE_PTS) {
     // vol bleed → favor CHOP
     scores.CHOP_STRONG += 0.6;
     scores.CHOP_WEAK += 0.4;
@@ -505,8 +508,8 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   if (charmZeroProxFrac != null && charmZeroProxFrac < 0.20) driverNotes.push(`spot near charm zero — second pin.`);
   if (vannaBias === "positive") driverNotes.push(`vanna positive — supports trend continuation.`);
   else if (vannaBias === "negative") driverNotes.push(`vanna negative — destabilizes trend, favors chop.`);
-  if (ivTermDelta > 0.02) driverNotes.push(`IV expanding (${ivTermLabel}) — vol regime.`);
-  else if (ivTermDelta < -0.02) driverNotes.push(`IV bleeding (${ivTermLabel}) — chop drift.`);
+  if (ivTermDelta >= IV_TERM_MOVE_PTS) driverNotes.push(`IV expanding (${ivTermLabel}) — vol regime.`);
+  else if (ivTermDelta <= -IV_TERM_MOVE_PTS) driverNotes.push(`IV bleeding (${ivTermLabel}) — chop drift.`);
   if (macroStress === "stress") driverNotes.push(`VIX backwardation — macro stress active.`);
   else if (macroStress === "calm") driverNotes.push(`steep contango — vol-bleed environment.`);
   if (Math.abs(whalePressure) > 0.4) driverNotes.push(`whale flow ${whalePressure > 0 ? "bullish" : "bearish"} (${(whalePressure * 100).toFixed(0)}%) — herding pressure.`);

@@ -53,3 +53,15 @@ test("scenario targets are spot +- 1 EM, as they always were, and the code now s
   const c = read("server/canary.ts");
   assert.match(c, /if \(!len0 \|\| c\.minutes >= REGULAR_OPEN_MIN \+ len0\) return 1;/);
 });
+
+test("review follow-ups: regime predictor and the logged MM feature read VIX points; a cached live build is not live after the close", () => {
+  const rp = readFileSync(new URL("../../server/regimePredictor.ts", import.meta.url), "utf8");
+  assert.match(rp, /const ivTermDelta = Number\(term\.vixDeltaPts \?\? 0\);/);
+  assert.match(rp, /const IV_TERM_MOVE_PTS = 1\.0;/);
+  assert.doesNotMatch(rp, /ivTermDelta [<>] -?0\.(25|02)/);
+  const mp = readFileSync(new URL("../../server/mmPredictions.ts", import.meta.url), "utf8");
+  assert.match(mp, /vixDelta: a\.termStructureDoD\?\.vixDeltaPts \?\? null,/);
+  const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
+  assert.match(r, /d\.session === "live" && !isRegularSessionOpen\(Date\.now\(\)\) \? \{ \.\.\.d, session: "last-close" \} : d;/);
+  assert.match(r, /if \(gate\.serve && cached\) return atServeSession\(cached\.data\);/);
+});

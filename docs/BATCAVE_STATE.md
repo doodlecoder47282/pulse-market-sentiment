@@ -2109,7 +2109,18 @@ date logic of M3/M4.
 M5: the VIX-derived daily sigma in percent (about 0.22 for a 4-point VIX day) was read as VIX points by the
 MM matrix's "VIX moved over 1 pt" rule and by the "Vol Bid Up / Vol Offered" label (0.25), so neither fired
 short of an ~18-point (or ~4.5-point) VIX day; termStructureDoD now carries vixDeltaPts and both read points;
-the row is labelled "1D sigma (from VIX)". M6: the models payload said session "live" on every successful
+the row is labelled "1D sigma (from VIX)". In plain terms, three things change from 2026-11-16: "Vol Bid Up / Vol Offered" now
+appears at a 1.0-point VIX move (the old test needed about 4.5 points, so it almost never showed); the MM
+matrix's VANNA_DRIVEN regime and its vol tilts (|VIX change| x 5 capped at 14, x 2 capped at 6) receive a
+number about 18x larger than before, so the pUp/pDown that mmPredictions records can shift by up to 14 points
+on a vol day and the logged MM series is not like-for-like across this date; and the stored `vixDelta`
+feature on those rows is VIX points from this date (daily sigma in percent before). Review should-fixes
+taken: the regime predictor had the same unit bug (iv1dDelta against +-0.25, with driver notes at +-0.02);
+it now reads vixDeltaPts against 1.0 for both the score and the note, so its vol driver fires about 4.5x more
+readily than before; the models session flag is re-read when a cached build is served, so a build made
+before the close cannot read "LIVE" after it. Open, not confirmed: Canary before 09:30 ET on a trading day
+still scales sigma by sqrt(0.25); whether the quote's change at that hour is the overnight move (correct) or
+still the prior completed session (z doubled) has not been observed. M6: the models payload said session "live" on every successful
 build, so a weekend build on Friday's chain read "LIVE"; live now needs the regular session open and no
 horizon on a last-session chain copy; a stored build reads "STORED BUILD"; three hard-coded "LIVE {spot}"
 labels read "SPOT". M7: the Heatseeker route never set chainLastSession and the thermal route sent no
