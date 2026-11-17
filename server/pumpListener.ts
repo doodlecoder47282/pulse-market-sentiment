@@ -21,6 +21,7 @@ import {
   type LaunchRecord,
 } from "../shared/pumpEvents";
 import type { CardBundle } from "../shared/cryptoBundle";
+import { normSymbol, unreadLaunchContext, buildLaunchContext, foldOutcomes, SAME_SYMBOL_HOURS, type LaunchContext } from "../shared/launchContext";
 
 const WS_URL = process.env.BATCAVE_PUMP_WS_URL || "wss://api.mainnet-beta.solana.com";
 const FOLLOW_MS = 6 * 3600_000;      // follow window buyers for 6 h in memory
@@ -51,6 +52,17 @@ function ensureTable(): void {
     mint TEXT PRIMARY KEY, launch_slot INTEGER NOT NULL, launched_at INTEGER NOT NULL,
     record_json TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
   sqlite.exec(`CREATE TABLE IF NOT EXISTS pump_listener_gaps (from_ms INTEGER PRIMARY KEY, to_ms INTEGER)`);
+  // Indexed copies of two record fields, for the launch-context counts (shared/launchContext.ts). Rows stored
+  // before the columns existed are filled once from their own JSON.
+  for (const col of ["symbol_norm TEXT", "deployer TEXT"]) {
+    try { sqlite.exec(`ALTER TABLE pump_launches ADD COLUMN ${col}`); } catch { /* already there */ }
+  }
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_pump_launches_symbol ON pump_launches(symbol_norm, launched_at)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_pump_launches_deployer ON pump_launches(deployer, launched_at)`);
+  sqlite.exec(`UPDATE pump_launches SET
+      symbol_norm = lower(ltrim(trim(coalesce(json_extract(record_json, '$.symbol'), '')), '$')),
+      deployer = json_extract(record_json, '$.deployer')
+    WHERE symbol_norm IS NULL`);
   ready = true;
 }
 
@@ -141,9 +153,9 @@ function flush(): void {
   const now = Date.now();
   try {
     ensureTable();
-    const up = sqlite.prepare("INSERT OR REPLACE INTO pump_launches (mint, launch_slot, launched_at, record_json, updated_at) VALUES (?, ?, ?, ?, ?)");
+    const up = sqlite.prepare("INSERT OR REPLACE INTO pump_launches (mint, launch_slot, launched_at, record_json, updated_at, symbol_norm, deployer) VALUES (?, ?, ?, ?, ?, ?, ?)");
     const tx = sqlite.transaction((keys: string[]) => {
-      for (const k of keys) { const r = live.get(k); if (r) up.run(r.mint, r.launchSlot, r.launchedAt, JSON.stringify(r), now); }
+      for (const k of keys) { const r = live.get(k); if (r) up.run(r.mint, r.launchSlot, r.launchedAt, JSON.stringify(r), now, normSymbol(r.symbol), r.deployer); }
     });
     tx([...dirty]);
     dirty.clear();
@@ -228,3 +240,44 @@ export function launchBundle(mint: string, launchedAtGuess: number | null, gradu
   if (launchedAtGuess != null && inGap(launchedAtGuess)) return unread("the stream was reconnecting when this coin launched");
   return unread("no pump.fun launch event was seen for this coin");
 }
+
+/**
+ * Launch context for a mint (shared/launchContext.ts): other launches under the same symbol in the last day,
+ * other launches by the same deployer in the kept window, and the desk's own record for those. Reads the
+ * flushed table, so a launch from the last FLUSH_MS may not be counted yet (one more reason the counts are
+ * lower bounds). Never throws.
+ */
+export function launchContextFor(mint: string, launchedAtGuess: number | null, now = Date.now()): LaunchContext {
+  if (startedAt == null) return unreadLaunchContext("the pump.fun listener is off", now);
+  if (!/pump$/.test(mint)) return unreadLaunchContext("not a pump.fun launch; the listener covers pump.fun only", now);
+  const r = loadRecord(mint);
+  if (!r) {
+    if (launchedAtGuess != null && launchedAtGuess < startedAt - 60_000) return unreadLaunchContext("launched before the listener started", now);
+    if (launchedAtGuess != null && inGap(launchedAtGuess)) return unreadLaunchContext("the stream was reconnecting when this coin launched", now);
+    return unreadLaunchContext("no pump.fun launch event was seen for this coin", now);
+  }
+  try {
+    ensureTable();
+    const sym = normSymbol(r.symbol);
+    const sameSymbol = sym
+      ? Number((sqlite.prepare("SELECT COUNT(*) AS n FROM pump_launches WHERE symbol_norm = ? AND mint != ? AND launched_at < ? AND launched_at >= ?")
+          .get(sym, mint, r.launchedAt, r.launchedAt - SAME_SYMBOL_HOURS * 3_600_000) as { n: number }).n)
+      : 0;
+    const prior = Number((sqlite.prepare("SELECT COUNT(*) AS n FROM pump_launches WHERE deployer = ? AND mint != ? AND launched_at < ?")
+      .get(r.deployer, mint, r.launchedAt) as { n: number }).n);
+    let outcomes = null as ReturnType<typeof foldOutcomes> | null;
+    if (prior > 0) {
+      // One outcome per coin: its first logged row (the record's own unit).
+      const rows = sqlite.prepare(`SELECT outcome, COUNT(*) AS n FROM (
+          SELECT token_address, outcome, ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY detected_at ASC, id ASC) AS rn
+          FROM crypto_signals
+          WHERE token_address IN (SELECT mint FROM pump_launches WHERE deployer = ? AND mint != ? AND launched_at < ?)
+        ) WHERE rn = 1 GROUP BY outcome`).all(r.deployer, mint, r.launchedAt) as Array<{ outcome: string | null; n: number }>;
+      outcomes = foldOutcomes(rows);
+    }
+    return buildLaunchContext({ sameSymbol24h: sameSymbol, deployerPrior: prior, outcomes, symbol: r.symbol, now });
+  } catch (e: any) {
+    return unreadLaunchContext(`store read failed (${String(e?.message ?? e).slice(0, 80)})`, now);
+  }
+}
+

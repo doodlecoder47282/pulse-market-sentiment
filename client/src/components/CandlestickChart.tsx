@@ -157,9 +157,10 @@ export function CandlestickChart({
     // If intraday (diff < 2 days across full series) show HH:mm
     const span = candles[candles.length - 1].t - candles[0].t;
     if (span < 3 * 86400) {
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      // Exchange time, not the viewer's: bars are stamped to the New York session.
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "America/New_York" });
     }
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric", timeZone: "America/New_York" });
   };
 
   const hovered = hoverIdx != null ? candles[hoverIdx] : null;
@@ -489,7 +490,7 @@ export function CandlestickChart({
       {hovered && (
         <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-border/40 bg-card/40 px-3 py-1.5 font-mono text-[11px] tabular-nums backdrop-blur">
           <span className="text-muted-foreground">
-            {new Date(hovered.t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            {new Date(hovered.t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "America/New_York" })} ET
           </span>
           <span>O <span className="font-semibold">{hovered.o.toFixed(2)}</span></span>
           <span>H <span className="font-semibold text-emerald-400">{hovered.h.toFixed(2)}</span></span>
