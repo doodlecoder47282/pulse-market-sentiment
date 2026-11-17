@@ -52,7 +52,7 @@ export interface MMCell {
   pUp: number;         // 0..100
   pDown: number;       // 0..100
   pPin: number;        // 0..100
-  magnitude: number;   // expected absolute $ move
+  magnitude: number | null;   // expected absolute move in points; null when VIX is missing (never 0)
   action: DealerAction;
   bias: number;        // -1..+1
   intensity: number;   // 0..1 — how strong the dealer bias is (drives color weight)
@@ -364,8 +364,8 @@ function magnitudeFor(
   regime: MMRegime,
   zone: MMZone,
   horizonDays: number,
-): number {
-  if (!vix) return 0;
+): number | null {
+  if (!vix) return null;
   const iv = vixToAtmPct(vix) / 100; // VIX → true ATM vol
   const sigma1 = spot * iv * Math.sqrt(Math.max(1, horizonDays) / 252);
 
@@ -411,7 +411,8 @@ export function buildMMMatrix(horizon: ModelHorizon, horizonDays: number): MMMat
     gammaZone: a.gammaZone,
     charmTighteningRate: a.charmTightening?.rate ?? 0,
     charmChopFlag: a.charmTightening?.chopFlag ?? false,
-    vixDelta: a.termStructureDoD?.iv1dDelta ?? null,
+    // VIX points (the regime rule is "VIX moved over 1 pt"); iv1dDelta is a daily sigma in percent, about 18x smaller.
+    vixDelta: a.termStructureDoD?.vixDeltaPts ?? null,
     dteToOpex: daysToFriday(a.asOf),
     vannaM: a.vannaM,
     vannaBias: a.vannaBias,
@@ -474,5 +475,5 @@ function buildSummary(c: MMCell): string {
     ? `${c.pUp}% up`
     : dominant === "down" ? `${c.pDown}% down`
     : `${c.pPin}% pinned`;
-  return `Dealers likely ${actionVerb[c.action]} — ${tilt} (hand-set prior), ~${c.magnitude}pt move`;
+  return `Dealers likely ${actionVerb[c.action]} — ${tilt} (hand-set prior)${c.magnitude != null ? `, ~${c.magnitude}pt move` : ", move size not computed (VIX missing)"}`;
 }

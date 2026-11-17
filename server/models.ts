@@ -174,7 +174,7 @@ export interface ModelAudit {
   dfi: number;                             // Delta Flow Indicator — normalised DEX slope (signed, float); 0 when unavailable (see dfiState)
   dfiState: "ok" | "unavailable";          // "unavailable" = the DEX curve had fewer than 3 points, so no slope exists; dfi is not a reading then
   dfiLabel: string;                        // "BULLISH" / "BEARISH" / "NEUTRAL" / "UNAVAILABLE"
-  dfiFlipped: boolean;                     // true if dfi sign changed vs prior reading
+  dfiFlipped: boolean;                     // true when spot is within 0.3% of the charm zero (NOT a DFI sign change; the name is historical)
   contractCount: number;                   // rows in the chain for this horizon
   mainPivot: number | null;                // dominant magnet / zero-gamma — the primary intraday pivot
   charmZero: number | null;               // zero-charm spot (drift target — primary)
@@ -212,8 +212,7 @@ export interface ModelAudit {
     negativeMassClipped: number;
   } | null;
   // Price targets per scenario for the close at the END of this horizon:
-  // bull = nearest structural resistance above spot capped to spot + EM,
-  // base = spot, bear = first structural support below capped to spot - EM,
+  // bull = spot + EM, base = spot, bear = spot - EM,
   // with EM = expectedMove.oneSigma of this horizon (horizonEM). oneDayEM is
   // the 1-day figure (same as horizonEM on the daily card), kept for the
   // intraday target decay (realtimeTargets) and the Discord card.
@@ -231,7 +230,8 @@ export interface ModelAudit {
   termStructureDoD: {                     // Selz #4 — term structure day-over-day
     iv1d: number | null;                  // today's 1D IV %
     iv1dPrev: number | null;               // yesterday's 1D IV %
-    iv1dDelta: number | null;             // iv1d - iv1dPrev
+    iv1dDelta: number | null;             // iv1d - iv1dPrev (VIX-derived daily sigma, percent)
+    vixDeltaPts: number | null;           // the same day-over-day change in VIX points
     charmNow: number;                     // current $B
     charmPrev: number | null;              // yesterday's $B
     label: string;                        // e.g. "Vol Bid Up" / "Vol Offered" / "Flat"
@@ -1047,18 +1047,10 @@ function buildAudit(
   });
 
   // ─── Scenario TARGETS (price levels per scenario for the close at the END of this horizon) ──
-  // Pulls strictly from already-computed levels + the horizon's expected move
-  // (shared/horizonExpectedMove.ts) — no LLM, no external feed.
-  //   BULL  = nearest structural resistance above spot, capped to spot + EM
-  //   BASE  = spot (a charm drift was intended but never computed; see below)
-  //   BEAR  = first structural support below spot that fails (strongMag /
-  //           zeroGamma / putWall), capped to spot - EM
-  // EM is the 1-sigma move to THIS horizon's end: the same-day straddle for
-  // the daily card; for the other horizons the ATM total vol of the horizon
-  // expiry's implied distribution (the same distribution the odds below are
-  // read from), else a VIX cone. The targets used to be 1-day for every
-  // horizon and were re-cut to a VIX cone by a route post-processor AFTER the
-  // odds had been read, so the weekly odds answered a one-day question.
+  //   BULL = spot + EM, BASE = spot, BEAR = spot - EM
+  // EM is the 1-sigma move to THIS horizon's end (shared/horizonExpectedMove.ts): the same-day straddle for
+  // the daily card; for the other horizons the ATM total vol of the horizon expiry's implied distribution
+  // (the same distribution the odds below are read from), else a VIX cone.
   const vixForEM = extras.vixForEM ?? null;
   const straddle = extras.straddleEM ?? null;
   const expectedMove: HorizonExpectedMove = horizonExpectedMove({
@@ -1074,31 +1066,17 @@ function buildAudit(
     ? horizonEM
     : horizonExpectedMove({ spot, horizon: "daily", vix: vixForEM, straddle: straddle ? { oneSigmaMove: straddle.oneSigmaMove, straddleMid: straddle.straddleMid, strike: straddle.strike } : null }).oneSigma;
 
-  const resistAbove = levels
-    .filter((l) => l.side === "resistance" && l.price > spot)
-    .sort((a, b) => a.price - b.price);
-  const supportBelow = levels
-    .filter((l) => l.side === "support" && l.price < spot)
-    .sort((a, b) => b.price - a.price);
-
-  // Bull target: nearest resistance, capped to spot + EM. If no resistance,
-  // fall back to spot + EM.
-  const bullCap = spot + horizonEM;
-  const bullRaw = resistAbove[0]?.price ?? bullCap;
-  const bullTarget = Math.min(bullRaw, bullCap);
-
-  // Base target: spot. The intended charm drift was never applied: the code
-  // read `cur.charmPerDay`, a field ExposurePoint never had (its `charm` is a
-  // dollar exposure per day), so the drift was always 0, and a dollar
-  // exposure has no units-correct conversion to a price drift here. Kept at
-  // spot explicitly rather than enabling an unvalidated formula.
-  const charmDrift = 0;
-  const baseTarget = spot * (1 + charmDrift);
-
-  // Bear target: first failing support below, capped to spot - EM.
-  const bearCap = spot - horizonEM;
-  const bearRaw = supportBelow[0]?.price ?? bearCap;
-  const bearTarget = Math.max(bearRaw, bearCap);
+  // Scenario targets: spot + 1 EM, spot, spot - 1 EM of THIS horizon. That is what this code has always
+  // produced: the "nearest structural resistance / support, capped to EM" described here before never
+  // happened, because it filtered on `side`, a field the levels only receive later (enrichedLevels), so
+  // both lists were always empty and the caps were always the answer. The event the odds and the
+  // calibration record have always been about is therefore "close beyond 1 sigma of the horizon", a
+  // stable, comparable event. Kept, and now said plainly. (A structural version would put the bull
+  // target at the nearest of a dozen level kinds, often a few points from spot, and change what every
+  // graded forecast so far was a forecast of: a model change for the owner to decide, not a silent fix.)
+  const bullTarget = spot + horizonEM;
+  const baseTarget = spot;
+  const bearTarget = spot - horizonEM;
 
   const scenarioTargets = {
     bull: parseFloat(bullTarget.toFixed(2)),
@@ -1169,9 +1147,14 @@ function buildAudit(
   const iv1dDelta = (iv1dNow != null && extras.iv1dPrev != null) ? iv1dNow - extras.iv1dPrev : null;
   const charmNow = cur.charm / 1e9;
   const charmDelta = extras.charmPrev != null ? charmNow - extras.charmPrev : null;
+  // The same change in VIX points. iv1d is a VIX-derived DAILY sigma in percent (vixToAtmPct(vix) / sqrt(252)),
+  // so a 4-point VIX day moves it by about 0.22: the 0.25 test below and the MM matrix's ">= 1.0, VIX moved
+  // over 1 pt" were both reading that number as VIX points and almost never fired. Both now read points.
+  const VIX_PTS_PER_IV1D = vixToAtmPct(1) > 0 ? Math.sqrt(252) / vixToAtmPct(1) : null;
+  const vixDeltaPts = iv1dDelta != null && VIX_PTS_PER_IV1D != null ? parseFloat((iv1dDelta * VIX_PTS_PER_IV1D).toFixed(2)) : null;
   let dodLabel = "Flat";
-  if (iv1dDelta != null && Math.abs(iv1dDelta) >= 0.25) {
-    dodLabel = iv1dDelta > 0 ? "Vol Bid Up" : "Vol Offered";
+  if (vixDeltaPts != null && Math.abs(vixDeltaPts) >= 1.0) {
+    dodLabel = vixDeltaPts > 0 ? "Vol Bid Up" : "Vol Offered";
   } else if (charmDelta != null && Math.abs(charmDelta) >= 0.5) {
     dodLabel = charmDelta > 0 ? "Charm Lifting" : "Charm Pressing";
   }
@@ -1179,6 +1162,7 @@ function buildAudit(
     iv1d: iv1dNow,
     iv1dPrev: extras.iv1dPrev,
     iv1dDelta,
+    vixDeltaPts,
     charmNow: parseFloat(charmNow.toFixed(2)),
     charmPrev: extras.charmPrev,
     label: dodLabel,
@@ -1645,6 +1629,11 @@ export async function buildModelsSnapshot(input: {
       }
     }),
   );
+
+  // "live" only when the regular session is open and no horizon was built on a last-session chain copy.
+  // It used to be "live" on every successful build, so a weekend build on Friday's chain read "● LIVE".
+  const built = Object.values(out.horizons).filter((h): h is ModelHorizon => h != null);
+  if (!isRegularSessionOpen(Date.now()) || built.some((h) => h.chainLastSession === true)) out.session = "last-close";
 
   return out;
 }

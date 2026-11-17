@@ -18,6 +18,7 @@
 
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION } from "./cryptoRules";
 import { ageMinutesCeil1 } from "./cryptoVerdict";
+import { capOf } from "./cryptoCap";
 
 type Rules = typeof CRYPTO_RULES;
 
@@ -234,6 +235,8 @@ export function planSummary(states: PlanState[], now: number = Date.now(), rules
 export interface PromptCoin {
   symbol: string; name: string; chain: string; tokenAddress: string; pairAddress: string; dexId: string;
   priceUsd: number | null; marketCap: number | null; liquidityUsd: number | null;
+  /** Fully diluted value: the cap the desk scores and plans on when DexScreener reports no market cap. */
+  fdv?: number | null;
   vol5m: number | null; vol1h: number | null; vol24h: number | null;
   buys5m: number | null; sells5m: number | null; chg5m: number | null; chg1h: number | null; chg24h: number | null;
   ageMinutes: number | null; mintAuthorityActive: boolean | null; freezeAuthorityActive: boolean | null;
@@ -252,7 +255,11 @@ const usd = (n: number) => `$${n >= 1 ? Math.round(n).toLocaleString("en-US") : 
 
 /** A self-contained prompt with the card's data and the rule-book plan. */
 export function buildTradePrompt(c: PromptCoin, sizeText: string, rules: Rules = CRYPTO_RULES, now = Date.now()): string {
-  const levels = planLevels(c.marketCap, rules).map((l) => `- ${l.text}`).join("\n");
+  // The same cap the card shows and the desk scored on (marketCap, else FDV with the basis named): the
+  // prompt used to print "market cap unread" and drop every cap level on an FDV-only coin.
+  const cap = capOf({ marketCap: c.marketCap, fdv: c.fdv ?? null });
+  const capLabel = cap.basis === "fdv" ? "market cap (FDV basis; no market cap reported)" : "market cap";
+  const levels = planLevels(cap.cap, rules).map((l) => `- ${l.text}`).join("\n");
   const yn = (b: boolean | null) => (b == null ? "unread" : b ? "ACTIVE" : "revoked");
   return [
     `Act as an experienced Solana meme-coin trader. Review this coin with me using ONLY the data below plus anything you can verify live. Tell me plainly: take it, wait, or skip, and why. If you would trade it, walk me through the entry, where you would trim, where you would get out, and what would make you leave early.`,
@@ -265,7 +272,7 @@ export function buildTradePrompt(c: PromptCoin, sizeText: string, rules: Rules =
       ? `${new Date(c.lastRefreshAt).toISOString()} (pair read ${ageMinutesCeil1(now - c.lastRefreshAt)} min before this prompt was copied${now - c.lastRefreshAt > rules.freshness.enterMaxAgeMinutes * 60_000 ? `; OLDER than the desk's ${rules.freshness.enterMaxAgeMinutes}-min freshness limit, treat as stale` : ""})`
       : `pair read time unknown (prompt copied ${new Date(now).toISOString()})`}`,
     ``,
-    `MARKET: price ${v(c.priceUsd, usd)}, market cap ${v(c.marketCap, usd)}, liquidity ${v(c.liquidityUsd, usd)}, age ${v(c.ageMinutes, (m) => (m >= 60 ? `${(m / 60).toFixed(1)} h` : `${Math.round(m)} min`))}`,
+    `MARKET: price ${v(c.priceUsd, usd)}, ${capLabel} ${v(cap.cap, usd)}, liquidity ${v(c.liquidityUsd, usd)}, age ${v(c.ageMinutes, (m) => (m >= 60 ? `${(m / 60).toFixed(1)} h` : `${Math.round(m)} min`))}`,
     `Volume: 5m ${v(c.vol5m, usd)}, 1h ${v(c.vol1h, usd)}, 24h ${v(c.vol24h, usd)}. Last 5m: ${c.buys5m ?? "unread"} buys / ${c.sells5m ?? "unread"} sells`,
     `Change: 5m ${v(c.chg5m, (n) => `${n.toFixed(1)}%`)}, 1h ${v(c.chg1h, (n) => `${n.toFixed(1)}%`)}, 24h ${v(c.chg24h, (n) => `${n.toFixed(1)}%`)}`,
     `Jupiter price check: ${c.jupState ?? "unchecked"}${c.jupGapPct != null ? ` (${c.jupGapPct}% gap)` : ""}`,

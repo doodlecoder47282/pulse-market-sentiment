@@ -108,7 +108,7 @@ limit (a re-score on the security or social tick without a pair refresh is
 WATCH stale_data and records no row at all), and the feed, the
 autopsy's "tracked" line and the AI prompt read one served verdict
 (shared/cryptoVerdict.ts servedVerdict: stale first, hold reasons first).
-Version 2026.11.06-1.
+Version 2026.11.16-1 (the stated "at least one sell observed in the last hour" gate is now enforced on an observed zero; no number changed).
 
 Funding and open interest are a recorded, descriptive regime readout, not a
 rule. Funding is the exchange's decimal rate per funding interval (positive:

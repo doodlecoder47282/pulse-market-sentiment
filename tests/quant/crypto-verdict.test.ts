@@ -28,7 +28,7 @@ test("every verdict code has a meaning and none says buy, sell or enter a trade"
     assert.ok(text.length > 8, code);
     assert.ok(!/\b(buy|sell) (now|it|this)\b/i.test(text), code);
   }
-  assert.equal(Object.keys(VERDICT_CODE_TEXT).length, 14);
+  assert.equal(Object.keys(VERDICT_CODE_TEXT).length, 15);
 });
 
 test("desk risk: a stale or failed venue read is unknown, never on or off; the reason names the venue", () => {
@@ -73,4 +73,13 @@ test("served verdict: an ENTER on pair data older than the freshness limit is WA
   // Non-ENTER rows pass through untouched.
   const w = { verdict: "WATCH" as const, verdictCode: "forming" as const, verdictReasons: ["x"], lastRefreshAt: now - 3600_000 };
   assert.equal(servedVerdict(w, on, now), w);
+});
+
+test("no_sells: an observed zero sell count holds a would-be ENTER at WATCH (the stated gate, enforced from 2026.11.16-1)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const e = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
+  assert.match(e, /\} else if \(hp === "no_sells" && CRYPTO_RULES\.enter\.requireSellsObserved\) \{\s*verdict = "WATCH"; code = "no_sells";/);
+  assert.equal(VERDICT_CODE_TEXT.no_sells, "no sell observed in the last hour");
+  const { CRYPTO_RULES_VERSION } = await import("../../shared/cryptoRules");
+  assert.equal(CRYPTO_RULES_VERSION, "2026.11.16-1");
 });

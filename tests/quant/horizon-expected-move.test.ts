@@ -67,8 +67,9 @@ function erf(x: number): number {
 test("wiring: buildAudit caps the targets to the horizon EM and reads the odds there; the route post-processor that re-cut targets after the odds is gone", () => {
   const m = readFileSync(new URL("../../server/models.ts", import.meta.url), "utf8");
   assert.match(m, /const expectedMove: HorizonExpectedMove = horizonExpectedMove\(\{\s*spot, horizon: extras\.horizon, vix: vixForEM, vix9d: extras\.vix9d \?\? null,/);
-  assert.match(m, /const bullCap = spot \+ horizonEM;/);
-  assert.match(m, /const bearCap = spot - horizonEM;/);
+  assert.match(m, /const bullTarget = spot \+ horizonEM;/);
+  assert.match(m, /const bearTarget = spot - horizonEM;/);
+  assert.doesNotMatch(m, /l\.side === "resistance" && l\.price > spot/, "the structural filter that never matched is gone; the targets are what they always were");
   assert.match(m, /gradedScenarioOdds\(extras\.impliedCdf, \{ bull: scenarioTargets\.bull, bear: scenarioTargets\.bear \}\)/);
   assert.match(m, /horizonEM: parseFloat\(horizonEM\.toFixed\(2\)\),\s*horizonDays: expectedMove\.days,/);
   assert.match(m, /impliedAtmTotalVol: dist && scenarioProbSource === "risk-neutral-implied" \? dist\.atmTotalVol : null,/);
