@@ -2404,3 +2404,15 @@ Second review: HOLD, taken. The depth floor comes from the row being graded, but
 every open exit plan on that pair with the successor read, so a later ENTER logged at $60k could be
 liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
 now grades its own row only; exit plans are not sampled on it.
+
+2026-11-17: Owner asked for items 1 to 6 of the next-steps list. Item 1, candidate rule sets on the record
+(feat/crypto-candidate-rules; shared/cryptoCandidates.ts, version candidates-2026.11.17-1). The live rules
+have never passed a coin, so the replay gains a fifth section: five rule sets declared in advance (structure
+only; two-sided tape; attention; past the first minutes; combined) are asked of the same graded first
+signals, each showing how many would have passed, wins, mean and median net of cost in the older and newer
+half, the hold-to-horizon mean, and per rule how many rows passed, failed or had no recorded input. A rule
+whose input was not recorded does not pass a row. Nothing here moves a live verdict, score or exit level;
+the parameters are the candidates', not the desk's thresholds, and are versioned in that file. Stated on
+screen: five sets on one record bias the best one upward; the record keeps only each coin's first signal
+(about minute 2), so rules about a later state pass few rows, which is a limit of the record; no candidate
+is a claim of edge. The owner picks a set from this readout before any rule-book change.

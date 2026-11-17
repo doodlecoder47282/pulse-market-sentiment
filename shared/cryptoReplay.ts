@@ -322,6 +322,11 @@ export interface SplitReadout {
   maxDrawdownPct: number | null;
 }
 
+/** The pass-set statistics of a list of rows (in detection order), net of cost; shared with the candidate sets. */
+export function splitReadout(label: string, rows: ReplayRow[], targetMcap: number): SplitReadout {
+  return split(label, rows, targetMcap);
+}
+
 function split(label: string, rows: ReplayRow[], targetMcap: number): SplitReadout {
   const priced = rows.filter((r) => r.outcome !== "NO_DATA");
   const nets = priced.map((r) => signalReturn(r, "graded", 100, {}, { targetMcap }).netPct).filter((x): x is number => x != null);
@@ -393,6 +398,8 @@ export interface CryptoReplay {
   bands: BandReadout[];
   features: FeatureReadout[];
   reeval: ReevalReadout;
+  /** Candidate rule sets read on the same rows; attached by the server (shared/cryptoCandidates.ts). */
+  candidates?: import("./cryptoCandidates").CandidatesReadout;
   samplingLimit: string;
   scope: string;
 }
