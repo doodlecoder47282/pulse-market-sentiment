@@ -71,7 +71,12 @@ export default function LiveQuoteStrip() {
     );
   }
 
-  if (!data) return null;
+  if (!data) {
+    // A failed first request says so; it is not an empty header.
+    return isError ? (
+      <span className="hidden rounded border border-amber-500/40 px-1 text-[11px] uppercase tracking-wider text-amber-400 sm:inline" data-testid="live-quote-strip-failed">quotes failed</span>
+    ) : null;
+  }
 
   const spyUp = (data.spy.changePct ?? 0) >= 0;
   // No change received is not "VIX up": the level is neutral, never red.

@@ -1045,7 +1045,9 @@ export default function WhaleFlowPanel() {
             </div>
           ) : whaleGroups.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/30 py-4 text-center text-xs text-muted-foreground" data-testid="fresh-whales-empty">
-              no whales pass the surgical gate right now — scan runs every 30s
+              {previewQuery.data?.dataState === "partial"
+                ? `none found in the tickers that could be read; the scan is partial${previewQuery.data.dataStateReason ? ` (${previewQuery.data.dataStateReason})` : ""}`
+                : "no whales pass the surgical gate right now — scan runs every 30s"}
             </div>
           ) : (
             <div className="space-y-2" data-testid="fresh-whales-list">

@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { afterDismissal, type FlowAlert } from "../../shared/flowAlerts";
 
 const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
 
@@ -39,9 +40,9 @@ test("S2/S13: the closed count does not claim 'today'; an unavailable scan is no
 
 test("S3/S4: a dismissed alert is not re-added by the next poll; a symbol change clears the comparison baseline", () => {
   const f = read("client/src/components/FlowAlertsPanel.tsx");
-  assert.match(f, /const kept = newAlerts\.filter\(\(a\) => !dismissedRef\.current\.has\(a\.id\)\);/);
-  assert.match(f, /dismissedRef\.current\.add\(id\);/);
-  assert.match(f, /for \(const a of prev\) dismissedRef\.current\.add\(a\.id\);/);
+  assert.match(f, /const kept = afterDismissal\(newAlerts, dismissedRef\.current\);/);
+  assert.match(f, /dismissedRef\.current\.set\(id, a\.severity\);/);
+  assert.match(f, /for \(const a of prev\) dismissedRef\.current\.set\(a\.id, a\.severity\);/);
   assert.match(f, /useEffect\(\(\) => \{ prevPcrRef\.current = null; prevChainRef\.current = null; \}, \[symbol\]\);/);
   // The reset is declared before the alert engine effect, so it runs first on a symbol change.
   assert.ok(f.indexOf("prevPcrRef.current = null; prevChainRef.current = null;") < f.indexOf("// Run alert engine whenever chain data updates"));
@@ -56,4 +57,13 @@ test("S8/S9: a failed tape or quote refresh is shown as failed; VIX with no chan
   assert.match(q, /const vixKnown = data\.vix\.changePct != null;/);
   assert.match(q, /neutralClassName=\{!vixKnown \? "text-foreground"/);
   assert.match(q, /data-testid="live-quote-strip-failed"/);
+});
+
+test("S3 review: a dismissal hides a standing condition, never a later P/C shift, and not a rise in severity", () => {
+  const mk = (id: string, type: FlowAlert["type"], severity: FlowAlert["severity"]): FlowAlert => ({ id, ts: 1, type, symbol: "SPY", message: "", severity });
+  const d = new Map<string, FlowAlert["severity"]>([["WALL:SPY:600:C", "med"], ["PC_SHIFT:SPY:x:x", "low"], ["BLOCK:SPY:590:P", "med"]]);
+  const out = afterDismissal([mk("WALL:SPY:600:C", "WALL", "med"), mk("PC_SHIFT:SPY:x:x", "PC_SHIFT", "high"), mk("BLOCK:SPY:590:P", "BLOCK", "high"), mk("WALL:SPY:610:C", "WALL", "low")], d);
+  assert.deepEqual(out.map((a) => a.id), ["PC_SHIFT:SPY:x:x", "BLOCK:SPY:590:P", "WALL:SPY:610:C"]);
+  assert.equal(d.has("BLOCK:SPY:590:P"), false, "once it returns it is no longer dismissed");
+  assert.equal(afterDismissal([mk("WALL:SPY:600:C", "WALL", "low")], d).length, 0);
 });

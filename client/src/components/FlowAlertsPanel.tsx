@@ -43,7 +43,7 @@ interface OptionContract {
 
 // ─── Alert computation ────────────────────────────────────────────────────────
 // Pure helpers (deterministic ids, merge-on-poll) live in shared/flowAlerts.ts so they are unit-tested.
-import { alertKey, mergeAlerts } from "@shared/flowAlerts";
+import { alertKey, mergeAlerts, afterDismissal } from "@shared/flowAlerts";
 
 function computeAlerts(
   prevChainRef: Record<string, Record<string, OptionContract[]>> | null,
@@ -289,8 +289,8 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
   const [isOpen, setIsOpen] = useState(true);
   const prevPcrRef = useRef<number | null>(null);
   const prevChainRef = useRef<any>(null);
-  /** Alert ids the user dismissed this page load (ids carry the symbol). */
-  const dismissedRef = useRef<Set<string>>(new Set());
+  /** Alerts the user dismissed this page load: id (carries the symbol) -> severity when dismissed. */
+  const dismissedRef = useRef<Map<string, AlertSeverity>>(new Map());
   // A new symbol has no baseline: the previous symbol's chain and put/call ratio are not one
   // (a P/C "shift" and volume jumps were being read between two different tickers).
   useEffect(() => { prevPcrRef.current = null; prevChainRef.current = null; }, [symbol]);
@@ -379,8 +379,9 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
       currentPcr,
       Number.isFinite(chainData.asOfMs) ? chainData.asOfMs : Date.now(),
     );
-    // A dismissed condition stays dismissed: ids are deterministic, so the next poll would re-add it as new.
-    const kept = newAlerts.filter((a) => !dismissedRef.current.has(a.id));
+    // A dismissed standing condition stays dismissed (ids are deterministic, so the next poll would re-add
+    // it as new); a later P/C shift or a rise in severity still shows (shared/flowAlerts.ts).
+    const kept = afterDismissal(newAlerts, dismissedRef.current);
     if (kept.length > 0) {
       // Same condition -> same row, updated in place; only a new condition is a new row.
       setAlerts((prev) => mergeAlerts(prev, kept));
@@ -390,11 +391,10 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
   }, [chainData, symbol, isConnected, computePcr]);
 
   const dismissAlert = useCallback((id: string) => {
-    dismissedRef.current.add(id);
-    setAlerts((prev) => prev.filter((a) => a.id !== id));
+    setAlerts((prev) => { const a = prev.find((x) => x.id === id); if (a) dismissedRef.current.set(id, a.severity); return prev.filter((x) => x.id !== id); });
   }, []);
 
-  const dismissAll = useCallback(() => setAlerts((prev) => { for (const a of prev) dismissedRef.current.add(a.id); return []; }), []);
+  const dismissAll = useCallback(() => setAlerts((prev) => { for (const a of prev) dismissedRef.current.set(a.id, a.severity); return []; }), []);
 
   const highCount = alerts.filter((a) => a.severity === "high").length;
   const totalCount = alerts.length;

@@ -2121,3 +2121,10 @@ is cleared. S8/S9: the macro tape and the header quote strip never read the requ
 failed refresh kept showing the last prices as live and a failed first load was an endless "Loading"; both
 show "refresh failed", and VIX with no change received is neutral, not red. Still open from this group:
 S5, S6, S7, S10, S11, S12, S15, S17, S19-S24.
+Review of feat/audit-signals: HOLD, one must-fix taken: remembering dismissed ids also hid every later P/C
+shift for the symbol (one id per symbol, and a shift is an event between two polls, not a standing
+condition); a P/C shift is never suppressed and a dismissed alert returns if its severity rises
+(shared/flowAlerts.ts afterDismissal, tested). Should-fixes taken: a partial whale scan with an empty list
+says it is partial; the header quote strip shows "quotes failed" on a failed first load (it rendered
+nothing). Left open, same class as S16: the snapshot's top-level pcrOi / pcrVol are still 0 with no call
+open interest and composite.ts reads that as call-heavy.
