@@ -515,10 +515,21 @@ export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now())
   const at = sessionMinuteOf(nowMs);
   // It was 24 * 60, which no stored point reaches (the last is the session length, 390), so before the open
   // and on non-trading days every stored session was dropped and the card read "0/20 sessions".
-  const minute = at && at.date === today ? at.minute : Infinity;
+  const inSession = !!at && at.date === today;
+  const minute = inSession ? at!.minute : Infinity;
+  // A stored day counts as full only when its last point is within 15 minutes of THAT day's close.
+  const fullDayFrom = (date: string): number => {
+    const o = sessionOpenMs(date), c = sessionCloseMs(date);
+    return o != null && c != null ? (c - o) / 60_000 - 15 : Infinity;
+  };
   const readFor = (key: string, putVol: number, callVol: number, observed: boolean): PcrRead => {
     if (observed) recordPcrSnapshot({ symbol: key, putVol, callVol, provider: resp.provider, capturedAtMs: nowMs });
-    return pcrReadAtClock(observed ? { putVol, callVol } : null, minute, loadPcrSessions(key, today), { today });
+    const stored = loadPcrSessions(key, today);
+    // Outside the session the chain still reports the LAST session's volume, so that session is the value
+    // being read: it is left out of its own baseline.
+    const newest = stored.reduce((m, s) => (s.date > m ? s.date : m), "");
+    const baseline = inSession ? stored : stored.filter((s) => s.date !== newest);
+    return pcrReadAtClock(observed ? { putVol, callVol } : null, minute, baseline, { today, fullDayFrom });
   };
   for (const t of [...resp.indexGroup, ...resp.mag7Group]) {
     const observed = t.dataState === "ok" && !t.chainStale && t.putVol + t.callVol > 0;

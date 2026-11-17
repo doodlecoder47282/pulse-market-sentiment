@@ -211,9 +211,9 @@ function zDetail(r: PcrRead | undefined): string {
 function fmtVol(v: number): string {
   if (!Number.isFinite(v)) return "n/a";
   // By magnitude, with the sign kept: a negative or fractional value used to print raw (-5107.666666666667).
-  const a = Math.abs(v), sign = v < 0 ? "-" : "";
+  const a = Math.abs(v), sign = v < 0 ? "\u2212" : "";
   if (a >= 1_000_000) return `${sign}${(a / 1_000_000).toFixed(1)}M`;
-  if (a >= 1_000) return `${sign}${(a / 1_000).toFixed(a >= 10_000 ? 0 : 1)}K`;
+  if (Math.round(a) >= 1_000) return `${sign}${(a / 1_000).toFixed(a >= 10_000 ? 0 : 1)}K`;
   return Math.round(a) === 0 ? "0" : `${sign}${Math.round(a)}`;
 }
 

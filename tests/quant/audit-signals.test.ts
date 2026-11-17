@@ -31,7 +31,7 @@ test("S16: a DTE bucket with no call open interest has no put/call ratio, not 0.
 test("S2/S13: the closed count does not claim 'today'; an unavailable scan is not 'no whales pass'", () => {
   const w = read("client/src/components/WhaleFlowPanel.tsx");
   assert.doesNotMatch(w, /closed today/);
-  assert.match(w, /\{closedPositions\.length\} closed \(stored\)/);
+  assert.match(w, /\{closedPositions\.length\} closed or expired \(stored\)/);
   const i = w.indexOf('data-testid="fresh-whales-unavailable"');
   const j = w.indexOf('data-testid="fresh-whales-empty"');
   assert.ok(i > 0 && j > i, "the unavailable branch comes before the empty one");

@@ -964,10 +964,10 @@ export default function WhaleFlowPanel() {
   }
 
   const trackingPositions = activeQuery.data?.positions ?? [];
-  // Filter out EXPIRED entirely from the Closed section. EXPIRED contracts are
-  // auto-purged from view (the rollup endpoint still sees them for stats).
+  // Closed AND expired. Expired rows used to be filtered out here (and not requested at all), so with a
+  // 1-3 DTE gate, where nearly every position ends by expiring, the section could never fill.
   const closedPositions = (terminalQuery.data?.positions ?? []).filter(
-    (p) => p.status === "CLOSED",
+    (p) => p.status === "CLOSED" || p.status === "EXPIRED",
   );
   const cfg = previewQuery.data?.config;
 
@@ -1017,7 +1017,7 @@ export default function WhaleFlowPanel() {
             {trackingPositions.length} tracking
           </span>
           <span className="text-muted-foreground text-xs" data-testid="whale-flow-closed-count" title="Closed positions kept in the follow-through store (up to 90 days), not only today's">
-            {closedPositions.length} closed (stored)
+            {closedPositions.length} closed or expired (stored)
           </span>
           {cfg && (
             <span className="text-muted-foreground text-[11px] font-mono ml-auto" data-testid="whale-flow-gate">

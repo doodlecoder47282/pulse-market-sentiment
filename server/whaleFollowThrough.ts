@@ -64,7 +64,7 @@ export interface FollowPosition {
   /** Entry observation snapshot */
   entry: {
     mark: number;
-    premium: number;       // $ day premium at the FIRST fire (= volume x mark x 100); never rewritten
+    premium: number;       // $ day premium at the FIRST fire (= volume x avgTraded x 100); never rewritten
     delta: number;
     volume: number;        // running session volume at detection
     openInterest: number;
@@ -139,7 +139,7 @@ export function registerWhale(hit: WhaleHit): void {
     // Already tracking (flowAlertEngine premium-tier dedup handles re-fires).
     // The entry is the FIRST fire and is never rewritten: the old code raised
     // entry.premium alone, so premium no longer equalled entry.volume x
-    // entry.mark x 100, and the DB upsert never stored it (entryJson is
+    // the day's average price x 100, and the DB upsert never stored it (entryJson is
     // insert-only), so memory and disk disagreed after a restart. The latest
     // fire is kept instead as one consistent premium/volume/mark snapshot.
     const p = positions.get(hit.occ)!;

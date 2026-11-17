@@ -2300,3 +2300,11 @@ ET in session is NOT explained by this (in session the comparison was already by
 stored-versus-usable wording will show which it is. O5: flow volumes printed raw when negative or under
 1,000 (-5107.666666666667); they are rounded with their sign. Open from the review: O1 (whale direction
 basis), O6-O16.
+Review of options batch 1: HOLD, one must-fix taken: the panel still filtered the closed list to CLOSED
+after the request was widened, so O3 had no effect; the list and its count are closed or expired. Should-
+fixes taken: a stored day counts as full only when its last point is within 15 minutes of that date's own
+close (a recording that stopped mid-session is not a full day); outside the session the newest stored
+session is left out of the baseline, because the chain still reports that session's volume and it would be
+compared with itself; the wording says "near its close" outside the session; the entry.premium comment names
+the day's average price; a minus glyph and no "1000". Known and left: positions stored before this keep the
+day-average entry mark (no avgTraded field marks them), so the tracking list mixes bases until they expire.
