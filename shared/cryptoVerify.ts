@@ -232,6 +232,11 @@ export function sourceHealthCheck(id: string, name: string, h: SourceHealth | nu
   // Nothing was asked of it (no ENTER/WATCH pair to read, no mint to price): not a pass, not a failure.
   if (h.okCount === 0 && h.failCount === 0) return mk(id, name, "unavailable", obs, null, opts.demand === 0 ? "nothing has needed this source yet" : "no call has been made yet");
   const failingNow = h.lastFailAt != null && (h.lastOkAt == null || h.lastFailAt > h.lastOkAt);
+  // The last call failed and nothing has been asked of the source since (no pair to read): a failure that old
+  // says nothing about now and cannot clear itself, so it is "unavailable", not a standing red.
+  if (failingNow && opts.demand === 0 && now - (h.lastFailAt as number) > maxQuietMs) {
+    return mk(id, name, "unavailable", obs, null, `last call failed ${ago(h.lastFailAt, now)} and nothing has needed this source since`);
+  }
   if (failingNow) return mk(id, name, "fail", obs, "the latest call succeeds", h.lastError ?? "latest call failed");
   if (h.lastOkAt != null && now - h.lastOkAt > maxQuietMs && opts.demand !== 0) {
     return mk(id, name, "fail", obs, `a successful call within ${Math.round(maxQuietMs / 60_000)} min`, "no successful call recently while the desk has work for it");

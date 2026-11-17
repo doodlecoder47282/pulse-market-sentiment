@@ -25,13 +25,17 @@ test("source health: untried is unavailable, a recent success passes, the latest
   const quiet = { lastOkAt: now - 45 * M, lastFailAt: null, lastError: null, okCount: 12, failCount: 0 };
   assert.equal(sourceHealthCheck("crypto.candles", "candles", quiet, now, CANDLES_MAX_QUIET_MS, { demand: 6 }).state, "fail", "work waiting and no success in 45 min");
   assert.equal(sourceHealthCheck("crypto.candles", "candles", quiet, now, CANDLES_MAX_QUIET_MS, { demand: 0 }).state, "pass", "no ENTER/WATCH pair to read: quiet is expected");
+  // A failure with no work since cannot clear itself: old and idle reads unavailable, not a standing red.
+  const oldFail = { lastOkAt: now - 3 * 3600_000, lastFailAt: now - 2 * 3600_000, lastError: "429", okCount: 9, failCount: 1 };
+  assert.equal(sourceHealthCheck("crypto.candles", "candles", oldFail, now, CANDLES_MAX_QUIET_MS, { demand: 0 }).state, "unavailable");
+  assert.equal(sourceHealthCheck("crypto.candles", "candles", oldFail, now, CANDLES_MAX_QUIET_MS, { demand: 3 }).state, "fail");
 });
 
 test("wiring: the engine counts real calls, a 200 that prices nothing is a failure, and Verify live data reports both sources", () => {
   const e = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
-  assert.match(e, /if \(r\.prices\.size > 0\) markOk\(jupHealth\); else markFail\(jupHealth, `answered but priced 0 of \$\{jupMints\.length\} mints`\);/);
+  assert.match(e, /if \(r\.prices\.size > 0\) markOk\(jupHealth\);\s*else if \(jupMints\.length >= JUP_INCONCLUSIVE_UNDER\) markFail\(jupHealth, `answered but priced 0 of \$\{jupMints\.length\} mints`\);/);
   assert.match(e, /\} catch \(e\) \{\s*jup = \{ prices: new Map\(\), omitted: new Set\(\), failed: true, at: Date\.now\(\) \};\s*markFail\(jupHealth, e\);/);
-  assert.match(e, /markOk\(candleHealth\); else markFail\(candleHealth, "answered without data\.attributes\.ohlcv_list"\);/);
+  assert.match(e, /if \(fresh\.length > 0 \|\| \(Array\.isArray\(rawList\) && rawList\.length === 0\)\) markOk\(candleHealth\);/, "rows that do not parse are a failure of the feed's shape, never ok");
   assert.match(e, /c\.candlesError = msg\.slice\(0, 80\);\s*markFail\(candleHealth, e\);/);
   const v = readFileSync(new URL("../../server/liveVerify.ts", import.meta.url), "utf8");
   assert.match(v, /sourceHealthCheck\("crypto\.jupiter", "Jupiter price cross-check", h\.jupiter, now, JUPITER_MAX_QUIET_MS,/);

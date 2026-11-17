@@ -250,6 +250,8 @@ const JUP_BASE = "https://api.jup.ag/price/v3"; // keyless tier, 0.5 req/s
 // Per-source health, counted on every real call (shared/cryptoVerify.ts sourceHealthCheck reads it on
 // Settings -> Verify live data): the Jupiter cross-check an ENTER depends on, and the 1-minute candle feed.
 const jupHealth: SourceHealth = emptySourceHealth();
+/** Under this many mints, a response pricing none of them is inconclusive (new mints have no route yet). */
+const JUP_INCONCLUSIVE_UNDER = 10;
 const candleHealth: SourceHealth = emptySourceHealth();
 function markOk(h: SourceHealth): void { h.lastOkAt = Date.now(); h.okCount++; h.lastError = null; }
 function markFail(h: SourceHealth, e: unknown): void { h.lastFailAt = Date.now(); h.failCount++; h.lastError = String((e as any)?.message ?? e).slice(0, 120); }
@@ -639,7 +641,10 @@ async function momentumTick(): Promise<void> {
       const r = parseJupiterPrices(j, jupMints);
       jup = { prices: r.prices, omitted: new Set(r.omitted), failed: false, at: Date.now() };
       // A 200 that prices none of the mints asked for is not a working feed (a moved or reshaped endpoint looks like this).
-      if (r.prices.size > 0) markOk(jupHealth); else markFail(jupHealth, `answered but priced 0 of ${jupMints.length} mints`);
+      // Jupiter legitimately omits mints it has no route for (brand-new pump mints), so a small batch pricing
+      // none is inconclusive, not a failure; a full batch pricing none is what a moved or reshaped endpoint looks like.
+      if (r.prices.size > 0) markOk(jupHealth);
+      else if (jupMints.length >= JUP_INCONCLUSIVE_UNDER) markFail(jupHealth, `answered but priced 0 of ${jupMints.length} mints`);
     } catch (e) {
       jup = { prices: new Map(), omitted: new Set(), failed: true, at: Date.now() };
       markFail(jupHealth, e);
@@ -1246,7 +1251,9 @@ async function candlesTick(): Promise<void> {
       c.candlesReadAt = Date.now();
       c.candlesError = null;
       // A 200 with no parsable candle is a failure of the feed's shape, not a quiet pair, unless the list is genuinely empty.
-      if (fresh.length > 0 || Array.isArray(r?.data?.attributes?.ohlcv_list)) markOk(candleHealth); else markFail(candleHealth, "answered without data.attributes.ohlcv_list");
+      const rawList = r?.data?.attributes?.ohlcv_list;
+      if (fresh.length > 0 || (Array.isArray(rawList) && rawList.length === 0)) markOk(candleHealth);
+      else markFail(candleHealth, Array.isArray(rawList) ? `answered ${rawList.length} rows, none parsable (row shape changed?)` : "answered without data.attributes.ohlcv_list");
       if (!c.candlesBackfilled) {
         const feats = candleFeatures(c.candles, c.candlesReadAt, { readAt: c.candlesReadAt });
         if (feats.state === "ok" || feats.state === "stale") { backfillFirstSignalCandles(c, feats); c.candlesBackfilled = true; }
