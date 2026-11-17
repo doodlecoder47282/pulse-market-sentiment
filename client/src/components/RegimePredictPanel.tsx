@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import UnavailablePanel from "@/components/UnavailablePanel";
 import { FLIP_DISTANCE_STRONG_EM, dexSlopeSignFromAudit, flipDistanceText } from "@shared/gammaRegime";
-import { Activity, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Activity, ChevronDown, ChevronUp, Minus } from "lucide-react";
 
 type RegimeBucket =
   | "TREND_STRONG"
@@ -49,8 +49,6 @@ interface RegimePredictPayload {
     dfiSlopePerMin: number | null;
     /** Signed distance of spot from the gamma flip in 1-day expected moves; null when not available. */
     flipDistanceEM?: number | null;
-    flipDistanceSlopePerMin?: number | null;
-    projectedFlipDistanceEM?: number | null;
     ivTermDelta: number;
     ivTermLabel: string;
     gammaFlipProxFrac: number | null;
@@ -75,15 +73,15 @@ const REGIME_META: Record<
     plain: "Strong Trend",
     tone: "text-emerald-300",
     bar: "bg-emerald-500/70",
-    icon: TrendingUp,
-    play: "Direction is set: dealer hedging tends to extend moves; pullbacks have tended to be shallow.",
+    icon: Activity,
+    play: "Negative gamma, and spot is at least half an expected move from the gamma flip. Under the usual dealer convention, hedging tends to amplify moves. No direction is implied.",
   },
   TREND_WEAK: {
     plain: "Weak Trend",
     tone: "text-emerald-200",
     bar: "bg-emerald-500/40",
-    icon: TrendingUp,
-    play: "Direction soft: moves can stall into the walls.",
+    icon: Activity,
+    play: "Negative gamma, and spot is within half an expected move of the gamma flip (or the flip distance is not available). Under the usual dealer convention, hedging tends to amplify moves. No direction is implied.",
   },
   NEUTRAL: {
     plain: "Neutral",
@@ -97,7 +95,7 @@ const REGIME_META: Record<
     tone: "text-amber-200",
     bar: "bg-amber-500/40",
     icon: Minus,
-    play: "Range-bound: price has tended to revert from the extremes toward the middle.",
+    play: "Positive gamma, and spot is within half an expected move of the gamma flip (or the flip distance is not available). Under the usual dealer convention, hedging tends to dampen moves.",
   },
   GAMMA_UNKNOWN: {
     plain: "Gamma unknown",
@@ -111,14 +109,14 @@ const REGIME_META: Record<
     tone: "text-muted-foreground",
     bar: "bg-muted/40",
     icon: Minus,
-    play: "No regime reading: the delta-flow slope, pivot or expected move is missing in this build; a zero that was never observed is not read as neutral.",
+    play: "No regime reading: the gamma zone, pivot or expected move is missing in this build; a zero that was never observed is not read as neutral.",
   },
   CHOP_STRONG: {
     plain: "Heavy Chop",
     tone: "text-amber-300",
     bar: "bg-amber-500/70",
-    icon: TrendingDown,
-    play: "Pin pressure heavy: price tends to be pulled toward the pin strike; trends struggle.",
+    icon: Minus,
+    play: "Positive gamma, and spot is at least half an expected move from the gamma flip. Under the usual dealer convention, hedging tends to dampen moves.",
   },
 };
 
@@ -327,13 +325,6 @@ export default function RegimePredictPanel() {
                 label="flip distance"
                 value={flipDistanceText(data.drivers.flipDistanceEM)}
                 title={`Distance of spot from the gamma flip in 1-day expected moves. The regime reads strong at ${FLIP_DISTANCE_STRONG_EM} or more and weak when closer or when the distance is not available. The ${FLIP_DISTANCE_STRONG_EM} line is hand-set, not fit to outcomes.`}
-              />
-              <DriverChip
-                label="flip dist. rate"
-                value={data.drivers.flipDistanceSlopePerMin != null
-                  ? `${data.drivers.flipDistanceSlopePerMin >= 0 ? "+" : ""}${data.drivers.flipDistanceSlopePerMin.toFixed(3)} EM/min`
-                  : "not available"}
-                title="Change in the flip distance per minute over the recent samples. Not available with fewer than two samples; the current regime is then carried forward."
               />
               <DriverChip
                 label="pivot dist"

@@ -18,11 +18,13 @@
 //     candidates[] sorted by probability, drivers, confidence.
 //
 // Drivers (each contributes a signed pressure toward a regime):
-//   1. Distance of spot from the gamma flip in 1-day expected moves, and its
-//      rate of change over the recent samples. Movement toward the flip (a
-//      zone change) or across the STRONG / WEAK line raises the transition
-//      score. (Until 2026-11-17 this was a "DFI" boundary / slope / projected
-//      DFI; DFI was pinned at +5 / -5, so none of it could move. Removed.)
+//   1. The current regime bucket (gamma zone + distance of spot from the gamma
+//      flip in 1-day expected moves), carried forward. NO projection of the
+//      flip distance is made: a slope over a few samples of spot is tick
+//      noise, and extrapolating it over the horizon turned 2-point moves into
+//      opposite-family calls. (Until 2026-11-17 this was a "DFI" boundary /
+//      slope / projected DFI; DFI was pinned at +5 / -5, so none of it could
+//      move. Removed.)
 //   2. IV term DoD (iv1d delta). Negative = vol bleed = chop drift. Positive
 //      vol expansion = trend pressure.
 //   3. Gamma flip proximity. Spot near mainPivot/charmZero (zero-gamma)
@@ -62,20 +64,17 @@ const ALL_REGIMES: RegimeBucket[] = [
 interface RawSample {
   ts: number;
   raw: RegimeBucket;
-  /** Signed distance of spot from the gamma flip in 1-day expected moves; null when not available. */
-  flipDistEM: number | null;
 }
 
 const HISTORY_CAP = 32;
 const _history: RawSample[] = [];
 
 /** Public observer hook — call from any place that has a fresh audit. */
-export function recordRawRegime(raw: RegimeBucket, flipDistEM: number | null, ts: number = Date.now()): void {
-  // A regime read from missing inputs is not a sample. A missing flip distance
-  // is kept as null (the regime still counts for the flip rate).
+export function recordRawRegime(raw: RegimeBucket, ts: number = Date.now()): void {
+  // A regime read from missing inputs is not a sample.
   if (raw === "INPUTS_UNAVAILABLE") return;
   try {
-    _history.push({ ts, raw, flipDistEM: flipDistEM != null && Number.isFinite(flipDistEM) ? flipDistEM : null });
+    _history.push({ ts, raw });
     if (_history.length > HISTORY_CAP) _history.shift();
   } catch {
     // fail-soft
@@ -108,20 +107,6 @@ function softmax(scores: Record<RegimeBucket, number>): Record<RegimeBucket, num
 }
 
 /**
- * Rate of change of the signed flip distance (expected moves per minute) over
- * the last 6 samples that carry one. null with fewer than 2 such samples.
- */
-function flipDistSlopeFromHistory(): { slope: number | null; samples: number } {
-  const samples = Math.min(6, _history.length);
-  const window = _history.slice(-6).filter((x) => x.flipDistEM != null);
-  if (window.length < 2) return { slope: null, samples };
-  const first = window[0];
-  const last = window[window.length - 1];
-  const dtMin = Math.max(0.0167, (last.ts - first.ts) / 60_000);
-  return { slope: ((last.flipDistEM as number) - (first.flipDistEM as number)) / dtMin, samples };
-}
-
-/**
  * Regime flips per minute over the known-gamma samples only: a GAMMA_UNKNOWN
  * sample is a data dropout, so known -> unknown -> known is not two flips.
  */
@@ -138,17 +123,6 @@ export function flipRateOf(history: ReadonlyArray<{ ts: number; raw: string }>):
 
 function flipRateFromHistory(): { rate: number; flips: number; samples: number } {
   return flipRateOf(_history);
-}
-
-/**
- * The what-if regime for a projected flip distance. A projected distance on
- * the other side of the flip (sign change) is a gamma-zone change, so the
- * family swaps; otherwise the zone holds and only STRONG / WEAK can change.
- */
-function projectedRegimeFor(gZone: string, flipDistNow: number, flipDistProjected: number): RegimeBucket {
-  const crossed = flipDistNow !== 0 && flipDistProjected !== 0 && Math.sign(flipDistNow) !== Math.sign(flipDistProjected);
-  const zone = !crossed ? gZone : gZone === "y-" || gZone === "y\u2212" ? "y+" : gZone === "y+" || gZone === "y" ? "y-" : gZone;
-  return regimeBucketFor(zone, flipDistProjected);
 }
 
 // ─── Public types ──────────────────────────────────────────────────────
@@ -209,10 +183,6 @@ export interface RegimePredictorOutput {
     dfiSlopePerMin: null;
     /** Signed distance of spot from the gamma flip in 1-day expected moves (+ above the flip); null when the flip or the EM is missing. */
     flipDistanceEM: number | null;
-    /** Rate of change of flipDistanceEM per minute over the recent samples; null with fewer than 2 samples. */
-    flipDistanceSlopePerMin: number | null;
-    /** flipDistanceEM projected over the horizon at that rate; null when either is missing (the current regime is then carried forward). */
-    projectedFlipDistanceEM: number | null;
     ivTermDelta: number;
     ivTermLabel: string;
     /** Spot distance to mainPivot, fraction of one-day expected move */
@@ -269,7 +239,6 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const pivotMissing = audit.mainPivot == null || !Number.isFinite(Number(audit.mainPivot));
   const emMissing = audit.scenarioTargets?.oneDayEM == null || !Number.isFinite(Number(audit.scenarioTargets.oneDayEM)) || Number(audit.scenarioTargets.oneDayEM) <= 0;
   const missingInputs = [audit.gammaZone == null ? "gamma zone" : null, pivotMissing ? "main pivot" : null, emMissing ? "1-day expected move" : null].filter(Boolean) as string[];
-  const gZone = String(audit.gammaZone ?? "").trim().toLowerCase();
   const slopeText = String(audit.slope ?? "");
   // Slope text e.g. "DN 0.31° → -0.61"; second number is signed magnitude
   const matches = slopeText.match(/-?\d+(\.\d+)?/g) ?? [];
@@ -283,7 +252,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const currentRaw: RegimeBucket = regimeBucketFor(audit.gammaZone, flipDist);
 
   // Drivers
-  const { slope: flipDistSlopePerMin, samples: histSamples } = flipDistSlopeFromHistory();
+  const histSamples = Math.min(6, _history.length);
   const { rate: flipRate, flips } = flipRateFromHistory();
 
   // IV term DoD
@@ -302,15 +271,8 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const sessionFrac = sessionFracRemaining(nowMs);
 
   // ─── Score each candidate regime ───
-  // Base score = match to current raw regime + the regime at the projected flip distance.
-  // The projection is the flip distance carried forward at its recent rate (bounded to
-  // +/-5 expected moves). With no flip level, no expected move or fewer than 2 samples
-  // there is no projection: the current regime is carried forward.
-  const knownGamma = currentRaw !== "GAMMA_UNKNOWN" && currentRaw !== "INPUTS_UNAVAILABLE";
-  const projectedFlipDist = flipDist != null && flipDistSlopePerMin != null
-    ? clamp(flipDist + flipDistSlopePerMin * horizonMinutes, -5, 5)
-    : null;
-
+  // Base score = the current raw regime, carried forward. No flip-distance projection is made
+  // (see the header): the other drivers below are the only adjustments.
   const scores: Record<RegimeBucket, number> = {
     TREND_STRONG: 0,
     TREND_WEAK: 0,
@@ -321,14 +283,9 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     INPUTS_UNAVAILABLE: 0,
   };
 
-  // 1) projected raw regime gets the largest base bump
-  const projectedRaw: RegimeBucket = knownGamma && flipDist != null && projectedFlipDist != null
-    ? projectedRegimeFor(gZone, flipDist, projectedFlipDist)
-    : currentRaw;
-  scores[projectedRaw] += 2.5;
-
-  // 2) current raw regime stays as the strong prior (hysteresis bias)
-  scores[currentRaw] += 1.8;
+  // 1) + 2) the current raw regime carries both base bumps (2.5 that used to go to the
+  //    "projected" regime, which was always the current one while DFI was pinned, + 1.8 prior)
+  scores[currentRaw] += 2.5 + 1.8;
 
   // 3) IV term direction
   // Same 1.0 VIX point as the "Vol Bid Up / Vol Offered" label printed beside it (models.ts).
@@ -383,11 +340,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     scores.NEUTRAL -= 0.2;
   }
 
-  // 8) Boundary proximity — if the projected flip distance crosses the flip
-  //    or the STRONG / WEAK line within the horizon, boost the receiving regime
-  if (projectedRaw !== currentRaw) {
-    scores[projectedRaw] += 0.8;
-  }
+  // 8) (removed: boundary-crossing bonus for a projected regime; no projection is made)
 
   // 9) Vanna bias — positive vanna stabilizes trend continuation, negative destabilizes
   const vannaBiasRaw = String(audit.vannaBias ?? "").toLowerCase();
@@ -495,16 +448,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   if (flipDist != null) {
     driverNotes.push(`spot ${Math.abs(flipDist).toFixed(2)} expected moves ${flipDist >= 0 ? "above" : "below"} the gamma flip (${Math.abs(flipDist) >= FLIP_DISTANCE_STRONG_EM ? "at or beyond" : "inside"} the ${FLIP_DISTANCE_STRONG_EM} line).`);
   }
-  if (flipDist != null && projectedFlipDist != null && flipDistSlopePerMin != null) {
-    if (projectedRaw !== currentRaw) {
-      const toward = Math.abs(projectedFlipDist) < Math.abs(flipDist) || Math.sign(projectedFlipDist) !== Math.sign(flipDist);
-      driverNotes.push(`flip distance moving ${toward ? "toward" : "away from"} the gamma flip (${Math.abs(flipDistSlopePerMin).toFixed(3)} expected moves/min): ${prettyRegime(projectedRaw)} at this rate.`);
-    }
-  } else {
-    driverNotes.push(flipDist == null
-      ? "no flip-distance projection (gamma flip or expected move not available): current regime carried forward, adjusted by the other drivers."
-      : "no flip-distance projection (fewer than 2 samples): current regime carried forward, adjusted by the other drivers.");
-  }
+  driverNotes.push("no flip-distance projection is made: the current regime is carried forward, adjusted by the other drivers.");
   if (gammaFlipProxFrac < 0.25) driverNotes.push(`spot near gamma flip (${(gammaFlipProxFrac * 100).toFixed(0)}% of 1-day EM) — pin pressure.`);
   else if (gammaFlipProxFrac > 1.0) driverNotes.push(`spot far from pivot — trend has room.`);
   if (charmZeroProxFrac != null && charmZeroProxFrac < 0.20) driverNotes.push(`spot near charm zero — second pin.`);
@@ -543,8 +487,6 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
       dfi: dexSlopeSign === "unavailable" ? null : dexSlopeSignValue(dexSlopeSign),
       dfiSlopePerMin: null,
       flipDistanceEM: flipDist,
-      flipDistanceSlopePerMin: flipDistSlopePerMin,
-      projectedFlipDistanceEM: projectedFlipDist,
       ivTermDelta,
       ivTermLabel,
       gammaFlipProxFrac,

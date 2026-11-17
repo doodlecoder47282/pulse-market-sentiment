@@ -2404,6 +2404,46 @@ Second review: HOLD, taken. The depth floor comes from the row being graded, but
 every open exit plan on that pair with the successor read, so a later ENTER logged at $60k could be
 liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
 now grades its own row only; exit plans are not sampled on it.
+
+2026-11-17: Item 2 (first part), name and deployer context (feat/crypto-listener-reads;
+shared/launchContext.ts). The pump.fun listener already stores every create it sees (name, symbol, deployer)
+for three days. Two things a trader checks before touching a new coin are now read from that store at no
+extra call: how many OTHER coins launched under the same symbol in the 24 hours before this one, and how
+many other coins the same deployer wallet launched in the kept window, with the desk's own graded outcome
+for the ones it logged (one outcome per coin: its first row). The read is taken once, when a coin's first
+signal is written, stored on the row (features.launchCtx) for the replay to test, and shown on the card as a
+"name and deployer" line. Measurements only: no verdict, score or exit level reads it. Counts are lower
+bounds and say so (the listener misses launches while reconnecting, keeps three days, reads the flushed
+table so the last 30 seconds may be missing, and a deployer can use a fresh wallet per coin). The listener
+table gains two indexed columns (symbol_norm, deployer), filled once for existing rows from their stored
+records. Not built yet from item 2: graduation as the entry universe, curve progress, dev-wallet sells,
+unique buyers.
+2026-11-17: Owner asked for items 1 to 6 of the next-steps list. Item 1, candidate rule sets on the record
+(feat/crypto-candidate-rules; shared/cryptoCandidates.ts, version candidates-2026.11.17-1). The live rules
+have never passed a coin, so the replay gains a fifth section: five rule sets declared in advance (structure
+only; two-sided tape; attention; past the first minutes; combined) are asked of the same graded first
+signals, each showing how many would have passed, wins, mean and median net of cost in the older and newer
+half, the hold-to-horizon mean, and per rule how many rows passed, failed or had no recorded input. A rule
+whose input was not recorded does not pass a row. Nothing here moves a live verdict, score or exit level;
+the parameters are the candidates', not the desk's thresholds, and are versioned in that file. Stated on
+screen: five sets on one record bias the best one upward; the record keeps only each coin's first signal
+(about minute 2), so rules about a later state pass few rows, which is a limit of the record; no candidate
+is a claim of edge. The owner picks a set from this readout before any rule-book change.
+Review of the candidate sets: HOLD, taken. The readout said a rule with no recorded input never passes a
+row, but the three structure rules do pass on absence (they block only on a recorded objection); the copy
+now says so and each rule's tally shows how many passes had nothing recorded. Also taken: the sets were
+"fixed before being run", not out-of-sample (their parameters came from this record; the clean evidence is
+rows after 2026-11-17); a set under 50 priced rows shows counts only; the hold mean shows its n; the "live
+rules have not passed a coin" sentence is conditional on the data; a whitespace symbol is unread; the
+parameters and set ids are hash-pinned to the version string and a test checks that only the replay imports
+the module.
+2026-11-17: Item 6, audit batch on dates and clocks (feat/audit-dates; audit items S5, S15, S22). S15: the
+header's market status pill knew weekends only, so it read OPEN on an exchange holiday and until 16:00 on a
+13:00 half day; it now reads the exchange calendar the server uses (pre-market from 04:00 ET, after-hours
+for four hours after the close, so 17:00 on a half day). S5: the news calendar bucketed weeks at Monday
+00:00 UTC and printed the label in New York time, so every header read "Week of Sun" and a Sunday-evening
+ET event was filed under the next week; weeks are now the ET calendar's Monday. S22: the SVG chart's axis
+and hover time used the viewer's time zone; they use New York time and the hover says ET.
 2026-11-17: DFI retired as a magnitude; the regime is keyed on the gamma zone (feat/retire-dfi-impl; audit
 item M1, owner decision of 2026-11-16). The "Delta Flow Indicator" was (dDEX/dS) / |GEX| x 1e9 clamped to
 [-5, 5]. The scale pinned it at the clamp, so it was always +5.00 or -5.00 when available: the sign of the
@@ -2428,14 +2468,13 @@ classification (it stays a predictor candidate and keeps its weights).
   After: y-, 0.5 EM or more from the flip TREND_STRONG, closer TREND_WEAK; y+, 0.5 EM or more from the
   flip CHOP_STRONG, closer CHOP_WEAK; no flip level: the WEAK bucket of the zone.
 (3) regimePredictor. The DFI boundaries (1 / 2 / 3.5), the DFI slope per minute and the projected DFI are
-removed (they could not move). The rolling history now keeps the signed flip distance; the what-if regime
-is the bucket at the flip distance carried forward at its recent rate over the horizon (a sign change is
-a zone change), and a projected change of bucket takes the bonus the "boundary one step away" rule gave.
-With no flip level, no expected move or fewer than 2 samples there is no projection: the current regime
-is carried forward with the other drivers' adjustments, and a driver note says so. The other drivers (VIX
+removed (they could not move). Nothing replaces them: no flip-distance projection is made. The current
+regime is carried forward with the other drivers' adjustments, and a driver note says so. (A first version
+of this branch projected the flip distance from the slope of the last 6 spot samples; review showed a
+2-point SPX move over 60 s turning TREND_WEAK into a "heavy chop" call that cleared the logging floor, so
+it was dropped before merge.) The other drivers (VIX
 change, pivot distance, charm zero, session time, flip rate, slope, vanna, VIX term, whale flow) are
-unchanged. Response: drivers.dexSlopeSign, flipDistanceEM, flipDistanceSlopePerMin and
-projectedFlipDistanceEM are new; drivers.dfi is the sign or null; drivers.dfiSlopePerMin is always null;
+unchanged. Response: drivers.dexSlopeSign and flipDistanceEM are new; drivers.dfi is the sign or null; drivers.dfiSlopePerMin is always null;
 boundaryDistance and nextBoundary are deleted (nothing read them). No "DFI ... /min toward ..." note.
 (4) computeScenarioProb. The DFI boost 0.10 x tanh(dfi / 3) is removed: with DFI pinned it was a constant
 0.093 toward bull (positive slope) or bear (negative slope), a second count of the gamma term. The
@@ -2455,8 +2494,13 @@ that it is a sign only, and the flip distance in expected moves where the regime
 level-break alerts used to print "DFI +5 (NEUTRAL)" because their BULLISH threshold was 200.
 Record breaks from this date (not like-for-like with earlier rows):
 - regime calls (regime predictions and their grades in the outcome log, the regime snapshot that
-  decorates flow alerts): the STRONG / WEAK suffix and the what-if candidate now vary with the flip
-  distance; before they were constant within a gamma zone.
+  decorates flow alerts): the STRONG / WEAK suffix now varies with the flip distance; before it was
+  constant within a gamma zone.
+- whale-alert conviction multiplier (server/edgeStats.ts regimeConvictionMultiplier): it matches
+  regimeAtFire by exact string, so TREND_WEAK and CHOP_STRONG start with no history, and the existing
+  TREND_STRONG / CHOP_WEAK history mixes the old definition (every y- / y+ reading) with the new one.
+- the by-regime tables in edgeStats and orthogonality: the same mix of definitions under one label.
+- the shadow particle filter: its observation is +1 / -1 from this date, where it was +5 / -5.
 - intraday close targets (realtimeTargets blend, shown on the Discord card and read by the exit score in
   exitBrain): the blend weights follow the regime bucket, so y- near the flip now uses the TREND_WEAK
   weights and y+ far from it the CHOP_STRONG weights.
@@ -2467,8 +2511,11 @@ Record breaks from this date (not like-for-like with earlier rows):
 - model_recal.dfi: +1 / -1 / 0 from this date.
 Left reading the legacy sign field, for the owner: (a) the 0DTE alert score (odteAlertEngine). Its
 momentum gate and its 10 AM tilt use the sign only, so they are unchanged; the aligned-sign bonus
-min(15, |dfi| / 30) was 0.17 points and is now 0.03 (it was written for a scale DFI never had). The score
-is a graded series, so the term was not removed or re-scaled here; only its reason text changed. (b) the
+min(15, |dfi| / 30) falls from about 0.17 to about 0.03 points (it was written for a scale DFI never
+had). The score is rounded before its 72 and 85 gates, so an aligned setup can lose one point at a
+rounding boundary: it can miss an alert, never add one. The score is a graded series, so the arithmetic
+was not changed here; only its reason text changed (it says the slope sign is aligned, without a number).
+(b) the whale conviction history above: not re-keyed or reset. (c) the
 experimental particle filter (/api/experimental/particle-dfi): a shadow forecaster that feeds nothing; it
 now observes +1 / -1 / 0 instead of +5 / -5. Keep or retire. Not changed: gamma, expected move, Wiener,
 implied scenario odds, crypto. No threshold changed other than the one new constant.

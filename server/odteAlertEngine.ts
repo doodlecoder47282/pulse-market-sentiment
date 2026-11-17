@@ -699,9 +699,9 @@ function scoreSetup(args: {
     if (Math.sign(dfi) === wantSign) {
       const mag = Math.min(15, Math.abs(dfi) / 30);
       momScore += mag; momAligned += 1;
-      momReasons.push(`DEX slope sign ${dfi > 0 ? "positive" : "negative"}, aligned: +${mag.toFixed(1)}`);
+      momReasons.push(`DEX slope sign ${dfi > 0 ? "positive" : "negative"}, aligned`);
     } else {
-      momReasons.push(`DEX slope sign ${dfi > 0 ? "positive" : dfi < 0 ? "negative" : "flat"}, opposed/flat: +0`);
+      momReasons.push(`DEX slope sign ${dfi > 0 ? "positive" : dfi < 0 ? "negative" : "flat"}, opposed/flat`);
     }
   }
 

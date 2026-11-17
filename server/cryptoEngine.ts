@@ -49,6 +49,7 @@ import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
 import { readDerivs, lastDerivs } from "./sources/cryptoDerivs";
 import { derivsRecord, type DerivsSnapshot } from "../shared/cryptoFunding";
 import { volumeAcceleration } from "../shared/cryptoFlow";
+import { candidatesReadout } from "../shared/cryptoCandidates";
 import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type JupState } from "./sources/dexCross";
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
@@ -63,7 +64,8 @@ import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClas
 import { appendObservation, exitCostStress, liquidityVelocity, type ExitCostStress, type LiquidityVelocity, type Observation } from "../shared/cryptoHistory";
 import { readTokenFacts, indexedRpcAvailable, noteIndexedRateLimit, solRpc, RPC_INDEXED, RPC_ACCOUNT, keyedRpcConfigured, solanaRpcStatus } from "./solanaToken";
 import { bundleEvidence, BUNDLE_MAX_TX, BUNDLE_WINDOW_SLOTS, type BundleEvidence, type CardBundle } from "../shared/cryptoBundle";
-import { startPumpListener, pumpListenerCheck, pumpListenerStatus, launchBundle } from "./pumpListener";
+import { startPumpListener, pumpListenerCheck, pumpListenerStatus, launchBundle, launchContextFor } from "./pumpListener";
+import type { LaunchContext } from "../shared/launchContext";
 import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
@@ -122,6 +124,8 @@ export interface Candidate {
   securityCheckedAt: number | null;
   /** Launch-block buying (pump.fun listener, else RPC lookup); descriptive, never a gate. Null = not checked yet. */
   bundle: CardBundle | null;
+  /** Same-symbol launches and the deployer's earlier launches (shared/launchContext.ts); read once, when the first signal is written; never a gate. */
+  launchCtx?: LaunchContext | null;
 
   // rugcheck.xyz cached report (keyless)
   rcRisks: string[];
@@ -380,6 +384,11 @@ function gateEvidence(c: Pick<Candidate, "hist" | "jupState" | "jupGapPct" | "bu
 
 function persistSignal(c: Candidate): void {
   if (!c.verdict || c.verdict === "PASS") return;
+  // Read once, here, so the stored figure is what was known when the signal was written (it is never
+  // rewritten on the row afterwards).
+  if (c.chain === "solana" && c.launchCtx == null) {
+    try { c.launchCtx = launchContextFor(c.tokenAddress, c.pairCreatedAt); } catch { c.launchCtx = null; }
+  }
   try {
     sqlite.prepare(`
       INSERT OR IGNORE INTO crypto_signals
@@ -414,6 +423,8 @@ function persistSignal(c: Candidate): void {
         gates: c.gatesAtScore ?? null,
         // Launch-block buying, recorded for the replay to test; never a gate.
         bundle: c.bundle,
+        // Same-symbol launches and the deployer's earlier launches at signal time; never a gate.
+        launchCtx: c.launchCtx ?? null,
         // The 1-minute tape at signal time (shared/cryptoCandles.ts), recorded for the grader to correlate; never a gate.
         // The first ENTER/WATCH row is written in the same pass the pair becomes eligible for a read, so it is
         // null here and back-filled by candlesTick when the first read lands (with minutesAfterSignal).
@@ -1768,7 +1779,8 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
       },
     };
   });
-  const data = buildReplay(like, now);
+  // Candidate rule sets over the same rows (shared/cryptoCandidates.ts): a what-if readout, never a verdict.
+  const data = { ...buildReplay(like, now), candidates: candidatesReadout(like) };
   replayCache = { at: now, data };
   return data;
 }

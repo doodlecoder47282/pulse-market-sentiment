@@ -99,11 +99,11 @@ test("predictor: a missing pivot or EM is degraded with no candidates, no confid
   assert.equal(b.confidence, 0);
   assert.match(b.headline, /main pivot, 1-day expected move not available/);
   assert.ok(!b.driverNotes.some((n) => /pin pressure|trend has room/.test(n)), b.driverNotes.join(" | "));
-  // The callers that feed the history pass the signed flip distance (null when the flip or EM is missing),
-  // never a DFI number.
+  // The callers that feed the history pass the regime only, never a DFI number (and no spot series:
+  // no flip-distance projection is made).
   const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
-  assert.match(r, /recordRawRegime\(out\.diag\.regimeRaw as any, flipDistanceEM\(daily\.spot, daily\.audit\?\.gammaFlip, daily\.audit\?\.scenarioTargets\?\.oneDayEM\)\);/);
-  assert.match(r, /if \(rawNow\) recordRawRegime\(rawNow, out\.drivers\.flipDistanceEM\);/);
+  assert.match(r, /recordRawRegime\(out\.diag\.regimeRaw as any\);/);
+  assert.match(r, /if \(rawNow\) recordRawRegime\(rawNow\);/);
   assert.doesNotMatch(r, /Number\(daily\.audit\?\.dfi \?\? 0\)|Number\(daily\.audit\.dfi\)/);
   assert.match(readFileSync(new URL("../../shared/gammaRegime.ts", import.meta.url), "utf8"), /if \(gammaZone == null\) return "INPUTS_UNAVAILABLE";/);
   assert.match(readFileSync(new URL("../../server/headline.ts", import.meta.url), "utf8"), /currentRegime === "INPUTS_UNAVAILABLE" && typeof \(models as any\)\?\.headline === "string"/);

@@ -73,7 +73,6 @@ import {
   directionalProbFromPosterior,
   type Particle,
 } from "./particleFilterDFI";
-import { flipDistanceEM } from "@shared/gammaRegime";
 import * as fs from "fs";
 import * as path from "path";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
@@ -4605,8 +4604,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       // Side-effect: feed raw regime into predictor history (fail-soft)
       try {
         const { recordRawRegime } = await import("./regimePredictor");
-        // The sample carries the signed flip distance (null when the flip or the expected move is missing).
-        recordRawRegime(out.diag.regimeRaw as any, flipDistanceEM(daily.spot, daily.audit?.gammaFlip, daily.audit?.scenarioTargets?.oneDayEM));
+        recordRawRegime(out.diag.regimeRaw as any);
       } catch {}
       res.json(out);
     } catch (e: any) {
@@ -4943,7 +4941,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
 
   // GET /api/regime/predict?symbol=^GSPC&horizonMinutes=20
   // Forward-looking regime transition probabilities. Pulls live audit from
-  // /api/models, scores candidate regimes via flip distance + IV term + gamma
+  // /api/models, scores candidate regimes via the current gamma regime + IV term + gamma
   // flip proximity + session time + recent flip frequency. Read-only.
   app.get("/api/regime/predict", internalRoute("/api/regime/predict", async (req, res) => {
     try {
@@ -5007,7 +5005,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       try {
         const { recordRawRegime } = await import("./regimePredictor");
         const rawNow = (out as any).currentRegime;
-        if (rawNow) recordRawRegime(rawNow, out.drivers.flipDistanceEM);
+        if (rawNow) recordRawRegime(rawNow);
       } catch {}
       // Closed-loop edge tracking (throttled).
       try {

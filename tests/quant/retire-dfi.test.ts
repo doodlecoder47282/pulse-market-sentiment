@@ -139,47 +139,72 @@ test("realtimeTargets.detectRegime and the predictor read the same bucket; the s
   assert.deepEqual(p.candidates, n.candidates);
 });
 
-test("predictor: what-if regime follows the flip distance; with no projection the current regime is carried and a note says so", () => {
+test("predictor: no flip-distance projection; the current regime is carried forward and a note says so", () => {
   const nowMs = Date.parse("2026-11-06T16:00:00Z");
   const audit = (spot: number) => ({ gammaZone: "y-", spot, gammaFlip: 6000, mainPivot: 6000, dfi: -1, dfiState: "ok", scenarioTargets: { oneDayEM: 40 } });
-  // No history: no projection.
   _resetPredictorHistory();
   const a = predictTransition({ audit: audit(5970), spot: 5970, nowMs, horizonMinutes: 20 } as any);
-  assert.equal(a.drivers.flipDistanceSlopePerMin, null);
-  assert.equal(a.drivers.projectedFlipDistanceEM, null);
   assert.equal(a.drivers.dfiSlopePerMin, null);
-  assert.ok(a.driverNotes.some((x) => /no flip-distance projection \(fewer than 2 samples\): current regime carried forward/.test(x)), a.driverNotes.join(" | "));
+  assert.equal(a.drivers.flipDistanceEM, -0.75);
+  assert.ok(a.driverNotes.some((x) => /no flip-distance projection is made: the current regime is carried forward/.test(x)), a.driverNotes.join(" | "));
   assert.ok(!a.driverNotes.some((x) => /DFI/.test(x)));
-  assert.ok(!("boundaryDistance" in a.drivers) && !("nextBoundary" in a.drivers));
+  for (const k of ["boundaryDistance", "nextBoundary", "flipDistanceSlopePerMin", "projectedFlipDistanceEM"]) assert.ok(!(k in a.drivers), k);
 
-  // Spot moving toward the flip: -0.75 EM heading to -0.25 EM within the horizon -> TREND_WEAK gains.
+  // Review must-fix: y-, flip 6000, EM 40, spot 5990 (TREND_WEAK), and a noisy short history in which
+  // spot moved 2 points over 60 s. A slope extrapolated from that once produced "heavy chop scores
+  // highest next ... would flip from weak trend". Now the history cannot move the call at all.
   _resetPredictorHistory();
-  for (let i = 0; i < 6; i++) recordRawRegime("TREND_STRONG", -1.0 + i * 0.05, nowMs - (6 - i) * 60_000);
-  const b = predictTransition({ audit: audit(5970), spot: 5970, nowMs, horizonMinutes: 20 } as any);
-  assert.ok(Math.abs((b.drivers.flipDistanceSlopePerMin as number) - 0.05) < 1e-9);
-  assert.ok(Math.abs((b.drivers.projectedFlipDistanceEM as number) - 0.25) < 1e-9);
-  // -0.75 -> +0.25 crosses the flip: the zone changes, so the what-if is CHOP_WEAK.
-  assert.ok(b.driverNotes.some((x) => /flip distance moving toward the gamma flip .*light chop at this rate/.test(x)), b.driverNotes.join(" | "));
-  const score = (o: any, r: string) => o.candidates.find((c: any) => c.regime === r).probability;
-  assert.ok(score(b, "CHOP_WEAK") > score(a, "CHOP_WEAK"));
-
-  // Moving away from the flip from the weak side: -0.3 EM heading to -0.7 -> TREND_STRONG gains.
+  const base = predictTransition({ audit: audit(5990), spot: 5990, nowMs, horizonMinutes: 20 } as any);
   _resetPredictorHistory();
-  for (let i = 0; i < 6; i++) recordRawRegime("TREND_WEAK", -0.2 - i * 0.02, nowMs - (6 - i) * 60_000);
-  const c = predictTransition({ audit: audit(5988), spot: 5988, nowMs, horizonMinutes: 20 } as any);
-  assert.equal(c.currentRegime, "TREND_WEAK");
-  assert.ok(c.driverNotes.some((x) => /flip distance moving away from the gamma flip .*strong trend at this rate/.test(x)), c.driverNotes.join(" | "));
-
-  // No gamma flip in the audit: no projection, regime WEAK, note says why.
-  _resetPredictorHistory();
-  const d = predictTransition({ audit: { ...audit(5970), gammaFlip: null }, spot: 5970, nowMs } as any);
-  assert.equal(d.currentRegime, "TREND_WEAK");
-  assert.equal(d.drivers.flipDistanceEM, null);
-  assert.ok(d.driverNotes.some((x) => /no flip-distance projection \(gamma flip or expected move not available\)/.test(x)));
+  const spots = [5988, 5988.6, 5987.9, 5989.2, 5988.4, 5990];
+  spots.forEach((_s, i) => recordRawRegime("TREND_WEAK", nowMs - (spots.length - i) * 10_000));
+  const noisy = predictTransition({ audit: audit(5990), spot: 5990, nowMs, horizonMinutes: 20 } as any);
+  assert.equal(noisy.currentRegime, "TREND_WEAK");
+  assert.match(noisy.candidates[0].regime, /^TREND_/);
+  assert.doesNotMatch(noisy.headline, /would flip/);
+  assert.ok(!noisy.driverNotes.some((x) => /would flip|moving toward|at this rate/.test(x)), noisy.driverNotes.join(" | "));
+  // Same inputs with and without the history: the same candidate scores (history only sets sample quality).
+  assert.deepEqual(noisy.candidates, base.candidates);
   _resetPredictorHistory();
 
   const rp = src("server/regimePredictor.ts");
-  assert.doesNotMatch(rp, /DFI_BOUNDARIES|projectedDfi|dfiSlopeFromHistory|rawRegimeFor\(/);
+  assert.doesNotMatch(rp, /DFI_BOUNDARIES|projectedDfi|dfiSlopeFromHistory|rawRegimeFor\(|flipDistSlope|projectedFlipDist|projectedRegimeFor|projectedRaw/);
+  assert.match(rp, /export function recordRawRegime\(raw: RegimeBucket, ts: number = Date\.now\(\)\): void/);
+});
+
+test("predictor: candidate weights sum to 1 with no NaN across missing flip, missing expected move and empty history", () => {
+  const nowMs = Date.parse("2026-11-06T16:00:00Z");
+  const full = { gammaZone: "y-", spot: 5990, gammaFlip: 6000, mainPivot: 6000, charmZero: 5995, dfi: -1, dfiState: "ok", scenarioTargets: { oneDayEM: 40 } };
+  const cases: Array<[string, any, boolean]> = [
+    ["complete, empty history", full, false],
+    ["complete, with history", full, true],
+    ["missing flip", { ...full, gammaFlip: null }, false],
+    ["missing flip, positive gamma", { ...full, gammaFlip: undefined, gammaZone: "y+" }, true],
+    ["missing expected move", { ...full, scenarioTargets: {} }, false],
+    ["missing flip and expected move", { gammaZone: "y+", spot: 5990, mainPivot: 6000 }, false],
+    ["unknown gamma", { ...full, gammaZone: "y?" }, false],
+    ["no audit fields", {}, false],
+  ];
+  for (const [name, audit, withHistory] of cases) {
+    _resetPredictorHistory();
+    if (withHistory) for (let i = 0; i < 6; i++) recordRawRegime("TREND_WEAK", nowMs - (6 - i) * 10_000);
+    const o = predictTransition({ audit, spot: 5990, nowMs, horizonMinutes: 20 } as any);
+    assert.ok(Number.isFinite(o.confidence) && o.confidence >= 0 && o.confidence <= 1, name);
+    assert.ok(Number.isFinite(o.confidenceScore), name);
+    if (o.candidates.length === 0) {
+      // no read (missing expected move / pivot, unknown gamma): no candidates and nothing for the logger
+      assert.equal(o.confidence, 0, name);
+      continue;
+    }
+    let sum = 0;
+    for (const c of o.candidates) {
+      assert.ok(Number.isFinite(c.probability) && Number.isFinite(c.score), `${name}: ${c.regime}`);
+      sum += c.probability;
+    }
+    assert.ok(Math.abs(sum - 1) < 1e-9, `${name}: sums to ${sum}`);
+    assert.equal(o.candidates[0].regime, o.currentRegime, `${name}: nothing here outweighs the carried regime`);
+  }
+  _resetPredictorHistory();
 });
 
 test("computeScenarioProb: no slope-sign input, and the fallback is only used when implied odds are missing", async () => {
@@ -230,6 +255,17 @@ test("no user-facing string says Delta Flow or prints the slope as a magnitude",
   assert.match(rp, /label="DEX slope"/);
   assert.match(rp, /label="flip distance"/);
   assert.doesNotMatch(rp, /dfi\.toFixed|dfiSlopePerMin\.toFixed/);
+  // Regime copy says only what is measured: the gamma sign and the half-expected-move line.
+  assert.doesNotMatch(rp, /delta-flow|Direction is set|Direction soft|pin strike|Pin pressure|pulled toward|TrendingUp|TrendingDown|Range-bound/);
+  assert.match(rp, /the gamma zone, pivot or expected move is missing in this build/);
+  assert.equal((rp.match(/play: "Negative gamma, and spot is /g) ?? []).length, 2);
+  assert.equal((rp.match(/play: "Positive gamma, and spot is /g) ?? []).length, 2);
+  assert.equal((rp.match(/No direction is implied\./g) ?? []).length, 2);
+  // 0DTE reason text: the sign is aligned or not; no rounded-to-zero bonus printed as a reading.
+  const od = src("server/odteAlertEngine.ts");
+  assert.match(od, /DEX slope sign \$\{dfi > 0 \? "positive" : "negative"\}, aligned`\)/);
+  assert.doesNotMatch(od, /aligned: \+\$\{mag\.toFixed/);
+  assert.match(od, /const mag = Math\.min\(15, Math\.abs\(dfi\) \/ 30\);/); // arithmetic untouched
 });
 
 test("the 0.5 flip-distance line is defined once, as a named exported constant", () => {
