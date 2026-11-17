@@ -2405,6 +2405,19 @@ every open exit plan on that pair with the successor read, so a later ENTER logg
 liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
 now grades its own row only; exit plans are not sampled on it.
 
+2026-11-17: Item 2 (first part), name and deployer context (feat/crypto-listener-reads;
+shared/launchContext.ts). The pump.fun listener already stores every create it sees (name, symbol, deployer)
+for three days. Two things a trader checks before touching a new coin are now read from that store at no
+extra call: how many OTHER coins launched under the same symbol in the 24 hours before this one, and how
+many other coins the same deployer wallet launched in the kept window, with the desk's own graded outcome
+for the ones it logged (one outcome per coin: its first row). The read is taken once, when a coin's first
+signal is written, stored on the row (features.launchCtx) for the replay to test, and shown on the card as a
+"name and deployer" line. Measurements only: no verdict, score or exit level reads it. Counts are lower
+bounds and say so (the listener misses launches while reconnecting, keeps three days, reads the flushed
+table so the last 30 seconds may be missing, and a deployer can use a fresh wallet per coin). The listener
+table gains two indexed columns (symbol_norm, deployer), filled once for existing rows from their stored
+records. Not built yet from item 2: graduation as the entry universe, curve progress, dev-wallet sells,
+unique buyers.
 2026-11-17: Owner asked for items 1 to 6 of the next-steps list. Item 1, candidate rule sets on the record
 (feat/crypto-candidate-rules; shared/cryptoCandidates.ts, version candidates-2026.11.17-1). The live rules
 have never passed a coin, so the replay gains a fifth section: five rule sets declared in advance (structure
