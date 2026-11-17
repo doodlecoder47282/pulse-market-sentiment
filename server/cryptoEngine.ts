@@ -1094,7 +1094,7 @@ function scoreCandidate(c: Candidate): void {
       // pass. Only "agree" or "watch" (<= 15% gap) lets ENTER stand.
       verdict = "WATCH"; code = "price_unconfirmed";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: DexScreener price not confirmed by Jupiter (${c.jupState}${c.jupGapPct != null ? ` ${c.jupGapPct}%` : ""}${c.jupState === "failed" || c.jupState === "unchecked" ? ", cross-check did not run" : ""})`);
-    } else if (hp === "sells_missing") {
+    } else if (hp === "sells_missing" && CRYPTO_RULES.enter.requireSellsObserved) {
       verdict = "WATCH"; code = "sells_missing";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: 1h sell count missing, honeypot check not possible`);
     } else if (hp === "no_sells" && CRYPTO_RULES.enter.requireSellsObserved) {

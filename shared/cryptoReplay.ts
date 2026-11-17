@@ -298,8 +298,11 @@ export function wouldEnterNow(r: ReplayRow, rules: CryptoRules = CRYPTO_RULES): 
     if (win > g.flowReadings.length && g.histLen > g.flowReadings.length) unchecked.push("flow sustained (window longer than the readings stored)");
     else if (!sustainedFlow(g.flowReadings, rules).sustained) b.push("flow not sustained");
     if (g.jupState !== "agree" && g.jupState !== "watch") b.push(`Jupiter ${g.jupState ?? "unread"}`);
-    if (g.sells1h == null) b.push("1 h sells unread");
-    else if (g.sells1h <= 0) b.push((g.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h ? "honeypot pattern" : "no sell observed in the last hour");
+    if (g.sells1h != null && g.sells1h <= 0 && (g.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h) b.push("honeypot pattern");
+    else if (rules.enter.requireSellsObserved) {
+      if (g.sells1h == null) b.push("1 h sells unread");
+      else if (g.sells1h <= 0) b.push("no sell observed in the last hour");
+    }
     if (g.deskRisk !== "on") b.push(`desk risk ${g.deskRisk ?? "unread"}`);
   }
   return { enter: b.length === 0, blockers: b, unchecked };

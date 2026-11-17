@@ -2124,3 +2124,14 @@ samplePlans now takes both readings and samples each plan with capOnBasis on its
 card showed "cap (FDV) $400K" with levels; the prompt now uses capOf and names the basis.
 Tests: r3-3 honeypotRead cases, crypto-replay blocker, crypto-verdict no_sells wiring and version, crypto-cap
 sampler wiring, exit-plan prompt FDV cases, rules-version pin. 206/206. Needs the crypto review.
+Review of fix/crypto-audit-gates (HOLD, one must-fix, taken): the autopsy still showed "Sells observed: pass"
+on an observed zero under the kill threshold while the desk line on the same card read WATCH no_sells. The
+kill gate is relabelled "Honeypot pattern" and an entry gate "Sell observed, last hour" (unread / fail /
+pass) is added (tested). Should-fixes: stated here that the new flag costs 5 structure points, as the
+missing-sells flag always has, so a zero-sell pair scores 5 lower (a would-be ENTER at 70-74 lands as WATCH
+forming; a 50-54 WATCH becomes PASS): "no number changed" is true of the rule book, not of every score.
+requireSellsObserved is honoured consistently by the scorer and the replay. Plans already closed by the
+wrong-basis sample before this change stay on the plan record as recorded (stop or liquidity-stop closes on
+FDV-entry rows under versions up to 2026.11.06-1); the sample that closed them was not retained, so they
+cannot be re-walked. Those versions' plan summaries include them; the 2026.11.16-1 headline does not.
+Plans still open at the change keep their starting version label and are sampled on their entry basis from here.

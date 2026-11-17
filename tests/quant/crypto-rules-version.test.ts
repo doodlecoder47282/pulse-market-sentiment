@@ -30,7 +30,8 @@ const PINNED: Record<string, string> = {
   // 2026.11.16-1: no number changed (same hash). The stated gate enter.requireSellsObserved ("at least one sell
   // observed in the last hour") was not enforced when sells1h was an observed 0 with under 25 buys (or buys
   // unread): honeypotRead returned "ok" and the pair could reach ENTER. It now returns "no_sells" and holds at
-  // WATCH (code no_sells). Graded outcomes differ from here, so the version moves and the records partition.
+  // WATCH (code no_sells). The flag it adds also costs 5 structure points, as the missing-sells flag always has, so a
+  // zero-sell pair scores 5 lower than before. Graded outcomes differ from here, so the version moves and the records partition.
   "2026.11.16-1": "5aaf5185dfc1258433f954604eb4c593ab698c4633be47660f0cdaccea04bf63",
 };
 
