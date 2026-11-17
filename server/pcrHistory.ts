@@ -63,6 +63,8 @@ export interface PcrRead {
   bearishAbove: number | null;
   method: string;
   reason: string | null;
+  /** Prior sessions with any stored point for this symbol (n counts only those usable at this clock time). */
+  sessionsStored?: number;
 }
 
 /** ln((P + 0.5) / (C + 0.5)); null when the volumes are not finite or both sides are missing. */
@@ -152,7 +154,7 @@ export interface PcrPoint {
 }
 
 /** Cumulative put/call volume of one session at `minute`, or null when no stored point brackets it. */
-export function cumulativeAt(points: PcrPoint[], minute: number): { putVol: number; callVol: number } | null {
+export function cumulativeAt(points: PcrPoint[], minute: number, fullDayFrom: number = FULL_DAY_MIN_MINUTE): { putVol: number; callVol: number } | null {
   const ps = points.filter((p) => Number.isFinite(p.minute) && p.minute >= 0).sort((a, b) => a.minute - b.minute);
   if (ps.length === 0 || !(minute >= 0)) return null;
   let prev: PcrPoint = { minute: 0, putVol: 0, callVol: 0 };
@@ -164,8 +166,18 @@ export function cumulativeAt(points: PcrPoint[], minute: number): { putVol: numb
     }
     prev = p;
   }
+  // "Full day" (asked outside the session with minute = Infinity): the day's last point, but only when it
+  // was recorded near the close; a day whose recording stopped at noon is not a full day.
+  if (minute === Infinity && prev.minute >= fullDayFrom) return { putVol: prev.putVol, callVol: prev.callVol };
   return null;
 }
+
+/**
+ * Default: a session's last stored point counts as its full-day value from this session minute (15 minutes
+ * before a normal 390-minute close). Callers that know the date pass that date's own figure (a half day
+ * ends at 210), so a recording that stopped mid-session is never taken as a full day.
+ */
+export const FULL_DAY_MIN_MINUTE = 375;
 
 export const PCR_CLOCK_METHOD =
   "z-score of ln((puts+0.5)/(calls+0.5)) vs this symbol's last 60 sessions AT THE SAME CLOCK TIME (cumulative volume interpolated " +
@@ -176,13 +188,18 @@ export function pcrReadAtClock(
   current: { putVol: number; callVol: number } | null,
   minute: number,
   sessions: Array<{ date: string; points: PcrPoint[] }>,
-  opts: { today?: string; window?: number; min?: number; zThreshold?: number } = {},
+  opts: { today?: string; window?: number; min?: number; zThreshold?: number; fullDayFrom?: (date: string) => number } = {},
 ): PcrRead {
   const days: PcrDay[] = [];
   for (const s of sessions) {
-    const v = cumulativeAt(s.points, minute);
+    const v = cumulativeAt(s.points, minute, opts.fullDayFrom ? opts.fullDayFrom(s.date) : FULL_DAY_MIN_MINUTE);
     if (v) days.push({ date: s.date, putVol: v.putVol, callVol: v.callVol });
   }
   const r = pcrReadFromHistory(current, days, opts);
-  return { ...r, method: PCR_CLOCK_METHOD };
+  // Say which it is: nothing stored, or sessions stored that have no point at this clock time.
+  const stored = sessions.length;
+  const reason = r.zone === "insufficient_history" && stored > r.n
+    ? `${r.reason}; ${stored} session${stored === 1 ? " is" : "s are"} stored, ${r.n} ha${r.n === 1 ? "s" : "ve"} ${minute === Infinity ? "a reading near its close" : "a reading at or after this clock time"}`
+    : r.reason;
+  return { ...r, reason, sessionsStored: stored, method: PCR_CLOCK_METHOD };
 }
