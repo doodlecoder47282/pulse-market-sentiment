@@ -2102,3 +2102,25 @@ nothing, so a young pool's first read (usually under 10 candles) would have lock
 "insufficient" forever; it now waits for the first readable tape (>= CANDLES_MIN) and the SQL also replaces
 a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
 with a separator.
+
+2026-11-16: Audit batch, Edge Lab and Trade Desk numbers (fix/audit-edgelab; audit items T1-T6, T17).
+T1: the Anomaly sub-tab crashed the whole Edge Lab tab once 30 history rows existed: "spy_ret_5d" is computed,
+not a snapshot_history column, so the feature value was undefined, vanished from the JSON, and the client
+called toFixed on it. The server sends the computed 5-day return or null; the client prints a dash for null
+and the return as percent. T4: the drift monitor printed fractions as percent ("MAE 0.45%" for 45%), called
+the mean absolute realized option return an error ("model degrading, retrain or distrust" on a run of large
+winners) and gave a verdict before its own sample gate; now fractions x100, labelled "mean |return|", the
+30-prior gate first, and a change in outcome size is reported as that, not as degradation. T2: the
+backtest deducted the cost twice under a "round-trip" label (gross +50 bps with 6 entered showed +38); the
+input is the round trip, deducted once, default 6 (same default behaviour); a cost of 0 is now sent as 0.
+T3: four signal kinds ignored the side selector and always traded long; every kind honours it, and "both"
+is relabelled "signal direction". T17: the gamma-curve asymmetry ratio was Infinity when there was no net
+gamma below spot, became null in JSON and crashed the panel; null with a dash; the bias names said the
+opposite of the model's own description ("compression-down" for heavy negative gamma below): now damping-
+above / amplifying-below / amplifying-above / damping-below with descriptive notes. T5: playbook scenario
+levels could sit on the wrong side of the entry with a positive R:R from the absolute distance (short
+under the put wall with the flip above as "L1", R:R 3.67); wrong-side levels are dropped, the next takes
+their place, R:R is read on signed distances and is null without a valid level or stop. T6: Camarilla
+and classic pivots are filed under Resistance or Support by their side of spot, not by name. Max drawdown
+no longer coloured as a gain. Tests: tests/quant/audit-edgelab.test.ts (buildLevels behaviour, wiring);
+full quant suite 1039 pass, 4 known local package failures. Needs review.
