@@ -4591,7 +4591,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   // ─── Real-time CLOSE TARGETS compression ────────────────────────────
   // GET /api/realtime-targets?symbol=^GSPC
   // Blends sqrt-time decay, spot reanchor, and range-aware (HOD/LOD) methods,
-  // weighted by regime (TREND vs CHOP via dfi/gammaZone/slope). Read-only.
+  // weighted by regime (TREND vs CHOP via the gamma zone, STRONG vs WEAK via the flip distance). Read-only.
   app.get("/api/realtime-targets", async (req, res) => {
     try {
       const { computeRealtimeTargets } = await import("./realtimeTargets");
@@ -4611,9 +4611,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       // Side-effect: feed raw regime into predictor history (fail-soft)
       try {
         const { recordRawRegime } = await import("./regimePredictor");
-        // An unavailable DFI (no DEX slope) is not a sample: NaN is dropped by recordRawRegime.
-        const dfiSample = daily.audit?.dfiState === "unavailable" || daily.audit?.dfi == null ? NaN : Number(daily.audit.dfi);
-        recordRawRegime(out.diag.regimeRaw as any, dfiSample);
+        recordRawRegime(out.diag.regimeRaw as any);
       } catch {}
       res.json(out);
     } catch (e: any) {
@@ -4961,8 +4959,9 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   });
 
   // GET /api/regime/predict?symbol=^GSPC&horizonMinutes=20
-  // Forward-looking regime transition probabilities. Pulls live audit from
-  // /api/models, scores candidate regimes via dfi slope + IV term + gamma
+  // The regime as read now, with a hand-set heuristic score per bucket (not a
+  // forecast: the top bucket is always the current regime). Pulls live audit from
+  // /api/models, scores regimes via the current gamma regime + IV term + gamma
   // flip proximity + session time + recent flip frequency. Read-only.
   app.get("/api/regime/predict", internalRoute("/api/regime/predict", async (req, res) => {
     try {
@@ -4974,7 +4973,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       // peek=1 (tab headlines): read the current models build, never start one.
       const peek = String(req.query.peek ?? "") === "1";
       // A peek reads the raw cached build: predictTransition uses only build
-      // fields (dfi, gamma zone, slope, term DoD, spot, pivot, EM, vanna,
+      // fields (gamma zone, gamma flip, slope, term DoD, spot, pivot, EM, vanna,
       // charm zero), none of /api/models' post-processing, so no Schwab read.
       let data: any;
       if (peek) {
@@ -5026,8 +5025,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       try {
         const { recordRawRegime } = await import("./regimePredictor");
         const rawNow = (out as any).currentRegime;
-        const dfiNow = daily.audit?.dfiState === "unavailable" || daily.audit?.dfi == null ? NaN : Number(daily.audit.dfi);
-        if (rawNow) recordRawRegime(rawNow, dfiNow);
+        if (rawNow) recordRawRegime(rawNow);
       } catch {}
       // Closed-loop edge tracking (throttled).
       try {
@@ -5908,17 +5906,17 @@ Describe the above in the JSON schema specified in the system prompt: what the n
     }
   });
 
-  // Tier 3.4: Particle filter on DFI — stateful shadow forecaster.
-  // We keep the cloud in module-scope so it persists across requests
-  // until server restart. On each call: ingest the current DFI value,
-  // step the filter, return posterior + directional prob.
+  // Tier 3.4: Particle filter on the legacy `dfi` field — stateful shadow
+  // forecaster, not used in any live calc. From 2026-11-17 that field is the
+  // SIGN of the DEX slope (+1 / -1 / 0), so the observation is a sign, not a
+  // magnitude; the filter is left reading it for the owner to keep or retire.
   let dfiCloud: Particle[] = initParticles(200);
   app.get("/api/experimental/particle-dfi", async (_req, res) => {
     try {
       const m: any = await internalJson("/api/models?symbol=SPX"); // in-process (internalApi.ts)
       const dfiRaw = m?.horizons?.daily?.audit?.dfi;
       if (typeof dfiRaw !== "number" || !isFinite(dfiRaw)) {
-        return res.status(503).json({ dataState: "unavailable", reason: "no live DFI value", note: "no live DFI value" });
+        return res.status(503).json({ dataState: "unavailable", reason: "no live DEX slope sign", note: "no live DEX slope sign" });
       }
       const stepped = stepFilter(dfiCloud, dfiRaw);
       dfiCloud = stepped.particles;
@@ -5931,7 +5929,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
           base: probs.pBase,
           bear: probs.pDown,
         },
-        note: "shadow forecaster — not used in live calc; promote only after Brier-better-than-trivial across 30+ days",
+        note: "shadow forecaster — not used in live calc; the observation is the sign of the DEX slope (+1 / -1 / 0), not a magnitude; promote only after Brier-better-than-trivial across 30+ days",
       });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;

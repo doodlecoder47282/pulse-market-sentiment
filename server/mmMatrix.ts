@@ -92,7 +92,6 @@ interface RegimeInputs {
   vannaM: number;             // signed $M (positive = IV↓ pulls spot up)
   vannaBias: "positive" | "negative";
   charmZero: number | null;   // primary charm-zero spot
-  dfi: number;                // delta flow indicator, signed
 }
 
 function classifyRegime(inp: RegimeInputs): { regime: MMRegime; note: string } {
@@ -314,12 +313,12 @@ function tilt(
     }
   }
 
-  // DFI tilt — live delta flow direction nudges up/down across all regimes
-  if (Math.abs(inp.dfi) > 0.1) {
-    const shift = Math.min(6, Math.abs(inp.dfi) * 5);
-    if (inp.dfi > 0) { pUp += shift; pDown -= shift; }
-    else { pDown += shift; pUp -= shift; }
-  }
+  // (Removed 2026-11-17: a "DFI tilt" moved pUp / pDown by min(6, |dfi| * 5).
+  // DFI was pinned at +5 / -5, so it was a constant 6 points in the direction
+  // of the DEX slope sign in every cell. The gamma regime is already the row
+  // and the position relative to the gamma flip is already the column, so the
+  // tilt counted the gamma term a second time. Logged MM probabilities are not
+  // like-for-like across this date.)
 
   // Charm tightening across non-CHARM regimes — smaller pin boost
   if (regime !== "CHARM_DRIVEN" && inp.charmChopFlag) {
@@ -417,7 +416,6 @@ export function buildMMMatrix(horizon: ModelHorizon, horizonDays: number): MMMat
     vannaM: a.vannaM,
     vannaBias: a.vannaBias,
     charmZero: a.charmZero,
-    dfi: a.dfi,
   };
 
   const { regime: currentRegime, note: regimeNote } = classifyRegime(inp);

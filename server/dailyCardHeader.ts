@@ -1,6 +1,7 @@
 // Daily Discord model card header (pure; no DB / network imports so it is
 // unit-testable). Used by discord.ts postDailyModelCard.
 import { gammaZoneLabel, normalizeGammaZone } from "./gammaZone";
+import { dexSlopeSignFromAudit } from "@shared/gammaRegime";
 
 // Pure header builder for the daily card (exported for tests). Every input
 // may be missing; missing renders as unavailable, never as a default value.
@@ -29,7 +30,8 @@ export function dailyCardHeader(
       ? "hand-set heuristic weights; not calibrated probabilities"
       : "source unlabelled: treat as heuristic";
   const scenarioFieldName = src === "risk-neutral-implied" ? "Scenarios (risk-neutral)" : "Scenarios (heuristic)";
-  const dfiTxt = fin(audit?.dfi) ? `DFI ${audit.dfi >= 0 ? "+" : ""}${audit.dfi.toFixed(2)}` : "DFI unavailable";
+  // A sign only: never printed as a magnitude.
+  const dfiTxt = `DEX slope ${dexSlopeSignFromAudit(audit)}`;
   const gz = audit?.gammaZone == null ? "\u03b3 unavailable" : gammaZoneLabel(normalizeGammaZone(audit.gammaZone));
   const vix = fin(quoteVix) ? quoteVix : fin(vol?.vix) ? (vol!.vix as number) : null;
   // termRatio = VIX3M / VIX: > 1 contango (calm front), < 1 backwardation.

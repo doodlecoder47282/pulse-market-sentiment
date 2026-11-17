@@ -173,6 +173,7 @@ export async function snapshotHorizon(horizon: ModelHorizon, horizonKey: string)
     // VIX points, the unit the matrix that produced pUp/pDown reads (rows before 2026-11-16 hold the daily sigma in percent, about 18x smaller).
     vixDelta: a.termStructureDoD?.vixDeltaPts ?? null,
     charmDriftPct: a.charmZero != null ? ((a.charmZero - a.spot) / a.spot) * 100 : null,
+    // Sign of the DEX slope (+1 / -1 / 0) from 2026-11-17; rows before hold the pinned +5 / -5. Not an input to pUp / pDown any more.
     dfi: a.dfi ?? null,
     masterAlpha,
     kind: "snapshot",

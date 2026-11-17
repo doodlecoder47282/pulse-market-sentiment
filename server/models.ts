@@ -29,6 +29,7 @@
 // approach since SPX·0.1 ≈ SPY to a few bps).
 
 import { vixToAtmPct } from "@shared/vol";
+import { dexSlopeSignAt, dexSlopeSignValue, dexSlopeLegacyLabel, flipDistanceEM, type DexSlopeSign } from "@shared/gammaRegime";
 import { horizonExpectedMove, type HorizonExpectedMove } from "@shared/horizonExpectedMove";
 import type { ExposureProfile, ExposureRow } from "./exposureProfile";
 import { buildExposureProfile, rowYears } from "./exposureProfile";
@@ -171,11 +172,20 @@ export interface ModelAudit {
   vannaM: number;                          // vanna exposure in $M
   gammaZone: "y+" | "y-" | "y?";           // positive = dampening, negative = amplifying, "y?" = unknown (missing / no material gamma)
   gammaZoneLabel: string;                  // "DAMPENING" / "AMPLIFYING" / "UNKNOWN"
-  gammaAtSpot: number;                     // raw gamma × OI at current spot (for DFI)
-  dfi: number;                             // Delta Flow Indicator — normalised DEX slope (signed, float); 0 when unavailable (see dfiState)
-  dfiState: "ok" | "unavailable";          // "unavailable" = the DEX curve had fewer than 3 points, so no slope exists; dfi is not a reading then
-  dfiLabel: string;                        // "BULLISH" / "BEARISH" / "NEUTRAL" / "UNAVAILABLE"
-  dfiFlipped: boolean;                     // true when spot is within 0.3% of the charm zero (NOT a DFI sign change; the name is historical)
+  gammaAtSpot: number;                     // signed GEX at current spot, $M
+  // Sign of the dealer delta-exposure slope (dDEX/dS) at spot. A sign only: it is not a flow measure and has no magnitude.
+  dexSlopeSign: DexSlopeSign;
+  /** @deprecated A SIGN ONLY: +1 / -1 / 0 (0 for flat and for unavailable, see dfiState). Was the "Delta Flow Indicator", which was pinned at +5 / -5; read dexSlopeSign instead. */
+  dfi: number;
+  /** @deprecated "unavailable" = the DEX curve had fewer than 3 points, so no slope exists. Read dexSlopeSign instead. */
+  dfiState: "ok" | "unavailable";
+  /** @deprecated "POSITIVE SLOPE" / "NEGATIVE SLOPE" / "FLAT" / "UNAVAILABLE": the sign of the DEX slope, not a bullish / bearish reading. */
+  dfiLabel: string;
+  dfiFlipped: boolean;                     // true when spot is within 0.3% of the charm zero (NOT a slope sign change; the name is historical)
+  gammaFlip: number | null;                // zero-gamma spot (the gamma flip); null when the profile has none
+  // Signed distance of spot from the gamma flip in 1-day expected moves, (spot - gammaFlip) / oneDayEM; null when either is missing.
+  // The regime bucket reads STRONG at |distance| >= FLIP_DISTANCE_STRONG_EM (shared/gammaRegime.ts), else WEAK.
+  flipDistanceEM: number | null;
   contractCount: number;                   // rows in the chain for this horizon
   mainPivot: number | null;                // dominant magnet / zero-gamma — the primary intraday pivot
   charmZero: number | null;               // zero-charm spot (drift target — primary)
@@ -225,8 +235,8 @@ export interface ModelAudit {
   };
   lastRecal: {                            // Selz #3 — intraday recal snapshots
     at: number;                           // epoch seconds
-    dfi: number;                          // DFI at recal time
-    dfiDeltaSinceOpen: number | null;     // change vs first snapshot of the day
+    dfi: number;                          // deprecated name: SIGN of the DEX slope at recal time (+1 / -1 / 0)
+    dfiDeltaSinceOpen: number | null;     // sign now minus sign at the first snapshot of the day: non-zero = the slope sign changed
   } | null;
   termStructureDoD: {                     // Selz #4 — term structure day-over-day
     iv1d: number | null;                  // today's 1D IV %
@@ -822,22 +832,23 @@ function midPath(spot: number, via: number, end: number, nAfter: number): number
 // ──────────────────────────────────────────────────────────────────────────
 
 // ─── Scenario probabilities ──────────────────────────────────────────────────
-// Derived from gamma regime, DFI direction, distance to gamma zero,
-// VIX term structure, and proximity to call/put walls.
+// Hand-set fallback, used only when the options-implied (risk-neutral) odds
+// are unavailable. Derived from gamma regime, VIX term structure, and
+// proximity to call/put walls.
 //
 // heuristic:
 //   baseProb starts at 0.37 — positive GEX (dampening) boosts it, negative cuts it.
-//   dfi > 0 (bullish flow) adds a bull boost via tanh ramp.
-//   dfi < 0 (bearish flow) adds a bear boost.
+//   (Until 2026-11-17 a "DFI" boost of 0.10 * tanh(dfi / 3) tilted bull or bear.
+//   DFI was pinned at +5 / -5, so the boost was a constant 0.093 in the direction
+//   of the DEX slope sign: a second count of the gamma term. Removed.)
 //   #5: VIX term ratio < 1 (backwardation/inversion) = stress → bear weight up,
 //   base weight cut. Term ratio >> 1 (steep contango) = calm → base weight up.
 //   #5: spot within 50bps of call wall caps bull (gamma resistance overhead);
 //   spot within 50bps of put wall caps bear (gamma support below). Within 15bps
 //   the cap is harder still — scenarios collapse toward base.
 //   Normalise to sum = 100, clamp each to minimum 10%.
-function computeScenarioProb(
+export function computeScenarioProb(
   gammaZone: "y+" | "y-" | "y?",
-  dfi: number,
   ctx?: {
     vixTermRatio: number | null;
     callWallDistBps: number | null;   // signed: + means wall above spot
@@ -846,8 +857,6 @@ function computeScenarioProb(
 ): { bull: number; base: number; bear: number } {
   // Unknown regime ("y?": missing or immaterial GEX): no regime adjustment.
   const rawBase = 0.37 + (gammaZone === "y+" ? 0.08 : gammaZone === "y-" ? -0.08 : 0);
-  const bullBoost = dfi > 0 ? 0.10 * Math.tanh(dfi / 3) : 0;
-  const bearBoost = dfi < 0 ? 0.10 * Math.tanh(-dfi / 3) : 0;
 
   // #5a: VIX term structure tilt
   // term < 1 = backwardation (front-month richer than 3m) = stress
@@ -869,8 +878,8 @@ function computeScenarioProb(
     }
   }
 
-  let bull = 0.20 + bullBoost - (bearBoost * 0.5);
-  let bear = 0.25 + bearBoost - (bullBoost * 0.5) + termBearTilt;
+  let bull = 0.20;
+  let bear = 0.25 + termBearTilt;
   let base = rawBase + termBaseTilt;
 
   // #5b: γ-wall distance caps. When spot is right under a call wall, upside
@@ -988,33 +997,16 @@ function buildAudit(
     ? `${intradayDelta.change >= 0 ? "+" : ""}${intradayDelta.change.toFixed(1)} in ${intradayDelta.windowMin} min`
     : "";
 
-  // DFI — Delta Flow Indicator.
-  // We derive it from the normalised DEX slope across the curve:
-  // dDEX/dS evaluated at current spot, normalised to the GEX scale.
-  // Positive DFI = bullish delta accumulation. Negative = bearish.
-  // Range is roughly -5 to +5 in normal conditions.
-  // With fewer than 3 curve points there is no slope to read: dfi stays 0 for
-  // readers that need a number, and dfiState says it is not a reading.
-  let dfi = 0;
-  const curveLen = profile.curve.length;
-  const dfiState: "ok" | "unavailable" = curveLen >= 3 ? "ok" : "unavailable";
-  if (curveLen >= 3) {
-    // Find index closest to spot in the curve
-    const idx = profile.curve.reduce((best, p, i) =>
-      Math.abs(p.spot - spot) < Math.abs(profile.curve[best].spot - spot) ? i : best, 0);
-    const lo = profile.curve[Math.max(0, idx - 1)];
-    const hi = profile.curve[Math.min(curveLen - 1, idx + 1)];
-    const dDex = hi.dex - lo.dex;
-    const dS = hi.spot - lo.spot;
-    // Normalise: divide by the absolute GEX to get a unit-less ratio
-    const gexAbs = Math.abs(cur.gex) || 1e6;
-    dfi = dS !== 0 ? (dDex / dS) / gexAbs * 1e9 : 0;
-    // Clamp to ±5
-    dfi = Math.max(-5, Math.min(5, dfi));
-    // Round to 2 decimals
-    dfi = parseFloat(dfi.toFixed(2));
-  }
-  const dfiLabel = dfiState === "unavailable" ? "UNAVAILABLE" : dfi > 0.1 ? "BULLISH" : dfi < -0.1 ? "BEARISH" : "NEUTRAL";
+  // DEX slope sign: the sign of dDEX/dS on the exposure curve at spot.
+  // This was the "Delta Flow Indicator": the slope divided by |GEX| and scaled
+  // by 1e9, clamped to [-5, 5]. The scaling pinned it at the clamp, so it only
+  // ever carried this sign. The scaling and the clamp are gone; `dfi` stays in
+  // the payload as the sign (+1 / -1 / 0) for stored rows and older clients.
+  // With fewer than 3 curve points there is no slope: "unavailable", dfi 0.
+  const dexSlopeSign = dexSlopeSignAt(profile.curve, spot);
+  const dfi = dexSlopeSignValue(dexSlopeSign);
+  const dfiState: "ok" | "unavailable" = dexSlopeSign === "unavailable" ? "unavailable" : "ok";
+  const dfiLabel = dexSlopeLegacyLabel(dexSlopeSign);
   // dfiFlipped: for real-time use — here we mark true when we're near the charm zero crossover
   const charmZero = profile.zeroCharmSpot;
   const dfiFlipped = charmZero != null && Math.abs(charmZero - spot) / spot < 0.003;
@@ -1044,7 +1036,7 @@ function buildAudit(
   const putWallDistBps = putWallPrice != null
     ? Math.round(((putWallPrice - spot) / spot) * 10_000)
     : null;
-  let scenarioProb = extras.scenarioProbIn ?? computeScenarioProb(gammaZone, dfi, {
+  let scenarioProb = extras.scenarioProbIn ?? computeScenarioProb(gammaZone, {
     vixTermRatio: extras.vixTermRatio ?? null,
     callWallDistBps,
     putWallDistBps,
@@ -1189,10 +1181,13 @@ function buildAudit(
     gammaZone,
     gammaZoneLabel,
     gammaAtSpot,
+    dexSlopeSign,
     dfi,
     dfiState,
     dfiLabel,
     dfiFlipped,
+    gammaFlip: profile.zeroGammaSpot ?? null,
+    flipDistanceEM: (() => { const d = flipDistanceEM(spot, profile.zeroGammaSpot, oneDayEM); return d == null ? null : parseFloat(d.toFixed(3)); })(),
     contractCount: profile.contractCount,
     mainPivot,
     charmZero,
@@ -1342,22 +1337,10 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const lastRecalRow = storage.getLatestRecal(symbol, horizon);
   const openRecal = storage.getTodayOpenRecal(symbol, horizon, tradeDate);
 
-  // Compute DFI FIRST (duplicates logic from buildAudit — we need it for snapshot storage)
-  let dfiForSnap = 0;
-  const curveLen = scaledProfile.curve.length;
-  if (curveLen >= 3) {
-    let idx = 0;
-    for (let i = 1; i < curveLen; i++) {
-      if (Math.abs(scaledProfile.curve[i].spot - displaySpot) < Math.abs(scaledProfile.curve[idx].spot - displaySpot)) idx = i;
-    }
-    const lo = scaledProfile.curve[Math.max(0, idx - 1)];
-    const hi = scaledProfile.curve[Math.min(curveLen - 1, idx + 1)];
-    const dDex = hi.dex - lo.dex;
-    const dS = hi.spot - lo.spot;
-    const gexAbs = Math.abs(scaledProfile.current.gex) || 1e6;
-    dfiForSnap = dS !== 0 ? Math.max(-5, Math.min(5, (dDex / dS) / gexAbs * 1e9)) : 0;
-    dfiForSnap = parseFloat(dfiForSnap.toFixed(2));
-  }
+  // DEX slope sign for the recal snapshot (same helper as buildAudit). The
+  // model_recal.dfi column keeps its name; from 2026-11-17 it holds the sign
+  // (+1 / -1 / 0), where it used to hold the pinned +5 / -5.
+  const dfiForSnap = dexSlopeSignValue(dexSlopeSignAt(scaledProfile.curve, displaySpot));
 
   // Record the recal — throttle to at most one write per 30 minutes per (symbol, horizon)
   const nowS = Math.floor(Date.now() / 1000);
@@ -1379,8 +1362,9 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const lastRecalOut = latestForDisplay
     ? {
         at: latestForDisplay.capturedAt,
-        dfi: latestForDisplay.dfi,
-        dfiDeltaSinceOpen: openRecal ? parseFloat((latestForDisplay.dfi - openRecal.dfi).toFixed(2)) : null,
+        // Math.sign: rows written before 2026-11-17 hold +5 / -5; only the sign was ever information.
+        dfi: Math.sign(latestForDisplay.dfi),
+        dfiDeltaSinceOpen: openRecal ? Math.sign(latestForDisplay.dfi) - Math.sign(openRecal.dfi) : null,
       }
     : null;
 

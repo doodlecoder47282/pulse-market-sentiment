@@ -22,7 +22,7 @@
 //                               extended by remaining-day expected move. Best
 //                               on CHOP days where realized range is the cage.
 //
-// Regime weighting (from audit.dfi + audit.gammaZone + slope direction):
+// Regime weighting (from audit.gammaZone + distance of spot from the gamma flip):
 //
 //   TREND_STRONG  -> reanchor 0.55, sqrt 0.30, range 0.15
 //   TREND_WEAK    -> reanchor 0.40, sqrt 0.40, range 0.20
@@ -33,7 +33,7 @@
 // Read-only. Pure function. Try/catch wrapped at every external surface.
 
 import { getPriceHistory } from "./schwab";
-import { gammaZoneEffect } from "./gammaZone";
+import { regimeBucketFromAudit } from "@shared/gammaRegime";
 
 // ─── Time helpers (America/New_York session math) ──────────────────────
 
@@ -144,26 +144,18 @@ async function fetchSessionRange(symbol: string): Promise<SessionRange> {
 // GAMMA_UNKNOWN (round 4): GEX missing or immaterial; its own state, not NEUTRAL.
 type RegimeBucket = "TREND_STRONG" | "TREND_WEAK" | "NEUTRAL" | "CHOP_WEAK" | "CHOP_STRONG" | "GAMMA_UNKNOWN" | "INPUTS_UNAVAILABLE";
 
-function detectRegime(audit: any): RegimeBucket {
-  // No DEX slope (dfiState unavailable) or no DFI at all: no regime is read from a zero.
-  if (audit?.dfiState === "unavailable" || audit?.dfi == null || !Number.isFinite(Number(audit.dfi))) return "INPUTS_UNAVAILABLE";
-  const dfi = Math.abs(Number(audit.dfi));
-  // dfi is normalized [-5..+5]. dominantMag/charm-flat regime in y/y+ → chop
-  const gZone = String(audit?.gammaZone ?? "").toLowerCase();
-  const inGammaPocket = gZone === "y" || gZone === "y+";
-  // Gamma unknown ("y?" / missing GEX): the trend/chop split below rests on
-  // the gamma regime, so make no regime claim at all.
-  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "GAMMA_UNKNOWN";
-  // Slope text e.g. "DN 0.70° → -1.40" — magnitude proxy
-  const slopeText = String(audit?.slope ?? "");
-  const slopeMag = Math.abs(parseFloat(slopeText.match(/-?\d+(\.\d+)?/g)?.[1] ?? "0"));
-
-  if (dfi >= 3.5 && !inGammaPocket) return "TREND_STRONG";
-  if (dfi >= 2.0 && !inGammaPocket) return "TREND_WEAK";
-  if (dfi >= 1.0 && inGammaPocket && slopeMag < 1.5) return "CHOP_WEAK";
-  if (dfi < 1.0 && inGammaPocket) return "CHOP_STRONG";
-  if (dfi >= 2.0 && inGammaPocket) return "CHOP_WEAK";
-  return "NEUTRAL";
+/**
+ * Regime bucket from the gamma zone and the distance of spot from the gamma
+ * flip (shared/gammaRegime.ts): positive gamma reads CHOP, negative gamma
+ * reads TREND; STRONG at FLIP_DISTANCE_STRONG_EM or more 1-day expected moves
+ * from the flip, WEAK when closer or when the flip / expected move is missing.
+ * Until 2026-11-17 the bucket was keyed on |DFI| thresholds; DFI was pinned at
+ * 5, so it was always TREND_STRONG in negative gamma and CHOP_WEAK in positive
+ * gamma. NEUTRAL is no longer produced here (its weights stay for stored
+ * state and for the predictor's candidates).
+ */
+export function detectRegime(audit: any, liveSpot?: number): RegimeBucket {
+  return regimeBucketFromAudit(audit, liveSpot);
 }
 
 const REGIME_WEIGHTS: Record<
@@ -181,8 +173,8 @@ const REGIME_WEIGHTS: Record<
 };
 
 // ─── Regime hysteresis ─────────────────────────────────────────────────
-// Audit fix: prevent regime flapping at the boundary (e.g. dfi oscillating
-// 1.95↔2.05 between TREND_WEAK and NEUTRAL) from rapidly re-weighting targets
+// Audit fix: prevent regime flapping at the boundary (e.g. spot oscillating
+// around 0.5 expected moves from the gamma flip, STRONG <-> WEAK) from rapidly re-weighting targets
 // every tick. Require the candidate regime to be stable for STABILITY_TICKS
 // consecutive observations before applying it. Until then, keep using the
 // last *applied* regime.
@@ -309,7 +301,7 @@ export interface RealtimeTargetsInput {
   spot: number;
   /** audit.scenarioTargets from /api/models */
   scenarioTargets: { bull: number; base: number; bear: number; oneDayEM?: number };
-  /** audit object (uses dfi, gammaZone, slope for regime detection) */
+  /** audit object (uses gammaZone, gammaFlip, spot and scenarioTargets.oneDayEM for regime detection) */
   audit: any;
   /** Override now (for testing) */
   nowMs?: number;
@@ -367,7 +359,7 @@ export async function computeRealtimeTargets(
   const m_reanchor = spotReanchorDecay(eod, input.spot, fracRemaining);
   const m_range = rangeAware(eod, input.spot, oneDayEM, fracRemaining, sessionRange);
 
-  const rawRegime = detectRegime(input.audit ?? {});
+  const rawRegime = detectRegime(input.audit ?? {}, input.spot);
   const hyst = applyRegimeHysteresis(rawRegime);
   const regime = hyst.applied;
   const w = REGIME_WEIGHTS[regime];

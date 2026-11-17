@@ -263,8 +263,13 @@ import { chainAbove, chainBelow, fmtChain, playbookCopy, type LevelLite } from "
 import { formatOdteAlert, type OdteAlert } from "./odteAlertEngine";
 import { internalJson, isInternalRoute } from "./internalApi";
 
+/** The legacy `dfi` number carries a sign only: say the sign, never print it as a magnitude. */
+export function dexSlopeWord(v: number): "positive" | "negative" | "flat" {
+  return v > 0 ? "positive" : v < 0 ? "negative" : "flat";
+}
+
 export type LevelAlertContext = {
-  dfi?: number | null;            // current DFI value
+  dfi?: number | null;            // legacy field: SIGN of the dealer delta-exposure slope (+1 / -1 / 0), not a magnitude
   gammaZone?: string | null;      // "y+" | "y-" | null
   downstreamLevels?: Array<{ name: string; price: number }>; // legacy field, kept for back-compat
   allLevels?: LevelLite[];        // full level chain so we can build upside/downside targets + playbook
@@ -292,14 +297,12 @@ export async function postLevelBreakAlert(args: {
   const sideWord = dist >= 0 ? "above" : "below";
   const distLine = `Spot **${fmtPrice(spot)}**  ·  ${Math.abs(dist).toFixed(2)} ${sideWord} ${level.kind} **${fmtPrice(level.price)}**  (${fmtPct(distPct)})`;
 
-  // Regime context line (DFI + γ-zone) — both optional, fall back gracefully.
+  // Regime context line (DEX slope sign + γ-zone) — both optional, fall back gracefully.
   let regimeLine = "";
   if (context) {
     const parts: string[] = [];
     if (typeof context.dfi === "number" && isFinite(context.dfi)) {
-      const dfiTag = context.dfi >= 200 ? "BULLISH" : context.dfi <= -200 ? "BEARISH" : "NEUTRAL";
-      const dfiSign = context.dfi >= 0 ? "+" : "";
-      parts.push(`DFI \`${dfiSign}${Math.round(context.dfi)}\` (${dfiTag})`);
+      parts.push(`DEX slope \`${dexSlopeWord(context.dfi)}\``);
     }
     if (context.gammaZone) {
       parts.push(`γ-zone \`${gammaZoneLabel(context.gammaZone)}\``);
@@ -417,9 +420,7 @@ export async function postLevelClusterAlert(args: {
   if (context) {
     const parts: string[] = [];
     if (typeof context.dfi === "number" && isFinite(context.dfi)) {
-      const dfiTag = context.dfi >= 200 ? "BULLISH" : context.dfi <= -200 ? "BEARISH" : "NEUTRAL";
-      const dfiSign = context.dfi >= 0 ? "+" : "";
-      parts.push(`DFI \`${dfiSign}${Math.round(context.dfi)}\` (${dfiTag})`);
+      parts.push(`DEX slope \`${dexSlopeWord(context.dfi)}\``);
     }
     if (context.gammaZone) {
       parts.push(`γ-zone \`${gammaZoneLabel(context.gammaZone)}\``);

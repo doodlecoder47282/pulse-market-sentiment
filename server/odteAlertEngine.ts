@@ -20,7 +20,7 @@
 // Grade composition (100 pts):
 //   pattern                20  (binary, gates everything)
 //   γ-zone alignment       15
-//   DFI alignment          15
+//   DEX slope sign aligned 15 (cap; the legacy dfi field is a sign, so this adds under 0.2)
 //   slope alignment        10
 //   vanna bias alignment   10
 //   risk:reward (T1/stop)  15
@@ -35,7 +35,7 @@
 //   - Max 3 alerts per ET trading day
 //   - Max 1 alert per 60-min window (across all setups/sides)
 //   - Per (setup, side) cooldown: 45 min
-//   - Requires ≥2 of 3 momentum signals (DFI, slope, vanna) aligned with trade direction
+//   - Requires ≥2 of 3 momentum signals (DEX slope sign, slope, vanna) aligned with trade direction
 //
 // State is in-memory (lost on restart, by design). The engine is a pure
 // function of current snapshots — restart-safe because it only fires on
@@ -62,7 +62,7 @@ export interface LevelLite {
 
 export interface Audit {
   slope?: number | null;            // negative = bear, positive = bull
-  dfi?: number | null;              // positive = bull, negative = bear
+  dfi?: number | null;              // legacy field: SIGN of the dealer delta-exposure slope (+1 / -1 / 0), not a magnitude
   gammaZone?: string | null;        // "y+" (dampened) | "y-" (volatile)
   vannaBias?: number | null;
   vannaM?: number | null;           // vanna $M magnitude (upgrade 2)
@@ -686,7 +686,7 @@ function scoreSetup(args: {
     }
   }
 
-  // 3-5. Momentum signals (DFI, slope, vanna). REQUIRE ≥2 of 3 aligned
+  // 3-5. Momentum signals (DEX slope sign, slope, vanna). REQUIRE ≥2 of 3 aligned
   // with trade direction — otherwise zero out the whole bundle and add a
   // big negative reasoning entry that effectively kills the grade.
   const wantSign = args.side === "call" ? 1 : -1;
@@ -699,9 +699,9 @@ function scoreSetup(args: {
     if (Math.sign(dfi) === wantSign) {
       const mag = Math.min(15, Math.abs(dfi) / 30);
       momScore += mag; momAligned += 1;
-      momReasons.push(`DFI ${dfi.toFixed(0)} aligned: +${mag.toFixed(1)}`);
+      momReasons.push(`DEX slope sign ${dfi > 0 ? "positive" : "negative"}, aligned`);
     } else {
-      momReasons.push(`DFI ${dfi.toFixed(0)} opposed/flat: +0`);
+      momReasons.push(`DEX slope sign ${dfi > 0 ? "positive" : dfi < 0 ? "negative" : "flat"}, opposed/flat`);
     }
   }
 
@@ -858,7 +858,7 @@ function scoreSetup(args: {
     } else {
       const inVilkovWindow = todMin >= 10 * 60 && todMin <= 11 * 60 + 30; // 10:00–11:30 ET
       if (tenAmRegime !== null && inVilkovWindow) {
-        // Derive regime direction: DFI positive = bullish; spot above mainPivot = bullish
+        // Derive regime direction from the DEX slope sign (legacy dfi field) and spot vs mainPivot
         const regimeBullByDfi  = typeof tenAmRegime.dfi === "number" && tenAmRegime.dfi > 0;
         const regimeBullByPivot = typeof tenAmRegime.spot === "number" &&
                                   typeof tenAmRegime.mainPivot === "number" &&
@@ -876,7 +876,7 @@ function scoreSetup(args: {
           score += clampedRegimeDelta;
           reasoning.push(
             `10AM regime tilt: ${aligned ? "aligned" : "fighting"} 10AM snapshot ` +
-            `(DFI ${tenAmRegime.dfi.toFixed(0)}, spot ${tenAmRegime.spot.toFixed(1)} vs pivot ${tenAmRegime.mainPivot.toFixed(1)}): ` +
+            `(DEX slope ${tenAmRegime.dfi > 0 ? "positive" : tenAmRegime.dfi < 0 ? "negative" : "flat"}, spot ${tenAmRegime.spot.toFixed(1)} vs pivot ${tenAmRegime.mainPivot.toFixed(1)}): ` +
             `${clampedRegimeDelta > 0 ? "+" : ""}${clampedRegimeDelta}`,
           );
         } else {

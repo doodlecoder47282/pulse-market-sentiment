@@ -74,20 +74,25 @@ test("regimePredictor: unknown gamma makes no trend/chop claim and is degraded",
   assert.equal(out.currentRegime, "GAMMA_UNKNOWN");
   assert.equal(out.status, "degraded");
   _resetPredictorHistory();
-  const k = predictTransition({ audit: { dfi: 4, gammaZone: "y-", slope: "UP 0.5° → 1.0" }, nowMs: Date.UTC(2026, 9, 9, 15, 0) });
-  assert.equal(k.currentRegime, "TREND_STRONG");
+  // Known negative gamma reads TREND. STRONG needs the flip distance (0.5 expected moves or more);
+  // with no gamma flip in the audit the suffix is WEAK (the pinned DFI used to make it STRONG always).
+  const k = predictTransition({ audit: { dfi: 1, gammaZone: "y-", slope: "UP 0.5° → 1.0" }, nowMs: Date.UTC(2026, 9, 9, 15, 0) });
+  assert.equal(k.currentRegime, "TREND_WEAK");
+  _resetPredictorHistory();
+  const far = predictTransition({ audit: { dfi: 1, gammaZone: "y-", slope: "UP 0.5° → 1.0", spot: 5960, gammaFlip: 6000, mainPivot: 6000, scenarioTargets: { oneDayEM: 40 } }, nowMs: Date.UTC(2026, 9, 9, 15, 0) });
+  assert.equal(far.currentRegime, "TREND_STRONG");
 });
 
 // ── 2. Discord daily card: missing is unavailable, source labelled ─────────
-test("daily card: missing scenario / gamma / dfi / term render unavailable, not defaults", () => {
+test("daily card: missing scenario / gamma / DEX slope / term render unavailable, not defaults", () => {
   const h = dailyCardHeader({}, null, null);
   assert.equal(h.scen, null);
   assert.equal(h.top, null);
   assert.match(h.description, /γ unavailable/);
-  assert.match(h.description, /DFI unavailable/);
+  assert.match(h.description, /DEX slope unavailable/);
   assert.match(h.description, /VIX unavailable/);
   assert.match(h.description, /term unavailable/);
-  assert.doesNotMatch(h.description, /dampened|DFI \+0\.00/);
+  assert.doesNotMatch(h.description, /dampened|DFI|DEX slope (positive|negative|flat)/);
   // all-zero scenario object (the old default) is not a distribution
   assert.equal(dailyCardHeader({ scenarioProb: { bull: 0, base: 0, bear: 0 } }, null, null).scen, null);
 });
@@ -102,7 +107,12 @@ test("daily card: observed values and the scenario source label are printed", ()
   assert.match(rn.scenarioSourceLabel, /risk-neutral, options-implied/);
   assert.equal(rn.scenarioFieldName, "Scenarios (risk-neutral)");
   assert.match(rn.description, /gamma unknown/);
-  assert.match(rn.description, /DFI \+0\.00/); // observed zero stays zero
+  assert.match(rn.description, /DEX slope flat/); // an observed zero slope is "flat", in words
+  assert.doesNotMatch(rn.description, /DFI|[+-]\d+\.\d\d(?! \()/); // never a magnitude
+  // The sign in words for both the new field and legacy stored values (+5 / -5 read as their sign).
+  assert.match(dailyCardHeader({ dexSlopeSign: "positive", dfi: 1 }, null, null).description, /DEX slope positive/);
+  assert.match(dailyCardHeader({ dfi: -5, dfiState: "ok" }, null, null).description, /DEX slope negative/);
+  assert.match(dailyCardHeader({ dfi: 0, dfiState: "unavailable" }, null, null).description, /DEX slope unavailable/);
   assert.match(rn.description, /VIX 15\.31/);
   assert.match(rn.description, /term 1\.12 \(contango \(calm\)\)/);
   const hs = dailyCardHeader({ scenarioProb: { bull: 40, base: 35, bear: 25 }, scenarioProbSource: "hand-set-heuristic" }, null, null);
@@ -631,7 +641,8 @@ test("regime: unknown gamma -> GAMMA_UNKNOWN (not NEUTRAL), no candidates; unkno
   assert.equal(flipRateOf(h2).flips, 1);
   assert.equal(flipRateOf(h2).rate, 1 / 4);
   const rt = src("server/realtimeTargets.ts");
-  assert.match(rt, /return "GAMMA_UNKNOWN";/);
+  assert.match(rt, /return regimeBucketFromAudit\(audit, liveSpot\);/);
+  assert.match(src("shared/gammaRegime.ts"), /if \(family == null\) return "GAMMA_UNKNOWN";/);
   assert.match(rt, /if \(rawRegime === "GAMMA_UNKNOWN" \|\| rawRegime === "INPUTS_UNAVAILABLE"\) \{/);
   assert.match(src("client/src/components/RegimePredictPanel.tsx"), /plain: "Gamma unknown"/);
   assert.match(src("server/headline.ts"), /models\?\.currentRegime \?\? "UNAVAILABLE"/);

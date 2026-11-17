@@ -2504,3 +2504,89 @@ states which odds the graded days carried (two forecasters pooled) and calls its
 signals, Wiener, MM matrix) say what they are instead of counting down to a share; the hand-set 30 no
 longer applies to them. (7) emitted = graded + open + excluded on every row; a part the source cannot
 provide is unknown (a dash), not 0. (8) Concurrent requests on a cold cache share one assembly.
+2026-11-17: DFI retired as a magnitude; the regime is keyed on the gamma zone (feat/retire-dfi-impl; audit
+item M1, owner decision of 2026-11-16). The "Delta Flow Indicator" was (dDEX/dS) / |GEX| x 1e9 clamped to
+[-5, 5]. The scale pinned it at the clamp, so it was always +5.00 or -5.00 when available: the sign of the
+dealer delta-exposure (DEX) slope, which is close to the sign of net gamma. It was not a flow measure.
+What changed:
+(1) Payload. audit.dexSlopeSign = "positive" | "negative" | "flat" | "unavailable" (flat only at a slope of
+exactly 0; unavailable with fewer than 3 curve points). The legacy fields stay for stored rows and older
+clients: audit.dfi is the sign as +1 / -1 / 0, audit.dfiLabel is "POSITIVE SLOPE" / "NEGATIVE SLOPE" /
+"FLAT" / "UNAVAILABLE", dfiState is unchanged. The 1e9 scale and the clamp are gone. New: audit.gammaFlip
+(the zero-gamma spot) and audit.flipDistanceEM = (spot - gammaFlip) / 1-day expected move, signed, null
+when either is missing. No database column renamed: model_recal.dfi now receives +1 / -1 / 0 (rows before
+this date hold +5 / -5; lastRecal reads every row through its sign, and "since open" now says whether the
+sign changed).
+(2) Regime bucket (shared/gammaRegime.ts, used by realtimeTargets.detectRegime and regimePredictor).
+Positive gamma ("y+") reads CHOP, negative gamma ("y-") reads TREND. STRONG when spot is at least
+FLIP_DISTANCE_STRONG_EM = 0.5 one-day expected moves from the gamma flip, WEAK when closer or when the
+flip or the expected move is missing. The 0.5 is one exported constant, hand-set, not fit to outcomes.
+"y?" is GAMMA_UNKNOWN as before; an audit with no gamma zone at all is INPUTS_UNAVAILABLE. A missing DEX
+slope no longer blocks the regime (it is not an input any more). NEUTRAL is no longer produced by the raw
+classification (it stays a predictor candidate and keeps its weights).
+  Before, for every live reading: outside the pocket (y-) TREND_STRONG, inside it (y+) CHOP_WEAK, always.
+  After: y-, 0.5 EM or more from the flip TREND_STRONG, closer TREND_WEAK; y+, 0.5 EM or more from the
+  flip CHOP_STRONG, closer CHOP_WEAK; no flip level: the WEAK bucket of the zone.
+(3) regimePredictor. The DFI boundaries (1 / 2 / 3.5), the DFI slope per minute and the projected DFI are
+removed (they could not move). Nothing replaces them: no flip-distance projection is made. The current
+regime is carried forward with the other drivers' adjustments, and a driver note says so. (A first version
+of this branch projected the flip distance from the slope of the last 6 spot samples; review showed a
+2-point SPX move over 60 s turning TREND_WEAK into a "heavy chop" call that cleared the logging floor, so
+it was dropped before merge.) The other drivers (VIX
+change, pivot distance, charm zero, session time, flip rate, slope, vanna, VIX term, whale flow) are
+unchanged. Response: drivers.dexSlopeSign and flipDistanceEM are new; drivers.dfi is the sign or null; drivers.dfiSlopePerMin is always null;
+boundaryDistance and nextBoundary are deleted (nothing read them). No "DFI ... /min toward ..." note.
+(4) computeScenarioProb. The DFI boost 0.10 x tanh(dfi / 3) is removed: with DFI pinned it was a constant
+0.093 toward bull (positive slope) or bear (negative slope), a second count of the gamma term. The
+heuristic split moves by up to about 10 points: in y+ with a positive slope bull 31.0 -> 22.2, bear 21.5
+-> 27.8, base 47.5 -> 50.0; in y- with a negative slope bear 43.6 -> 33.8, bull 19.5 -> 27.0, base 36.9
+-> 39.2 (no term or wall adjustment in either). Checked in the code: this split is the fallback only. In
+buildAudit the implied (risk-neutral) odds overwrite it whenever the implied CDF exists, and
+scenarioProbSource then reads "risk-neutral-implied"; the heuristic is shown and logged only as
+"hand-set-heuristic".
+(5) mmMatrix. The DFI tilt (pUp / pDown moved by min(6, |dfi| x 5), so a constant 6 points toward the
+slope sign in all 25 cells before renormalisation) is removed, not replaced: the gamma regime is already
+the row and the position against the gamma flip is already the column, so it only counted gamma twice.
+(6) Display. ModelsPanel, RegimePredictPanel, the Discord daily card, the level-break alerts, the 0DTE
+score reasons and the tab headline bullets no longer print "DFI +5.00" (or "+499") or BULLISH / BEARISH
+for it. They show "DEX slope: positive / negative / flat / unavailable" as a secondary fact, with a note
+that it is a sign only, and the flip distance in expected moves where the regime is explained. The
+level-break alerts used to print "DFI +5 (NEUTRAL)" because their BULLISH threshold was 200.
+Record breaks from this date (not like-for-like with earlier rows):
+- regime calls (the outcome log, the regime snapshot that decorates flow alerts). The logged call is now
+  always the current regime: a persistence baseline, graded on the TREND / CHOP family against the
+  realised 20-minute move. Hit or miss depends only on the gamma sign, so the family-level grades are
+  comparable across this date; only the by-suffix (STRONG / WEAK) tables are not, because the suffix now
+  varies with the flip distance where it was constant within a gamma zone. The logging and grading code
+  is unchanged. The panel, the headline and the driver notes now say "regime now" and describe the read
+  and its drivers; they no longer use forecast, pinning or bullish / bearish wording.
+- whale-alert conviction multiplier (server/edgeStats.ts regimeConvictionMultiplier): it matches
+  regimeAtFire by exact string, so TREND_WEAK and CHOP_STRONG start with no history, and the existing
+  TREND_STRONG / CHOP_WEAK history mixes the old definition (every y- / y+ reading) with the new one.
+- the by-regime tables in edgeStats and orthogonality: the same mix of definitions under one label.
+- the shadow particle filter: its observation is +1 / -1 from this date, where it was +5 / -5.
+- intraday close targets (realtimeTargets blend, shown on the Discord card and read by the exit score in
+  exitBrain): the blend weights follow the regime bucket, so y- near the flip now uses the TREND_WEAK
+  weights and y+ far from it the CHOP_STRONG weights.
+- MM predictions (data/mm-predictions): pUp / pDown no longer carry the 6-point tilt; the logged dfi
+  field is +1 / -1 / 0, where it was +5 / -5.
+- fallback scenario probabilities (calibration rows with probSource "hand-set-heuristic" only); rows
+  with "risk-neutral-implied" are unchanged.
+- model_recal.dfi: +1 / -1 / 0 from this date.
+Left reading the legacy sign field, for the owner: (a) the 0DTE alert score (odteAlertEngine). Its
+momentum gate and its 10 AM tilt use the sign only, so they are unchanged; the aligned-sign bonus
+min(15, |dfi| / 30) falls from about 0.17 to about 0.03 points (it was written for a scale DFI never
+had). The score is rounded before its 72 and 85 gates, so an aligned setup can lose one point at a
+rounding boundary: it can miss an alert, never add one. The score is a graded series, so the arithmetic
+was not changed here; only its reason text changed (it says the slope sign is aligned, without a number).
+(b) the whale conviction history above: not re-keyed or reset. (c) the logged regime call is a
+persistence call: keep grading it under regime_call or relabel it. (d) the
+experimental particle filter (/api/experimental/particle-dfi): a shadow forecaster that feeds nothing; it
+now observes +1 / -1 / 0 instead of +5 / -5. Keep or retire. Not changed: gamma, expected move, Wiener,
+implied scenario odds, crypto. No threshold changed other than the one new constant.
+Third review of the DFI retirement (copy only): the session driver notes named a window the clock was not
+in (the late-session weight applies after the close and the early-session one before the open; the windows
+are a quarter of the session, 97.5 minutes, not 1.5 hours): each note now says which case it is and prints
+the minutes. The badge is "read strength" (top score scaled by sample quality), no longer the same label as
+the headline's top score. "Pin pressure" is gone from the chart tab's headline bullet. The weights
+themselves are unchanged.

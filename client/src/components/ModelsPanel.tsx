@@ -3,11 +3,11 @@
 // Rebuilt to match the @OptionsDepth / Green Room "SPX DAILY MODEL" layout:
 //
 //   ┌─────────────────────────────────────────────────────────────────────────────┐
-//   │ HEADER STRIP: SPX DAILY MODEL | DATE | TIME ET | SPOT | DFI                 │
+//   │ HEADER STRIP: SPX DAILY MODEL | DATE | TIME ET | SPOT | DEX slope sign      │
 //   ├──────────────────────────────────────────────┬──────────────────────────────┤
 //   │ AUDIT BOX (top-left)                         │ RIGHT-RAIL LEVEL STACK       │
 //   │  • live pivot / gamma-zero / charm-zero       │  • CEILING / ACCEL ZONE      │
-//   │  • DFI / Vanna / Gamma / Double-Zero zone    │  • CALL WALL / PUT WALL      │
+//   │  • Vanna / Gamma / Double-Zero zone          │  • CALL WALL / PUT WALL      │
 //   ├──────────────────────────────────────────────┤  • CHARM POCKET / VANNA SQ.  │
 //   │ MAIN CHART (path projections)                │  • DOUBLE ZERO ZONE          │
 //   │  • BULL / BASE / BEAR lines                  │  • BULL / BASE / BEAR proj.  │
@@ -50,6 +50,7 @@ import MLAccuracyCard from "@/components/models/MLAccuracyCard";
 import MultiDayCone from "@/components/models/MultiDayCone";
 
 import { livePoll } from "@/lib/pollInterval";
+import { FLIP_DISTANCE_STRONG_EM, dexSlopeSignFromAudit, flipDistanceText } from "@shared/gammaRegime";
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
 type Horizon = "daily" | "weekly" | "monthly" | "quarterly";
@@ -88,6 +89,33 @@ interface ModelPath {
   color: "base" | "bull" | "bear";
 }
 
+const DEX_SLOPE_TIP =
+  "Sign of the dealer delta-exposure (DEX) slope at spot. A sign only: it has no magnitude and it is not a flow measure.";
+
+/** Small secondary fact: the sign of the DEX slope, in words. Never a number, never bullish / bearish. */
+function DexSlopeFact({ a }: { a: ModelAudit }) {
+  return (
+    <span className="text-muted-foreground" title={DEX_SLOPE_TIP} data-testid="text-dex-slope-sign">
+      DEX slope: {dexSlopeSignFromAudit(a)}
+    </span>
+  );
+}
+
+/** Where spot sits against the gamma flip, in 1-day expected moves: what picks STRONG or WEAK in the regime bucket. */
+function FlipDistanceFact({ a }: { a: ModelAudit }) {
+  const d = a.flipDistanceEM;
+  const known = d != null && Number.isFinite(d);
+  return (
+    <span
+      title={`The regime reads strong at ${FLIP_DISTANCE_STRONG_EM} or more 1-day expected moves from the gamma flip and weak when closer or when the distance is not available. The ${FLIP_DISTANCE_STRONG_EM} line is hand-set, not fit to outcomes.`}
+      data-testid="text-flip-distance"
+    >
+      FLIP DIST: <span className={known ? "text-amber-400" : "text-muted-foreground"}>{flipDistanceText(d)}</span>
+      {known && <span className="text-muted-foreground"> ({Math.abs(d as number) >= FLIP_DISTANCE_STRONG_EM ? "strong" : "weak"} side of the {FLIP_DISTANCE_STRONG_EM} line)</span>}
+    </span>
+  );
+}
+
 interface ModelAudit {
   asOf: number;
   spot: number;
@@ -104,9 +132,18 @@ interface ModelAudit {
   gammaZone: "y+" | "y-" | "y?";
   gammaZoneLabel: string;
   gammaAtSpot: number;
+  /** Sign of the dealer delta-exposure slope at spot. A sign only. Absent on stored builds from before 2026-11-17. */
+  dexSlopeSign?: "positive" | "negative" | "flat" | "unavailable";
+  /** @deprecated A sign only (+1 / -1 / 0; older stored builds hold +5 / -5). Read through dexSlopeSignFromAudit. */
   dfi: number;
+  dfiState?: "ok" | "unavailable";
+  /** @deprecated */
   dfiLabel: string;
   dfiFlipped: boolean;
+  /** Zero-gamma spot (the gamma flip); null or absent when not available. */
+  gammaFlip?: number | null;
+  /** Signed distance of spot from the gamma flip in 1-day expected moves; null or absent when not available. */
+  flipDistanceEM?: number | null;
   contractCount: number;
   mainPivot: number | null;
   charmZero: number | null;
@@ -609,13 +646,12 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         )}
       </div>
 
-      {/* Line 4: DFI + Vanna */}
+      {/* Line 4: flip distance + DEX slope sign + Vanna */}
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <FlipDistanceFact a={a} />
+        <span>|</span>
         <span>
-          DFI:{" "}
-          <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
-            {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
-          </span>
+          <DexSlopeFact a={a} />
           {a.dfiFlipped && <span className="ml-1 text-yellow-400" title="spot is within 0.3% of the charm zero">(NEAR CHARM ZERO)</span>}
         </span>
         <span>|</span>
@@ -958,8 +994,8 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
       <span>|</span>
       <span>{timeStr} ET</span>
       <span>|</span>
-      <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
-        DFI {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
+      <span>
+        <DexSlopeFact a={a} />
         {a.dfiFlipped ? " · near charm zero" : ""}
       </span>
       <span>|</span>
@@ -2087,8 +2123,8 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           <span className="text-border">|</span>
           <DataAgeChip asOfMs={(horizon as any).chainAsOfMs ?? null} stale={(horizon as any).chainStale ?? null} lastSession={(horizon as any).chainLastSession ?? null} maxAgeMs={session === "live" ? ((horizon as any).chainMaxAgeMs ?? null) : null} label={`${(horizon as any).chainSymbol ?? "chain"} chain`} />
           <span className="text-border">|</span>
-          <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
-            DFI {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
+          <span>
+            <DexSlopeFact a={a} />
             {a.dfiFlipped && <span className="ml-1 text-yellow-400 text-[11px]" title="spot is within 0.3% of the charm zero">near charm zero</span>}
           </span>
         </div>
@@ -2126,14 +2162,11 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
               <span className="text-muted-foreground">LAST RECAL</span>
               <span className="text-foreground">{etTime(a.lastRecal.at)} ET</span>
               <span className="text-muted-foreground">·</span>
-              <span>
-                DFI{" "}
-                <span className={a.lastRecal.dfi >= 0 ? "text-green-400" : "text-red-400"}>
-                  {a.lastRecal.dfi >= 0 ? "+" : ""}{a.lastRecal.dfi.toFixed(2)}
-                </span>
+              <span className="text-muted-foreground" title={DEX_SLOPE_TIP}>
+                DEX slope: {a.lastRecal.dfi > 0 ? "positive" : a.lastRecal.dfi < 0 ? "negative" : "flat or unavailable"}
                 {a.lastRecal.dfiDeltaSinceOpen != null && (
-                  <span className="ml-1 text-muted-foreground">
-                    ({a.lastRecal.dfiDeltaSinceOpen >= 0 ? "+" : ""}{a.lastRecal.dfiDeltaSinceOpen.toFixed(2)} since open)
+                  <span className="ml-1">
+                    ({a.lastRecal.dfiDeltaSinceOpen !== 0 ? "sign changed since open" : "same sign as the open"})
                   </span>
                 )}
               </span>

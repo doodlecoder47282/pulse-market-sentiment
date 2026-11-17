@@ -193,7 +193,7 @@ export default function TradeDesk() {
         <RegimeChip origin="tradedesk" />
       </div>
 
-      {/* Regime transition forecast — forward-looking probability scoring */}
+      {/* Regime now: the current read and how the drivers score each regime (not a forecast) */}
       {/* 0DTE map: the day's dealer-gamma plan (shared/odteMap.ts); zones only in the personal edition */}
       <OdteMapCard />
 
