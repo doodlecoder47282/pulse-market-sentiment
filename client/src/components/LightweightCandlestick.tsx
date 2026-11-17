@@ -36,7 +36,7 @@ type GammaLevels = {
   putWall: number | null;
   zeroGamma: number | null;
   maxPain: number | null;
-  regime: "positive" | "negative";
+  regime: "positive" | "negative" | "neutral" | "unknown";
 };
 
 export default function LightweightCandlestick({
