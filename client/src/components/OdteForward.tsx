@@ -78,6 +78,7 @@ export default function OdteForward() {
   const [hoverMin, setHoverMin] = useState<number | null>(null);
   const [showOverlay, setShowOverlay] = useState(false);
   const [showLevels, setShowLevels] = useState(true);
+  const [showGuide, setShowGuide] = useState(false);
 
   const { data, isLoading, isError } = useQuery<OdteResponse>({
     queryKey: ["/api/odte/forward"],
@@ -294,6 +295,34 @@ export default function OdteForward() {
         </div>
       ) : (
         <>
+          {/* Plain-language read first: what the map says right now, in one sentence, before any chip or chart. */}
+          <div className="mb-2 rounded border border-cyan-400/30 bg-cyan-400/5 px-2 py-1.5 text-xs leading-relaxed" data-testid="odte-plain-read">
+            <span className="font-semibold text-cyan-200">In plain terms: </span>
+            <span className="text-foreground/90">
+              {w!.spot != null ? `${data.symbol} is at ${Math.round(w!.spot)}` : `${data.symbol}`}{w!.horizon === "next_session" ? "; the market is closed, so this is the map for the next session"
+                : session.state === "preopen" ? " (the last price before the open); the session has not started, so this is the map for the full session"
+                : w!.minutesLeft != null ? ` with ${w!.minutesLeft} minutes of the session left` : ""}.
+              If price only wandered at random from here, at the size of move the options market is pricing (about ±{w!.sigmaToClose} points to the close),
+              half of closes would land between {w!.bands[w!.bands.length - 1].q.p25} and {w!.bands[w!.bands.length - 1].q.p75} and
+              four in five between {w!.bands[w!.bands.length - 1].q.p10} and {w!.bands[w!.bands.length - 1].q.p90}.
+              The map has no view on direction: it is the yardstick a real move is measured against, not a forecast.
+            </span>
+            <button type="button" onClick={() => setShowGuide((v) => !v)} aria-expanded={showGuide} data-testid="button-toggle-wiener-guide"
+              className="ml-1 min-h-[28px] rounded border border-border px-2 align-middle text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
+              {showGuide ? "Hide guide" : "How to read this"}
+            </button>
+            {showGuide && (
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[11px] text-muted-foreground" data-testid="odte-wiener-guide">
+                <li><span className="text-foreground/85">Shaded bands on the chart:</span> where price sits at each time under the random-walk assumption. Darkest band holds half of outcomes, the next four in five, the widest 95 in 100. They are ranges at a moment, not paths price will follow.</li>
+                <li><span className="text-foreground/85">The bands start from now:</span> they are redrawn from the current price on every refresh, and today's path so far is the line to their left. They show the range ahead from here, so the chart does not show whether the session has already left this morning's bands.</li>
+                <li><span className="text-foreground/85">Touch by close:</span> the share of random walks that trade at that level at least once before the close. <span className="text-foreground/85">Close above:</span> the share that finish above it. A level 1σ away is touched about one time in three.</li>
+                <li><span className="text-foreground/85">1σ to the close:</span> one standard deviation of the remaining move, {w!.sigmaSource === "atm_iv" ? "from the 0DTE at-the-money implied volatility" : "from the price of the 0DTE at-the-money straddle (no implied volatility was available)"}. It normally shrinks through the day as time runs out; a rise in implied volatility can offset that.</li>
+                <li><span className="text-foreground/85">Pin, walls, flip:</span> dealer-positioning levels from the same chain, listed for reference. The random walk does not use them; the level table shows the model's odds of reaching each.</li>
+                <li><span className="text-foreground/85">Morning odds scorecard:</span> each morning's stated odds are compared after the close with what happened. Until {sc?.minDays ?? 50} days are scored the odds are untested and say so.</li>
+                <li><span className="text-foreground/85">What it leaves out:</span> trend, news, dealer hedging and jumps. Real sessions have fatter tails than this model.</li>
+              </ul>
+            )}
+          </div>
           <div className="mb-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
             <Chip label="Clock" testId="odte-variance-profile"
               value={w!.varianceProfile?.source === "empirical" ? `own profile · ${w!.varianceProfile.sessions}d` : "flat"}
