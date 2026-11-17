@@ -2467,3 +2467,14 @@ outcome, the second is the user's trades, not emitted signals); the master alpha
 matrix log and its existing summary rounds its hit rates, so no win count is rebuilt from it. Unverified
 from the sandbox: the route against a live database (no SQLite binary here); the count queries were checked
 against the table definitions only.
+Review of the signal record: MERGE-READY, eight should-fix items taken. (1) The 0DTE option ledger's 385 is a
+per-bucket gate; the row summed five buckets against it and would have printed a pooled share the ledger
+never computes. The row is now held to its largest bucket, and a share, when shown, is that bucket's own,
+named, with its own n. (2) Whale follow-through "emitted" is the whale_follows row count when it can be
+read (a failed hydration no longer reads as 0); the in-memory count is used, and labelled, only when the
+table cannot be read. (3) computeEdgeStats runs once per assembly, not twice. (4) Scenario odds: the row
+states which odds the graded days carried (two forecasters pooled) and calls its figure "top-pick hits".
+(5) An unavailable source still states its own gate. (6) Rows that never show a win share (tracked
+signals, Wiener, MM matrix) say what they are instead of counting down to a share; the hand-set 30 no
+longer applies to them. (7) emitted = graded + open + excluded on every row; a part the source cannot
+provide is unknown (a dash), not 0. (8) Concurrent requests on a cold cache share one assembly.

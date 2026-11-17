@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import DataStateChip from "@/components/DataStateChip";
 import {
-  countText, meanNetText, resultText, SIGNAL_RECORD_NOTE,
+  countText, gateText, meanNetText, resultText, SIGNAL_RECORD_NOTE,
   type SignalRecord, type SignalRecordSource,
 } from "@shared/signalRecord";
 
@@ -43,7 +43,7 @@ function SourceRow({ s }: { s: SignalRecordSource }) {
             data-testid={`chip-record-${s.id}`}
             data-state="insufficient"
           >
-            counts only
+            {s.kind === "calibration" ? "calibration" : "counts only"}
           </span>
         ) : (
           <DataStateChip state={CHIP_STATE[s.state]} reason={s.reason} testId={`chip-record-${s.id}`} />
@@ -59,19 +59,19 @@ function SourceRow({ s }: { s: SignalRecordSource }) {
         <Count label="excluded" value={s.n.excluded} testId={`text-record-excluded-${s.id}`} />
         {since && <span className="text-muted-foreground whitespace-nowrap">since {since}</span>}
       </div>
-      <p className={`text-xs font-mono leading-snug break-words mt-1 ${s.state === "ok" ? "" : s.state === "unavailable" ? "text-rose-400" : "text-amber-400"}`} data-testid={`text-record-result-${s.id}`}>
+      <p className={`text-xs font-mono leading-snug break-words mt-1 ${s.state === "unavailable" ? "text-rose-400" : s.state === "insufficient" && s.kind === "win_loss" ? "text-amber-400" : s.kind === "win_loss" ? "" : "text-muted-foreground"}`} data-testid={`text-record-result-${s.id}`}>
         {resultText(s)}
       </p>
       {mean && (
         <p className="text-xs font-mono leading-snug break-words" data-testid={`text-record-mean-${s.id}`}>{mean}</p>
       )}
-      {s.state === "ok" && s.reason && (
+      {s.state === "ok" && s.kind === "win_loss" && s.reason && (
         <p className="text-xs text-muted-foreground leading-snug break-words">{s.reason}</p>
       )}
       {s.notes.length > 0 && (
         <details className="mt-1">
           <summary className="text-xs text-muted-foreground cursor-pointer min-h-6 py-1 select-none" data-testid={`button-record-notes-${s.id}`}>
-            notes ({s.notes.length}); minimum sample {s.minSample} graded{s.minSampleFrom === "default" ? " (hand-set default)" : " (this source's own gate)"}
+            notes ({s.notes.length}); {gateText(s)}
           </summary>
           <ul className="text-xs text-muted-foreground leading-snug list-disc pl-4 space-y-0.5 break-words">
             {s.notes.map((n, i) => <li key={i}>{n}</li>)}
@@ -111,7 +111,7 @@ export default function SignalRecordCard() {
               {r.sources.map((s) => <SourceRow key={s.id} s={s} />)}
             </div>
             <p className="text-xs text-muted-foreground leading-snug break-words" data-testid="text-record-footer">
-              {r.note ?? SIGNAL_RECORD_NOTE} "excluded" rows were logged but could not be graded on the source's basis; they are counted, not scored. a dash means the store could not be read, which is different from zero.
+              {r.note ?? SIGNAL_RECORD_NOTE} "excluded" rows were logged and are neither graded on the source's basis nor still open; they are counted, not scored, so emitted = graded + open + excluded. a dash means the count is unknown (the store could not be read, or the source's own counts do not add up), which is different from zero.
             </p>
           </>
         )}

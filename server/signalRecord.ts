@@ -38,7 +38,7 @@ import type { EdgeStats } from "./edgeStats";
 import type { WienerScorecard } from "../shared/odteWiener";
 import type { ExpectancySummary } from "../shared/cryptoExpectancy";
 import {
-  buildSource, unavailableSource, makeSignalRecord, winsFromRate,
+  buildSource, unavailableSource, makeSignalRecord, winsFromRate, remainder,
   type SignalRecord, type SignalRecordSource, type SourceMeta, type WilsonFn,
 } from "../shared/signalRecord";
 
@@ -64,12 +64,16 @@ export interface CryptoRead {
 export interface RollingBrierLike {
   n: number; total: number; trivialTotal: number;
   topPickHits: number; topPickN: number; gated: boolean; minDays: number;
+  /** Which odds the graded rows carried (prob_source); "unrecorded" for rows before the column. */
+  probSourceMix?: Record<string, number>;
 }
 
 export interface SignalRecordDeps {
   now: () => number;
   wilson: WilsonFn;
-  mins: { odteCalibrationTotal: number; scenarioDays: number };
+  /** Each source's own gate, so a row states it even when its store cannot be read. */
+  mins: { odteCalibrationTotal: number; odteLedgerPerBucket: number; scenarioDays: number; wienerDays: number; cryptoGraded: number };
+  /** Rows in whale_follows. Throws when the table cannot be read. */
   whaleFollowStoreRows: () => number;
   whalePerformance: (windowDays: number) => PerformanceSnapshot;
   whaleFollowSnapshot: () => FollowSnapshot;
@@ -181,26 +185,50 @@ const msg = (e: unknown): string => {
 };
 
 // ── Adapters: map an existing summary to the record's shape (no new arithmetic) ──
+// Counts: emitted = graded + open + excluded on every row. "excluded" is what
+// was logged and is neither graded on the source's basis nor still open; the
+// notes say what it holds. Where the parts exceed the whole the unknown part
+// is null (shared remainder / buildSource), never forced to 0.
 
 export function whaleFollowSource(d: SignalRecordDeps): SignalRecordSource {
   const meta = SOURCE_META.whale_follow;
-  d.whaleFollowStoreRows(); // throws when the store cannot be read
   const perf = d.whalePerformance(WHALE_FOLLOW_WINDOW_DAYS);
   const snap = d.whaleFollowSnapshot();
   const o = perf.overall;
   const open = snap.byStatus.OPEN + snap.byStatus.TRIMMING + snap.byStatus.CLOSING;
+  const terminal = snap.byStatus.CLOSED + snap.byStatus.EXPIRED;
+  const inMemory = open + terminal;
+  // The scoreboard is computed from the positions held in memory (500 at most,
+  // hydrated from whale_follows at boot). The store's row count is the better
+  // "emitted" when it can be read: a failed hydration must not read as 0.
+  let storeRows: number | null = null;
+  let storeError: string | null = null;
+  try { storeRows = d.whaleFollowStoreRows(); } catch (e) { storeError = msg(e); }
+  if (storeRows == null && inMemory === 0) {
+    throw new Error(`whale_follows could not be read and no positions are held in memory: ${storeError}`);
+  }
+  const notes = [
+    `window: terminal positions of the last ${WHALE_FOLLOW_WINDOW_DAYS} days`,
+    `excluded holds every position that is neither scored nor open: ${o.excludedNoQuote} without a logged entry ask or exit bid, ${o.excludedNoFee} index-root positions without a configured fee, and terminal positions without a closing print or outside the window`,
+    "the same detections are also graded at expiry in the next row, under a different exit rule: the two rows are not additive",
+  ];
+  let emitted = inMemory;
+  if (storeRows == null) {
+    notes.push(`emitted counts the positions held in memory: the whale_follows table could not be read (${storeError})`);
+  } else if (storeRows >= inMemory) {
+    emitted = storeRows;
+    if (storeRows !== inMemory) notes.push(`the store holds ${storeRows} positions and ${inMemory} are held in memory; the ${storeRows - inMemory} not in memory (not loaded, or dropped at the 500-position cap or after 90 days) are counted as excluded: the scoreboard cannot score them`);
+  } else {
+    notes.push(`emitted counts the ${inMemory} positions held in memory: the store holds fewer rows (${storeRows})`);
+  }
   return buildSource({
     ...meta,
-    n: { emitted: snap.total, graded: o.count, open, excluded: o.excludedNoQuote + o.excludedNoFee },
+    n: { emitted, graded: o.count, open, excluded: remainder(emitted, o.count, open) },
     wins: o.wins,
     meanNet: o.avgPct, meanNetUnit: "mean return on cash paid, after fees", meanNetScale: "fraction",
     minSample: null,
     since: d.now() - WHALE_FOLLOW_WINDOW_DAYS * DAY_MS,
-    notes: [
-      `window: terminal positions of the last ${WHALE_FOLLOW_WINDOW_DAYS} days (the store keeps them that long)`,
-      `excluded: ${o.excludedNoQuote} without a logged entry ask or exit bid, ${o.excludedNoFee} index-root positions without a configured fee`,
-      "the same detections are also graded at expiry in the next row, under a different exit rule: the two rows are not additive",
-    ],
+    notes,
   }, d.wilson);
 }
 
@@ -209,9 +237,12 @@ export function whaleAlertExpirySource(d: SignalRecordDeps): SignalRecordSource 
   d.predictionOutcomeRows();
   const s = d.edgeStats(EDGE_STATS_WINDOW_DAYS);
   const w = s.whaleAlerts;
+  // The summary's `total` leaves out rows graded under the earlier proxy
+  // method; they were emitted, so they are added back and sit in excluded.
+  const emitted = w.total + w.legacyProxyExcluded;
   return buildSource({
     ...meta,
-    n: { emitted: w.total, graded: w.graded, open: w.pending, excluded: w.ungradedNoMark + w.legacyProxyExcluded },
+    n: { emitted, graded: w.graded, open: w.pending, excluded: remainder(emitted, w.graded, w.pending) },
     wins: winsFromRate(w.hit30Rate, w.graded),
     meanNet: w.avgPctReturn, meanNetUnit: "mean return on the premium, before fees", meanNetScale: "fraction",
     minSample: null,
@@ -252,14 +283,16 @@ export function odteT1Source(d: SignalRecordDeps): SignalRecordSource {
   const wins = r.buckets.reduce((s, b) => s + b.wins, 0);
   return buildSource({
     ...meta,
-    n: { emitted: c.fired, graded, open: c.open, excluded: Math.max(0, c.fired - c.open - graded) },
+    n: { emitted: c.fired, graded, open: c.open, excluded: remainder(c.fired, graded, c.open) },
     wins,
     minSample: d.mins.odteCalibrationTotal,
+    minSampleScope: "graded fires in total",
     since: c.firstAt,
     notes: [
       "graded = fired alerts with a T1-or-stop result inside the grade buckets 72 to 100; per-bucket rates are on the grade calibration card",
+      "excluded = fired alerts that were processed without a T1-or-stop result, or scored outside the grade buckets",
       `rejected setups are graded as a counterfactual and are not in this row (${r.rejectedCounterfactual.n} graded, ${c.rejected} logged)`,
-      `minimum sample: the ${d.mins.odteCalibrationTotal} graded fires the sizer requires before it uses the fitted curve`,
+      `minimum sample: the ${d.mins.odteCalibrationTotal} graded fires in total the sizer requires before it uses the fitted curve (the calibration report's own total gate)`,
     ],
   }, d.wilson);
 }
@@ -278,18 +311,30 @@ export function odteOptionLedgerSource(d: SignalRecordDeps): SignalRecordSource 
     },
   };
   const graded = buckets.reduce((s, b) => s + b.n, 0);
-  const wins = buckets.reduce((s, b) => s + b.wins, 0);
-  const min = buckets[0]?.minFiresForLedgerBacked ?? null;
+  const min = buckets[0]?.minFiresForLedgerBacked ?? d.mins.odteLedgerPerBucket;
+  // The ledger's gate is PER GRADE BUCKET and it computes a win rate per
+  // bucket only; it never states one across buckets. So the row is held to
+  // the largest bucket, and a win share is shown only for a bucket the ledger
+  // itself reports as ledger-backed, named as that bucket.
+  const largest = buckets.reduce<OptionLedgerBucketReport | null>((m, b) => (m == null || b.n > m.n ? b : m), null);
+  const backed = buckets.filter((b) => b.labelStatus === "ledger_backed").map((b) => b.label);
   return buildSource({
     ...meta,
-    n: { emitted: c.fired, graded, open: c.open, excluded: Math.max(0, c.fired - c.open - graded) },
-    wins,
+    n: { emitted: c.fired, graded, open: c.open, excluded: remainder(c.fired, graded, c.open) },
+    wins: largest ? largest.wins : null,
+    winN: largest ? largest.n : null,
+    winScope: largest ? `grade bucket ${largest.label} only, the ledger's largest; the ledger states no figure across buckets` : null,
+    gateCount: largest ? largest.n : 0,
+    gateLabel: largest && largest.n > 0 ? `in one grade bucket (largest: ${largest.label}); the gate is per bucket, not on the ${graded} graded in total` : "in one grade bucket; the gate is per bucket",
     minSample: min,
+    minSampleScope: "option-graded fires per grade bucket",
     since: c.firstAt,
     notes: [
+      "graded = option-graded fires over all grade buckets; the win share, when shown, is one bucket's, as the ledger computes it",
+      `grade buckets at the ledger's gate: ${backed.length ? backed.join(", ") : "none"}; per-bucket figures are on the grade calibration card`,
       "excluded = fired alerts without logged option marks (ungraded, never estimated) or outside the grade buckets",
       "the ledger reports mean winner and mean loser per grade bucket, not one mean for the source, so no mean is shown here",
-      min != null ? `minimum sample: the ${min} option-graded fires a grade bucket needs before the ledger is used as a point estimate` : "the ledger reported no minimum sample",
+      `minimum sample: the ${min} option-graded fires a grade bucket needs before the ledger is used as a point estimate (per bucket)`,
     ],
   }, d.wilson);
 }
@@ -307,17 +352,23 @@ export function regimeCallsSource(d: SignalRecordDeps): SignalRecordSource {
   const repeats = Math.max(0, r.graded - sessions);
   return buildSource({
     ...meta,
-    n: { emitted: r.total, graded: sessions, open: r.pending, excluded: legacy + repeats },
+    n: { emitted: r.total, graded: sessions, open: r.pending, excluded: remainder(r.total, sessions, r.pending) },
     wins,
     minSample: null,
     since: s.windowFrom,
     notes: [
       `window: calls captured in the last ${s.windowDays} days`,
-      `graded = independent sessions (the first graded call of each ET session): calls logged minutes apart share one outcome, so ${repeats} repeat calls are excluded from the count`,
-      `${legacy} calls graded under the earlier close-to-close proxy are excluded`,
+      `graded = independent sessions (the first graded call of each ET session): calls logged minutes apart share one outcome`,
+      `excluded: ${repeats} repeat calls inside an already-counted session, ${legacy} calls graded under the earlier close-to-close proxy, and any processed call without a result`,
       r.calibrationEvent ? `graded event: ${r.calibrationEvent}` : "graded event: regime-match proxy on the called horizon",
     ],
   }, d.wilson);
+}
+
+/** "risk-neutral-implied 12, hand-set-heuristic 18". */
+function mixLine(mix: Record<string, number> | undefined): string | null {
+  const e = Object.entries(mix ?? {}).filter(([, v]) => v > 0);
+  return e.length ? e.map(([k, v]) => `${k} ${v}`).join(", ") : null;
 }
 
 export function scenarioOddsSource(d: SignalRecordDeps): SignalRecordSource {
@@ -327,18 +378,28 @@ export function scenarioOddsSource(d: SignalRecordDeps): SignalRecordSource {
   const graded = r?.topPickN ?? 0;
   const min = r?.minDays ?? d.mins.scenarioDays;
   const ready = r != null && !r.gated;
+  const open = Math.max(0, c.predictionDays - c.settledDays);
   const notes = [
     `graded = the latest ${SCENARIO_WINDOW_DAYS} settled days that have a recorded morning forecast (the window the calibration card scores)`,
     "excluded = settled days outside that window or without a recorded forecast",
   ];
+  const mix = mixLine(r?.probSourceMix);
+  if (mix) {
+    const forecasters = Object.keys(r?.probSourceMix ?? {}).filter((k) => k !== "unrecorded").length;
+    notes.push(`odds recorded as: ${mix}${forecasters > 1 ? " (two forecasters are pooled in this row, as in the source's own score)" : ""}`);
+  } else if (r) {
+    notes.push("the source did not report which odds the graded days carried");
+  }
   if (ready && r && graded >= min) {
     notes.push(`Brier score over the window ${r.total.toFixed(3)} against ${r.trivialTotal.toFixed(3)} for always stating the base rate (lower is closer; the base rate is fitted on the same days)`);
   }
   return buildSource({
     ...meta,
-    n: { emitted: c.predictionDays, graded, open: Math.max(0, c.predictionDays - c.settledDays), excluded: Math.max(0, c.settledDays - graded) },
+    n: { emitted: c.predictionDays, graded, open, excluded: remainder(c.predictionDays, graded, open) },
     wins: r ? r.topPickHits : null,
+    winLabel: "top-pick hits",
     minSample: min,
+    minSampleScope: "settled days",
     sourceGate: r ? { ready: !r.gated, reason: `${r.n} of ${min} settled days needed` } : null,
     since: null,
     notes,
@@ -349,7 +410,7 @@ export function wienerOddsSource(d: SignalRecordDeps): SignalRecordSource {
   const meta = SOURCE_META.wiener_odds;
   const c = d.mapDayCounts(WIENER_SYMBOL);
   const sc = d.wienerScorecard(WIENER_SYMBOL);
-  const notes = [`symbol ${WIENER_SYMBOL}; graded = settled days with scored levels`];
+  const notes = [`symbol ${WIENER_SYMBOL}; graded = settled days with scored levels; excluded = settled days without scored levels`];
   if (sc.tested) {
     const line = (label: string, x: WienerScorecard["touch"]) =>
       x.brier != null && x.brierBaseRate != null
@@ -357,11 +418,13 @@ export function wienerOddsSource(d: SignalRecordDeps): SignalRecordSource {
         : `${label}: no scored levels`;
     notes.push(line("touch odds", sc.touch), line("close-above odds", sc.close));
   }
+  const open = Math.max(0, c.mapped - c.settled);
   return buildSource({
     ...meta,
-    n: { emitted: c.mapped, graded: sc.days, open: Math.max(0, c.mapped - c.settled), excluded: Math.max(0, c.settled - sc.days) },
+    n: { emitted: c.mapped, graded: sc.days, open, excluded: remainder(c.mapped, sc.days, open) },
     wins: null,
     minSample: sc.minDays,
+    minSampleScope: "scored days",
     since: null,
     notes,
   }, d.wilson);
@@ -371,15 +434,17 @@ export async function mmMatrixSource(d: SignalRecordDeps): Promise<SignalRecordS
   const meta = SOURCE_META.mm_matrix;
   const probe = await d.mmLogProbe();
   const s = await d.mmStats();
+  const open = remainder(s.total, s.graded, 0);
   return buildSource({
     ...meta,
-    n: { emitted: s.total, graded: s.graded, open: Math.max(0, s.total - s.graded), excluded: 0 },
+    n: { emitted: s.total, graded: s.graded, open, excluded: open == null ? null : 0 },
     wins: null,
     minSample: null,
     since: null,
     notes: [
       probe === "absent" ? "the prediction log file does not exist yet: nothing has been logged" : "per-cell observed frequencies against the stated odds are in the MM matrix stats",
       "the master alpha composite is logged on the same snapshots and is not a separate row",
+      ...(open == null ? [`the log holds more outcome rows (${s.graded}) than snapshots (${s.total}): open and excluded are unknown`] : []),
     ],
   }, d.wilson);
 }
@@ -391,7 +456,7 @@ export function cryptoDeskSource(d: SignalRecordDeps): SignalRecordSource {
   const blocked = g.validation === "INSUFFICIENT DATA";
   return buildSource({
     ...meta,
-    n: { emitted: c.enterCoins.total, graded: g.n, open: c.enterCoins.open, excluded: g.skipped },
+    n: { emitted: c.enterCoins.total, graded: g.n, open: c.enterCoins.open, excluded: remainder(c.enterCoins.total, g.n, c.enterCoins.open) },
     wins: g.positiveShare.yes,
     meanNet: g.meanNetPct, meanNetUnit: `mean net return on a $${g.sizeUsd} position`, meanNetScale: "percent",
     minSample: g.minSample,
@@ -399,36 +464,53 @@ export function cryptoDeskSource(d: SignalRecordDeps): SignalRecordSource {
     since: null,
     notes: [
       `rule book ${c.currentVersion}; one row per coin (its first ENTER), all logged signals`,
-      `excluded = graded rows whose return could not be computed (${g.noData} could not be priced past the horizon: likely rugs, outside the denominator)`,
+      `excluded = resolved coins whose return could not be computed (the summary skipped ${g.skipped}; ${g.noData} could not be priced past the horizon: likely rugs, outside the denominator)`,
       "market-cap multiples stand in for price multiples, which overstates a move when supply grew",
     ],
   }, d.wilson);
 }
 
 type Adapter = (d: SignalRecordDeps) => SignalRecordSource | Promise<SignalRecordSource>;
+type OwnGate = (d: SignalRecordDeps) => { minSample: number; scope: string };
 
-/** Row order of the record. Each source stands alone: nothing below combines two of them. */
-export const SOURCE_ADAPTERS: Array<{ id: string; build: Adapter; minSample?: (d: SignalRecordDeps) => number | null }> = [
+/** Row order of the record. Each source stands alone: nothing below combines two of them. `gate` = the source's own minimum, stated even when its store cannot be read. */
+export const SOURCE_ADAPTERS: Array<{ id: string; build: Adapter; gate?: OwnGate }> = [
   { id: "whale_follow", build: whaleFollowSource },
   { id: "whale_alert_expiry", build: whaleAlertExpirySource },
   { id: "tracked_signals", build: trackedSignalsSource },
-  { id: "odte_t1", build: odteT1Source, minSample: (d) => d.mins.odteCalibrationTotal },
-  { id: "odte_option_ledger", build: odteOptionLedgerSource },
+  { id: "odte_t1", build: odteT1Source, gate: (d) => ({ minSample: d.mins.odteCalibrationTotal, scope: "graded fires in total" }) },
+  { id: "odte_option_ledger", build: odteOptionLedgerSource, gate: (d) => ({ minSample: d.mins.odteLedgerPerBucket, scope: "option-graded fires per grade bucket" }) },
   { id: "regime_calls", build: regimeCallsSource },
-  { id: "scenario_odds", build: scenarioOddsSource, minSample: (d) => d.mins.scenarioDays },
-  { id: "wiener_odds", build: wienerOddsSource },
+  { id: "scenario_odds", build: scenarioOddsSource, gate: (d) => ({ minSample: d.mins.scenarioDays, scope: "settled days" }) },
+  { id: "wiener_odds", build: wienerOddsSource, gate: (d) => ({ minSample: d.mins.wienerDays, scope: "scored days" }) },
   { id: "mm_matrix", build: mmMatrixSource },
-  { id: "crypto_desk", build: cryptoDeskSource },
+  { id: "crypto_desk", build: cryptoDeskSource, gate: (d) => ({ minSample: d.mins.cryptoGraded, scope: "graded" }) },
 ];
 
+/** One call per assembly for a summary two rows read (a result or its error is reused). */
+function once<A extends unknown[], R>(fn: (...a: A) => R): (...a: A) => R {
+  let done = false, value: R | undefined, error: unknown;
+  return (...a: A): R => {
+    if (!done) {
+      done = true;
+      try { value = fn(...a); } catch (e) { error = e ?? new Error("failed"); }
+    }
+    if (error !== undefined) throw error;
+    return value as R;
+  };
+}
+
 /** Assemble the record. A source that throws is "unavailable" with the reason; the others are unaffected. */
-export async function assembleSignalRecord(d: SignalRecordDeps): Promise<SignalRecord> {
+export async function assembleSignalRecord(deps: SignalRecordDeps): Promise<SignalRecord> {
+  // Whale alerts and regime calls read the same edge stats (one fixed window): compute them once.
+  const d: SignalRecordDeps = { ...deps, edgeStats: once(deps.edgeStats), predictionOutcomeRows: once(deps.predictionOutcomeRows) };
   const sources: SignalRecordSource[] = [];
   for (const a of SOURCE_ADAPTERS) {
     try {
       sources.push(await a.build(d));
     } catch (e) {
-      sources.push(unavailableSource(SOURCE_META[a.id], `could not be read: ${msg(e)}`, a.minSample ? a.minSample(d) : null));
+      const g = a.gate ? a.gate(d) : null;
+      sources.push(unavailableSource(SOURCE_META[a.id], `could not be read: ${msg(e)}`, g?.minSample ?? null, g?.scope ?? null));
     }
   }
   return makeSignalRecord(sources, d.now());
@@ -438,7 +520,9 @@ export async function assembleSignalRecord(d: SignalRecordDeps): Promise<SignalR
 
 export async function loadDeps(): Promise<SignalRecordDeps> {
   const { sqlite } = await import("./storage");
-  const { wilsonInterval } = await import("./validationMath");
+  const { wilsonInterval, MIN_FIRES_FOR_POINT_ESTIMATE } = await import("./validationMath");
+  const { SCORECARD_MIN_DAYS } = await import("../shared/odteWiener");
+  const { CRYPTO_SAMPLE_READY_MIN_GRADED } = await import("./cryptoStats");
   const { getPerformanceSnapshot, getFollowSnapshot } = await import("./whaleFollowThrough");
   const { getAllTracked } = await import("./signalTracker");
   const { getCalibrationReport, MIN_TOTAL } = await import("./gradeCalibration");
@@ -454,7 +538,10 @@ export async function loadDeps(): Promise<SignalRecordDeps> {
   return {
     now: () => Date.now(),
     wilson: (k, n) => wilsonInterval(k, n),
-    mins: { odteCalibrationTotal: MIN_TOTAL, scenarioDays: CALIBRATION_MIN_DAYS },
+    mins: {
+      odteCalibrationTotal: MIN_TOTAL, odteLedgerPerBucket: MIN_FIRES_FOR_POINT_ESTIMATE, scenarioDays: CALIBRATION_MIN_DAYS,
+      wienerDays: SCORECARD_MIN_DAYS, cryptoGraded: CRYPTO_SAMPLE_READY_MIN_GRADED,
+    },
     whaleFollowStoreRows: () => num(one("SELECT COUNT(*) AS n FROM whale_follows").n),
     whalePerformance: (windowDays) => getPerformanceSnapshot({ windowDays }),
     whaleFollowSnapshot: () => getFollowSnapshot({ includeExpired: true }),
@@ -503,12 +590,26 @@ export async function loadDeps(): Promise<SignalRecordDeps> {
 }
 
 let _cache: { at: number; record: SignalRecord } | null = null;
+let _inFlight: Promise<SignalRecord> | null = null;
 
-/** The record, cached for a minute (the summaries behind it are not free). */
-export async function getSignalRecord(force = false): Promise<SignalRecord> {
+/**
+ * The record, cached for a minute (the summaries behind it are not free).
+ * Concurrent callers on a cold cache share one assembly. `load` is injectable for tests.
+ */
+export function getSignalRecord(force = false, load: () => Promise<SignalRecordDeps> = loadDeps): Promise<SignalRecord> {
   const now = Date.now();
-  if (!force && _cache && now - _cache.at < CACHE_MS) return _cache.record;
-  const record = await assembleSignalRecord(await loadDeps());
-  _cache = { at: now, record };
-  return record;
+  if (!force && _cache && now - _cache.at < CACHE_MS) return Promise.resolve(_cache.record);
+  if (_inFlight) return _inFlight;
+  const run = (async () => {
+    const record = await assembleSignalRecord(await load());
+    _cache = { at: Date.now(), record };
+    return record;
+  })();
+  _inFlight = run;
+  const clear = () => { if (_inFlight === run) _inFlight = null; };
+  run.then(clear, clear);
+  return run;
 }
+
+/** Tests only. */
+export function _resetSignalRecordCache(): void { _cache = null; _inFlight = null; }

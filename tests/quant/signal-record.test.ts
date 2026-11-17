@@ -6,12 +6,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   DEFAULT_MIN_GRADED, SIGNAL_RECORD_NOTE, buildSource, unavailableSource, makeSignalRecord, resolveMinSample,
-  winsFromRate, resultText, meanNetText, countText, insufficientText,
+  winsFromRate, resultText, meanNetText, countText, insufficientText, countsReconcile, remainder, gateText, gateFor, kindText,
   type SourceInput, type SignalRecordSource,
 } from "../../shared/signalRecord";
 import { wilsonInterval } from "../../server/validationMath";
 import {
-  assembleSignalRecord, SOURCE_ADAPTERS, SOURCE_META, whaleFollowSource, cryptoDeskSource, scenarioOddsSource,
+  assembleSignalRecord, getSignalRecord, _resetSignalRecordCache, SOURCE_ADAPTERS, SOURCE_META, whaleAlertExpirySource, odteT1Source, mmMatrixSource, whaleFollowSource, cryptoDeskSource, scenarioOddsSource,
   wienerOddsSource, odteOptionLedgerSource, regimeCallsSource, trackedSignalsSource,
   type SignalRecordDeps,
 } from "../../server/signalRecord";
@@ -173,7 +173,7 @@ function fakeDeps(over: Partial<SignalRecordDeps> = {}): SignalRecordDeps {
   return {
     now: () => 1_800_000_000_000,
     wilson,
-    mins: { odteCalibrationTotal: 40, scenarioDays: 20 },
+    mins: { odteCalibrationTotal: 40, odteLedgerPerBucket: 385, scenarioDays: 20, wienerDays: 50, cryptoGraded: 50 },
     whaleFollowStoreRows: () => 0,
     whalePerformance: (windowDays) => ({ asOf: 0, windowDays, totalTerminal: 0, bySource: [], overall: scoreRow() }) as any,
     whaleFollowSnapshot: () => ({ asOf: 0, total: 0, byStatus: { OPEN: 0, TRIMMING: 0, CLOSING: 0, CLOSED: 0, EXPIRED: 0 }, positions: [] }) as any,
@@ -203,8 +203,10 @@ test("assemble: one row per source in a fixed order, each on its own basis, none
   const r = await assembleSignalRecord(fakeDeps());
   assert.deepEqual(r.sources.map((s) => s.id), SOURCE_ADAPTERS.map((a) => a.id));
   assert.equal(new Set(r.sources.map((s) => s.id)).size, r.sources.length);
+  const noGate = new Set(["tracked_signals", "mm_matrix"]); // rows that never show a win share and have no gate of their own
   for (const s of r.sources) {
-    assert.equal(s.state, "insufficient", s.id);
+    assert.equal(s.state, noGate.has(s.id) ? "ok" : "insufficient", s.id);
+    assert.ok(countsReconcile(s.n), s.id);
     assert.equal(s.winShare, null, s.id);
     assert.equal(s.meanNet, null, s.id);
     assert.ok(s.basis.entry && s.basis.exit && s.basis.costs, s.id);
@@ -228,6 +230,10 @@ test("assemble: a store that throws is unavailable with the reason; the other ro
     assert.equal(s.n.graded, null);
   }
   assert.equal(by.get("odte_t1")!.minSample, 40);
+  // An unavailable source still states its own gate, not the default 30.
+  assert.equal(by.get("odte_option_ledger")!.minSample, 385);
+  assert.equal(by.get("odte_option_ledger")!.minSampleFrom, "source");
+  assert.match(gateText(by.get("odte_option_ledger")!), /^minimum sample 385 option-graded fires per grade bucket \(this source's own gate\)$/);
   assert.equal(by.get("mm_matrix")!.state, "unavailable");
   assert.match(by.get("mm_matrix")!.reason ?? "", /EACCES/);
   assert.equal(by.get("whale_follow")!.state, "insufficient");
@@ -243,7 +249,23 @@ test("whale follow-through: figures are the scoreboard row's own, on its 90-day 
   const s = whaleFollowSource(d);
   assert.equal(asked, 90);
   assert.equal(s.state, "ok");
+  // Store (default 0 rows) holds fewer than memory: emitted is the memory count and says so.
   assert.deepEqual(s.n, { emitted: 67, graded: 40, open: 22, excluded: 5 });
+  assert.ok(s.notes.some((x) => /emitted counts the 67 positions held in memory/.test(x)));
+  // Store readable and larger: emitted is the store's count; rows not in memory are excluded and said so.
+  const big = whaleFollowSource({ ...d, whaleFollowStoreRows: () => 900 });
+  assert.deepEqual(big.n, { emitted: 900, graded: 40, open: 22, excluded: 838 });
+  assert.ok(countsReconcile(big.n));
+  assert.ok(big.notes.some((x) => /store holds 900 positions and 67 are held in memory/.test(x)));
+  // Store unreadable but memory populated: memory counts, labelled.
+  const mem = whaleFollowSource({ ...d, whaleFollowStoreRows: () => { throw new Error("no such table: whale_follows"); } });
+  assert.equal(mem.n.emitted, 67);
+  assert.ok(mem.notes.some((x) => /positions held in memory: the whale_follows table could not be read \(no such table/.test(x)));
+  // Failed hydration: the store has rows, memory has none. Never "emitted 0".
+  const cold = whaleFollowSource(fakeDeps({ whaleFollowStoreRows: () => 300 }));
+  assert.deepEqual(cold.n, { emitted: 300, graded: 0, open: 0, excluded: 300 });
+  // Store unreadable and memory empty: unknown, so the source is unavailable.
+  assert.throws(() => whaleFollowSource(fakeDeps({ whaleFollowStoreRows: () => { throw new Error("locked"); } })), /could not be read and no positions are held in memory: locked/);
   assert.equal(s.winShare, 14 / 40);
   assert.equal(s.winLo, wilsonInterval(14, 40).lo);
   assert.equal(s.meanNet, -0.18);
@@ -263,14 +285,21 @@ test("tracked signals: counts only (no summary function), mid to mid stated", ()
   assert.equal(s.kind, "counts_only");
   assert.deepEqual(s.n, { emitted: 33, graded: 32, open: 1, excluded: 0 });
   assert.equal(s.state, "ok");
+  // Under 30 it is still what it is: counts only, no countdown to a share that never comes.
+  const few = trackedSignalsSource(fakeDeps({ trackedSignals: () => all.slice(0, 4) }));
+  assert.equal(few.state, "ok");
+  assert.equal(resultText(few), kindText("counts_only"));
+  assert.doesNotMatch(resultText(few), /INSUFFICIENT|needed/);
+  assert.equal(few.minSampleFrom, "not_applicable");
+  assert.equal(gateText(few), "no minimum sample applies to this row");
   assert.equal(s.winShare, null);
   assert.equal(s.since, 900);
   assert.match(s.basis.exit, /mid to mid/);
   assert.match(s.basis.costs, /no fees/);
 });
 
-test("0DTE option ledger: gated at the ledger's own 385 fires; costs say whether a fee is deducted", () => {
-  const bucket = (label: string, n: number, wins: number) => ({ label, n, wins, avgWinReturn: null, avgLossReturn: null, winRate: null, wilsonLo: null, wilsonHi: null, labelStatus: "heuristic", minFiresForLedgerBacked: 385, positionContracts: {}, returnDefinition: "" }) as any;
+test("0DTE option ledger: the 385 gate is per grade bucket; no share is pooled across buckets", () => {
+  const bucket = (label: string, n: number, wins: number) => ({ label, n, wins, avgWinReturn: null, avgLossReturn: null, winRate: n ? wins / n : null, wilsonLo: null, wilsonHi: null, labelStatus: n >= 385 ? "ledger_backed" : "heuristic", minFiresForLedgerBacked: 385, positionContracts: {}, returnDefinition: "" }) as any;
   let feeAsked = -1;
   const d = fakeDeps({
     odteAuditCounts: () => ({ fired: 120, open: 5, rejected: 300, firstAt: 1_700_000_000_000 }),
@@ -280,12 +309,36 @@ test("0DTE option ledger: gated at the ledger's own 385 fires; costs say whether
   assert.equal(feeAsked, 0);
   assert.match(gross.basis.costs, /before fees/);
   assert.equal(gross.state, "insufficient");
-  assert.equal(gross.reason, "INSUFFICIENT DATA: 80 of 385 needed");
+  assert.equal(gross.reason, "INSUFFICIENT DATA: 50 of 385 needed in one grade bucket (largest: 80-84); the gate is per bucket, not on the 80 graded in total");
   assert.equal(gross.winShare, null);
   assert.deepEqual(gross.n, { emitted: 120, graded: 80, open: 5, excluded: 35 });
+  assert.equal(gateText(gross), "minimum sample 385 option-graded fires per grade bucket (this source's own gate)");
   const net = odteOptionLedgerSource({ ...d, odteIndexFee: () => 0.95 });
   assert.equal(feeAsked, 0.95);
   assert.match(net.basis.costs, /\$0\.95 per contract per side/);
+
+  // 400 fires spread over the buckets: over 385 in total, but every bucket is still heuristic. Counts only.
+  const spread = odteOptionLedgerSource(fakeDeps({
+    odteAuditCounts: () => ({ fired: 450, open: 0, rejected: 0, firstAt: null }),
+    odteLedger: () => [bucket("72-79", 80, 40), bucket("80-84", 80, 44), bucket("85-89", 80, 50), bucket("90-94", 80, 52), bucket("95-100", 80, 60)],
+  }));
+  assert.equal(spread.n.graded, 400);
+  assert.equal(spread.state, "insufficient");
+  assert.equal(spread.winShare, null);
+  assert.match(spread.reason ?? "", /^INSUFFICIENT DATA: 80 of 385 needed in one grade bucket/);
+
+  // One bucket at the gate: the share shown is that bucket's own (the ledger's figure), named, with its own n.
+  const one = odteOptionLedgerSource(fakeDeps({
+    odteAuditCounts: () => ({ fired: 520, open: 0, rejected: 0, firstAt: null }),
+    odteLedger: () => [bucket("72-79", 100, 30), bucket("80-84", 390, 195)],
+  }));
+  assert.equal(one.state, "ok");
+  assert.equal(one.n.graded, 490);
+  assert.equal(one.winN, 390);
+  assert.equal(one.winShare, 195 / 390);          // not (30 + 195) / 490
+  assert.equal(one.winLo, wilsonInterval(195, 390).lo);
+  assert.match(resultText(one), /^50% wins \(95% interval 45% to 55%, n=390; grade bucket 80-84 only, the ledger's largest; the ledger states no figure across buckets\)$/);
+  assert.ok(one.notes.some((x) => /grade buckets at the ledger's gate: 80-84;/.test(x)));
 });
 
 test("regime calls: independent sessions are the sample; repeats and legacy rows are excluded and counted", () => {
@@ -318,13 +371,23 @@ test("scenario odds: the source's own day gate holds the figures back", () => {
   assert.equal(over.winShare, 15 / 30);
   assert.deepEqual(over.n, { emitted: 70, graded: 30, open: 2, excluded: 38 });
   assert.ok(over.notes.some((x) => /Brier score/.test(x)));
+  // The figure is named for what it is, and the pooled forecasters are stated.
+  assert.equal(over.winLabel, "top-pick hits");
+  assert.match(resultText(over), /^50% top-pick hits \(95% interval /);
+  assert.ok(over.notes.some((x) => /did not report which odds/.test(x)));
+  const mixed = scenarioOddsSource(fakeDeps({ scenarioCounts: () => ({ predictionDays: 70, settledDays: 68 }), scenarioBrier: () => ({ ...brier(30, false), probSourceMix: { "risk-neutral-implied": 12, "hand-set-heuristic": 18 } }) }));
+  assert.ok(mixed.notes.some((x) => x === "odds recorded as: risk-neutral-implied 12, hand-set-heuristic 18 (two forecasters are pooled in this row, as in the source's own score)"));
+  const single = scenarioOddsSource(fakeDeps({ scenarioCounts: () => ({ predictionDays: 70, settledDays: 68 }), scenarioBrier: () => ({ ...brier(30, false), probSourceMix: { "risk-neutral-implied": 25, unrecorded: 5 } }) }));
+  assert.ok(single.notes.some((x) => x === "odds recorded as: risk-neutral-implied 25, unrecorded 5"));
 });
 
 test("Wiener scorecard: a calibration row, gated at its own 50 days, never a win share", () => {
   const cal = { n: 400, buckets: [], brier: 0.19, brierBaseRate: 0.21 };
   const under = wienerOddsSource(fakeDeps({ mapDayCounts: () => ({ mapped: 30, settled: 28 }), wienerScorecard: () => ({ days: 27, touch: cal, close: cal, minDays: 50, tested: false }) }));
   assert.equal(under.state, "insufficient");
-  assert.equal(under.reason, "INSUFFICIENT DATA: 27 of 50 needed");
+  // Says what the row is; never a countdown to a win share it will not show.
+  assert.doesNotMatch(under.reason ?? "", /INSUFFICIENT DATA|needed/);
+  assert.match(resultText(under), /^calibration: stated odds scored against outcomes; .* The source reads its scorecard from 50 graded; 27 so far$/);
   assert.ok(!under.notes.some((x) => /Brier/.test(x)));
   const over = wienerOddsSource(fakeDeps({ mapDayCounts: () => ({ mapped: 60, settled: 58 }), wienerScorecard: () => ({ days: 55, touch: cal, close: cal, minDays: 50, tested: true }) }));
   assert.equal(over.state, "ok");
@@ -339,7 +402,7 @@ test("crypto desk: the expectancy summary's own figures and its own INSUFFICIENT
       graded: expectancy({ n: 60, skipped: 14, meanNetPct: -31.4, positiveShare: { yes: 21, of: 60, lo: 24.2, hi: 47.6 }, sampleReady: true, validation: "NO DEMONSTRATED EDGE", validationReason: null, noData: 4 }) as any }),
   }));
   assert.equal(ok.state, "ok");
-  assert.deepEqual(ok.n, { emitted: 90, graded: 60, open: 10, excluded: 14 });
+  assert.deepEqual(ok.n, { emitted: 90, graded: 60, open: 10, excluded: 20 });
   assert.equal(ok.winShare, 21 / 60);
   assert.equal(ok.meanNet, -31.4);
   assert.equal(ok.meanNetScale, "percent");
@@ -354,12 +417,124 @@ test("crypto desk: the expectancy summary's own figures and its own INSUFFICIENT
   assert.equal(selected.meanNet, null);
 });
 
+test("counts reconcile: emitted = graded + open + excluded on every row whose four counts are numbers", async () => {
+  const bucket = (label: string, n: number, wins: number) => ({ label, lo: 0, hi: 0, n, wins, winRate: null, wilsonLo: null, wilsonHi: null, fitted: null, prior: 0.5, labelStatus: "heuristic", minFiresForLedgerBacked: 385 }) as any;
+  const r = await assembleSignalRecord(fakeDeps({
+    whaleFollowStoreRows: () => 510,
+    whalePerformance: (windowDays) => ({ asOf: 0, windowDays, totalTerminal: 60, bySource: [], overall: scoreRow({ count: 50, wins: 20, avgPct: 0.01, excludedNoQuote: 6, excludedNoFee: 4 }) }) as any,
+    // 3 terminal positions without a closing print sit in no scoreboard bucket: they must land in excluded.
+    whaleFollowSnapshot: () => ({ asOf: 0, total: 500, byStatus: { OPEN: 400, TRIMMING: 20, CLOSING: 17, CLOSED: 30, EXPIRED: 33 }, positions: [] }) as any,
+    trackedSignals: () => [{ id: "a", source: "manual", symbol: "SPY", entry: { at: 1 }, status: "OPEN", statusAt: 1 } as any],
+    odteAuditCounts: () => ({ fired: 200, open: 12, rejected: 50, firstAt: 1 }),
+    odteCalibration: () => ({ asOf: 0, source: "fitted", totalGradedFires: 150, buckets: [bucket("72-79", 90, 40), bucket("80-84", 55, 30)], rejectedCounterfactual: { n: 40, winRate: 0.4, note: "" }, note: "" }) as any,
+    odteLedger: () => [bucket("72-79", 70, 30), bucket("80-84", 40, 20)],
+    edgeStats: (windowDays) => ({
+      asOf: 0, windowDays, windowFrom: 1,
+      // total (graded + pending + ungraded) leaves the 9 legacy-proxy rows out: they are still emitted.
+      whaleAlerts: { total: 131, graded: 100, pending: 20, ungradedNoMark: 11, legacyProxyExcluded: 9, hit30Rate: 0.31, avgPctReturn: -0.2 },
+      regimeCalls: { total: 900, graded: 700, pending: 150, overallHitRate: 0.6, legacyProxyGraded: 50, calibrationSessions: 35, calibration: [{ predictedProb: 0.5, actualHitRate: 0.5, n: 35, hits: 18 }] },
+    }) as any,
+    scenarioCounts: () => ({ predictionDays: 70, settledDays: 68 }),
+    scenarioBrier: () => ({ n: 30, total: 0.6, trivialTotal: 0.64, topPickHits: 15, topPickN: 29, gated: false, minDays: 20 }),
+    mapDayCounts: () => ({ mapped: 60, settled: 58 }),
+    wienerScorecard: () => ({ days: 55, touch: emptyCal, close: emptyCal, minDays: 50, tested: true }),
+    mmLogProbe: async () => "present",
+    mmStats: async () => ({ total: 400, graded: 380 }),
+    crypto: () => ({ enterCoins: { total: 90, open: 10, graded: 70, noData: 4 }, basis: "", currentVersion: "v", graded: expectancy({ n: 60, skipped: 20, meanNetPct: -3, positiveShare: { yes: 21, of: 60, lo: 24, hi: 47 }, sampleReady: true, validation: "NO DEMONSTRATED EDGE", validationReason: null }) as any }),
+  }));
+  for (const s of r.sources) {
+    const all = [s.n.emitted, s.n.graded, s.n.open, s.n.excluded].every((v) => typeof v === "number");
+    assert.ok(all, `${s.id}: every count is a number in this fixture`);
+    assert.equal(s.n.emitted, (s.n.graded as number) + (s.n.open as number) + (s.n.excluded as number), s.id);
+  }
+  const by = new Map(r.sources.map((s) => [s.id, s] as const));
+  assert.deepEqual(by.get("whale_follow")!.n, { emitted: 510, graded: 50, open: 437, excluded: 23 });      // 10 unscored + 3 without a print + 10 not in memory
+  assert.deepEqual(by.get("whale_alert_expiry")!.n, { emitted: 140, graded: 100, open: 20, excluded: 20 }); // 11 no mark + 9 legacy
+});
+
+test("counts that cannot add up are unknown (null), never forced", async () => {
+  assert.equal(remainder(10, 4, 3), 3);
+  assert.equal(remainder(10, 8, 3), null);
+  // The source reports more graded than emitted: the remainder is unknown.
+  const t1 = odteT1Source(fakeDeps({
+    odteAuditCounts: () => ({ fired: 10, open: 2, rejected: 0, firstAt: null }),
+    odteCalibration: () => ({ asOf: 0, source: "prior", totalGradedFires: 12, buckets: [{ label: "72-79", lo: 72, hi: 79, n: 12, wins: 5 }], rejectedCounterfactual: { n: 0, winRate: null, note: "" }, note: "" }) as any,
+  }));
+  assert.equal(t1.n.excluded, null);
+  assert.ok(!countsReconcile(t1.n));
+  const mm = await mmMatrixSource(fakeDeps({ mmLogProbe: async () => "present", mmStats: async () => ({ total: 5, graded: 9 }) }));
+  assert.equal(mm.n.open, null);
+  assert.equal(mm.n.excluded, null);
+  assert.ok(mm.notes.some((x) => /open and excluded are unknown/.test(x)));
+  // An input whose four numbers disagree is not passed through as if it added up.
+  const bad = buildSource(input({ n: { emitted: 100, graded: 60, open: 30, excluded: 3 } }), wilson);
+  assert.equal(bad.n.excluded, null);
+  assert.ok(bad.notes.some((x) => /do not add up/.test(x)));
+  assert.equal(countText(bad.n.excluded), "-");
+});
+
+test("a row that never shows a win share carries its own gate or none, never the default 30", () => {
+  assert.deepEqual(gateFor("win_loss", null), { minSample: 30, from: "default" });
+  assert.deepEqual(gateFor("calibration", null), { minSample: 0, from: "not_applicable" });
+  assert.deepEqual(gateFor("counts_only", null), { minSample: 0, from: "not_applicable" });
+  assert.deepEqual(gateFor("calibration", 50), { minSample: 50, from: "source" });
+  const u = unavailableSource(SOURCE_META.mm_matrix, "x");
+  assert.equal(u.minSampleFrom, "not_applicable");
+});
+
+test("whale alerts held to expiry: legacy-proxy rows are emitted and excluded", () => {
+  const s = whaleAlertExpirySource(fakeDeps({
+    edgeStats: (windowDays) => ({ asOf: 0, windowDays, windowFrom: 5, whaleAlerts: { total: 60, graded: 40, pending: 12, ungradedNoMark: 8, legacyProxyExcluded: 7, hit30Rate: 10 / 40, avgPctReturn: -0.3 }, regimeCalls: {} }) as any,
+  }));
+  assert.deepEqual(s.n, { emitted: 67, graded: 40, open: 12, excluded: 15 });
+  assert.equal(s.winShare, 10 / 40);
+});
+
+test("assemble: the edge stats two rows share are computed once", async () => {
+  let calls = 0, probes = 0;
+  const base = fakeDeps();
+  const r = await assembleSignalRecord({ ...base, edgeStats: (w) => { calls++; return base.edgeStats(w); }, predictionOutcomeRows: () => { probes++; return 0; } });
+  assert.equal(calls, 1);
+  assert.equal(probes, 1);
+  assert.equal(r.sources.length, SOURCE_ADAPTERS.length);
+  // A failure is shared too: both rows are unavailable, and it is still one call.
+  let failed = 0;
+  const f = await assembleSignalRecord({ ...base, edgeStats: () => { failed++; throw new Error("database is locked"); } });
+  assert.equal(failed, 1);
+  for (const id of ["whale_alert_expiry", "regime_calls"]) {
+    const s = f.sources.find((x) => x.id === id)!;
+    assert.equal(s.state, "unavailable");
+    assert.match(s.reason ?? "", /database is locked/);
+  }
+});
+
+test("getSignalRecord: concurrent callers on a cold cache share one assembly", async () => {
+  _resetSignalRecordCache();
+  let loads = 0;
+  const load = async () => { loads++; await new Promise((r) => setTimeout(r, 15)); return fakeDeps(); };
+  const [a, b, c] = await Promise.all([getSignalRecord(false, load), getSignalRecord(false, load), getSignalRecord(false, load)]);
+  assert.equal(loads, 1);
+  assert.equal(a, b);
+  assert.equal(b, c);
+  await getSignalRecord(false, load);          // warm cache: no new assembly
+  assert.equal(loads, 1);
+  await getSignalRecord(true, load);           // forced: one more
+  assert.equal(loads, 2);
+  // A failed assembly is not cached and does not stick as the in-flight promise.
+  _resetSignalRecordCache();
+  await assert.rejects(getSignalRecord(false, async () => { throw new Error("boom"); }), /boom/);
+  await new Promise((r) => setTimeout(r, 0));
+  const ok = await getSignalRecord(false, load);
+  assert.equal(ok.sources.length, SOURCE_ADAPTERS.length);
+  _resetSignalRecordCache();
+});
+
 // ─── The server module calls the existing summaries; it does not re-derive them ──
 
 test("server module reads each source through its existing summary function", () => {
   const src = read("server/signalRecord.ts");
   const wired: Array<[string, RegExp]> = [
-    ["./validationMath", /\{ wilsonInterval \} = await import\("\.\/validationMath"\)/],
+    ["./validationMath", /\{ wilsonInterval, MIN_FIRES_FOR_POINT_ESTIMATE \} = await import\("\.\/validationMath"\)/],
     ["./whaleFollowThrough", /\{ getPerformanceSnapshot, getFollowSnapshot \} = await import\("\.\/whaleFollowThrough"\)/],
     ["./signalTracker", /\{ getAllTracked \} = await import\("\.\/signalTracker"\)/],
     ["./gradeCalibration", /\{ getCalibrationReport, MIN_TOTAL \} = await import\("\.\/gradeCalibration"\)/],
