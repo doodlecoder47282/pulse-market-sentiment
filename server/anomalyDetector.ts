@@ -112,16 +112,18 @@ export function scoreAnomalyToday(): AnomalyResult | { error: string } {
   const meanDistance = dists.slice(0, 10).reduce((a, b) => a + b.distance, 0) / Math.min(10, dists.length);
 
   let notes = "today's state has historical analogs — base rates apply";
-  if (isAnomaly) notes = "today's market state is in the 5% most-anomalous of recent history — base rates degrade, mean-reversion strategies break here";
-  else if (pct >= 80) notes = "today is mildly unusual vs recent history — degrade signal confidence by ~25%";
+  if (isAnomaly) notes = "today's market state is in the 5% most unusual of recent history by nearest-neighbour distance: few close analogs, so base rates drawn from that history describe it less well";
+  else if (pct >= 80) notes = "today is mildly unusual vs recent history (80th percentile or above of nearest-neighbour distance)";
 
   return {
     date: today.date,
-    features: FEATURE_NAMES.map((n, i) => ({
-      name: n,
-      value: rows[0][n.replace("_z", "") as keyof SnapHistoryRow] as number,
-      z: today.features[i],
-    })),
+    // spy_ret_5d is computed (spy5dRet), not a snapshot_history column: reading it off the row gave
+    // undefined, the field vanished from the JSON, and the client's toFixed on it threw, taking the
+    // whole Edge Lab tab down. A value that is not finite is null, never a hole.
+    features: FEATURE_NAMES.map((n, i) => {
+      const raw = n === "spy_ret_5d_z" ? spy5dRet(rows, 0) : (rows[0][n.replace("_z", "") as keyof SnapHistoryRow] as number | null | undefined);
+      return { name: n, value: typeof raw === "number" && Number.isFinite(raw) ? raw : null, z: today.features[i] };
+    }),
     nearestNeighborDistance: todayNN,
     meanDistance,
     pctileVsHistory: pct,
@@ -138,7 +140,8 @@ export function scoreAnomalyToday(): AnomalyResult | { error: string } {
 export interface DriftResult {
   recent30: { count: number; meanAbsPctReturn: number | null; meanHit50: number | null };
   prior90: { count: number; meanAbsPctReturn: number | null; meanHit50: number | null };
-  driftPctMae: number | null;       // % degradation in MAE
+  /** Fractions (0.45 = 45%), as stored in prediction_outcomes; the client multiplies by 100. */
+  driftPctMae: number | null;       // % change in mean |realized return| (recent 30 vs prior 90); not an error measure
   driftPctHit: number | null;
   status: "stable" | "drifting" | "n/a";
   note: string;
@@ -171,10 +174,13 @@ export function computeDrift(): DriftResult {
     ? ((r.meanAbsPctReturn - p.meanAbsPctReturn) / p.meanAbsPctReturn) * 100 : null;
   const driftHit = (r.meanHit50 != null && p.meanHit50 != null && p.meanHit50 > 0)
     ? ((r.meanHit50 - p.meanHit50) / p.meanHit50) * 100 : null;
+  // The sample gate comes FIRST: a verdict on a 5-row prior is not a verdict. And the first figure is the
+  // mean absolute realized option return (a size of outcomes, larger for big winners as much as for big
+  // losers), not an error: a rise in it alone is reported as a change, never as "degrading".
   let status: DriftResult["status"] = "stable";
-  let note = "model performance stable vs prior 90 grades";
-  if (driftMae != null && driftMae > 25) { status = "drifting"; note = "MAE up 25%+ vs prior 90 — model degrading, retrain or distrust"; }
-  else if (driftHit != null && driftHit < -25) { status = "drifting"; note = "hit-rate dropped 25%+ vs prior 90 — calibration breaking"; }
-  else if (prior.length < 30) { status = "n/a"; note = "not enough prior history for drift comparison"; }
+  let note = "hit rate and mean |return| within 25% of the prior 90 grades";
+  if (prior.length < 30) { status = "n/a"; note = `not enough prior history for a comparison (${prior.length} of 30 prior grades)`; }
+  else if (driftHit != null && driftHit < -25) { status = "drifting"; note = "hit rate down 25% or more against the prior 90 grades"; }
+  else if (driftMae != null && Math.abs(driftMae) > 25) { note = `mean |return| ${driftMae > 0 ? "up" : "down"} 25% or more against the prior 90 grades (outcome size changed; says nothing about direction)`; }
   return { recent30: r, prior90: p, driftPctMae: driftMae, driftPctHit: driftHit, status, note };
 }
