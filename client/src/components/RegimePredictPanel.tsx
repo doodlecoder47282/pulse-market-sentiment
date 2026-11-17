@@ -261,7 +261,7 @@ export default function RegimePredictPanel() {
             data-testid="badge-regime-confidence"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-current" />
-            heuristic score {conf}/100
+            read strength {conf}/100
           </span>
         </div>
 

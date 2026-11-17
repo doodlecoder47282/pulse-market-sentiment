@@ -24,7 +24,7 @@ test("regime predictor: candidates carry a 0..100 heuristic score, not a probabi
   assert.match(out.headline, /heuristic \d+\/100|collecting data|audit incomplete/);
   const ui = read("client/src/components/RegimePredictPanel.tsx");
   assert.ok(!/% confidence/.test(ui));
-  assert.match(ui, /heuristic score \{conf\}\/100/);
+  assert.match(ui, /read strength \{conf\}\/100/);
 });
 
 test("composite: social gauge has a display label, history key unchanged", async () => {

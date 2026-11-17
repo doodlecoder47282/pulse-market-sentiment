@@ -2524,3 +2524,9 @@ persistence call: keep grading it under regime_call or relabel it. (d) the
 experimental particle filter (/api/experimental/particle-dfi): a shadow forecaster that feeds nothing; it
 now observes +1 / -1 / 0 instead of +5 / -5. Keep or retire. Not changed: gamma, expected move, Wiener,
 implied scenario odds, crypto. No threshold changed other than the one new constant.
+Third review of the DFI retirement (copy only): the session driver notes named a window the clock was not
+in (the late-session weight applies after the close and the early-session one before the open; the windows
+are a quarter of the session, 97.5 minutes, not 1.5 hours): each note now says which case it is and prints
+the minutes. The badge is "read strength" (top score scaled by sample quality), no longer the same label as
+the headline's top score. "Pin pressure" is gone from the chart tab's headline bullet. The weights
+themselves are unchanged.

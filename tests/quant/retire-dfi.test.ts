@@ -333,3 +333,20 @@ test("regime read copy: describes the current read, never a forecast, a pin or a
   assert.ok(o.driverNotes.some((n) => /from the charm zero \(under 0\.20\)/.test(n)));
   _resetPredictorHistory();
 });
+
+test("third review: session notes are true outside the session window, and the badge is not labelled as the same figure as the headline score", async () => {
+  const { readFileSync } = await import("node:fs");
+  const p = readFileSync(new URL("../../server/regimePredictor.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(p, /under 1\.5 hours to the close|first 1\.5 hours of the session/);
+  assert.match(p, /if \(sessionFrac <= 0\) driverNotes\.push\(`the regular session is over:/);
+  assert.match(p, /else if \(sessionFrac >= 1\) driverNotes\.push\(`the regular session has not opened:/);
+  // The in-session notes print minutes computed from the fraction, not a fixed "1.5 hours" (the windows are 97.5 minutes).
+  assert.match(p, /\$\{Math\.round\(sessionFrac \* 390\)\} minutes to 16:00 ET/);
+  assert.match(p, /\$\{Math\.round\(\(1 - sessionFrac\) \* 390\)\} minutes since 09:30 ET/);
+  // The "under 0.25" pivot note floors, so it cannot print "0.25 ... (under 0.25)".
+  assert.match(p, /\(Math\.floor\(gammaFlipProxFrac \* 100\) \/ 100\)\.toFixed\(2\)\} expected moves from the main pivot \(under 0\.25\)/);
+  const ui = readFileSync(new URL("../../client/src/components/RegimePredictPanel.tsx", import.meta.url), "utf8");
+  assert.match(ui, /read strength \{conf\}\/100/);
+  assert.doesNotMatch(readFileSync(new URL("../../server/headline.ts", import.meta.url), "utf8"), /pin pressure/);
+});
+

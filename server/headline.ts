@@ -139,7 +139,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         subLine: withRegime("SPX cash chart with dealer levels. Levels are estimates from the Schwab option chain"),
         bullets: [
           "Dealer levels: call wall (resistance), put wall (support), gamma flip (pivot).",
-          "Vanna and charm zeros add second-order pin pressure near OpEx.",
+          "Vanna and charm zeros are second-order levels; they carry more weight near monthly expiry.",
           "Above gamma flip = positive gamma = mean reversion. Below = negative gamma = momentum.",
         ],
         asOf: Date.now(),
@@ -190,7 +190,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         subLine: "Trade Desk: the regime as read now, edge tracking and position tools. Heuristic weights, not calibrated probabilities; no forecast is made.",
         bullets: [
           "The regime read uses the gamma zone, gamma flip distance, vanna, charm, IV term, VIX term and large option prints.",
-          "Heuristic score 70+/100 = the drivers agree strongly with the current read, under 40 = weakly; uncalibrated.",
+          "Read strength (the badge) is the top hand-set score scaled by how many samples back it: 70+/100 = the drivers agree strongly with the current read, under 40 = weakly; uncalibrated.",
           "Warming-up state means <5 samples collected: the reading is not formed yet.",
         ],
         asOf: Date.now(),
