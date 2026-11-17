@@ -33,8 +33,8 @@ test("source health: untried is unavailable, a recent success passes, the latest
 
 test("wiring: the engine counts real calls, a 200 that prices nothing is a failure, and Verify live data reports both sources", () => {
   const e = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
-  assert.match(e, /if \(r\.prices\.size > 0\) markOk\(jupHealth\);\s*else if \(jupMints\.length >= JUP_INCONCLUSIVE_UNDER\) markFail\(jupHealth, `answered but priced 0 of \$\{jupMints\.length\} mints`\);/);
-  assert.match(e, /\} catch \(e\) \{\s*jup = \{ prices: new Map\(\), omitted: new Set\(\), failed: true, at: Date\.now\(\) \};\s*markFail\(jupHealth, e\);/);
+  assert.match(e, /if \(anyOk && !anyFail\) \{\s*if \(priced > 0\) markOk\(jupHealth\);\s*else if \(asked >= JUP_INCONCLUSIVE_UNDER\) markFail\(jupHealth, `answered but priced 0 of \$\{asked\} mints`\);/);
+  assert.match(e, /\} catch \(e\) \{\s*for \(const m of part\) jup\.failedMints\.add\(m\);\s*anyFail = true;\s*markFail\(jupHealth, e\);/);
   assert.match(e, /if \(fresh\.length > 0 \|\| \(Array\.isArray\(rawList\) && rawList\.length === 0\)\) markOk\(candleHealth\);/, "rows that do not parse are a failure of the feed's shape, never ok");
   assert.match(e, /c\.candlesError = msg\.slice\(0, 80\);\s*markFail\(candleHealth, e\);/);
   const v = readFileSync(new URL("../../server/liveVerify.ts", import.meta.url), "utf8");

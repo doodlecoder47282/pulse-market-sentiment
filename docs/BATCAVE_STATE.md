@@ -2308,3 +2308,23 @@ session is left out of the baseline, because the chain still reports that sessio
 compared with itself; the wording says "near its close" outside the session; the entry.premium comment names
 the day's average price; a minus glyph and no "1000". Known and left: positions stored before this keep the
 day-average entry mark (no avgTraded field marks them), so the tracking list mixes bases until they expire.
+2026-11-17: Practitioner review (docs/PRO_REVIEW_2026-11-17.md): two independent read-only reviews, as an
+options trader and as a meme-coin trader, with the live record read from the deployed site. Headline: the
+crypto desk has logged 4,170 coins and never issued an ENTER, and the whale record is never graded either.
+Owner decisions taken the same day (the owner delegated them): retire DFI and key the regime on the gamma
+zone; keep scenario targets at spot +- 1 expected move; crypto alpha feed per coin first; one top-to-bottom
+order per coin on the crypto tab. None of those four is built yet.
+First crypto batch (feat/pro-review-fixes; review items C3, C7): the Jupiter cross-check makes two spaced
+calls per momentum tick (2.5 s apart, inside the keyless 0.5 req/s) so every mint refreshed in a tick is
+checked against the price read in that tick; with one call the 40 lowest-scored mints of a 90-mint batch
+were never asked, were reset to "unchecked" on every refresh, lost 5 score points for it and stayed at the
+back (2,621 of 3,008 first signals were "Jupiter unchecked"); a failed call fails only its own mints and the
+tick stays a failure for the health check. pumpfunGraduate is true only for a pair trading on PumpSwap; it
+was true for any dex id containing "pump", so the card, the AI prompt and the replay's graduate split all
+described pump vs non-pump. Rows stored before this date keep the old meaning. No threshold changed, so the
+rule version is unchanged; more mints being checked can change scores (the "unchecked" flag costs 5).
+Review of the first crypto batch: MERGE-READY; should-fixes taken: an engine tick that is still running is
+not started again on top of itself (the momentum tick's worst case moved close to its 75 s period); each
+mint's Jupiter check is stamped with its own call's time. Left open and unverified: "pumpswap" as the dex id
+GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
+replay pools old-meaning and new-meaning graduate rows without a marker.
