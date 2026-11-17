@@ -33,6 +33,12 @@ const PINNED: Record<string, string> = {
   // WATCH (code no_sells). The flag it adds also costs 5 structure points, as the missing-sells flag always has, so a
   // zero-sell pair scores 5 lower than before. Graded outcomes differ from here, so the version moves and the records partition.
   "2026.11.16-1": "5aaf5185dfc1258433f954604eb4c593ab698c4633be47660f0cdaccea04bf63",
+  // 2026.11.17-1: flow.accelMinAgeMinutes = 10 (new). Volume acceleration divided the hour's volume by 60 for
+  // every coin, so a coin under 5 minutes old read exactly 12x whatever its tape (the record's median was 12.00
+  // for winners and losers alike) and collected the full flow points for it. It now compares the 5-minute pace
+  // with the pace of the coin's own life when younger than an hour, and is not read at all under the minimum
+  // age. Scores of young coins fall, so fewer minute-2 rows reach WATCH; the records partition here.
+  "2026.11.17-1": "2bc17f1dd3ec58352cdaec6a7c078b113ca46ed7684328466972786ea94ef3ad",
 };
 
 test("crypto rule book content is pinned to its version", () => {
@@ -61,7 +67,7 @@ test("the engine, stats and verdict read the book instead of carrying their own 
   // (a threshold nobody reads is a hollow pin). Descriptive leaves (booleans,
   // the chain list) document the gate; their enforcement is asserted above.
   const leaves = (o: any, prefix: string): Array<[string, unknown]> => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" && !Array.isArray(v) ? leaves(v, `${prefix}${k}.`) : [[`${prefix}${k}`, v] as [string, unknown]]));
-  const corpus = ["server/cryptoEngine.ts", "server/cryptoStats.ts", "server/sources/dexCross.ts", "shared/cryptoVerdict.ts", "shared/cryptoVerify.ts", "shared/memeStructure.ts", "shared/cryptoExpectancy.ts", "shared/exitPlan.ts"].map(src).join("\n");
+  const corpus = ["server/cryptoEngine.ts", "shared/cryptoFlow.ts", "server/cryptoStats.ts", "server/sources/dexCross.ts", "shared/cryptoVerdict.ts", "shared/cryptoVerify.ts", "shared/memeStructure.ts", "shared/cryptoExpectancy.ts", "shared/exitPlan.ts"].map(src).join("\n");
   const referenced = (leaf: string) => {
     const parent = leaf.replace(/\.[^.]+$/, "");
     return [`CRYPTO_RULES.${leaf}`, `rules.${leaf}`, `CRYPTO_RULES.${parent};`, `CRYPTO_RULES.${parent}.`, `= CRYPTO_RULES.${parent}`].some((needle) => corpus.includes(needle));
