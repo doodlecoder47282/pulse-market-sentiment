@@ -76,6 +76,11 @@ test("kill gates sit exactly on the rule book thresholds", () => {
   assert.equal(st(clean({ buys1h: hp - 1, sells1h: 0 }), "honeypot"), "pass");
   assert.equal(st(clean({ buys1h: 500, sells1h: 1 }), "honeypot"), "pass");
   assert.equal(st(clean({ buys1h: 500, sells1h: null }), "honeypot"), "unread", "a missing sell count is unread, never zero sells");
+  // The stated entry gate: at least one sell observed. An observed zero under the kill threshold fails it (the desk's no_sells hold).
+  assert.equal(st(clean({ buys1h: hp - 1, sells1h: 0 }), "sells_observed"), "fail");
+  assert.equal(st(clean({ buys1h: null, sells1h: 0 }), "sells_observed"), "fail");
+  assert.equal(st(clean({ buys1h: 500, sells1h: null }), "sells_observed"), "unread");
+  assert.equal(st(clean({ buys1h: 500, sells1h: 1 }), "sells_observed"), "pass");
 
   const rug = R.hardKills.midRugChg1hPct;
   assert.equal(st(clean({ chg1h: rug }), "mid_rug"), "fail", "engine: <= threshold kills");

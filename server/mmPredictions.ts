@@ -168,7 +168,8 @@ export async function snapshotHorizon(horizon: ModelHorizon, horizonKey: string)
     bias: current.bias,
     action: current.action,
     spot: a.spot,
-    vixDelta: a.termStructureDoD?.iv1dDelta ?? null,
+    // VIX points, the unit the matrix that produced pUp/pDown reads (rows before 2026-11-16 hold the daily sigma in percent, about 18x smaller).
+    vixDelta: a.termStructureDoD?.vixDeltaPts ?? null,
     charmDriftPct: a.charmZero != null ? ((a.charmZero - a.spot) / a.spot) * 100 : null,
     dfi: a.dfi ?? null,
     masterAlpha,

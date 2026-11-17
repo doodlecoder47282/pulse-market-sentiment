@@ -519,7 +519,7 @@ function buildAnomalyContext(): any {
   const d = computeDrift();
   return {
     panel: "anomaly",
-    description: "anomaly score = how far today's market vector sits from history. ≥95th percentile = unusual day, look at closest analogs. drift = is the model getting worse over time?",
+    description: "anomaly score = how far today's market vector sits from history. ≥95th percentile = unusual day, look at closest analogs. drift = has the hit rate or the size of realized outcomes changed against the prior 90 grades?",
     anomaly: "error" in a ? { error: a.error } : {
       pctileVsHistory: a.pctileVsHistory,
       isAnomaly: a.isAnomaly,

@@ -50,7 +50,7 @@ type ThermalResp = {
   };
   dataState?: "ok" | "no_iv" | "empty";
   reason?: string | null;
-  chain?: { asOfMs: number | null; ageMs: number | null; servedFromCache: boolean; stale: boolean; staleReason: string | null };
+  chain?: { asOfMs: number | null; ageMs: number | null; servedFromCache: boolean; stale: boolean; staleReason: string | null; lastSession?: boolean; maxAgeMs?: number | null };
   /** live = Schwab OI; held = last trading day's saved OI (Schwab posts 0 SPX OI on weekends). */
   oiState?: { source: "live" | "held" | "none"; sessionDate: string | null; contractsWithOi: number; note: string | null } | null;
   source: string;
@@ -538,7 +538,7 @@ export default function ThermalHeatmap() {
             </div>
             <div className="flex items-center gap-2">
               {data.chain && data.chain.asOfMs != null ? (
-                <DataStateChip state={data.chain.stale ? "stale" : "ok"} reason={data.chain.staleReason} asOf={data.chain.asOfMs} source="Schwab" showAge testId="thermal-chain-age" />
+                <DataStateChip state={data.chain.lastSession ? "last_session" : data.chain.stale ? "stale" : "ok"} reason={data.chain.staleReason} asOf={data.chain.asOfMs} source="Schwab" showAge testId="thermal-chain-age" />
               ) : (
                 <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> {new Date(data.asOf).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               )}

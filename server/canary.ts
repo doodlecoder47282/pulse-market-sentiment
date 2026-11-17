@@ -24,7 +24,12 @@ import { ledoitWolfConstantCorrelation, toCorrelation, standardizedComposite, co
 // fraction of daily variance (~25% overnight + 75% pro-rata through RTH).
 function elapsedVarianceFrac(): number {
   const c = etClock();
-  const len = sessionMinutes(c.date) || 390; // 210 on a half day
+  // Closed market (weekend, holiday, after the close): the move on screen is a COMPLETED session's, so it is
+  // compared with a full day's sigma. Reading the wall clock here made a Saturday 10:00 look like 30 minutes
+  // into a session and inflated every z by up to 2x.
+  const len0 = sessionMinutes(c.date);
+  if (!len0 || c.minutes >= REGULAR_OPEN_MIN + len0) return 1;
+  const len = len0; // 210 on a half day
   const elapsedMin = Math.min(len, Math.max(0, c.minutes - REGULAR_OPEN_MIN)); // since 9:30
   return Math.max(0.15, 0.25 + 0.75 * (elapsedMin / len));
 }

@@ -109,7 +109,8 @@ test("recorded decision-time gate evidence is re-checked with the CURRENT rules 
   assert.deepEqual(wouldEnterNow(withG(G({ jupState: null }))).blockers, ["Jupiter unread"]);
   assert.deepEqual(wouldEnterNow(withG(G({ sells1h: null }))).blockers, ["1 h sells unread"]);
   assert.deepEqual(wouldEnterNow(withG(G({ sells1h: 0, buys1h: 25 }))).blockers, ["honeypot pattern"]);
-  assert.deepEqual(wouldEnterNow(withG(G({ sells1h: 0, buys1h: 24 }))).blockers, []);
+  assert.deepEqual(wouldEnterNow(withG(G({ sells1h: 0, buys1h: 24 }))).blockers, ["no sell observed in the last hour"], "an observed zero never meets \"at least one sell observed\"");
+  assert.deepEqual(wouldEnterNow(withG(G({ sells1h: 1, buys1h: 24 }))).blockers, []);
   assert.deepEqual(wouldEnterNow(withG(G({ deskRisk: "off" }))).blockers, ["desk risk off"]);
   assert.deepEqual(wouldEnterNow(withG(G({ deskRisk: null }))).blockers, ["desk risk unread"]);
   assert.equal(wouldEnterNow({ ...withG(G()), outcome: "RUGGED", peakMcap: 9e9 } as ReplayRow).enter, true);

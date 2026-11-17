@@ -67,6 +67,7 @@ import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
 import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
+import { emptySourceHealth, type SourceHealth } from "../shared/cryptoVerify";
 import { capOf, capOnBasis, evictOverCap, MOMENTUM_CYCLE_MS } from "../shared/cryptoCap";
 import { candleFeatures, parseGtOhlcv, unavailableCandles, type Candle, type CandleFeatures } from "../shared/cryptoCandles";
 
@@ -246,6 +247,19 @@ const GRADER_MS = 10 * 60_000;
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
 const DS_BASE = "https://api.dexscreener.com";
 const JUP_BASE = "https://api.jup.ag/price/v3"; // keyless tier, 0.5 req/s
+// Per-source health, counted on every real call (shared/cryptoVerify.ts sourceHealthCheck reads it on
+// Settings -> Verify live data): the Jupiter cross-check an ENTER depends on, and the 1-minute candle feed.
+const jupHealth: SourceHealth = emptySourceHealth();
+/** Under this many mints, a response pricing none of them is inconclusive (new mints have no route yet). */
+const JUP_INCONCLUSIVE_UNDER = 10;
+const candleHealth: SourceHealth = emptySourceHealth();
+function markOk(h: SourceHealth): void { h.lastOkAt = Date.now(); h.okCount++; h.lastError = null; }
+function markFail(h: SourceHealth, e: unknown): void { h.lastFailAt = Date.now(); h.failCount++; h.lastError = String((e as any)?.message ?? e).slice(0, 120); }
+/** Source health plus what the desk currently needs from each source. */
+export function getCryptoSourceHealth(): { jupiter: SourceHealth; candles: SourceHealth; candlePairsWanted: number; candlePairsRead: number; jupiterBase: string } {
+  const want = [...tracked.values()].filter((c) => c.chain === "solana" && (c.verdict === "ENTER" || c.verdict === "WATCH"));
+  return { jupiter: { ...jupHealth }, candles: { ...candleHealth }, candlePairsWanted: want.length, candlePairsRead: want.filter((c) => c.candlesReadAt != null).length, jupiterBase: JUP_BASE };
+}
 
 // Meme lexicon for the catchy-name scorer. Weighted by how reliably the theme
 // has carried runners. This is a heuristic, not a model — disclosed as such.
@@ -626,8 +640,15 @@ async function momentumTick(): Promise<void> {
       const j = await getJson(`${JUP_BASE}?ids=${jupMints.join(",")}`);
       const r = parseJupiterPrices(j, jupMints);
       jup = { prices: r.prices, omitted: new Set(r.omitted), failed: false, at: Date.now() };
-    } catch {
+      // A 200 that prices none of the mints asked for is not a working feed (a moved or reshaped endpoint looks like this).
+      // Jupiter legitimately omits mints it has no route for (brand-new pump mints), so a small batch pricing
+      // none is inconclusive, not a failure; a full batch pricing none is what a moved or reshaped endpoint looks like.
+      if (r.prices.size > 0) markOk(jupHealth);
+      else if (jupMints.length >= JUP_INCONCLUSIVE_UNDER) markFail(jupHealth, `answered but priced 0 of ${jupMints.length} mints`);
+      else jupHealth.lastInconclusiveAt = Date.now();
+    } catch (e) {
       jup = { prices: new Map(), omitted: new Set(), failed: true, at: Date.now() };
+      markFail(jupHealth, e);
     }
   }
   for (let i = 0; i < addrs.length; i += 30) {
@@ -703,7 +724,7 @@ function recordPeakSample(c: Candidate): void {
     for (const basis of PEAK_SAMPLE_BASES) {
       _peakStmt.run(peakSampleParams(capOnBasis(c, basis), basis, at, c.liquidityUsd, c.chain, c.pairAddress));
     }
-    samplePlans(c.chain, c.pairAddress, cap, c.liquidityUsd, at);
+    samplePlans(c.chain, c.pairAddress, { marketCap: c.marketCap, fdv: c.fdv }, c.liquidityUsd, at);
   } catch (e: any) {
     console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
@@ -1031,6 +1052,7 @@ function scoreCandidate(c: Candidate): void {
   const hp = honeypotRead(c.buys1h, c.sells1h);
   if (hp === "honeypot") { flags.push("buys but ZERO sells in 1h (observed) — honeypot pattern"); hardKill = true; }
   else if (hp === "sells_missing") flags.push("1h sell count not reported (missing) — honeypot check not possible");
+  else if (hp === "no_sells") flags.push("no sell observed in the last hour — nobody has been seen getting out yet");
   if (c.chg1h != null && c.chg1h <= CRYPTO_RULES.hardKills.midRugChg1hPct) { flags.push(`price ${c.chg1h.toFixed(0)}% in 1h — mid-rug or post-dump`); hardKill = true; }
   if ((c.ageMinutes ?? 1e9) < CRYPTO_RULES.flags.sniperZoneMinutes) flags.push(`under ${CRYPTO_RULES.flags.sniperZoneMinutes} min old — sniper zone, spreads brutal`);
   if (c.boosted) flags.push("paid DexScreener boost — manufactured attention, discount the FOMO");
@@ -1093,9 +1115,12 @@ function scoreCandidate(c: Candidate): void {
       // pass. Only "agree" or "watch" (<= 15% gap) lets ENTER stand.
       verdict = "WATCH"; code = "price_unconfirmed";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: DexScreener price not confirmed by Jupiter (${c.jupState}${c.jupGapPct != null ? ` ${c.jupGapPct}%` : ""}${c.jupState === "failed" || c.jupState === "unchecked" ? ", cross-check did not run" : ""})`);
-    } else if (hp === "sells_missing") {
+    } else if (hp === "sells_missing" && CRYPTO_RULES.enter.requireSellsObserved) {
       verdict = "WATCH"; code = "sells_missing";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: 1h sell count missing, honeypot check not possible`);
+    } else if (hp === "no_sells" && CRYPTO_RULES.enter.requireSellsObserved) {
+      verdict = "WATCH"; code = "no_sells";
+      reasons.push(`score ${c.score}, flow sustained — held at WATCH: no sell observed in the last hour (the rule book requires at least one)`);
     } else if (c.top10Pct == null) {
       // Fail-closed like Jupiter / sells (round 4): concentration not read
       // (owners unreadable, RPC cooldown, not yet checked) is not a pass.
@@ -1230,6 +1255,10 @@ async function candlesTick(): Promise<void> {
       c.candles = [...byT.values()].sort((a, b) => a.t - b.t).slice(-CANDLE_KEEP);
       c.candlesReadAt = Date.now();
       c.candlesError = null;
+      // A 200 with no parsable candle is a failure of the feed's shape, not a quiet pair, unless the list is genuinely empty.
+      const rawList = r?.data?.attributes?.ohlcv_list;
+      if (fresh.length > 0 || (Array.isArray(rawList) && rawList.length === 0)) markOk(candleHealth);
+      else markFail(candleHealth, Array.isArray(rawList) ? `answered ${rawList.length} rows, none parsable (row shape changed?)` : "answered without data.attributes.ohlcv_list");
       if (!c.candlesBackfilled) {
         const feats = candleFeatures(c.candles, c.candlesReadAt, { readAt: c.candlesReadAt });
         if (feats.state === "ok" || feats.state === "stale") { backfillFirstSignalCandles(c, feats); c.candlesBackfilled = true; }
@@ -1237,6 +1266,7 @@ async function candlesTick(): Promise<void> {
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       c.candlesError = msg.slice(0, 80);
+      markFail(candleHealth, e);
       // Rate-limited: the rest of this tick would be too. Next tick in a minute.
       if (/^429\b/.test(msg)) break;
     }
@@ -1304,6 +1334,8 @@ async function graderTick(): Promise<void> {
     const age = now - Number(row.detected_at);
     let mcap: number | null = null;
     let liq: number | null = null;
+    // Both readings of this pass, so the plans on this pair are each sampled on their own entry basis.
+    let caps: { marketCap: number | null; fdv: number | null } = { marketCap: null, fdv: null };
     const live = tracked.get(key);
     // The cap is read on the basis the row was RECORDED on (FDV rows on FDV,
     // marketCap rows on marketCap): an entry on FDV $500k is never graded
@@ -1312,12 +1344,14 @@ async function graderTick(): Promise<void> {
     const basis: string | null = row.mcap_basis ?? null;
     if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) {
       mcap = capOnBasis(live, basis); liq = live.liquidityUsd;
+      caps = { marketCap: live.marketCap, fdv: live.fdv };
     } else {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
         const p = resp?.pairs?.[0] ?? resp?.pair;
         // observed 0 stays 0: a full liquidity pull must grade RUGGED
-        mcap = capOnBasis({ marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) }, basis);
+        caps = { marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) };
+        mcap = capOnBasis(caps, basis);
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         // transient fetch error: retry next tick, unless it has failed for a week
@@ -1342,7 +1376,7 @@ async function graderTick(): Promise<void> {
     if (g.outcome === "NO_DATA") { markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP)); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
     mark.run(graderMarkParams(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id));
-    if (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000) samplePlans(row.chain, row.pair_address, mcap, liq, now);
+    if (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000) samplePlans(row.chain, row.pair_address, caps, liq, now);
   }
 }
 

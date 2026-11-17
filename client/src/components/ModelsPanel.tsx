@@ -147,6 +147,7 @@ interface ModelAudit {
     iv1d: number | null;
     iv1dPrev: number | null;
     iv1dDelta: number | null;
+    vixDeltaPts?: number | null;
     charmNow: number;
     charmPrev: number | null;
     label: string;
@@ -164,7 +165,7 @@ interface MMCell {
   pUp: number;
   pDown: number;
   pPin: number;
-  magnitude: number;
+  magnitude: number | null;
   action: DealerAction;
   bias: number;
   intensity: number;
@@ -511,7 +512,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {dnPivot  && <RailRow label="DOWNSIDE PIVOT" value={pFmt(dnPivot.price)} sub={distPct(dnPivot.price)} color={COLORS.pivot} backtestKind="downsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {putWall  && <RailRow label="PUT WALL" value={pFmt(putWall.price)} sub={putWall.gex != null ? `${(Math.abs(putWall.gex)/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="putWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {loVomma  && <RailRow label="LOWER VOMMA" value={pFmt(loVomma.price)} sub={distPct(loVomma.price)} color={COLORS.negGamma} />}
-      {negGamma && <RailRow label="NEG-Γ ENTRY" value={pFmt(negGamma.price)} sub={distPct(negGamma.price)} color={COLORS.bear} />}
+      {negGamma && <RailRow label="NEG-Γ LEVEL" value={pFmt(negGamma.price)} sub={distPct(negGamma.price)} color={COLORS.bear} />}
       {extVac   && <RailRow label="EXT VACUUM" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} backtestKind="extremeVac" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {zomma    && <RailRow label="ZOMMA BRIDGE" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
       {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} backtestKind="mopexMaxPain" backtestHorizon={horizon.horizon as BacktestHorizon} />}
@@ -548,7 +549,13 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
   const dzStr  = dzLow != null && dzHigh != null
     ? `${fmtK(dzLow)}-${fmtK(dzHigh)}`
     : (zg != null ? `${fmtK(zg)}` : "—");
-  const aboveDz = spot > (dzHigh ?? spot) ? "ABOVE = POSITIVE GAMMA" : (spot < (dzLow ?? spot) ? "BELOW = NEGATIVE GAMMA" : "KNIFE EDGE — WATCH");
+  // Both bounds are needed to place spot against the zone; with no charm zero there is no zone, and the line
+  // used to read as a knife edge whatever the distance to the flip. The gamma sign comes from the audit's zone.
+  const zoneSign = a.gammaZone === "y+" ? "model gamma positive" : a.gammaZone === "y-" ? "model gamma negative" : "gamma sign unknown";
+  const aboveDz = dzLow == null || dzHigh == null ? `NO DOUBLE-ZERO ZONE (charm zero not found) · ${zoneSign}`
+    : spot > dzHigh ? `SPOT ABOVE THE ZONE · ${zoneSign}`
+    : spot < dzLow ? `SPOT BELOW THE ZONE · ${zoneSign}`
+    : `SPOT INSIDE THE ZONE · ${zoneSign}`;
 
   return (
     <div
@@ -557,7 +564,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
     >
       {/* Line 1: live stats */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span className="font-bold text-foreground">LIVE {spotStr}</span>
+        <span className="font-bold text-foreground">SPOT {spotStr}</span>
         <span>|</span>
         <span>{horizon.spotAnchorDate}</span>
         <span>|</span>
@@ -608,7 +615,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
           <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
             {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
           </span>
-          {a.dfiFlipped && <span className="ml-1 text-yellow-400">(FIRST FLIP)</span>}
+          {a.dfiFlipped && <span className="ml-1 text-yellow-400" title="spot is within 0.3% of the charm zero">(NEAR CHARM ZERO)</span>}
         </span>
         <span>|</span>
         <span>
@@ -891,7 +898,7 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
                               <span className="font-bold" style={{ color: ACTION_COLOR[c.action] }}>
                                 {ACTION_LABEL[c.action]}
                               </span>
-                              <span className="text-foreground/80 text-[11px]">±{c.magnitude}</span>
+                              <span className="text-foreground/80 text-[11px]">{c.magnitude != null ? `±${c.magnitude}` : "—"}</span>
                             </div>
                             <div className="mt-0.5 flex items-center gap-1 text-[11px]">
                               <span className="text-green-300">↑{c.pUp}</span>
@@ -904,7 +911,7 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
                           <div className="font-semibold mb-1">{REGIME_LABEL[r]} · {ZONE_LABEL[z]}</div>
                           <div>Action: <span style={{ color: ACTION_COLOR[c.action] }}>{ACTION_LABEL[c.action]}</span></div>
                           <div>P(up): {c.pUp}% · P(pin): {c.pPin}% · P(down): {c.pDown}%</div>
-                          <div>Expected move (model): ±{c.magnitude}pt</div>
+                          <div>Expected move (model): {c.magnitude != null ? `±${c.magnitude}pt` : "not computed (VIX missing)"}</div>
                         </TooltipContent>
                       </UITooltip>
                     </td>
@@ -946,13 +953,13 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
       className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/40 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-muted-foreground"
       data-testid="batcave-status-strip"
     >
-      <span className="text-foreground font-semibold">LIVE {fmtK(spot)}</span>
+      <span className="text-foreground font-semibold">SPOT {fmtK(spot)}</span>
       <span>|</span>
       <span>{timeStr} ET</span>
       <span>|</span>
       <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
         DFI {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
-        {a.dfiFlipped ? " FLIP" : ""}
+        {a.dfiFlipped ? " · near charm zero" : ""}
       </span>
       <span>|</span>
       <span>
@@ -1420,9 +1427,12 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   const callWallPrice = byKind("callWall")?.price;
   const putWallPrice  = byKind("putWall")?.price;
   const zgPrice       = byKind("zeroGamma")?.price;
-  const regimeLabel   = a.gammaAtSpot >= 0
-    ? { text: "POS \u0393 · mean-revert", color: "text-emerald-400", dot: "bg-emerald-400" }
-    : { text: "NEG \u0393 · trend/breakout", color: "text-rose-400", dot: "bg-rose-400" };
+  // From the audit's gamma zone, not the raw sign: "y?" (missing or immaterial gamma) used to read "POS Γ".
+  const regimeLabel   = a.gammaZone === "y+"
+    ? { text: "POS \u0393 · model: hedging damps moves", color: "text-emerald-400", dot: "bg-emerald-400" }
+    : a.gammaZone === "y-"
+    ? { text: "NEG \u0393 · model: hedging amplifies moves", color: "text-rose-400", dot: "bg-rose-400" }
+    : { text: "\u0393 sign unknown", color: "text-muted-foreground", dot: "bg-muted-foreground" };
 
   return (
     <div className="mt-2 space-y-1 border-t border-border/40 pt-2">
@@ -1441,17 +1451,17 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
         <span className="uppercase tracking-widest text-muted-foreground">Vol Structure</span>
         <span className="text-border/60">|</span>
         <span className="text-rose-400">
-          Sell zone {callWallPrice ? `≥ ${fmtK(callWallPrice)}` : "—"}
+          Above call wall {callWallPrice ? `≥ ${fmtK(callWallPrice)}` : "—"}
         </span>
         <span className="text-border/60">·</span>
         <span className="text-amber-400">
-          Chop {zgPrice && callWallPrice && putWallPrice
+          Between the walls {zgPrice && callWallPrice && putWallPrice
             ? `${fmtK(putWallPrice)}–${fmtK(callWallPrice)} (0Γ ${fmtK(zgPrice)})`
             : "—"}
         </span>
         <span className="text-border/60">·</span>
         <span className="text-emerald-400">
-          Buy zone {putWallPrice ? `≤ ${fmtK(putWallPrice)}` : "—"}
+          Below put wall {putWallPrice ? `≤ ${fmtK(putWallPrice)}` : "—"}
         </span>
       </div>
       {above.length > 0 && (
@@ -1464,7 +1474,7 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
         <span className="font-mono text-[11px] uppercase tracking-wider text-amber-400/80 w-16">Spot</span>
         <div className="inline-flex items-center gap-1.5 rounded border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px]">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
-          <span className="font-bold text-amber-300">LIVE {fmtK(spot)}</span>
+          <span className="font-bold text-amber-300">SPOT {fmtK(spot)}</span>
         </div>
         {a.charmZero != null && (
           <div className="inline-flex items-center gap-1.5 rounded border border-purple-500/40 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[11px]">
@@ -2032,7 +2042,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
   );
 }
 
-function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; session: "live" | "last-close"; symbol: string }) {
+function ModelView({ horizon, session, stale = false, symbol }: { horizon: ModelHorizon; session: "live" | "last-close"; stale?: boolean; symbol: string }) {
   const a = horizon.audit;
   const timeStr = etTime(a.asOf);
   const probs = a.scenarioProb;
@@ -2055,7 +2065,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           <span className="text-muted-foreground">{horizon.targetDateLong ?? horizon.spotAnchorDate}</span>
           <span className="text-border">|</span>
           <span className={session === "live" ? "text-green-400" : "text-amber-400"}>
-            {session === "live" ? "LIVE" : "LAST SESSION"} {timeStr} ET
+            {stale ? "STORED BUILD" : session === "live" ? "LIVE" : "LAST SESSION"} {timeStr} ET
           </span>
           <span className="text-border">|</span>
           <span className="text-foreground font-bold">SPOT {fmtK(horizon.spot)}</span>
@@ -2063,7 +2073,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           <span className="text-border">|</span>
           <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
             DFI {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
-            {a.dfiFlipped && <span className="ml-1 text-yellow-400 text-[11px]">⚡ FLIP</span>}
+            {a.dfiFlipped && <span className="ml-1 text-yellow-400 text-[11px]" title="spot is within 0.3% of the charm zero">near charm zero</span>}
           </span>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground text-[11px]">
@@ -2116,7 +2126,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           {a.lastRecal && a.termStructureDoD && <span className="text-border/60">|</span>}
           {a.termStructureDoD && (
             <>
-              <span className="text-muted-foreground">1D IV</span>
+              <span className="text-muted-foreground" title="VIX converted to a one-day sigma in percent (not a chain IV)">1D σ (from VIX)</span>
               <span className="text-foreground">
                 {a.termStructureDoD.iv1d != null ? `${a.termStructureDoD.iv1d.toFixed(2)}%` : "—"}
               </span>
@@ -2359,7 +2369,7 @@ export default function ModelsPanel() {
       )}
       {active && (
         <ErrorBoundary label="BATCAVE Model View">
-          <ModelView horizon={active} session={data!.session} symbol={symbol} />
+          <ModelView horizon={active} session={(data as any).stale ? "last-close" : data!.session} stale={(data as any).stale === true} symbol={symbol} />
         </ErrorBoundary>
       )}
 

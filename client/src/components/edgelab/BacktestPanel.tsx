@@ -56,7 +56,7 @@ export default function BacktestPanel() {
       };
       if (param1) spec.param1 = Number(param1);
       if (param2) spec.param2 = Number(param2);
-      const res = await apiRequest("POST", "/api/backtest/run", { spec, costBps: Number(costBps) || undefined });
+      const res = await apiRequest("POST", "/api/backtest/run", { spec, costBps: costBps.trim() === "" || !Number.isFinite(Number(costBps)) ? undefined : Number(costBps) });
       return res.json();
     },
   });
@@ -96,13 +96,13 @@ export default function BacktestPanel() {
             </datalist>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">side</Label>
+            <Label className="text-xs" title="long or short is traded on every signal of the chosen kind, whatever the signal points to; signal direction trades up-signals long and down-signals short">side (applies to every signal)</Label>
             <Select value={side} onValueChange={(v: any) => setSide(v)}>
               <SelectTrigger data-testid="select-bt-side" className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="long">long</SelectItem>
                 <SelectItem value="short">short</SelectItem>
-                <SelectItem value="both">both</SelectItem>
+                <SelectItem value="both">signal direction</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -163,7 +163,7 @@ export default function BacktestPanel() {
             <Stat label="mean bps" value={r.mean_ret_bps.toFixed(1)} positive={r.mean_ret_bps} />
             <Stat label="median bps" value={r.median_ret_bps.toFixed(1)} positive={r.median_ret_bps} />
             <Stat label="total ret" value={`${r.total_ret_pct.toFixed(2)}%`} positive={r.total_ret_pct} />
-            <Stat label="max DD" value={`${r.max_dd_pct.toFixed(2)}%`} positive={r.max_dd_pct} />
+            <Stat label="max DD" value={`${r.max_dd_pct.toFixed(2)}%`} positive={r.max_dd_pct > 0 ? -r.max_dd_pct : null} />
             <Stat label="Sharpe (ann.)" value={r.sharpe != null ? r.sharpe.toFixed(2) : "n/a"} positive={r.sharpe} />
             <Stat label="Sortino (ann.)" value={r.sortino != null ? r.sortino.toFixed(2) : "n/a"} positive={r.sortino} />
           </div>

@@ -2103,6 +2103,129 @@ nothing, so a young pool's first read (usually under 10 candles) would have lock
 a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
 with a separator.
 
+2026-11-16: Audit batch, Edge Lab and Trade Desk numbers (fix/audit-edgelab; audit items T1-T6, T17).
+T1: the Anomaly sub-tab crashed the whole Edge Lab tab once 30 history rows existed: "spy_ret_5d" is computed,
+not a snapshot_history column, so the feature value was undefined, vanished from the JSON, and the client
+called toFixed on it. The server sends the computed 5-day return or null; the client prints a dash for null
+and the return as percent. T4: the drift monitor printed fractions as percent ("MAE 0.45%" for 45%), called
+the mean absolute realized option return an error ("model degrading, retrain or distrust" on a run of large
+winners) and gave a verdict before its own sample gate; now fractions x100, labelled "mean |return|", the
+30-prior gate first, and a change in outcome size is reported as that, not as degradation. T2: the
+backtest deducted the cost twice under a "round-trip" label (gross +50 bps with 6 entered showed +38); the
+input is the round trip, deducted once, default 6 (same default behaviour); a cost of 0 is now sent as 0.
+T3: four signal kinds ignored the side selector and always traded long; every kind honours it, and "both"
+is relabelled "signal direction". T17: the gamma-curve asymmetry ratio was Infinity when there was no net
+gamma below spot, became null in JSON and crashed the panel; null with a dash; the bias names said the
+opposite of the model's own description ("compression-down" for heavy negative gamma below): now damping-
+above / amplifying-below / amplifying-above / damping-below with descriptive notes. T5: playbook scenario
+levels could sit on the wrong side of the entry with a positive R:R from the absolute distance (short
+under the put wall with the flip above as "L1", R:R 3.67); wrong-side levels are dropped, the next takes
+their place, R:R is read on signed distances and is null without a valid level or stop. T6: Camarilla
+and classic pivots are filed under Resistance or Support by their side of spot, not by name. Max drawdown
+no longer coloured as a gain. Tests: tests/quant/audit-edgelab.test.ts (buildLevels behaviour, wiring);
+full quant suite 1039 pass, 4 known local package failures. Needs review.
+Review of feat/audit-edgelab (HOLD, one must-fix, taken): the server feature type still said value: number
+while the function now returns null (a new tsc error the CI type gate rejects); typed number | null.
+Should-fixes taken: the "Downside Break" target sentence no longer names the flip when the flip is above
+the entry; an "either" scenario takes its direction from its stop (stop above entry = short), so it keeps
+its R:R (tested); the backtest side label says it applies to every signal; a negative cost is refused;
+drift wording in the brief corrected. Behaviour changes stated: "short" on up-signals now shorts (was
+long); "signal direction" (was "both") trades up-signals long and down-signals short (was long everywhere).
+2026-11-16: Tab-by-tab accuracy audit (owner request) and its first fixes. Four independent read-only audits
+over every tab plus Settings at d60d647 (trace: component -> route -> server module; labels, math, data
+states, client/server contract, copy, dead controls; confirmed defects only). Confirmed: 14 on Crypto and
+Settings, 20 on Models/Heatseeker/Regime, 24 on Signals/Chart/News and the shell; Trade Desk / Take Five /
+Edge Lab / Cosmos pending at the time of writing. The full list is being worked in bounded PRs, most
+severe first; each PR's entry below names the items it closes.
+fix/crypto-audit-gates (crypto items 1, 4, 5):
+(1) The rule book states "at least one sell observed in the last hour" (enter.requireSellsObserved) but
+honeypotRead returned "ok" for an OBSERVED zero sell count with under 25 buys (or buys unread), so such a
+pair could reach ENTER (and its 5-minute net-buy ratio of 100% helped it). It now returns "no_sells" and the
+scorer holds at WATCH (code no_sells, flag on the card); the verifier's ENTER-gates check and the replay's
+wouldEnterNow apply the same test. No number changed (hash identical) but graded outcomes differ, so the
+rule version is 2026.11.16-1 and the records partition there (the plan record keeps earlier versions).
+(4) The exit-plan sampler read marketCap-else-FDV whatever basis the entry was recorded on, so an FDV entry
+of $500k saw a later marketCap of $250k as 0.5x and closed at the stop with a loss that never happened;
+samplePlans now takes both readings and samples each plan with capOnBasis on its own row's mcapBasis
+(same rule as the peak sampler and the grader), on both the refresh path and the grader's fetch path.
+(5) The AI prompt printed "market cap unread" and dropped every cap level on an FDV-only coin while the
+card showed "cap (FDV) $400K" with levels; the prompt now uses capOf and names the basis.
+Tests: r3-3 honeypotRead cases, crypto-replay blocker, crypto-verdict no_sells wiring and version, crypto-cap
+sampler wiring, exit-plan prompt FDV cases, rules-version pin. 206/206. Needs the crypto review.
+Review of fix/crypto-audit-gates (HOLD, one must-fix, taken): the autopsy still showed "Sells observed: pass"
+on an observed zero under the kill threshold while the desk line on the same card read WATCH no_sells. The
+kill gate is relabelled "Honeypot pattern" and an entry gate "Sell observed, last hour" (unread / fail /
+pass) is added (tested). Should-fixes: stated here that the new flag costs 5 structure points, as the
+missing-sells flag always has, so a zero-sell pair scores 5 lower (a would-be ENTER at 70-74 lands as WATCH
+forming; a 50-54 WATCH becomes PASS): "no number changed" is true of the rule book, not of every score.
+requireSellsObserved is honoured consistently by the scorer and the replay. Plans already closed by the
+wrong-basis sample before this change stay on the plan record as recorded (stop or liquidity-stop closes on
+FDV-entry rows under versions up to 2026.11.06-1); the sample that closed them was not retained, so they
+cannot be re-walked. Those versions' plan summaries include them; the 2026.11.16-1 headline does not.
+Plans still open at the change keep their starting version label and are sampled on their entry basis from here.
+2026-11-16: Verify live data covers the Jupiter cross-check and the candle feed (feat/verify-crypto-feeds).
+The engine counts real calls per source; sourceHealthCheck: untried is unavailable (never a pass), a recent
+success passes, the latest call failing fails, a long quiet with work waiting fails. Review (HOLD, one
+must-fix, taken): candle rows that do not parse (a changed row shape) counted as ok because the list was
+still an array; ok now needs parsed candles or a genuinely empty list. Should-fixes taken: a small Jupiter
+batch (under 10 mints) pricing none is inconclusive, since Jupiter omits brand-new mints, while a full
+batch pricing none is a failure; an old failure with no work since reads unavailable instead of a standing
+red. The ticker-outlook headline link is a 24 px tap target (a one-line title was 16 px tall and failed
+the phone UX audit on a day's headline). Tests: tests/quant/crypto-source-health.test.ts.
+Second review (MERGE-READY), one should-fix taken: an inconclusive small Jupiter batch did not count as
+activity, so a tracked set under 10 unpriced mints turned the check red after the 10-minute quiet window;
+the engine now records lastInconclusiveAt and the check reads "unavailable" while the latest answers are
+inconclusive (a later failure still fails; tested). Left as is: a brief red (up to 75 s Jupiter, 60 s
+candles) when demand resumes after a long idle.
+2026-11-16: Audit batch, Models / Heatseeker / Regime (feat/models-audit; audit items M2, M5, M6, M7, M8, M9,
+M11, M12, M13, M15, M17). NOT in this batch, owner decisions: M1 (DFI saturates at +-5: see below) and the
+date logic of M3/M4.
+M5: the VIX-derived daily sigma in percent (about 0.22 for a 4-point VIX day) was read as VIX points by the
+MM matrix's "VIX moved over 1 pt" rule and by the "Vol Bid Up / Vol Offered" label (0.25), so neither fired
+short of an ~18-point (or ~4.5-point) VIX day; termStructureDoD now carries vixDeltaPts and both read points;
+the row is labelled "1D sigma (from VIX)". In plain terms, three things change from 2026-11-16: "Vol Bid Up / Vol Offered" now
+appears at a 1.0-point VIX move (the old test needed about 4.5 points, so it almost never showed); the MM
+matrix's VANNA_DRIVEN regime and its vol tilts (|VIX change| x 5 capped at 14, x 2 capped at 6) receive a
+number about 18x larger than before, so the pUp/pDown that mmPredictions records can shift by up to 14 points
+on a vol day and the logged MM series is not like-for-like across this date; and the stored `vixDelta`
+feature on those rows is VIX points from this date (daily sigma in percent before). Review should-fixes
+taken: the regime predictor had the same unit bug (iv1dDelta against +-0.25, with driver notes at +-0.02);
+it now reads vixDeltaPts against 1.0 for both the score and the note, so its vol driver fires about 4.5x more
+readily than before; the models session flag is re-read when a cached build is served, so a build made
+before the close cannot read "LIVE" after it. Open, not confirmed: Canary before 09:30 ET on a trading day
+still scales sigma by sqrt(0.25); whether the quote's change at that hour is the overnight move (correct) or
+still the prior completed session (z doubled) has not been observed. Second review notes: the regime
+predictor's driver NOTE used +-0.02 sigma-percent (about 0.36 VIX points) and now uses the same 1.0 point as
+the score, so the note appears less often while the score fires more often; /api/regime/predict logs regime
+calls, so that graded series is also not like-for-like across 2026-11-16; a build made minutes before the
+close and served just after reads "last-close" although it is not the settled close (short window, and it
+is no longer "live"). M6: the models payload said session "live" on every successful
+build, so a weekend build on Friday's chain read "LIVE"; live now needs the regular session open and no
+horizon on a last-session chain copy; a stored build reads "STORED BUILD"; three hard-coded "LIVE {spot}"
+labels read "SPOT". M7: the Heatseeker route never set chainLastSession and the thermal route sent no
+lastSession, so neither could show "last session"; both set, Thermal's chip reads it. M9: Canary scaled
+sigma by the wall clock with no closed-market check, so a Saturday 10:00 read as 30 minutes into a session
+and inflated z by up to 2x; a closed market is compared with a full day's sigma. M17: a missing VIX gave an
+MM-matrix move of 0 ("+-0", "~0pt move"); null with a dash. M12: unknown gamma ("y?") read "POS gamma";
+three states now. M13: with no charm zero the Double Zero line always read "KNIFE EDGE"; it now says no
+zone exists, and the gamma sign comes from the audit's zone. M15: "Sell zone / Buy zone / Chop" are "Above
+call wall / Below put wall / Between the walls"; "NEG-gamma ENTRY" rail label is "NEG-gamma LEVEL". M11:
+"(FIRST FLIP)" / "FLIP" on DFI meant spot within 0.3% of the charm zero; labelled "near charm zero". M8:
+every TREND regime mapped to the "bull" tone (green, up-arrow) on the tab headlines although TREND is the
+short-gamma state and has no direction; regime tone is neutral, the Heatseeker subline no longer claims
+"price has been pinning" (not measured) and its bullets describe what the tab shows. M2: the documented
+"nearest structural resistance / support capped to EM" never happened (the filter read `side`, a field
+added to the levels later), so scenario targets have always been spot +- 1 EM of the horizon; the dead
+filter is removed and the code and type comments say what the targets are. The graded event is unchanged
+on purpose: a structural version would move the target to the nearest of a dozen level kinds and change
+what every calibration row so far was a forecast of. OWNER DECISIONS OPEN: (a) DFI: (dDEX/dS)/|GEX| x 1e9 is
+about 1e8 and always clamps to +-5.00, so "DFI +5.00 BULLISH" carries only a sign (close to the gamma
+sign), the regime predictor can only return CHOP_WEAK or TREND_STRONG from it, and the MM matrix always
+applies its maximum tilt. A unit-less version is about +-1 plus DEX/(100 GEX), still close to a sign; the
+regime thresholds (1.0 / 2.0 / 3.5) were set for a spread that never existed. Options: retire DFI and key
+the regime on the gamma zone it already equals, or define a real flow measure and re-grade. (b) whether
+scenario targets should become structural.
+Tests: tests/quant/audit-models.test.ts. Needs a quant review.
 2026-11-16: Audit batch, desk data (feat/audit-desk-data; audit items T9, T13, T14, T18, T19, T22). T9: every
 GET of the IV/RV panel wrote today's row with INSERT OR REPLACE, so a weekend or holiday request stored the
 prior session's numbers under a date with no session (each such row entered the RV percentile cones and the

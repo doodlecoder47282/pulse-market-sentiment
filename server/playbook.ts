@@ -347,7 +347,7 @@ function fmtPrice(p: number | null, t: number): string {
   return p.toFixed(2);
 }
 
-function buildLevels(
+export function buildLevels(
   side: TradeSide,
   entry: number | null,
   stop: number | null,
@@ -358,13 +358,26 @@ function buildLevels(
   const t = tick(spot);
   const e = entry != null ? roundToTick(entry, t) : null;
   const s = stop != null ? roundToTick(stop, t) : null;
-  const t1 = target1 != null ? roundToTick(target1, t) : null;
-  const t2 = target2 != null ? roundToTick(target2, t) : null;
+  // A target must lie BEYOND the entry in the scenario's direction (above for a long, below for a short).
+  // The flip often sits between the put wall and spot, so "short below the put wall, first level the flip"
+  // put the level above the entry and still printed a positive R:R from the absolute distance. Such a
+  // level is dropped (the next one takes its place) and R:R is read on the signed distance.
+  // Direction of the levels: the scenario's side, or for an "either" scenario the side the stop implies
+  // (a stop above the entry is a short's stop).
+  const dir: "long" | "short" | null = side === "long" || side === "short" ? side : e != null && s != null && s !== e ? (s > e ? "short" : "long") : null;
+  const beyond = (x: number | null): number | null => {
+    if (x == null || e == null || dir == null) return x;
+    return dir === "long" ? (x > e ? x : null) : (x < e ? x : null);
+  };
+  const r1 = beyond(target1 != null ? roundToTick(target1, t) : null);
+  const r2 = beyond(target2 != null ? roundToTick(target2, t) : null);
+  const t1 = r1 ?? r2;
+  const t2 = r1 != null ? r2 : null;
   let rr1: number | null = null;
   if (e != null && s != null && t1 != null) {
-    const risk = Math.abs(e - s);
-    const reward = Math.abs(t1 - e);
-    rr1 = risk > 0 ? +(reward / risk).toFixed(2) : null;
+    const risk = dir === "short" ? s - e : e - s;
+    const reward = dir === "short" ? e - t1 : t1 - e;
+    rr1 = risk > 0 && reward > 0 ? +(reward / risk).toFixed(2) : null;
   }
   const verb = side === "long" ? "BUY" : side === "short" ? "SELL" : "WAIT";
   let instruction = "";
@@ -521,7 +534,8 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     scenarios.push({
       name: "Downside Break — Put Wall Fail",
       trigger: `If 15-min closes below ${fmtPrice(pw, tk)} (failed put wall)`,
-      target: zg != null ? `Test zero-gamma ${fmtPrice(zg, tk)} then ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}` : `Extend ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}`,
+      // The flip is named only when it lies below the entry (it usually sits above the put wall, where it is not a level of this scenario).
+      target: zg != null && zg < pw - tk ? `Test zero-gamma ${fmtPrice(zg, tk)} then ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}` : `Extend ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}`,
       invalidation: `Reclaim above ${fmtPrice(pw, tk)}`,
       odds: "tail",
       levels: buildLevels(
@@ -672,12 +686,18 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     else support.push({ level: zg, label: "Zero-Γ Flip" });
   }
   if (pivots) {
-    resistance.push({ level: pivots.camarilla.h3, label: "Cam H3 (fade)" });
-    resistance.push({ level: pivots.camarilla.h4, label: "Cam H4 (breakout)" });
-    support.push({ level: pivots.camarilla.l3, label: "Cam L3 (fade)" });
-    support.push({ level: pivots.camarilla.l4, label: "Cam L4 (breakdown)" });
-    resistance.push({ level: pivots.classic.r1, label: "Classic R1" });
-    support.push({ level: pivots.classic.s1, label: "Classic S1" });
+    // By side of spot, not by name: with spot above H3/H4/R1 those levels are below price and were
+    // still listed under Resistance.
+    const place = (level: number, label: string) => {
+      if (!Number.isFinite(level)) return;
+      (level > spot ? resistance : support).push({ level, label });
+    };
+    place(pivots.camarilla.h3, "Cam H3");
+    place(pivots.camarilla.h4, "Cam H4");
+    place(pivots.camarilla.l3, "Cam L3");
+    place(pivots.camarilla.l4, "Cam L4");
+    place(pivots.classic.r1, "Classic R1");
+    place(pivots.classic.s1, "Classic S1");
   }
   resistance.sort((a, b) => a.level - b.level);
   support.sort((a, b) => b.level - a.level);
