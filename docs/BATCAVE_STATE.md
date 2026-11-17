@@ -2131,3 +2131,35 @@ the entry; an "either" scenario takes its direction from its stop (stop above en
 its R:R (tested); the backtest side label says it applies to every signal; a negative cost is refused;
 drift wording in the brief corrected. Behaviour changes stated: "short" on up-signals now shorts (was
 long); "signal direction" (was "both") trades up-signals long and down-signals short (was long everywhere).
+2026-11-16: Tab-by-tab accuracy audit (owner request) and its first fixes. Four independent read-only audits
+over every tab plus Settings at d60d647 (trace: component -> route -> server module; labels, math, data
+states, client/server contract, copy, dead controls; confirmed defects only). Confirmed: 14 on Crypto and
+Settings, 20 on Models/Heatseeker/Regime, 24 on Signals/Chart/News and the shell; Trade Desk / Take Five /
+Edge Lab / Cosmos pending at the time of writing. The full list is being worked in bounded PRs, most
+severe first; each PR's entry below names the items it closes.
+fix/crypto-audit-gates (crypto items 1, 4, 5):
+(1) The rule book states "at least one sell observed in the last hour" (enter.requireSellsObserved) but
+honeypotRead returned "ok" for an OBSERVED zero sell count with under 25 buys (or buys unread), so such a
+pair could reach ENTER (and its 5-minute net-buy ratio of 100% helped it). It now returns "no_sells" and the
+scorer holds at WATCH (code no_sells, flag on the card); the verifier's ENTER-gates check and the replay's
+wouldEnterNow apply the same test. No number changed (hash identical) but graded outcomes differ, so the
+rule version is 2026.11.16-1 and the records partition there (the plan record keeps earlier versions).
+(4) The exit-plan sampler read marketCap-else-FDV whatever basis the entry was recorded on, so an FDV entry
+of $500k saw a later marketCap of $250k as 0.5x and closed at the stop with a loss that never happened;
+samplePlans now takes both readings and samples each plan with capOnBasis on its own row's mcapBasis
+(same rule as the peak sampler and the grader), on both the refresh path and the grader's fetch path.
+(5) The AI prompt printed "market cap unread" and dropped every cap level on an FDV-only coin while the
+card showed "cap (FDV) $400K" with levels; the prompt now uses capOf and names the basis.
+Tests: r3-3 honeypotRead cases, crypto-replay blocker, crypto-verdict no_sells wiring and version, crypto-cap
+sampler wiring, exit-plan prompt FDV cases, rules-version pin. 206/206. Needs the crypto review.
+Review of fix/crypto-audit-gates (HOLD, one must-fix, taken): the autopsy still showed "Sells observed: pass"
+on an observed zero under the kill threshold while the desk line on the same card read WATCH no_sells. The
+kill gate is relabelled "Honeypot pattern" and an entry gate "Sell observed, last hour" (unread / fail /
+pass) is added (tested). Should-fixes: stated here that the new flag costs 5 structure points, as the
+missing-sells flag always has, so a zero-sell pair scores 5 lower (a would-be ENTER at 70-74 lands as WATCH
+forming; a 50-54 WATCH becomes PASS): "no number changed" is true of the rule book, not of every score.
+requireSellsObserved is honoured consistently by the scorer and the replay. Plans already closed by the
+wrong-basis sample before this change stay on the plan record as recorded (stop or liquidity-stop closes on
+FDV-entry rows under versions up to 2026.11.06-1); the sample that closed them was not retained, so they
+cannot be re-walked. Those versions' plan summaries include them; the 2026.11.16-1 headline does not.
+Plans still open at the change keep their starting version label and are sampled on their entry basis from here.

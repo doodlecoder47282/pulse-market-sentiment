@@ -601,11 +601,15 @@ export function momentumPoints(i: { volAccel: number | null; netBuyRatio5m: numb
 /**
  * Honeypot read on the 1 h sell count. An OBSERVED 0 sells against 25+
  * buys is the honeypot pattern (hard kill); a MISSING sell count is not
- * "zero sells", it is an unverifiable sell side (blocks ENTER, not a kill).
+ * "zero sells", it is an unverifiable sell side (blocks ENTER, not a kill);
+ * an OBSERVED 0 sells with fewer buys (or buys unread) is "no_sells": not
+ * enough for the kill, but the rule book's "at least one sell observed in the
+ * last hour" (enter.requireSellsObserved) is not met, so it blocks ENTER too.
+ * Before 2026.11.16-1 that last case returned "ok" and could reach ENTER.
  */
-export function honeypotRead(buys1h: number | null, sells1h: number | null): "honeypot" | "sells_missing" | "ok" {
-  if (sells1h == null) return "sells_missing";
-  if ((buys1h ?? 0) >= CRYPTO_RULES.hardKills.honeypotMinBuys1h && sells1h === 0) return "honeypot";
+export function honeypotRead(buys1h: number | null, sells1h: number | null): "honeypot" | "sells_missing" | "no_sells" | "ok" {
+  if (sells1h == null || !Number.isFinite(sells1h)) return "sells_missing";
+  if (sells1h <= 0) return (buys1h ?? 0) >= CRYPTO_RULES.hardKills.honeypotMinBuys1h ? "honeypot" : "no_sells";
   return "ok";
 }
 

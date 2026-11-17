@@ -18,6 +18,7 @@ export type VerdictCode =
   | "security_unread"
   | "price_unconfirmed"
   | "sells_missing"
+  | "no_sells"
   | "top10_unread"
   | "risk_off"
   | "risk_unknown"
@@ -34,6 +35,7 @@ export const VERDICT_CODE_TEXT: Record<VerdictCode, string> = {
   security_unread: "mint and freeze authority not read",
   price_unconfirmed: "pool price not confirmed by a second route",
   sells_missing: "1 h sell count missing, honeypot test not possible",
+  no_sells: "no sell observed in the last hour",
   top10_unread: "top-10 holder share not read",
   risk_off: "desk risk off: BTC 5% or more under its 24 h VWAP",
   risk_unknown: "desk risk unknown: majors not readable",
