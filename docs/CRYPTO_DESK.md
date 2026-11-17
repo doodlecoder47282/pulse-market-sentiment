@@ -109,6 +109,10 @@ WATCH stale_data and records no row at all), and the feed, the
 autopsy's "tracked" line and the AI prompt read one served verdict
 (shared/cryptoVerdict.ts servedVerdict: stale first, hold reasons first).
 Version 2026.11.16-1 (the stated "at least one sell observed in the last hour" gate is now enforced on an observed zero; no number changed).
+Version 2026.11.17-1 (flow.accelMinAgeMinutes = 10): volume acceleration is the 5-minute volume pace over the
+pace of the last hour, or of the coin's own life when it is younger than an hour, and is not read on a coin
+under 10 minutes old. Before, the hour's volume was divided by 60 for every coin, so anything under 5 minutes
+old read exactly 12x (shared/cryptoFlow.ts).
 
 Funding and open interest are a recorded, descriptive regime readout, not a
 rule. Funding is the exchange's decimal rate per funding interval (positive:

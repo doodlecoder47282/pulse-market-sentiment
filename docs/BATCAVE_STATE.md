@@ -2328,3 +2328,15 @@ not started again on top of itself (the momentum tick's worst case moved close t
 mint's Jupiter check is stamped with its own call's time. Left open and unverified: "pumpswap" as the dex id
 GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
 replay pools old-meaning and new-meaning graduate rows without a marker.
+
+2026-11-17: Crypto rule version 2026.11.17-1 (feat/crypto-accel-age; practitioner review item C2). Volume
+acceleration was (5-minute volume / 5) over (1-hour volume / 60) for every coin. For a coin under 5 minutes
+old the "1-hour volume" is its 5-minute volume, so the figure was exactly 12 whatever the tape: the live
+record showed a median of 12.00 for winners and for losers, and every minute-2 coin collected the full flow
+points for it. It now compares the 5-minute pace with the pace of the coin's own life when younger than an
+hour and is not read (null, never a number) under flow.accelMinAgeMinutes = 10; an unknown age keeps the
+hour. Consequences, stated plainly: scores of coins under an hour old fall; a coin under 10 minutes old gets
+no acceleration points and cannot meet the ENTER acceleration floor or count toward the sustained-flow polls,
+so fewer minute-2 launches reach WATCH and the log starts later in a coin's life. This does not make ENTER
+reachable (the score ceiling, C1, is still open); it removes a number that carried no information. Rows
+stored under earlier versions keep the old figure and the records partition at the version.

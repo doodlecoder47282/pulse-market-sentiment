@@ -48,6 +48,7 @@ import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
 import { readDerivs, lastDerivs } from "./sources/cryptoDerivs";
 import { derivsRecord, type DerivsSnapshot } from "../shared/cryptoFunding";
+import { volumeAcceleration } from "../shared/cryptoFlow";
 import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type JupState } from "./sources/dexCross";
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
@@ -1041,15 +1042,9 @@ function scoreCandidate(c: Candidate): void {
     .filter((n) => new RegExp(`\\b${n.term}\\b`, "i").test(`${c.name} ${c.symbol}`))
     .map((n) => n.term);
 
-  // flow: volume acceleration = m5 pace vs h1 pace (null when the source
-  // did not report volume: missing is not zero flow)
-  if (c.vol5m == null || c.vol1h == null) {
-    c.volAccel = null;
-  } else {
-    const paceM5 = c.vol5m / 5;
-    const paceH1 = c.vol1h / 60;
-    c.volAccel = paceH1 > 0 ? paceM5 / paceH1 : (paceM5 > 0 ? 5 : 0);
-  }
+  // flow: volume acceleration (shared/cryptoFlow.ts): 5-minute pace over the pace of the last hour or of the
+  // coin's own life; null when volume is missing or the coin is too young to have a baseline.
+  c.volAccel = volumeAcceleration(c.vol5m, c.vol1h, c.ageMinutes);
   const t5 = c.buys5m != null && c.sells5m != null ? c.buys5m + c.sells5m : 0;
   c.netBuyRatio5m = t5 > 0 ? (c.buys5m ?? 0) / t5 : null;
 
