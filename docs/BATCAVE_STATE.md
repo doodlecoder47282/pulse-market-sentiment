@@ -2328,3 +2328,16 @@ not started again on top of itself (the momentum tick's worst case moved close t
 mint's Jupiter check is stamped with its own call's time. Left open and unverified: "pumpswap" as the dex id
 GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
 replay pools old-meaning and new-meaning graduate rows without a marker.
+
+2026-11-17: Crypto grader, successor pool (feat/crypto-grader-successor; practitioner review item C11). The
+grader and the 72 h horizon pass asked DexScreener for the pair a row was logged on and nothing else. A
+pump.fun coin that graduates leaves its bonding-curve pair for a new pool, so the read came back empty, the
+row stayed OPEN and became NO_DATA at the horizon: the coins that did best were the likeliest to lose their
+outcome (59% of resolved coins had none on 2026-11-17). When the pair is absent, both passes now read the
+same token's deepest other pool on the same chain (cryptoStats.pickSuccessorPool; never the original pair,
+another token's pool, another chain, or a pool with no liquidity figure) and grade on it, on the row's own
+cap basis. A coin with no other pool is still NO_DATA. Not changed, and stated: rows already marked NO_DATA
+are not re-opened (recovering them needs an OHLCV backfill); a tracked coin's peak samples are still keyed
+on its original pair; the RUGGED liquidity test compares the successor pool's liquidity with the entry
+pool's. Unverified from the sandbox: that DexScreener drops a bonding-curve pair after graduation (the
+fallback only acts when the pair is absent, so it is inert if that is wrong). No threshold changed.

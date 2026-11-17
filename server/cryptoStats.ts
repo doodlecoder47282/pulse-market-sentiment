@@ -665,3 +665,27 @@ export function countMentions(
   }
   return { m10, byAddress10m, m1h, capped, byAddress1h };
 }
+
+// ─── Successor pool: a coin whose original pair is gone from the feed ──────
+/**
+ * The pool to grade a row on when DexScreener no longer returns the pair it was logged on. A pump.fun coin
+ * that graduates leaves its bonding-curve pair for a new pool; the grader asked for the original pair only,
+ * got nothing, left the row OPEN and marked it NO_DATA at the horizon, so the coins that did best were the
+ * ones most likely to lose their outcome (59% of resolved coins had none on 2026-11-17). The successor is
+ * the same token's deepest pool on the same chain, never the original pair and never a pool of another
+ * token. Null when the token has no other pool with an observed liquidity figure.
+ */
+export function pickSuccessorPool(pairs: unknown, chain: string, tokenAddress: string, originalPair: string): any | null {
+  if (!Array.isArray(pairs) || !tokenAddress) return null;
+  let best: any = null, bestLiq = -1;
+  for (const p of pairs) {
+    if (String(p?.chainId ?? "") !== chain) continue;
+    if (String(p?.baseToken?.address ?? "") !== tokenAddress) continue;
+    if (!p?.pairAddress || String(p.pairAddress) === originalPair) continue;
+    const liq = Number(p?.liquidity?.usd);
+    if (!Number.isFinite(liq) || liq < 0) continue; // liquidity not reported: cannot rank it, not chosen
+    if (liq > bestLiq) { best = p; bestLiq = liq; }
+  }
+  return best;
+}
+
