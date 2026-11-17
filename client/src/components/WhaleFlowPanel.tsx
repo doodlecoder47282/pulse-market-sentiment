@@ -511,7 +511,7 @@ function ClosedTickerGroup({
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-sm text-foreground">{ticker}</span>
         <Badge variant="outline" className="text-[11px] border-muted-foreground/30 text-muted-foreground">
-          {positions.length} closed
+          {positions.length} closed or expired
         </Badge>
         {wins > 0 && (
           <span className="text-[11px] text-emerald-400/80">{wins}W</span>

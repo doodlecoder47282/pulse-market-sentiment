@@ -18,7 +18,7 @@
 // Source rows: schwabChainRows.flattenSchwabChain (side, volume, OI, bid, ask, last).
 
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
-import { etDate, isRegularSessionOpen, isTradingDay, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
+import { etDate, isRegularSessionOpen, isTradingDay, prevTradingDay, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
 import { pcrReadAtClock, type PcrRead, type PcrZone } from "./pcrHistory";
 import { loadPcrSessions, recordPcrSnapshot, sessionMinuteOf } from "./pcrHistoryStore";
 
@@ -515,20 +515,27 @@ export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now())
   const at = sessionMinuteOf(nowMs);
   // It was 24 * 60, which no stored point reaches (the last is the session length, 390), so before the open
   // and on non-trading days every stored session was dropped and the card read "0/20 sessions".
-  const inSession = !!at && at.date === today;
-  const minute = inSession ? at!.minute : Infinity;
+  // True from today's open until midnight ET (after the close the minute is the session length).
+  const onSessionDay = !!at && at.date === today;
+  const minute = onSessionDay ? at!.minute : Infinity;
+  let lastSession = "";
+  try { lastSession = prevTradingDay(today); } catch { /* outside the calendar: nothing is dropped */ }
   // A stored day counts as full only when its last point is within 15 minutes of THAT day's close.
   const fullDayFrom = (date: string): number => {
-    const o = sessionOpenMs(date), c = sessionCloseMs(date);
-    return o != null && c != null ? (c - o) / 60_000 - 15 : Infinity;
+    // A malformed stored date is never a full day (and never fails the whole response).
+    try {
+      const o = sessionOpenMs(date), c = sessionCloseMs(date);
+      return o != null && c != null ? (c - o) / 60_000 - 15 : Infinity;
+    } catch { return Infinity; }
   };
   const readFor = (key: string, putVol: number, callVol: number, observed: boolean): PcrRead => {
     if (observed) recordPcrSnapshot({ symbol: key, putVol, callVol, provider: resp.provider, capturedAtMs: nowMs });
     const stored = loadPcrSessions(key, today);
     // Outside the session the chain still reports the LAST session's volume, so that session is the value
     // being read: it is left out of its own baseline.
-    const newest = stored.reduce((m, s) => (s.date > m ? s.date : m), "");
-    const baseline = inSession ? stored : stored.filter((s) => s.date !== newest);
+    // By date, not "the newest stored": if that session was never recorded, the newest stored one is an
+    // ordinary baseline day and stays in.
+    const baseline = onSessionDay ? stored : stored.filter((s) => s.date !== lastSession);
     return pcrReadAtClock(observed ? { putVol, callVol } : null, minute, baseline, { today, fullDayFrom });
   };
   for (const t of [...resp.indexGroup, ...resp.mag7Group]) {
