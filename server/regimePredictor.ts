@@ -1,8 +1,11 @@
 // server/regimePredictor.ts
 //
-// Regime transition prediction — forward-looking probability scoring for the
-// next regime bucket, plus the drivers that pushed us there. Read-only,
-// pure-function. Operates on a snapshot of audit + recent history.
+// Regime read — the regime bucket as read NOW, with a hand-set heuristic score
+// per bucket and the drivers that support or weaken that read. It is not a
+// forecast: no projection is made, and the top-scoring bucket is always the
+// current regime (the function keeps the name predictTransition for its
+// callers). Read-only, pure-function. Operates on a snapshot of audit + recent
+// history.
 //
 // Existing system (do not touch):
 //   - detectRegime(audit) in realtimeTargets.ts maps current audit to a
@@ -12,10 +15,10 @@
 //     regime before _appliedRegime switches.
 //
 // What this module adds:
-//   - Forward-looking heuristic score (hand-set softmax weights, not calibrated
-//     probabilities): how strongly does each candidate regime score to be the
-//     APPLIED regime in the next ~15-30 minutes? Returns currentRegime,
-//     candidates[] sorted by probability, drivers, confidence.
+//   - A heuristic score (hand-set softmax weights, not calibrated
+//     probabilities): how the drivers score each regime bucket for the current
+//     read. Returns currentRegime, candidates[] sorted by score, drivers,
+//     confidence.
 //
 // Drivers (each contributes a signed pressure toward a regime):
 //   1. The current regime bucket (gamma zone + distance of spot from the gamma
@@ -27,10 +30,10 @@
 //      move. Removed.)
 //   2. IV term DoD (iv1d delta). Negative = vol bleed = chop drift. Positive
 //      vol expansion = trend pressure.
-//   3. Gamma flip proximity. Spot near mainPivot/charmZero (zero-gamma)
-//      destabilizes the current applied regime.
-//   4. Session time remaining. Late-day chop bias dominates regardless of
-//      morning trend (pin pressure rises into close).
+//   3. Distance of spot from the main pivot and from the charm zero, in 1-day
+//      expected moves. Close to either weakens a trend read.
+//   4. Session time remaining. A hand-set chop weight in the last 1.5 hours
+//      and a trend weight in the first 1.5 hours.
 //   5. Recent flip frequency from rolling raw-regime history. High flip rate
 //      = low confidence = elevated NEUTRAL probability.
 //
@@ -141,7 +144,7 @@ export interface RegimePredictorInput {
     dxyDelta?: number | null;     // intraday %
     tnxDelta?: number | null;     // intraday %
   } | null;
-  /** Optional whale herding signal: net signed pressure last 30min, normalized -1..+1. */
+  /** Optional large-print signal: net call-minus-put premium of large SPY prints over the last 30min, normalized -1..+1. */
   whalePressure?: number | null;
 }
 
@@ -224,7 +227,9 @@ function sessionFracRemaining(nowMs: number): number {
 const IV_TERM_MOVE_PTS = 1.0;
 
 /**
- * Predict the most likely applied regime over the next horizon minutes.
+ * Read the current regime and score each bucket for that read (no forecast: the
+ * top-scoring bucket is always the current regime; horizonMinutes is echoed for
+ * the outcome logger, which grades the carried regime over it).
  * Pure-function, fail-soft, returns sane defaults on any error.
  */
 export function predictTransition(input: RegimePredictorInput): RegimePredictorOutput {
@@ -233,8 +238,8 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
 
   const audit = input.audit ?? {};
   // Missing inputs are missing, not zero: a null pivot or 1-day EM makes the
-  // call "degraded" with no candidates, instead of "pin pressure" or "room to
-  // trend" read from nothing. The DEX slope sign is reported, not scored.
+  // call "degraded" with no candidates, instead of a pivot-distance note read
+  // from nothing. The DEX slope sign is reported, not scored.
   const dexSlopeSign = dexSlopeSignFromAudit(audit);
   const pivotMissing = audit.mainPivot == null || !Number.isFinite(Number(audit.mainPivot));
   const emMissing = audit.scenarioTargets?.oneDayEM == null || !Number.isFinite(Number(audit.scenarioTargets.oneDayEM)) || Number(audit.scenarioTargets.oneDayEM) <= 0;
@@ -314,14 +319,14 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     scores.TREND_WEAK += 0.3;
   }
 
-  // 5) Session time remaining — late-day pin bias
+  // 5) Session time remaining — hand-set late-day chop weight
   if (sessionFrac < 0.25) {
-    // last 1.5 hr — pin/chop pressure rises
+    // last 1.5 hr — chop weight
     scores.CHOP_STRONG += 0.5;
     scores.CHOP_WEAK += 0.3;
     scores.TREND_STRONG -= 0.3;
   } else if (sessionFrac > 0.75) {
-    // first 1.5 hr — direction-setting
+    // first 1.5 hr — hand-set trend weight
     scores.TREND_STRONG += 0.3;
     scores.TREND_WEAK += 0.2;
   }
@@ -357,7 +362,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     scores.TREND_STRONG -= 0.2;
   }
 
-  // 10) Charm zero proximity — second pivot, similar pin pressure as mainPivot
+  // 10) Charm zero proximity — second pivot, same kind of weight as the mainPivot distance
   const charmZero = Number(audit.charmZero ?? NaN);
   let charmZeroProxFrac: number | null = null;
   if (Number.isFinite(charmZero) && charmZero > 0 && spot > 0) {
@@ -393,7 +398,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     }
   }
 
-  // 12) Whale herding pressure — net signed flow last 30min reinforces directional regimes
+  // 12) Large-print pressure — net signed premium last 30min adds weight to the TREND buckets
   const whalePressure = clamp(Number(input.whalePressure ?? 0), -1, 1);
   if (Math.abs(whalePressure) > 0.4) {
     // Strong directional whale flow — reinforces TREND, weakens CHOP
@@ -424,11 +429,9 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
 
   // ─── Plain-English synthesis ───
   const top = candidates[0];
-  const second = candidates[1];
-  const isTransition = top && top.regime !== currentRaw;
   const headline = (() => {
     if (status === "warming") {
-      return `collecting data — ${histSamples}/5 samples needed before forecast is reliable.`;
+      return `collecting data — ${histSamples}/5 samples needed before the regime read is formed.`;
     }
     if (status === "degraded") {
       return missingInputs.length
@@ -438,10 +441,8 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     if (!top) return "no signal yet.";
     // Heuristic score out of 100 (hand-set softmax weight), not a probability.
     const pct = Math.round(top.probability * 100);
-    if (isTransition) {
-      return `${prettyRegime(top.regime)} scores highest next (heuristic ${pct}/100) — would flip from ${prettyRegime(currentRaw)} within ${horizonMinutes}min.`;
-    }
-    return `${prettyRegime(currentRaw)} scores highest (heuristic ${pct}/100) — no transition indicated in next ${horizonMinutes}min.`;
+    // The top-scoring bucket is always the current regime: this is the read now, not a forecast.
+    return `${prettyRegime(currentRaw)} is the regime read now (heuristic ${pct}/100, a hand-set score, not a probability). This is the current read carried forward, not a forecast.`;
   })();
 
   const driverNotes: string[] = [];
@@ -449,19 +450,20 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     driverNotes.push(`spot ${Math.abs(flipDist).toFixed(2)} expected moves ${flipDist >= 0 ? "above" : "below"} the gamma flip (${Math.abs(flipDist) >= FLIP_DISTANCE_STRONG_EM ? "at or beyond" : "inside"} the ${FLIP_DISTANCE_STRONG_EM} line).`);
   }
   driverNotes.push("no flip-distance projection is made: the current regime is carried forward, adjusted by the other drivers.");
-  if (gammaFlipProxFrac < 0.25) driverNotes.push(`spot near gamma flip (${(gammaFlipProxFrac * 100).toFixed(0)}% of 1-day EM) — pin pressure.`);
-  else if (gammaFlipProxFrac > 1.0) driverNotes.push(`spot far from pivot — trend has room.`);
-  if (charmZeroProxFrac != null && charmZeroProxFrac < 0.20) driverNotes.push(`spot near charm zero — second pin.`);
-  if (vannaBias === "positive") driverNotes.push(`vanna positive — supports trend continuation.`);
-  else if (vannaBias === "negative") driverNotes.push(`vanna negative — destabilizes trend, favors chop.`);
-  if (ivTermDelta >= IV_TERM_MOVE_PTS) driverNotes.push(`IV expanding (${ivTermLabel}) — vol regime.`);
-  else if (ivTermDelta <= -IV_TERM_MOVE_PTS) driverNotes.push(`IV bleeding (${ivTermLabel}) — chop drift.`);
-  if (macroStress === "stress") driverNotes.push(`VIX backwardation — macro stress active.`);
-  else if (macroStress === "calm") driverNotes.push(`steep contango — vol-bleed environment.`);
-  if (Math.abs(whalePressure) > 0.4) driverNotes.push(`whale flow ${whalePressure > 0 ? "bullish" : "bearish"} (${(whalePressure * 100).toFixed(0)}%) — herding pressure.`);
-  if (sessionFrac < 0.25) driverNotes.push(`<1.5hr to close — pin/chop bias rising.`);
-  else if (sessionFrac > 0.75) driverNotes.push(`first 1.5hr of RTH — direction-setting window.`);
-  if (flipRate > 0.3) driverNotes.push(`high flip rate (${flipRate.toFixed(2)}/min) — uncertain regime.`);
+  // Each note states the measurement and which way its hand-set weight leans; none is a forecast.
+  if (gammaFlipProxFrac < 0.25) driverNotes.push(`spot is ${gammaFlipProxFrac.toFixed(2)} expected moves from the main pivot (under 0.25): weighs against a strong-trend read.`);
+  else if (gammaFlipProxFrac > 1.0) driverNotes.push(`spot is ${gammaFlipProxFrac.toFixed(2)} expected moves from the main pivot (over 1.0): weighs toward a trend read.`);
+  if (charmZeroProxFrac != null && charmZeroProxFrac < 0.20) driverNotes.push(`spot is ${charmZeroProxFrac.toFixed(2)} expected moves from the charm zero (under 0.20): weighs toward a chop read.`);
+  if (vannaBias === "positive") driverNotes.push(`vanna exposure positive: weighs toward a trend read.`);
+  else if (vannaBias === "negative") driverNotes.push(`vanna exposure negative: weighs toward a chop read.`);
+  if (ivTermDelta >= IV_TERM_MOVE_PTS) driverNotes.push(`VIX up ${ivTermDelta.toFixed(1)} points day over day (${ivTermLabel}): weighs toward a trend read.`);
+  else if (ivTermDelta <= -IV_TERM_MOVE_PTS) driverNotes.push(`VIX down ${Math.abs(ivTermDelta).toFixed(1)} points day over day (${ivTermLabel}): weighs toward a chop read.`);
+  if (macroStress === "stress") driverNotes.push(`VIX9D above VIX (ratio ${(vixTermRatio as number).toFixed(2)}, backwardation): weighs toward a trend or neutral read.`);
+  else if (macroStress === "calm") driverNotes.push(`VIX9D below VIX (ratio ${(vixTermRatio as number).toFixed(2)}, steep contango): weighs toward a chop read.`);
+  if (Math.abs(whalePressure) > 0.4) driverNotes.push(`large SPY option prints, last 30 minutes: ${Math.abs(whalePressure * 100).toFixed(0)}% net premium on the ${whalePressure > 0 ? "call" : "put"} side (calls counted +, puts -, by premium; the buyer or seller side is not known): weighs toward a trend read.`);
+  if (sessionFrac < 0.25) driverNotes.push(`under 1.5 hours to the close: a hand-set weight toward a chop read.`);
+  else if (sessionFrac > 0.75) driverNotes.push(`first 1.5 hours of the session: a hand-set weight toward a trend read.`);
+  if (flipRate > 0.3) driverNotes.push(`the regime read changed ${flipRate.toFixed(2)} times per minute over the recent samples: weighs toward a neutral read.`);
 
   // Gamma unknown, or an input missing: no bucket applies, so no candidates,
   // no confidence (the outcome logger skips confidence < 0.3) and no drivers
@@ -481,7 +483,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
       : missingInputs.length
         ? `no regime call: ${missingInputs.join(", ")} not available in this build.`
         : headline,
-    driverNotes: noRead ? driverNotes.filter((n) => !/gamma flip|far from pivot|flip distance|flip-distance/.test(n)) : driverNotes,
+    driverNotes: noRead ? driverNotes.filter((n) => !/gamma flip|main pivot|charm zero|flip distance|flip-distance/.test(n)) : driverNotes,
     drivers: {
       dexSlopeSign,
       dfi: dexSlopeSign === "unavailable" ? null : dexSlopeSignValue(dexSlopeSign),

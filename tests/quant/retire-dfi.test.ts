@@ -281,3 +281,55 @@ test("the 0.5 flip-distance line is defined once, as a named exported constant",
     assert.doesNotMatch(src(f), /flipDist\w*\)?\s*>=\s*0\.5/, f);
   }
 });
+
+test("regime read copy: describes the current read, never a forecast, a pin or a direction", () => {
+  const banned = /What's Next|What&apos;s Next|transition forecast|next 20 ?min|next \$\{[^}]*\}min|would flip|pin pressure|trend has room|no transition indicated|forecast is reliable|scores highest next|forward-looking|bullish|bearish|herding|direction-setting|second pin|room to trend/i;
+  for (const f of ["server/regimePredictor.ts", "client/src/components/RegimePredictPanel.tsx"]) {
+    const hits = src(f).split("\n").map((l, i) => (banned.test(l) ? `${f}:${i + 1} ${l.trim().slice(0, 90)}` : null)).filter(Boolean);
+    assert.deepEqual(hits, [], f);
+  }
+  const h = src("server/headline.ts");
+  assert.doesNotMatch(h, /strong transition reading|20-minute regime outlook|Regime outlook for the next 20 minutes|the 20-minute outlook/);
+  assert.match(h, /the drivers agree strongly with the current read/);
+  assert.doesNotMatch(src("server/routes.ts"), /Forward-looking regime transition/);
+  assert.doesNotMatch(src("client/src/components/TradeDesk.tsx"), /Regime transition forecast/);
+
+  const ui = src("client/src/components/RegimePredictPanel.tsx");
+  assert.match(ui, />Regime now</);
+  assert.match(ui, /current read, not a forecast/);
+  assert.match(ui, /How the drivers score each regime for the current read/);
+  assert.doesNotMatch(ui, /#\{rank\}/);
+  // The carried-forward note sits above the collapsed "Why", not inside it.
+  const note = ui.indexOf("No flip-distance projection is made; this is the current regime carried forward.");
+  assert.ok(note > 0 && note < ui.indexOf("{showWhy && ("), "note is outside the collapsed section");
+  assert.match(ui, /hand-set heuristic weights, not probabilities/);
+
+  // Live output across every driver branch: the top bucket is the current regime and the text says so.
+  const nowLate = Date.parse("2026-11-06T20:30:00Z"); // under 1.5 h to the close
+  const nowEarly = Date.parse("2026-11-06T15:00:00Z"); // first 1.5 h
+  const mkAudit = (o: any) => ({ gammaZone: "y-", spot: 5990, gammaFlip: 6000, mainPivot: 6000, dfi: -1, dfiState: "ok", scenarioTargets: { oneDayEM: 40 }, ...o });
+  const runs = [
+    { audit: mkAudit({ charmZero: 5992, vannaBias: "negative", termStructureDoD: { vixDeltaPts: -1.4, label: "Vol Offered" } }), spot: 5990, nowMs: nowLate, macro: { vixTermRatio: 0.9 }, whalePressure: -0.8 },
+    { audit: mkAudit({ spot: 5940, vannaBias: "positive", termStructureDoD: { vixDeltaPts: 2.1, label: "Vol Bid Up" } }), spot: 5940, nowMs: nowEarly, macro: { vixTermRatio: 1.2 }, whalePressure: 0.9 },
+    { audit: mkAudit({ gammaZone: "y+", spot: 6003 }), spot: 6003, nowMs: nowLate, macro: null, whalePressure: null },
+  ];
+  for (const r of runs) {
+    _resetPredictorHistory();
+    for (let i = 0; i < 6; i++) recordRawRegime(i % 2 ? "TREND_WEAK" : "CHOP_WEAK", r.nowMs - (6 - i) * 10_000); // high flip rate
+    const o = predictTransition({ ...r, horizonMinutes: 20 } as any);
+    assert.equal(o.status, "ready");
+    assert.equal(o.candidates[0].regime, o.currentRegime);
+    assert.match(o.headline, /is the regime read now \(heuristic \d+\/100, a hand-set score, not a probability\)\. This is the current read carried forward, not a forecast\./);
+    const text = [o.headline, ...o.driverNotes].join(" | ");
+    assert.doesNotMatch(text, banned, text);
+    assert.match(text, /no flip-distance projection is made/);
+  }
+  // The pivot note names the pivot and states the distance; the large-print note states its basis.
+  _resetPredictorHistory();
+  for (let i = 0; i < 6; i++) recordRawRegime("TREND_WEAK", nowLate - (6 - i) * 10_000);
+  const o = predictTransition({ ...runs[0], horizonMinutes: 20 } as any);
+  assert.ok(o.driverNotes.some((n) => /^spot is 0\.25 expected moves from the main pivot|^spot is 0\.\d\d expected moves from the main pivot \(under 0\.25\)/.test(n)) || o.drivers.gammaFlipProxFrac >= 0.25);
+  assert.ok(o.driverNotes.some((n) => /large SPY option prints, last 30 minutes: 80% net premium on the put side \(calls counted \+, puts -, by premium; the buyer or seller side is not known\)/.test(n)), o.driverNotes.join(" | "));
+  assert.ok(o.driverNotes.some((n) => /from the charm zero \(under 0\.20\)/.test(n)));
+  _resetPredictorHistory();
+});

@@ -186,15 +186,15 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: known ? `${cap(regimeWord(currentRegime))} regime now; the 20-minute outlook (heuristic, uncalibrated) is on the desk.` : regimeMissing,
-        subLine: "Trade Desk: 20-minute regime outlook, edge tracking and position tools. Heuristic weights, not calibrated probabilities.",
+        topLine: known ? `${cap(regimeWord(currentRegime))} regime now; the drivers behind the read (heuristic, uncalibrated) are on the desk.` : regimeMissing,
+        subLine: "Trade Desk: the regime as read now, edge tracking and position tools. Heuristic weights, not calibrated probabilities; no forecast is made.",
         bullets: [
-          "Predictor uses gamma flip distance, vanna, charm, IV term, VIX term, whale pressure.",
-          "Heuristic score 70+/100 = strong transition reading, under 40 = weak; uncalibrated.",
+          "The regime read uses the gamma zone, gamma flip distance, vanna, charm, IV term, VIX term and large option prints.",
+          "Heuristic score 70+/100 = the drivers agree strongly with the current read, under 40 = weakly; uncalibrated.",
           "Warming-up state means <5 samples collected: the reading is not formed yet.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Regime outlook for the next 20 minutes, the edge-tracking loop and trade tools.",
+        whatThisIs: "The regime as read now with its drivers, the edge-tracking loop and trade tools.",
       };
 
     case "regime":

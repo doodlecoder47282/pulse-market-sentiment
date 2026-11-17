@@ -4940,8 +4940,9 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   });
 
   // GET /api/regime/predict?symbol=^GSPC&horizonMinutes=20
-  // Forward-looking regime transition probabilities. Pulls live audit from
-  // /api/models, scores candidate regimes via the current gamma regime + IV term + gamma
+  // The regime as read now, with a hand-set heuristic score per bucket (not a
+  // forecast: the top bucket is always the current regime). Pulls live audit from
+  // /api/models, scores regimes via the current gamma regime + IV term + gamma
   // flip proximity + session time + recent flip frequency. Read-only.
   app.get("/api/regime/predict", internalRoute("/api/regime/predict", async (req, res) => {
     try {

@@ -92,13 +92,13 @@ test("predictor: a missing pivot or EM is degraded with no candidates, no confid
   assert.equal(none.status, "degraded");
   assert.deepEqual(none.candidates, []);
   assert.equal(none.confidence, 0, "below the logger's 0.3 floor: nothing is recorded");
-  // No pivot and no EM: degraded, and no "pin pressure" / "room to trend" from nothing.
+  // No pivot and no EM: degraded, and no pivot-distance note from nothing.
   const b = predictTransition({ ...base, audit: { dfi: 1, dfiState: "ok", gammaZone: "y+", slope: "UP 0.2 -> 0.3" } } as any);
   assert.equal(b.status, "degraded");
   assert.deepEqual(b.candidates, []);
   assert.equal(b.confidence, 0);
   assert.match(b.headline, /main pivot, 1-day expected move not available/);
-  assert.ok(!b.driverNotes.some((n) => /pin pressure|trend has room/.test(n)), b.driverNotes.join(" | "));
+  assert.ok(!b.driverNotes.some((n) => /main pivot|charm zero/.test(n)), b.driverNotes.join(" | "));
   // The callers that feed the history pass the regime only, never a DFI number (and no spot series:
   // no flip-distance projection is made).
   const r = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");

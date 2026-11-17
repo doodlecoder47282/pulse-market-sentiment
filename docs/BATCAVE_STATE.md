@@ -2493,9 +2493,13 @@ for it. They show "DEX slope: positive / negative / flat / unavailable" as a sec
 that it is a sign only, and the flip distance in expected moves where the regime is explained. The
 level-break alerts used to print "DFI +5 (NEUTRAL)" because their BULLISH threshold was 200.
 Record breaks from this date (not like-for-like with earlier rows):
-- regime calls (regime predictions and their grades in the outcome log, the regime snapshot that
-  decorates flow alerts): the STRONG / WEAK suffix now varies with the flip distance; before it was
-  constant within a gamma zone.
+- regime calls (the outcome log, the regime snapshot that decorates flow alerts). The logged call is now
+  always the current regime: a persistence baseline, graded on the TREND / CHOP family against the
+  realised 20-minute move. Hit or miss depends only on the gamma sign, so the family-level grades are
+  comparable across this date; only the by-suffix (STRONG / WEAK) tables are not, because the suffix now
+  varies with the flip distance where it was constant within a gamma zone. The logging and grading code
+  is unchanged. The panel, the headline and the driver notes now say "regime now" and describe the read
+  and its drivers; they no longer use forecast, pinning or bullish / bearish wording.
 - whale-alert conviction multiplier (server/edgeStats.ts regimeConvictionMultiplier): it matches
   regimeAtFire by exact string, so TREND_WEAK and CHOP_STRONG start with no history, and the existing
   TREND_STRONG / CHOP_WEAK history mixes the old definition (every y- / y+ reading) with the new one.
@@ -2515,7 +2519,8 @@ min(15, |dfi| / 30) falls from about 0.17 to about 0.03 points (it was written f
 had). The score is rounded before its 72 and 85 gates, so an aligned setup can lose one point at a
 rounding boundary: it can miss an alert, never add one. The score is a graded series, so the arithmetic
 was not changed here; only its reason text changed (it says the slope sign is aligned, without a number).
-(b) the whale conviction history above: not re-keyed or reset. (c) the
+(b) the whale conviction history above: not re-keyed or reset. (c) the logged regime call is a
+persistence call: keep grading it under regime_call or relabel it. (d) the
 experimental particle filter (/api/experimental/particle-dfi): a shadow forecaster that feeds nothing; it
 now observes +1 / -1 / 0 instead of +5 / -5. Keep or retire. Not changed: gamma, expected move, Wiener,
 implied scenario odds, crypto. No threshold changed other than the one new constant.

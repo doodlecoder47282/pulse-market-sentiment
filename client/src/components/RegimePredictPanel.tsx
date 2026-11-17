@@ -1,6 +1,8 @@
 // RegimePredictPanel.tsx
-// "What's Next" — plain-English regime transition forecast.
-// Top-line human sentence, top-3 candidates with bars, expandable "Why".
+// "Regime now" — the regime as read now, in plain English. Not a forecast:
+// the server makes no projection and the top-scoring regime is always the
+// current one. Top-line sentence, the carried-forward note, how the drivers
+// score each regime for the current read, expandable "Why".
 // Mobile-friendly: 44px tap targets, vertical stack on small screens, no
 // hover-only tooltips. Read-only view of /api/regime/predict.
 
@@ -120,16 +122,13 @@ const REGIME_META: Record<
   },
 };
 
-function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank: number }) {
+function CandidateRow({ c, max }: { c: RegimeCandidate; max: number }) {
   const meta = REGIME_META[c.regime];
   const pct = Math.round(c.score ?? c.probability * 100);
   const w = max > 0 ? (c.probability / max) * 100 : 0;
   const Icon = meta.icon;
   return (
     <div className="flex items-center gap-3 py-2 min-h-[44px]" data-testid={`regime-row-${c.regime}`}>
-      <div className="flex w-7 flex-shrink-0 items-center justify-center">
-        <span className="font-mono text-xs text-muted-foreground tabular-nums">#{rank}</span>
-      </div>
       <Icon className={`h-4 w-4 flex-shrink-0 ${meta.tone}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
@@ -143,7 +142,7 @@ function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank:
           />
         </div>
         {c.isCurrent && (
-          <div className="mt-1 text-[11px] uppercase tracking-wider text-cyan-300">now</div>
+          <div className="mt-1 text-[11px] uppercase tracking-wider text-cyan-300">current read</div>
         )}
       </div>
     </div>
@@ -169,7 +168,7 @@ export default function RegimePredictPanel() {
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-semibold text-foreground">What&apos;s Next</span>
+            <span className="text-sm font-semibold text-foreground">Regime now</span>
           </div>
           <Skeleton className="h-12 w-full" />
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
@@ -187,9 +186,9 @@ export default function RegimePredictPanel() {
         <CardContent className="p-4 space-y-3 min-h-[196px]">
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-semibold text-foreground">What&apos;s Next</span>
+            <span className="text-sm font-semibold text-foreground">Regime now</span>
           </div>
-          <UnavailablePanel title="Regime transition forecast" error={isError ? error : undefined} state={isError ? undefined : "unavailable"} reason={isError ? undefined : "the server sent no forecast"} compact />
+          <UnavailablePanel title="Regime read" error={isError ? error : undefined} state={isError ? undefined : "unavailable"} reason={isError ? undefined : "the server sent no regime read"} compact />
         </CardContent>
       </Card>
     );
@@ -202,7 +201,7 @@ export default function RegimePredictPanel() {
         <CardContent className="p-4">
           <div className="flex items-center gap-2 mb-2">
             <Minus className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-semibold text-foreground">What&apos;s Next — {(REGIME_META[data.currentRegime] ?? REGIME_META.GAMMA_UNKNOWN).plain}</span>
+            <span className="text-sm font-semibold text-foreground">Regime now — {(REGIME_META[data.currentRegime] ?? REGIME_META.GAMMA_UNKNOWN).plain}</span>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">{data.headline}</p>
         </CardContent>
@@ -214,7 +213,6 @@ export default function RegimePredictPanel() {
   const top3 = data.candidates.slice(0, 3);
   const topMeta = REGIME_META[data.candidates[0].regime];
   const conf = Math.round(data.confidenceScore ?? data.confidence * 100);
-  const isTransition = data.candidates[0].regime !== data.currentRegime;
 
   // Warming / degraded states get a calm message instead of fake numbers
   if (data.status === "warming") {
@@ -223,7 +221,7 @@ export default function RegimePredictPanel() {
         <CardContent className="p-4">
           <div className="flex items-center gap-2 mb-2">
             <Activity className="h-4 w-4 text-amber-400" />
-            <span className="text-sm font-semibold text-amber-200">What&apos;s Next — warming up</span>
+            <span className="text-sm font-semibold text-amber-200">Regime now — warming up</span>
           </div>
           <p className="text-sm text-amber-100/90 leading-relaxed">
             {data.headline}
@@ -249,8 +247,8 @@ export default function RegimePredictPanel() {
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-purple-400" />
-            <span className="text-sm font-semibold text-foreground">What&apos;s Next</span>
-            <span className="text-xs text-muted-foreground">· next {data.horizonMinutes}min</span>
+            <span className="text-sm font-semibold text-foreground">Regime now</span>
+            <span className="text-xs text-muted-foreground">· current read, not a forecast</span>
           </div>
           <span
             className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium font-mono ${
@@ -269,11 +267,7 @@ export default function RegimePredictPanel() {
 
         {/* Plain-English headline */}
         <div
-          className={`mb-3 rounded-md border p-3 ${
-            isTransition
-              ? "border-cyan-500/40 bg-cyan-500/5"
-              : "border-slate-600 bg-slate-800/30"
-          }`}
+          className="mb-3 rounded-md border border-slate-600 bg-slate-800/30 p-3"
         >
           <p
             className="text-base leading-relaxed text-foreground"
@@ -286,10 +280,16 @@ export default function RegimePredictPanel() {
           </p>
         </div>
 
-        {/* Top 3 candidates */}
+        {/* Visible without expanding: what this is and is not */}
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground" data-testid="text-regime-no-projection">
+          No flip-distance projection is made; this is the current regime carried forward. The scores are hand-set heuristic weights, not probabilities.
+        </p>
+
+        {/* How the drivers score each regime for the current read (not alternatives that may come next) */}
+        <div className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground">How the drivers score each regime for the current read</div>
         <div className="space-y-1 mb-3">
-          {top3.map((c, i) => (
-            <CandidateRow key={c.regime} c={c} max={max} rank={i + 1} />
+          {top3.map((c) => (
+            <CandidateRow key={c.regime} c={c} max={max} />
           ))}
         </div>
 
@@ -307,7 +307,7 @@ export default function RegimePredictPanel() {
         {showWhy && (
           <div className="mt-2 space-y-2 rounded-md border border-border bg-muted/10 p-3" data-testid="region-regime-why">
             {data.driverNotes.length === 0 ? (
-              <p className="text-sm text-muted-foreground">no strong drivers right now — regime is in equilibrium.</p>
+              <p className="text-sm text-muted-foreground">no driver notes for this read.</p>
             ) : (
               <ul className="space-y-1.5 text-sm leading-relaxed text-foreground/90">
                 {data.driverNotes.map((note, i) => (
