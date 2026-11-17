@@ -2416,3 +2416,11 @@ the parameters are the candidates', not the desk's thresholds, and are versioned
 screen: five sets on one record bias the best one upward; the record keeps only each coin's first signal
 (about minute 2), so rules about a later state pass few rows, which is a limit of the record; no candidate
 is a claim of edge. The owner picks a set from this readout before any rule-book change.
+Review of the candidate sets: HOLD, taken. The readout said a rule with no recorded input never passes a
+row, but the three structure rules do pass on absence (they block only on a recorded objection); the copy
+now says so and each rule's tally shows how many passes had nothing recorded. Also taken: the sets were
+"fixed before being run", not out-of-sample (their parameters came from this record; the clean evidence is
+rows after 2026-11-17); a set under 50 priced rows shows counts only; the hold mean shows its n; the "live
+rules have not passed a coin" sentence is conditional on the data; a whitespace symbol is unread; the
+parameters and set ids are hash-pinned to the version string and a test checks that only the replay imports
+the module.

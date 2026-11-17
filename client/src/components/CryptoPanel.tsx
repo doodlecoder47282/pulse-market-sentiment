@@ -1243,7 +1243,7 @@ function ReplayCard() {
             <section data-testid="crypto-replay-candidates">
               <div className="text-[11px] font-medium text-muted-foreground">5 · Candidate rule sets on the same record ({r.candidates.version})</div>
               <p className="mt-0.5 text-muted-foreground">
-                The current rules have never passed a coin, so there is nothing to judge them by. Each set below is declared in advance and asked of the same {r.candidates.considered} graded first signals: which would have passed, and what those coins did. None is a live rule.
+                {r.reeval.originallyEnter === 0 ? "The live rules have not passed a coin in this record, so there is nothing to judge them by. " : ""}Each set below was fixed before it was run and is asked of the same {r.candidates.considered} graded first signals: which would have passed, and what those coins did. None is a live rule.
               </p>
               <div className="mt-1 space-y-1.5">
                 {r.candidates.sets.map((s) => (
@@ -1253,19 +1253,27 @@ function ReplayCard() {
                       <span className="font-mono tabular-nums text-muted-foreground">passed <span className="text-foreground">{s.passed}</span> of {s.considered}{s.notEvaluable > 0 ? ` · ${s.notEvaluable} not evaluable (an input was not recorded)` : ""}</span>
                     </div>
                     <div className="text-muted-foreground">{s.why}</div>
-                    <div className="mt-1 grid grid-cols-1 gap-1 font-mono tabular-nums sm:grid-cols-3">
-                      {[s.inSample, s.outOfSample, s.all].map((x) => (
-                        <div key={x.label} className="rounded border border-border/30 p-1.5">
-                          <div className="text-foreground">{x.label}</div>
-                          <div>n {x.n} · wins {x.wins} ({pct(x.winShare)}{x.winLo != null ? `, CI ${x.winLo}–${x.winHi}` : ""})</div>
-                          <div>mean net {pct(x.meanNetGradedPct)} · median {pct(x.medianNetGradedPct)}</div>
+                    {s.insufficient ? (
+                      <div className="mt-1 font-mono tabular-nums text-amber-300/90" data-testid={`crypto-candidate-${s.id}-insufficient`}>
+                        INSUFFICIENT DATA · {s.all.n} priced, {s.all.wins} touched the target or 2x · counts only under 50
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mt-1 grid grid-cols-1 gap-1 font-mono tabular-nums sm:grid-cols-3">
+                          {[s.inSample, s.outOfSample, s.all].map((x) => (
+                            <div key={x.label} className="rounded border border-border/30 p-1.5">
+                              <div className="text-foreground">{x.label}</div>
+                              <div>n {x.n} · wins {x.wins} ({pct(x.winShare)}{x.winLo != null ? `, CI ${x.winLo}–${x.winHi}` : ""})</div>
+                              <div>mean net {pct(x.meanNetGradedPct)} · median {pct(x.medianNetGradedPct)}</div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                    <div className="mt-1 font-mono tabular-nums text-muted-foreground">held to the 72 h mark: mean net {pct(s.meanNetHoldPct)}</div>
+                        <div className="mt-1 font-mono tabular-nums text-muted-foreground">held to the 72 h mark: mean net {pct(s.meanNetHoldPct)} over {s.holdN} priced</div>
+                      </>
+                    )}
                     <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
                       {s.rules.map((rule) => (
-                        <li key={rule.id}>{rule.text} <span className="font-mono tabular-nums">· pass {rule.pass} · fail {rule.fail}{rule.unread > 0 ? ` · not recorded ${rule.unread}` : ""}</span></li>
+                        <li key={rule.id}>{rule.text} <span className="font-mono tabular-nums">· pass {rule.pass}{rule.passUnread > 0 ? ` (${rule.passUnread} with nothing recorded)` : ""} · fail {rule.fail}{rule.unread > 0 ? ` · not recorded ${rule.unread}` : ""}</span></li>
                       ))}
                     </ul>
                   </div>

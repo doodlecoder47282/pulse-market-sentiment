@@ -13,17 +13,22 @@
 // changed number is visible. Every set is declared before it is run: there is no search over parameters,
 // and with several sets read on one record the best of them is biased upward, which the readout says.
 //
-// Each rule reads only fields stored at detection (features_json and the row's own columns). A rule whose
-// input was not recorded on a row is "unread" for that row and the row does NOT pass: a candidate is never
-// credited with a row it could not have evaluated.
+// Each rule reads only fields stored at detection (features_json and the row's own columns). For the
+// selective rules (tape, attention, age, cap, relaunch) a row whose input was not recorded is "unread" and
+// does NOT pass: a candidate is never credited with a row it could not have evaluated. The three structure
+// rules are objections, not confirmations: they block only on a recorded objection, so a row with no read
+// passes them, and the tally says how many of the passes were of that kind.
 
 import { signalReturn } from "./cryptoExpectancy";
 import { firstPerCoin, splitReadout, type ReplayRow, type SplitReadout } from "./cryptoReplay";
 import { CRYPTO_RULES } from "./cryptoRules";
 
 export const CANDIDATES_VERSION = "candidates-2026.11.17-1";
+/** Under this many priced rows a set shows counts only (the desk's own minimum for a graded sample). */
+export const CANDIDATE_MIN_SAMPLE = 50;
 
-type RuleResult = "pass" | "fail" | "unread";
+/** "pass-unread": passed because nothing was recorded to object to (structure rules only). */
+type RuleResult = "pass" | "pass-unread" | "fail" | "unread";
 
 export interface CandidateRule {
   id: string;
@@ -58,17 +63,25 @@ export const RULES: Record<string, CandidateRule> = {
   noActiveAuthority: {
     id: "noActiveAuthority",
     text: "mint and freeze authority not active where they were read (unread passes: the read usually lands after the first signal)",
-    test: (r) => (r.features.mintAuthorityActive === true || r.features.freezeAuthorityActive === true ? "fail" : "pass"),
+    test: (r) => {
+      const m = r.features.mintAuthorityActive, f = r.features.freezeAuthorityActive;
+      if (m === true || f === true) return "fail";
+      return m === false && f === false ? "pass" : "pass-unread";
+    },
   },
   top10WhenRead: {
     id: "top10WhenRead",
     text: `top-10 holders at most ${P.maxTop10Pct}% where read (unread passes)`,
-    test: (r) => { const t = num(r.features.top10Pct); return t != null && t > P.maxTop10Pct ? "fail" : "pass"; },
+    test: (r) => { const t = num(r.features.top10Pct); return t == null ? "pass-unread" : t > P.maxTop10Pct ? "fail" : "pass"; },
   },
   jupiterNotAgainst: {
     id: "jupiterNotAgainst",
-    text: "Jupiter cross-check not diverging and not no-reliable-price (unchecked passes)",
-    test: (r) => { const s = r.features.gates?.jupState ?? null; return s === "diverge" || s === "no-reliable-price" ? "fail" : "pass"; },
+    text: "Jupiter cross-check not diverging and not no-reliable-price (unchecked, failed or unrecorded passes)",
+    test: (r) => {
+      const s = r.features.gates?.jupState ?? null;
+      if (s === "diverge" || s === "no-reliable-price") return "fail";
+      return s === "agree" || s === "watch" ? "pass" : "pass-unread";
+    },
   },
   twoSidedTape: {
     id: "twoSidedTape",
@@ -106,7 +119,7 @@ export const RULES: Record<string, CandidateRule> = {
     id: "notRelaunch",
     text: `the same symbol logged at most ${P.maxSameNameBefore} time in the ${P.sameNameLookbackHours} hours before (a lower bound: only coins the desk logged count)`,
     test: (r, ctx) => {
-      if (!r.symbol) return "unread";
+      if (!r.symbol || !r.symbol.trim()) return "unread";
       return (ctx.sameNameBefore.get(r.id) ?? 0) <= P.maxSameNameBefore ? "pass" : "fail";
     },
   },
@@ -129,7 +142,8 @@ export interface CandidateReadout {
   id: string;
   name: string;
   why: string;
-  rules: Array<{ id: string; text: string; pass: number; fail: number; unread: number }>;
+  /** pass includes passUnread (passed with nothing recorded to object to; structure rules only). */
+  rules: Array<{ id: string; text: string; pass: number; passUnread: number; fail: number; unread: number }>;
   considered: number;
   passed: number;
   /** Rows that failed no rule but had at least one unread rule: not credited. */
@@ -137,8 +151,11 @@ export interface CandidateReadout {
   inSample: SplitReadout;
   outOfSample: SplitReadout;
   all: SplitReadout;
-  /** Mean net per signal under "hold to the 72 h horizon" where priced, for the passing rows. */
+  /** Mean net per signal under "hold to the 72 h horizon" for the passing rows it could be priced on, and how many that was. */
   meanNetHoldPct: number | null;
+  holdN: number;
+  /** True when the pass set is under the desk's minimum sample: counts only. */
+  insufficient: boolean;
 }
 
 export interface CandidatesReadout {
@@ -169,14 +186,15 @@ export function candidatesReadout(rows: ReplayRow[], sets: CandidateSet[] = CAND
   const ctx: CandidateContext = { sameNameBefore: sameNameCounts(firstPerCoin(rows)) };
   const target = CRYPTO_RULES.universe.targetMcapUsd;
   const out: CandidateReadout[] = sets.map((s) => {
-    const tally = s.rules.map((rule) => ({ id: rule.id, text: rule.text, pass: 0, fail: 0, unread: 0 }));
+    const tally = s.rules.map((rule) => ({ id: rule.id, text: rule.text, pass: 0, passUnread: 0, fail: 0, unread: 0 }));
     const passed: ReplayRow[] = [];
     let notEvaluable = 0;
     for (const r of firsts) {
       let anyFail = false, anyUnread = false;
       s.rules.forEach((rule, i) => {
         const v = rule.test(r, ctx);
-        tally[i][v]++;
+        if (v === "pass-unread") { tally[i].pass++; tally[i].passUnread++; }
+        else tally[i][v]++;
         if (v === "fail") anyFail = true; else if (v === "unread") anyUnread = true;
       });
       if (!anyFail && !anyUnread) passed.push(r);
@@ -192,6 +210,8 @@ export function candidatesReadout(rows: ReplayRow[], sets: CandidateSet[] = CAND
       outOfSample: splitReadout("newer half", sorted.slice(cut), target),
       all: splitReadout("all", sorted, target),
       meanNetHoldPct: holds.length ? Math.round((holds.reduce((a, b) => a + b, 0) / holds.length) * 10) / 10 : null,
+      holdN: holds.length,
+      insufficient: sorted.filter((r) => r.outcome !== "NO_DATA").length < CANDIDATE_MIN_SAMPLE,
     };
   });
   return {
@@ -199,11 +219,13 @@ export function candidatesReadout(rows: ReplayRow[], sets: CandidateSet[] = CAND
     considered: firsts.length,
     sets: out,
     caveats: [
-      `${sets.length} sets are read on the same record, so the best of them is biased upward: read the newer half, and treat a set as worth a rule version only if it holds there.`,
+      `${sets.length} sets are read on the same record, so the best of them is biased upward.`,
+      "The sets were fixed before being run (no search over parameters), but their parameters were informed by this same record (the $100k floor and the choice of attention features come from it), so the newer half is not out-of-sample for them. The clean evidence is rows detected after 2026-11-17.",
       "Each coin's FIRST signal is all the record keeps (median about two and a half minutes old), so a rule about a later state of the coin (age, a two-sided tape) passes few rows: that is a limit of the record, not evidence against the rule.",
-      "A win is a sampled touch of the target or of 2x; net figures sell when the row was graded, net of pool fees and impact at the liquidity recorded. Rows with no outcome are left out of n.",
+      "A win is a sampled touch of the target or of 2x; net figures sell when the row was graded, net of pool fees and impact at the liquidity recorded. Rows with no outcome are left out of n. The hold figure covers only rows with a 72 h mark (recorded since 2026-10-20) and counts a rugged pool as -100%.",
       "Rows stored before 2026-11-17 carry the old acceleration figure and the old meaning of the graduate flag; neither is used by these rules.",
-      "A rule whose input was not recorded on a row does not pass it. No candidate is a live rule and none is a claim of edge.",
+      "For the tape, attention, age, cap and relaunch rules a row whose input was not recorded does not pass. The three structure rules block only on a recorded objection, so a row with nothing recorded passes them; each shows how many of its passes were of that kind. A failed boost or narrative read is stored as a negative, so it counts as a fail, not as unrecorded.",
+      `Under ${CANDIDATE_MIN_SAMPLE} priced rows a set shows counts only. No candidate is a live rule and none is a claim of edge.`,
     ],
   };
 }
