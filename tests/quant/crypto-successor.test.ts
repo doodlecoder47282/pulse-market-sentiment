@@ -41,3 +41,11 @@ test("wiring: the grader and the horizon pass fall back to the successor only wh
   assert.equal((e.match(/if \(!p && row\.token_address\) \{\s*const byToken = await getJson\(`\$\{DS_BASE\}\/latest\/dex\/tokens\/\$\{row\.token_address\}`\);\s*p = pickSuccessorPool\(byToken\?\.pairs, String\(row\.chain\), String\(row\.token_address\), String\(row\.pair_address\), successorFloor\(row\.liquidity_at_signal\)\);/g) ?? []).length, 2);
   assert.match(e, /SELECT id, pair_address, token_address, chain, detected_at, mcap_at_signal,/);
 });
+
+test("review: a successor read grades its own row only and never walks exit plans", () => {
+  const e = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
+  assert.match(e, /fromSuccessor = !!p;/);
+  assert.match(e, /if \(!fromSuccessor && \(!live\?\.lastRefreshAt \|\| now - live\.lastRefreshAt >= 10 \* 60_000\)\) samplePlans\(/);
+  assert.doesNotMatch(e, /\n    if \(!live\?\.lastRefreshAt \|\| now - live\.lastRefreshAt >= 10 \* 60_000\) samplePlans\(/);
+});
+

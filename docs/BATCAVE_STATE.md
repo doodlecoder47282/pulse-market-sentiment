@@ -2348,3 +2348,7 @@ A successor must now be at least as deep as the desk's liquidity floor AND as th
 on; otherwise there is no successor and the row keeps its missing outcome. A pool that deep cannot trip the
 liquidity-RUGGED test. The unused read counter is gone. Not recorded yet: which rows were graded on a
 successor.
+Second review: HOLD, taken. The depth floor comes from the row being graded, but the grader then walked
+every open exit plan on that pair with the successor read, so a later ENTER logged at $60k could be
+liquidity-stopped for good by a $30k successor that had passed an earlier row's $20k floor. A successor read
+now grades its own row only; exit plans are not sampled on it.

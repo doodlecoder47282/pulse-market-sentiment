@@ -1377,6 +1377,11 @@ async function graderTick(): Promise<void> {
     const age = now - Number(row.detected_at);
     let mcap: number | null = null;
     let liq: number | null = null;
+    // True when this pass read a successor pool. Its depth floor comes from THIS row's entry liquidity, so the
+    // read is used for this row's grade only, never to walk the exit plans of other rows on the same pair
+    // (a later ENTER logged at $60k would be liquidity-stopped for good by a $30k successor that passed an
+    // earlier row's $20k floor).
+    let fromSuccessor = false;
     // Both readings of this pass, so the plans on this pair are each sampled on their own entry basis.
     let caps: { marketCap: number | null; fdv: number | null } = { marketCap: null, fdv: null };
     const live = tracked.get(key);
@@ -1397,6 +1402,7 @@ async function graderTick(): Promise<void> {
         if (!p && row.token_address) {
           const byToken = await getJson(`${DS_BASE}/latest/dex/tokens/${row.token_address}`);
           p = pickSuccessorPool(byToken?.pairs, String(row.chain), String(row.token_address), String(row.pair_address), successorFloor(row.liquidity_at_signal));
+          fromSuccessor = !!p;
         }
         // observed 0 stays 0: a full liquidity pull must grade RUGGED
         caps = { marketCap: observedNumber(p?.marketCap), fdv: observedNumber(p?.fdv) };
@@ -1425,7 +1431,7 @@ async function graderTick(): Promise<void> {
     if (g.outcome === "NO_DATA") { markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP)); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
     mark.run(graderMarkParams(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id));
-    if (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000) samplePlans(row.chain, row.pair_address, caps, liq, now);
+    if (!fromSuccessor && (!live?.lastRefreshAt || now - live.lastRefreshAt >= 10 * 60_000)) samplePlans(row.chain, row.pair_address, caps, liq, now);
   }
 }
 
