@@ -292,6 +292,20 @@ function classifyIntent(hits: WhaleHit[], contracts: SchwabFlowContract[], now: 
   }
 }
 
+/**
+ * A whale's direction, on the SAME basis the gate passed it on. The label used to come from the latest print
+ * against the current quote (schwabFlow deriveSentiment), re-read on every 30 s scan, while the gate passes
+ * on the day's ask-side share: a call that passed as ask-side read BEARISH whenever its latest print sat at
+ * the bid, and the label flipped between polls (seen live 2026-11-17). Ask-side buying of calls is labelled
+ * BULLISH and of puts BEARISH, the screen's existing convention; opening versus closing is not known.
+ * When the gate did not establish the ask side (a config that does not require it) the last print decides,
+ * as before, and can change between scans.
+ */
+export function whaleDirection(type: "C" | "P", askSide: boolean, lastPrintSentiment: string): string {
+  if (askSide) return type === "C" ? "BULLISH" : "BEARISH";
+  return lastPrintSentiment;
+}
+
 // ─── Whale gate — single contract test ────────────────────────────────────────
 /** Premium and side for the gate from the contract's ledger summary (when it has one). */
 export function gateInputs(c: SchwabFlowContract, s: FlowSummary | null): {
@@ -421,7 +435,7 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
         isNewStrike: c.isNewStrike,
         premium: g.premium,
         tag: c.tag,
-        sentiment: c.sentiment,
+        sentiment: whaleDirection(c.type, g.askSide, c.sentiment),
         delta: c.delta,
         detectedAt: now,
         reason,
@@ -576,6 +590,15 @@ async function evalCycle(): Promise<void> {
   // post-close behavior includes stale snapshots and late prints that
   // appear novel to a fresh dedup window. Skip eval entirely when closed.
   if (!isRthNow()) {
+    // Expiry does not need a chain: positions that expired at the close are closed out now, not at the next
+    // session's first scan.
+    try {
+      const { expirePass } = await import("./whaleFollowThrough");
+      const n = expirePass();
+      if (n > 0) console.log(`[flowAlerts] ${n} whale position(s) expired`);
+    } catch (e: any) {
+      console.warn(`[flowAlerts] expiry pass failed: ${e?.message ?? e}`);
+    }
     lastEvalAt = Date.now();
     lastEvalDurationMs = Date.now() - t0;
     scanRecord = recordClosedSkip(scanRecord, lastEvalAt);
@@ -758,7 +781,7 @@ async function previewFlowScan(): Promise<{
             expiration: c.expiration, dte: c.dte, volume: c.volume,
             openInterest: c.openInterest, volOiRatio: c.volOiRatio,
             isNewStrike: c.isNewStrike, premium: g.premium, tag: c.tag,
-            sentiment: c.sentiment, delta: c.delta, detectedAt: now, reason,
+            sentiment: whaleDirection(c.type, g.askSide, c.sentiment), delta: c.delta, detectedAt: now, reason,
             premiumBasis: g.premiumBasis, askShare: summary?.askShare ?? null, attributedCoverage: summary?.attributedCoverage ?? null,
             sideBasis: g.sideBasis, sideDetail: g.sideDetail, burstPremium5m: summary?.burstPremium, burstSide: summary?.burstSide ?? null,
             lastPrintAgeMs: summary?.lastPrintAgeMs ?? null,

@@ -2329,6 +2329,21 @@ mint's Jupiter check is stamped with its own call's time. Left open and unverifi
 GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
 replay pools old-meaning and new-meaning graduate rows without a marker.
 
+2026-11-17: Practitioner review, options batch 2 (feat/pro-review-options-2; items O1 and the rest of O3).
+O1: a whale's direction label came from the latest print against the current quote, re-read on every 30 s
+scan, while the gate passes on the day's ask-side share, so a call that passed as ask-side read BEARISH
+whenever its latest print sat at the bid and the label flipped between polls (seen live). The alert, the
+preview and the stored tracking side now take the direction from the gate's own basis (ask-side call
+BULLISH, ask-side put BEARISH); only a config that does not require the ask side falls back to the last
+print. Opening versus closing is still unknown and the label does not claim it. O3: expiry was stamped only
+inside the regular-hours scan, so a position expiring at the close stayed OPEN until the next session's
+first scan and carried that morning's time; an expiry pass now runs while the market is closed (no chain
+read) and stamps the expiry close itself. Still unverified: whether tracked positions survive a restart on
+the deployed volume (boot line "[whaleFollowThrough] hydrated N positions"). Review follow-ups from batch 1
+taken here: outside the session the previous trading day is left out of the put/call baseline by date (not
+"the newest stored session", which is an ordinary baseline day when the last session was not recorded); a
+malformed stored date is never a full day and cannot fail the response; the per-ticker closed group says
+"closed or expired".
 2026-11-17: Crypto rule version 2026.11.17-1 (feat/crypto-accel-age; practitioner review item C2). Volume
 acceleration was (5-minute volume / 5) over (1-hour volume / 60) for every coin. For a coin under 5 minutes
 old the "1-hour volume" is its 5-minute volume, so the figure was exactly 12 whatever the tape: the live

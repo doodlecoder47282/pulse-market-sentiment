@@ -297,6 +297,26 @@ export async function updateAll(): Promise<{
   return { updated, closed, errors };
 }
 
+/**
+ * Expire every open position whose contract has expired, without reading a chain. The scan cycle (and with
+ * it updateAll) runs only in regular hours, so a position expiring at today's close used to stay OPEN until
+ * the next session's first scan and was then stamped with that morning's time: with a 1-3 DTE gate nothing
+ * showed as closed the same evening, and the 7-day window was measured from the wrong moment. The stamp is
+ * the expiry close itself; the exit quote is the last one logged before it (preExpiryQuote), as before.
+ */
+export function expirePass(now: number = Date.now()): number {
+  let n = 0;
+  for (const p of positions.values()) {
+    if (p.status === "CLOSED" || p.status === "EXPIRED") continue;
+    if (!isExpired(p.expiration)) continue;
+    const at = expiryCloseMs(p.expiration);
+    transitionToTerminal(p, "EXPIRED", "expiration date passed", Number.isFinite(at) && at <= now ? at : now);
+    safePersistFollow(p);
+    n++;
+  }
+  return n;
+}
+
 function isExpired(expiration: string): boolean {
   // expiration shape varies; treat anything parseable
   const d = Date.parse(expiration);
