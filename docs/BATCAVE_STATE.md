@@ -2120,7 +2120,12 @@ it now reads vixDeltaPts against 1.0 for both the score and the note, so its vol
 readily than before; the models session flag is re-read when a cached build is served, so a build made
 before the close cannot read "LIVE" after it. Open, not confirmed: Canary before 09:30 ET on a trading day
 still scales sigma by sqrt(0.25); whether the quote's change at that hour is the overnight move (correct) or
-still the prior completed session (z doubled) has not been observed. M6: the models payload said session "live" on every successful
+still the prior completed session (z doubled) has not been observed. Second review notes: the regime
+predictor's driver NOTE used +-0.02 sigma-percent (about 0.36 VIX points) and now uses the same 1.0 point as
+the score, so the note appears less often while the score fires more often; /api/regime/predict logs regime
+calls, so that graded series is also not like-for-like across 2026-11-16; a build made minutes before the
+close and served just after reads "last-close" although it is not the settled close (short window, and it
+is no longer "live"). M6: the models payload said session "live" on every successful
 build, so a weekend build on Friday's chain read "LIVE"; live now needs the regular session open and no
 horizon on a last-session chain copy; a stored build reads "STORED BUILD"; three hard-coded "LIVE {spot}"
 labels read "SPOT". M7: the Heatseeker route never set chainLastSession and the thermal route sent no
