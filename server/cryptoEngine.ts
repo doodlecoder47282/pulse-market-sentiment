@@ -235,6 +235,9 @@ const MAX_TRACKED = CRYPTO_RULES.universe.maxTracked;          // memory + rate-
 const CANDIDATE_TTL_MS = CRYPTO_RULES.universe.candidateTtlHours * 3600_000; // drop after this long without a signal
 const SCANNER_MS = 60_000;
 const MOMENTUM_MS = 75_000;
+/** Jupiter price calls per momentum tick and the pause between them (keyless tier: 0.5 req/s). */
+const JUP_CALLS_PER_TICK = 2;
+const JUP_CALL_GAP_MS = 2_500;
 
 // Market cap has one basis (shared/cryptoCap.ts capOf / capOnBasis); see there.
 const MOMENTUM_BATCH = 90; // tracked coins refreshed per momentum tick (3 DexScreener calls)
@@ -462,6 +465,16 @@ function isPumpDex(dexId: string | null | undefined): boolean {
   return d.includes("pump"); // pumpswap / pump-fun / pumpfun variants
 }
 
+/**
+ * Graduated = a pump.fun coin that has LEFT the bonding curve (trades on PumpSwap). The flag used to be true
+ * for any dex id containing "pump", bonding-curve pairs included, so the card, the AI prompt ("graduated
+ * pump.fun") and the replay's graduate split all described pump vs non-pump, not graduated vs not.
+ */
+function isPumpGraduate(dexId: string | null | undefined): boolean {
+  // Positive identification only: an unrecognised pump dex id is not called graduated.
+  return String(dexId ?? "").toLowerCase() === "pumpswap";
+}
+
 function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
   const attrs = pool?.attributes ?? {};
   const rel = pool?.relationships ?? {};
@@ -488,7 +501,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     chain, pairAddress,
     tokenAddress: String(rel?.base_token?.data?.id ?? "").split("_").pop() ?? "",
     symbol: baseName, name: baseName, dexId,
-    pumpfunGraduate: isPumpDex(dexId),
+    pumpfunGraduate: isPumpGraduate(dexId),
     discoveredVia: via,
     firstSeenAt: Date.now(),
     pairCreatedAt: createdAt,
@@ -626,29 +639,42 @@ async function momentumTick(): Promise<void> {
     byToken.set(c.tokenAddress, arr);
   }
   const addrs = [...byToken.keys()];
-  // Jupiter cross-check: one keyless call per tick (<= 50 mints; the keyless
-  // limit is 0.5 req/s and the tick is 75 s). A failed call marks the check
-  // failed for this tick; it never blocks the DexScreener refresh.
-  // Highest-scoring mints first: with the check fail-closed (an unchecked
-  // mint cannot be ENTER), the 50-mint budget goes to the candidates that
-  // could reach ENTER.
+  // Jupiter cross-check: up to JUP_CALLS_PER_TICK keyless calls per tick (<= 50 mints each, spaced to stay
+  // inside the keyless 0.5 req/s), so every mint refreshed this tick is checked against the price read in the
+  // same tick. With ONE call, the 40 lowest-scored mints of a 90-mint batch were never asked, were reset to
+  // "unchecked" on every refresh (even after agreeing earlier), lost 5 score points for it and so stayed at
+  // the back of the queue: 2,621 of 3,008 first signals were "Jupiter unchecked" (record read 2026-11-17).
+  // Highest-scoring mints first, so a partial failure costs the weakest candidates.
   const bestScore = (m: string) => Math.max(...(byToken.get(m) ?? []).map((c) => c.score ?? 0));
-  const jupMints = addrs.slice().sort((a, b) => bestScore(b) - bestScore(a)).slice(0, JUP_MAX_IDS);
-  let jup: { prices: Map<string, number>; omitted: Set<string>; failed: boolean; at: number } | null = null;
+  const jupMints = addrs.slice().sort((a, b) => bestScore(b) - bestScore(a)).slice(0, JUP_MAX_IDS * JUP_CALLS_PER_TICK);
+  let jup: { prices: Map<string, number>; omitted: Set<string>; failedMints: Set<string>; at: number } | null = null;
   if (jupMints.length) {
-    try {
-      const j = await getJson(`${JUP_BASE}?ids=${jupMints.join(",")}`);
-      const r = parseJupiterPrices(j, jupMints);
-      jup = { prices: r.prices, omitted: new Set(r.omitted), failed: false, at: Date.now() };
-      // A 200 that prices none of the mints asked for is not a working feed (a moved or reshaped endpoint looks like this).
-      // Jupiter legitimately omits mints it has no route for (brand-new pump mints), so a small batch pricing
-      // none is inconclusive, not a failure; a full batch pricing none is what a moved or reshaped endpoint looks like.
-      if (r.prices.size > 0) markOk(jupHealth);
-      else if (jupMints.length >= JUP_INCONCLUSIVE_UNDER) markFail(jupHealth, `answered but priced 0 of ${jupMints.length} mints`);
+    jup = { prices: new Map(), omitted: new Set(), failedMints: new Set(), at: Date.now() };
+    let priced = 0, asked = 0, anyOk = false, anyFail = false;
+    for (let k = 0; k < jupMints.length; k += JUP_MAX_IDS) {
+      const part = jupMints.slice(k, k + JUP_MAX_IDS);
+      if (k > 0) await sleep(JUP_CALL_GAP_MS);
+      try {
+        const j = await getJson(`${JUP_BASE}?ids=${part.join(",")}`);
+        const r = parseJupiterPrices(j, part);
+        for (const [m, v] of r.prices) jup.prices.set(m, v);
+        for (const m of r.omitted) jup.omitted.add(m);
+        priced += r.prices.size; asked += part.length; anyOk = true;
+        jup.at = Date.now();
+      } catch (e) {
+        for (const m of part) jup.failedMints.add(m);
+        anyFail = true;
+        markFail(jupHealth, e);
+      }
+    }
+    // A 200 that prices none of the mints asked for is not a working feed (a moved or reshaped endpoint looks like this).
+    // Jupiter legitimately omits mints it has no route for (brand-new pump mints), so a small batch pricing
+    // none is inconclusive, not a failure; a full batch pricing none is what a moved or reshaped endpoint looks like.
+    // A tick where one of the calls failed stays a failure for the health check: half the batch went unchecked.
+    if (anyOk && !anyFail) {
+      if (priced > 0) markOk(jupHealth);
+      else if (asked >= JUP_INCONCLUSIVE_UNDER) markFail(jupHealth, `answered but priced 0 of ${asked} mints`);
       else jupHealth.lastInconclusiveAt = Date.now();
-    } catch (e) {
-      jup = { prices: new Map(), omitted: new Set(), failed: true, at: Date.now() };
-      markFail(jupHealth, e);
     }
   }
   for (let i = 0; i < addrs.length; i += 30) {
@@ -683,7 +709,7 @@ async function momentumTick(): Promise<void> {
       c.boosted = boostedTokens.has(c.tokenAddress.toLowerCase());
       if (jup && jupMints.includes(c.tokenAddress)) {
         const jp = jup.prices.get(c.tokenAddress) ?? null;
-        const chk = jupiterCheck(c.priceUsd, { price: jp, omitted: jup.omitted.has(c.tokenAddress), failed: jup.failed });
+        const chk = jupiterCheck(c.priceUsd, { price: jp, omitted: jup.omitted.has(c.tokenAddress), failed: jup.failedMints.has(c.tokenAddress) });
         c.jupPriceUsd = jp;
         c.jupState = chk.state;
         c.jupGapPct = chk.gapPct != null ? Number(chk.gapPct.toFixed(1)) : null;
@@ -911,7 +937,7 @@ async function socialTick(): Promise<void> {
       }
 
       // ── pump.fun coin object (only for pump ecosystem tokens) ──
-      if (c.tokenAddress.endsWith("pump") || c.pumpfunGraduate) {
+      if (c.tokenAddress.endsWith("pump") || isPumpDex(c.dexId)) {
         try {
           const coin = await curlJson(`${PUMP}/coins/${c.tokenAddress}`);
           const replies = Number(coin?.reply_count ?? NaN);
@@ -1947,7 +1973,7 @@ export async function runCryptoAutopsy(input: unknown, now: number = Date.now())
     const c: Candidate = {
       chain: "solana", pairAddress: String(best.pairAddress), tokenAddress: mint,
       symbol: String(best?.baseToken?.symbol ?? ""), name: String(best?.baseToken?.name ?? ""), dexId: String(best?.dexId ?? ""),
-      pumpfunGraduate: isPumpDex(String(best?.dexId ?? "")), discoveredVia: "new_pools", firstSeenAt: now, pairCreatedAt: null,
+      pumpfunGraduate: isPumpGraduate(String(best?.dexId ?? "")), discoveredVia: "new_pools", firstSeenAt: now, pairCreatedAt: null,
       priceUsd: null, marketCap: null, fdv: null, liquidityUsd: null, vol5m: null, vol1h: null, vol24h: null,
       buys5m: null, sells5m: null, buys1h: null, sells1h: null, chg5m: null, chg1h: null, chg24h: null,
       boosted: false, lastRefreshAt: now,
