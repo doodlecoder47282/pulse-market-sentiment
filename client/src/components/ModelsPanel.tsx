@@ -1316,6 +1316,9 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
     for (const d of data.days) m.set(d.label, d.events);
     return m;
   }, [data]);
+  // Days whose full list is open. "+N more" used to be plain text: the rest of the day's events could not be seen.
+  const [openDays, setOpenDays] = useState<Set<string>>(new Set());
+  const toggleDay = (label: string) => setOpenDays((prev) => { const n = new Set(prev); if (n.has(label)) n.delete(label); else n.add(label); return n; });
 
   return (
     <div className="mb-2 rounded border border-border/40 bg-black/30">
@@ -1341,19 +1344,28 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
                 {events.length === 0 && (
                   <span className="font-mono text-[11px] text-muted-foreground">—</span>
                 )}
-                {events.slice(0, 4).map((e) => {
+                {(openDays.has(label) ? events : events.slice(0, 4)).map((e) => {
                   const tone = chipTone(e.importance);
                   return (
                     <div
                       key={e.id}
+                      title={[e.timeLabel, e.importance, e.note].filter(Boolean).join(" · ")}
                       className={`inline-flex items-center gap-1 rounded border ${tone.border} ${tone.bg} px-1.5 py-0.5 font-mono text-[11px] leading-tight ${tone.fg}`}
                     >
-                      <span className="whitespace-normal break-words">{e.longTitle ?? e.title}</span>
+                      <span className="whitespace-normal break-words">{openDays.has(label) && e.timeLabel ? `${e.timeLabel} · ` : ""}{e.longTitle ?? e.title}</span>
                     </div>
                   );
                 })}
                 {events.length > 4 && (
-                  <span className="font-mono text-[11px] text-muted-foreground">+{events.length - 4} more</span>
+                  <button
+                    type="button"
+                    onClick={() => toggleDay(label)}
+                    aria-expanded={openDays.has(label)}
+                    data-testid={`button-catalysts-more-${label.replace(/[^A-Za-z0-9]+/g, "-")}`}
+                    className="min-h-[28px] self-start rounded border border-border/50 px-2 font-mono text-[11px] text-foreground/80 underline decoration-dotted underline-offset-2 hover:text-foreground"
+                  >
+                    {openDays.has(label) ? "show fewer" : `+${events.length - 4} more`}
+                  </button>
                 )}
               </div>
             </div>

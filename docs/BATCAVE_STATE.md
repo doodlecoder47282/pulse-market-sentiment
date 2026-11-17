@@ -2270,3 +2270,11 @@ condition); a P/C shift is never suppressed and a dismissed alert returns if its
 says it is partial; the header quote strip shows "quotes failed" on a failed first load (it rendered
 nothing). Left open, same class as S16: the snapshot's top-level pcrOi / pcrVol are still 0 with no call
 open interest and composite.ts reads that as call-heavy.
+
+2026-11-17: Owner report, Models tab (feat/models-more-clarity). "+N more" under a day in the Catalysts strip
+was plain text, so events past the fourth could not be seen; it is a button that opens the day's full list
+(with each event's time) and closes it again. The 0DTE Wiener map opens with one plain-language sentence
+(where price is, the size of move the options market is pricing, the middle-half and four-in-five close
+ranges, and that the map has no view on direction) and a "How to read this" guide covering the bands, price
+outside the bands, touch and close-above odds, 1 sigma, the dealer levels, the scorecard and what the model
+leaves out. Copy only: no number, band or odds calculation changed.
