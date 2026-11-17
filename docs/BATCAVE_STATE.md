@@ -2298,3 +2298,8 @@ tick stays a failure for the health check. pumpfunGraduate is true only for a pa
 was true for any dex id containing "pump", so the card, the AI prompt and the replay's graduate split all
 described pump vs non-pump. Rows stored before this date keep the old meaning. No threshold changed, so the
 rule version is unchanged; more mints being checked can change scores (the "unchecked" flag costs 5).
+Review of the first crypto batch: MERGE-READY; should-fixes taken: an engine tick that is still running is
+not started again on top of itself (the momentum tick's worst case moved close to its 75 s period); each
+mint's Jupiter check is stamped with its own call's time. Left open and unverified: "pumpswap" as the dex id
+GeckoTerminal reports for a graduated pair (if it is something else the flag fails closed to false); the
+replay pools old-meaning and new-meaning graduate rows without a marker.

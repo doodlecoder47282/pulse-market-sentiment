@@ -299,7 +299,13 @@ function hb(name: string, cadenceMs: number): EngineHealth {
   return h;
 }
 
+/** Engines with a tick still running. A tick that outlasts its period is not started again on top of itself
+ *  (two momentum ticks would pick the same batch and double the calls against every keyless limit). */
+const enginesRunning = new Set<string>();
+
 async function runEngine(name: string, cadenceMs: number, fn: () => Promise<void>): Promise<void> {
+  if (enginesRunning.has(name)) return;
+  enginesRunning.add(name);
   const h = hb(name, cadenceMs);
   h.lastRunAt = Date.now();
   h.runs++;
@@ -311,6 +317,8 @@ async function runEngine(name: string, cadenceMs: number, fn: () => Promise<void
     h.errors++;
     h.lastError = String(e?.message ?? e).slice(0, 300);
     console.warn(`[crypto:${name}] ${h.lastError}`);
+  } finally {
+    enginesRunning.delete(name);
   }
 }
 
@@ -647,10 +655,12 @@ async function momentumTick(): Promise<void> {
   // Highest-scoring mints first, so a partial failure costs the weakest candidates.
   const bestScore = (m: string) => Math.max(...(byToken.get(m) ?? []).map((c) => c.score ?? 0));
   const jupMints = addrs.slice().sort((a, b) => bestScore(b) - bestScore(a)).slice(0, JUP_MAX_IDS * JUP_CALLS_PER_TICK);
-  let jup: { prices: Map<string, number>; omitted: Set<string>; failedMints: Set<string>; at: number } | null = null;
+  let jup: { prices: Map<string, number>; omitted: Set<string>; failedMints: Set<string>; at: number; atOf?: (m: string) => number } | null = null;
   if (jupMints.length) {
     jup = { prices: new Map(), omitted: new Set(), failedMints: new Set(), at: Date.now() };
     let priced = 0, asked = 0, anyOk = false, anyFail = false;
+    const jupAt = new Map<string, number>(); // when each mint's own call answered
+    jup.atOf = (m: string) => jupAt.get(m) ?? jup!.at;
     for (let k = 0; k < jupMints.length; k += JUP_MAX_IDS) {
       const part = jupMints.slice(k, k + JUP_MAX_IDS);
       if (k > 0) await sleep(JUP_CALL_GAP_MS);
@@ -660,7 +670,8 @@ async function momentumTick(): Promise<void> {
         for (const [m, v] of r.prices) jup.prices.set(m, v);
         for (const m of r.omitted) jup.omitted.add(m);
         priced += r.prices.size; asked += part.length; anyOk = true;
-        jup.at = Date.now();
+        const answeredAt = Date.now();
+        for (const m of part) jupAt.set(m, answeredAt);
       } catch (e) {
         for (const m of part) jup.failedMints.add(m);
         anyFail = true;
@@ -713,7 +724,7 @@ async function momentumTick(): Promise<void> {
         c.jupPriceUsd = jp;
         c.jupState = chk.state;
         c.jupGapPct = chk.gapPct != null ? Number(chk.gapPct.toFixed(1)) : null;
-        c.jupCheckedAt = jup.at;
+        c.jupCheckedAt = jup.atOf ? jup.atOf(c.tokenAddress) : jup.at;
       } else {
         c.jupState = "unchecked";
         c.jupGapPct = null;

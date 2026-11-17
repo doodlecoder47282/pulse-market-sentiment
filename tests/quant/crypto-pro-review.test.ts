@@ -30,3 +30,10 @@ test("graduate flag: only a coin trading on PumpSwap is called graduated; a bond
   // The pump.fun coin read still covers bonding-curve pairs.
   assert.match(eng, /c\.tokenAddress\.endsWith\("pump"\) \|\| isPumpDex\(c\.dexId\)/);
 });
+
+test("review: an engine tick still running is not started again; each mint is stamped with its own call's time", () => {
+  assert.match(eng, /if \(enginesRunning\.has\(name\)\) return;\s*enginesRunning\.add\(name\);/);
+  assert.match(eng, /\} finally \{\s*enginesRunning\.delete\(name\);\s*\}/);
+  assert.match(eng, /for \(const m of part\) jupAt\.set\(m, answeredAt\);/);
+  assert.match(eng, /c\.jupCheckedAt = jup\.atOf \? jup\.atOf\(c\.tokenAddress\) : jup\.at;/);
+});
