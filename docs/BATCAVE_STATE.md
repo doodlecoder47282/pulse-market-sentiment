@@ -2278,3 +2278,7 @@ was plain text, so events past the fourth could not be seen; it is a button that
 ranges, and that the map has no view on direction) and a "How to read this" guide covering the bands, price
 outside the bands, touch and close-above odds, 1 sigma, the dealer levels, the scorecard and what the model
 leaves out. Copy only: no number, band or odds calculation changed.
+Review (MERGE-READY), copy should-fixes taken: the 1 sigma line names the straddle when that is the source;
+before the open the sentence says the session has not started instead of "390 minutes left"; the "price
+outside the bands" line is replaced (the bands restart from the current price on each refresh, so the chart
+cannot show that); "shrinks" is "normally shrinks".

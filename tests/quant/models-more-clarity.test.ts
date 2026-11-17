@@ -22,6 +22,10 @@ test("Wiener map: a plain-language read comes first, with a guide; its statement
   assert.match(o, /not a forecast/);
   assert.match(o, /data-testid="odte-wiener-guide"/);
   assert.doesNotMatch(o.slice(i, j), /\b(buy|sell|should|edge|likely to)\b/i);
+  // Review: the sigma source is named as it is, pre-open is not "390 minutes left", and nothing claims the chart shows price outside the bands.
+  assert.match(o, /w!\.sigmaSource === "atm_iv" \? "from the 0DTE at-the-money implied volatility" : "from the price of the 0DTE at-the-money straddle/);
+  assert.match(o, /session\.state === "preopen" \? " \(the last price before the open\)/);
+  assert.doesNotMatch(o, /Price outside the bands/);
   // "A level 1 sigma away is touched about one time in three" (2(1 - Phi(1)) = 0.317).
   const p = hitProbability(10, 0, 10, 1);
   assert.ok(Math.abs(p - 0.3173) < 0.001, String(p));
