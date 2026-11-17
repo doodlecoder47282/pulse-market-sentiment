@@ -41,6 +41,9 @@ export interface ForwardLike {
   chainAsOfMs?: number | null;
   chainStale?: boolean;
   chainStaleReason?: string | null;
+  /** Open-interest session and weight behind the exposures (shared/gammaBasis.ts). */
+  oiBasis?: import("./gammaBasis").OiBasis | null;
+  weighting?: import("./gammaBasis").GammaWeighting | null;
   /** The Wiener baseline (shared/odteWiener.ts), when the forward computed one. */
   wiener?: WienerMap | null;
 }
@@ -123,6 +126,9 @@ export interface OdteMap {
   /** When Schwab produced the chain behind this map (epoch ms); null when the forward did not say. The cards show this age, not asOf (compute time). */
   chainAsOfMs: number | null;
   chainStale: boolean;
+  /** Trading date whose end-of-day open interest the exposures use, and the weight; null when the forward did not say. */
+  oiBasis: import("./gammaBasis").OiBasis | null;
+  weighting: import("./gammaBasis").GammaWeighting | null;
   /** The Wiener level odds at the time of this map (kept with the morning plan and scored after the close). */
   wiener: WienerSnapshot | null;
 }
@@ -335,6 +341,8 @@ export function composeOdteMap(f: ForwardLike, opts: ComposeOptions): OdteMap {
     method,
     chainAsOfMs: Number.isFinite(Number(f.chainAsOfMs)) ? Number(f.chainAsOfMs) : null,
     chainStale,
+    oiBasis: f.oiBasis ?? null,
+    weighting: f.weighting ?? null,
     wiener: f.wiener && f.wiener.state === "ok"
       ? { state: f.wiener.state, spot: f.wiener.spot, sigmaToClose: f.wiener.sigmaToClose, minutesLeft: f.wiener.minutesLeft, levels: f.wiener.levels }
       : null,

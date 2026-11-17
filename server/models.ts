@@ -40,6 +40,7 @@ import { storage } from "./storage";
 import { getQuotes as schwabGetQuotes, getOptionChainLadder } from "./schwab";
 import { cdfAt, type ImpliedDistribution } from "./breedenLitzenberger";
 import { isRegularSessionOpen } from "./exchangeCalendar";
+import { buildOiBasis, chainReadMs, gammaWeighting } from "../shared/gammaBasis";
 import {
   etNowParts,
   horizonTargetIso,
@@ -299,6 +300,9 @@ export interface ModelHorizon {
   chainLastSession?: boolean;
   chainMaxAgeMs?: number;
   chainCoverageComplete?: boolean | null;
+  /** Trading date whose end-of-day open interest the gamma levels use, and the weight (shared/gammaBasis.ts). */
+  oiBasis?: import("../shared/gammaBasis").OiBasis;
+  weighting?: import("../shared/gammaBasis").GammaWeighting;
 }
 
 export interface ModelsResponse {
@@ -1513,6 +1517,8 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     chainLastSession: chain.lastSession === true,
     chainMaxAgeMs: chain.maxAgeMs,
     chainCoverageComplete: chain.strikeCoverage?.complete ?? null,
+    oiBasis: buildOiBasis(chainReadMs(chain), chain.oiState),
+    weighting: gammaWeighting("oi"),
   };
 
   // MM probability matrix — 5×5 regime × zone grid with conditional probs + action tags

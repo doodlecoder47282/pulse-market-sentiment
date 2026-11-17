@@ -718,6 +718,10 @@ export interface ChainGex {
   /** Contracts with open interest dropped because no usable sigma exists
    *  (no vendor IV and no two-sided quote): missing, not zero gamma. */
   contractsNoSigma?: number;
+  /** The same per-contract GEX terms the profile sums, added up per calendar
+   *  day to expiry (calls +, puts -), with the number of contract rows in each.
+   *  Their sum is the profile's net GEX; sources.buildGammaStructure buckets them. */
+  gexByDteDay?: Array<{ dte: number; gex: number; contracts: number }>;
 }
 
 /** Signals per-strike / wall / flip universe: expiries 0-45 DTE in the request. */
@@ -767,9 +771,16 @@ export function gexByStrikeFromChain(
     }
   }
   const strikeMap = new Map<number, GexStrike>();
+  const dteDayMap = new Map<number, { dte: number; gex: number; contracts: number }>();
   for (const row of rows) {
     const T = row.T as number;
     const gex = dollarGexPerPct(bsGamma(spot, row.strike, row.iv, T, r, q, row.type), row.oi, spot);
+    {
+      let d = dteDayMap.get(row.dte);
+      if (!d) { d = { dte: row.dte, gex: 0, contracts: 0 }; dteDayMap.set(row.dte, d); }
+      d.gex += row.type === "C" ? gex : -gex;
+      d.contracts++;
+    }
     let s = strikeMap.get(row.strike);
     if (!s) { s = { strike: row.strike, callGex: 0, putGex: 0, netGex: 0 }; strikeMap.set(row.strike, s); }
     if (row.type === "C") s.callGex += gex;
@@ -797,5 +808,6 @@ export function gexByStrikeFromChain(
     flipInputs: flipInputs({ weight: "open_interest", universe: "all-expiries-in-request", expiryKeys: keys }),
     gammaBasis: "repriced-bs",
     contractsNoSigma,
+    gexByDteDay: Array.from(dteDayMap.values()).sort((a, b) => a.dte - b.dte),
   };
 }

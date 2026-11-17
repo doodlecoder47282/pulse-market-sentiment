@@ -7,6 +7,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import SignalRecordCard from "./SignalRecordCard";
 
 interface CalBucket { label: string; n: number; wins: number; winRate: number | null; wilsonLo: number | null; wilsonHi: number | null; fitted: number | null; prior: number; fittedInUse?: boolean }
 interface CalReport { source: "fitted" | "prior"; totalGradedFires: number; buckets: CalBucket[]; rejectedCounterfactual: { n: number; winRate: number | null; note: string }; note: string }
@@ -228,6 +229,7 @@ function OrthogonalityCard() {
 export default function TruthPanel() {
   return (
     <div className="space-y-3" data-testid="truth-panel">
+      <SignalRecordCard />
       <CalibrationCard />
       <WalkForwardCard />
       <OrthogonalityCard />

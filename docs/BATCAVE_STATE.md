@@ -2444,6 +2444,66 @@ for four hours after the close, so 17:00 on a half day). S5: the news calendar b
 00:00 UTC and printed the label in New York time, so every header read "Week of Sun" and a Sunday-evening
 ET event was filed under the next week; weeks are now the ET calendar's Monday. S22: the SVG chart's axis
 and hover time used the viewer's time zone; they use New York time and the hover says ET.
+2026-11-17: Gamma "OI as of" stamp, weighting label and Signals DTE split (feat/gamma-oi-stamp-impl;
+practitioner review items O7, O8 and "missing" item 3). Descriptive only: no GEX figure, wall, flip, regime
+or weighting changed. (1) Every gamma payload (Signals, Models, Heatseeker, 0DTE forward and map, Killbox)
+now carries oiBasis { sessionDate, note }: the trading date whose end-of-day open interest the figures use.
+Rule (shared/gammaBasis.ts, same posting rule as oiHold.postedSession): a chain read on a trading day
+carries that morning's posting, which counts positions as of the previous trading day's close; a weekend or
+holiday read carries the last posting; when the open interest was filled from the saved store, the saved
+posting day is used instead of the read day; with no chain date or no open interest the date is null and
+the screen says "OI date unknown". The read date is the chain's receive time (else its data time) in New
+York. Each panel shows "OI as of the close of Mon 16 Nov" (formatted from the field) with the tooltip
+"Open interest is posted once a day. Today's trading is not in these figures." (2) Each payload carries
+weighting { kind, label }: Signals, Models and Heatseeker "open interest"; the 0DTE forward and map "open
+interest + 0.25 x today's volume"; the Killbox "open interest, volume or both" with its rule (hybrid when
+volume exceeds 5 x OI; volume alone when OI is under 1,000 contracts and volume over 1,000) and the mode the
+read used. The 0.25, 5 and 1,000 are now named constants read by both the code and the labels; the values
+are the ones the code already used. (3) Signals gamma adds gexByDte: Net GEX split into 0DTE, 1-7 and 8-45
+calendar days to expiry, summed from the same per-contract terms as the total (they add up to it); a bucket
+with no contract is null, not 0. Shown under the tiles with each bucket's share of the three buckets'
+combined absolute size. Pre-open rule: Schwab's chain does not say when the day's
+open interest posted, so a live-source chain read on a trading day before that day's regular open (09:30
+ET, exchange calendar) is not assumed to carry the new posting: the stamp names the earlier session
+(two trading days before the read date), sets postingPending and reads "OI as of the close of <date>;
+today's posting may not be in yet". From the open onward it names the previous trading day. Held open
+interest is unaffected. Dates outside the exchange calendar's verified years give "OI date unknown". The
+explanations are visible text, not hover-only. The three weightings still differ by tab, now labelled
+rather than reconciled.
+2026-11-17: Signal record (feat/signal-record-impl; practitioner review, options "missing" item 1). One
+read-only record of what each signal source has logged and graded, each on its own basis: GET
+/api/record/signals (server/signalRecord.ts, rules in shared/signalRecord.ts) and a "Signal record" card at
+the top of Edge Lab > Truth. No grading rule, threshold, stored row or existing endpoint changed: every
+figure is read through the source's existing summary function, and the only new SQL is counts. Ten rows:
+whale follow-through (ask in, bid out, fees; getPerformanceSnapshot, 90 days), whale alerts held to expiry
+(ask in, bid at the expiry close, win = +30%, no fees; computeEdgeStats), tracked signals (mid to mid, in
+memory, no summary function: counts only), 0DTE T1 before stop (getCalibrationReport, gate 40), 0DTE option
+ledger (getOptionLedgerSummary, gate 385, net of the configured index fee or stated as before fees), regime
+calls (one per ET session; computeEdgeStats), scenario odds (rollingBrier, gate 20 days), the Wiener morning
+odds scorecard (calibration, gate 50 days), MM matrix predictions (calibration, counts) and the crypto desk
+(first ENTER per coin; getCryptoSignals, gate from the rule book). Rules: under a source's own minimum
+sample (or 30 graded where it defines none: DEFAULT_MIN_GRADED, hand-set) the row is INSUFFICIENT DATA with
+counts only; a store that cannot be read is UNAVAILABLE with the reason and dashes, never zero; a win share
+is only printed with its Wilson 95% interval (validationMath.wilsonInterval) and n; there is no overall
+figure, because the rows are graded on different bases. Not built, and stated: this is not the single entry
+basis and single expiry rule the review asked for (that needs a new grading rule, which this task excluded);
+the two whale rows grade the same detections twice under different exits; the ML direction card and the
+user's own trade log (CLV) are not rows (the first grades on read from a Schwab price fetch and stores no
+outcome, the second is the user's trades, not emitted signals); the master alpha composite shares the MM
+matrix log and its existing summary rounds its hit rates, so no win count is rebuilt from it. Unverified
+from the sandbox: the route against a live database (no SQLite binary here); the count queries were checked
+against the table definitions only.
+Review of the signal record: MERGE-READY, eight should-fix items taken. (1) The 0DTE option ledger's 385 is a
+per-bucket gate; the row summed five buckets against it and would have printed a pooled share the ledger
+never computes. The row is now held to its largest bucket, and a share, when shown, is that bucket's own,
+named, with its own n. (2) Whale follow-through "emitted" is the whale_follows row count when it can be
+read (a failed hydration no longer reads as 0); the in-memory count is used, and labelled, only when the
+table cannot be read. (3) computeEdgeStats runs once per assembly, not twice. (4) Scenario odds: the row
+states which odds the graded days carried (two forecasters pooled) and calls its figure "top-pick hits".
+(5) An unavailable source still states its own gate. (6) Rows that never show a win share (tracked
+signals, Wiener, MM matrix) say what they are instead of counting down to a share; the hand-set 30 no
+longer applies to them. (7) emitted = graded + open + excluded on every row; a part the source cannot
+provide is unknown (a dash), not 0. (8) Concurrent requests on a cold cache share one assembly.
 2026-11-17: DFI retired as a magnitude; the regime is keyed on the gamma zone (feat/retire-dfi-impl; audit
 item M1, owner decision of 2026-11-16). The "Delta Flow Indicator" was (dDEX/dS) / |GEX| x 1e9 clamped to
 [-5, 5]. The scale pinned it at the clamp, so it was always +5.00 or -5.00 when available: the sign of the
