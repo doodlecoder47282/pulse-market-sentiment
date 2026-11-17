@@ -134,7 +134,7 @@ export interface GammaStructure {
   profile: GexStrikePoint[];    // strike-level GEX within ±$60 of spot
   topCallOi: { strike: number; oi: number; expiry: string; dte: number }[];
   topPutOi:  { strike: number; oi: number; expiry: string; dte: number }[];
-  pcrByBucket: { label: string; dteMax: number; pcrOi: number; pcrVol: number; callOi: number; putOi: number }[];  // rolling DTE buckets for PCR selector
+  pcrByBucket: { label: string; dteMax: number; pcrOi: number | null; pcrVol: number | null; callOi: number; putOi: number }[];  // rolling DTE buckets for PCR selector
   gexCrossoverStrike: number | null;       // legacy metric — strike where cumulative per-strike GEX flips sign
   gammaProfile: { spot: number; gex: number }[];  // 60-pt Perfiliev curve, 0.9 · S → 1.1 · S
 }

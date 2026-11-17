@@ -289,6 +289,11 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
   const [isOpen, setIsOpen] = useState(true);
   const prevPcrRef = useRef<number | null>(null);
   const prevChainRef = useRef<any>(null);
+  /** Alert ids the user dismissed this page load (ids carry the symbol). */
+  const dismissedRef = useRef<Set<string>>(new Set());
+  // A new symbol has no baseline: the previous symbol's chain and put/call ratio are not one
+  // (a P/C "shift" and volume jumps were being read between two different tickers).
+  useEffect(() => { prevPcrRef.current = null; prevChainRef.current = null; }, [symbol]);
 
   // Tracked signals — get set of tracked ids so AlertRow can highlight already-tracked
   const trackedQ = useQuery<any>({
@@ -374,19 +379,22 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
       currentPcr,
       Number.isFinite(chainData.asOfMs) ? chainData.asOfMs : Date.now(),
     );
-    if (newAlerts.length > 0) {
+    // A dismissed condition stays dismissed: ids are deterministic, so the next poll would re-add it as new.
+    const kept = newAlerts.filter((a) => !dismissedRef.current.has(a.id));
+    if (kept.length > 0) {
       // Same condition -> same row, updated in place; only a new condition is a new row.
-      setAlerts((prev) => mergeAlerts(prev, newAlerts));
+      setAlerts((prev) => mergeAlerts(prev, kept));
     }
     prevPcrRef.current = currentPcr;
     prevChainRef.current = chainData;
   }, [chainData, symbol, isConnected, computePcr]);
 
   const dismissAlert = useCallback((id: string) => {
+    dismissedRef.current.add(id);
     setAlerts((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
-  const dismissAll = useCallback(() => setAlerts([]), []);
+  const dismissAll = useCallback(() => setAlerts((prev) => { for (const a of prev) dismissedRef.current.add(a.id); return []; }), []);
 
   const highCount = alerts.filter((a) => a.severity === "high").length;
   const totalCount = alerts.length;

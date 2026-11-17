@@ -2102,3 +2102,22 @@ nothing, so a young pool's first read (usually under 10 candles) would have lock
 "insufficient" forever; it now waits for the first readable tape (>= CANDLES_MIN) and the SQL also replaces
 a recorded insufficient/unavailable tape, never a readable one (tested); and the stale sentence now ends
 with a separator.
+
+2026-11-16: Audit batch, Signals / Chart shell (feat/audit-signals; audit items S1, S2, S3, S4, S8, S9, S13,
+S14, S16, S18). S1/S14: the chart's gamma banner read anything that was not "positive" as "NEG GAMMA - trend
+/ breakout" (an unknown sign on a single name included), and the SPY levels route rebuilt the regime as
+totalGex >= 0 while the Signals tile used the snapshot's own regime with its +-$50M neutral band, so the
+two could disagree; the route sends the snapshot's regime, the banner has four states (positive, negative,
+net gamma near zero, sign unknown) and the Signals tile's neutral sub-label no longer says "trend/breakout".
+S18: the SPY levels route stamped the snapshot's capture time as the levels' time; it sends the chain's own
+time (gammaAsOf), null when there is none. S16: a DTE bucket with no call open interest reported a put/call
+ratio of 0.00 (reads as "all calls"); it is null and shows a dash. S2: "N closed today" counted every closed
+position in the follow-through store (up to 90 days); it reads "N closed (stored)". S13: an unavailable
+whale scan with an empty list read "no whales pass the surgical gate"; it says the scan is unavailable and
+why. S3: a dismissed flow alert came back on the next 30-second poll (ids are deterministic); dismissed ids
+are remembered for the page load. S4: after a symbol change the previous symbol's chain and put/call ratio
+were the comparison baseline, so a P/C "shift" and volume jumps were read between two tickers; the baseline
+is cleared. S8/S9: the macro tape and the header quote strip never read the request's error state, so a
+failed refresh kept showing the last prices as live and a failed first load was an endless "Loading"; both
+show "refresh failed", and VIX with no change received is neutral, not red. Still open from this group:
+S5, S6, S7, S10, S11, S12, S15, S17, S19-S24.

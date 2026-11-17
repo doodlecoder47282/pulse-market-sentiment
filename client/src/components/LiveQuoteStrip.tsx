@@ -51,7 +51,7 @@ function fmtPct(v: number | null): string {
 }
 
 export default function LiveQuoteStrip() {
-  const { data, isLoading } = useQuery<QuotesResponse>({
+  const { data, isLoading, isError } = useQuery<QuotesResponse>({
     queryKey: ["/api/quotes"],
     queryFn: async () => {
       const r = await apiRequest("GET", "/api/quotes");
@@ -74,7 +74,9 @@ export default function LiveQuoteStrip() {
   if (!data) return null;
 
   const spyUp = (data.spy.changePct ?? 0) >= 0;
-  const vixUp = (data.vix.changePct ?? 0) >= 0;
+  // No change received is not "VIX up": the level is neutral, never red.
+  const vixKnown = data.vix.changePct != null;
+  const vixUp = vixKnown && (data.vix.changePct as number) >= 0;
   const spyChangeClass = spyUp ? "text-emerald-400" : "text-red-400";
   const vixChangeClass = vixUp ? "text-red-400" : "text-emerald-400"; // VIX up = bearish
 
@@ -106,7 +108,7 @@ export default function LiveQuoteStrip() {
           value={data.vix.price}
           format={(v) => fmt2(v)}
           className="font-mono text-sm font-semibold"
-          neutralClassName={vixUp ? "text-red-400" : "text-emerald-400"}
+          neutralClassName={!vixKnown ? "text-foreground" : vixUp ? "text-red-400" : "text-emerald-400"}
         />
         {data.vix.changePct != null && (
           <span className={`font-mono text-[11px] tabular-nums ${vixChangeClass}`}>
@@ -115,6 +117,11 @@ export default function LiveQuoteStrip() {
         )}
         <StaleChip q={data.vix} />
       </div>
+      {isError && (
+        <span className="rounded border border-amber-500/40 px-1 text-[11px] uppercase tracking-wider text-amber-400" data-testid="live-quote-strip-failed" title="The latest quote request failed; these are the last prices received">
+          refresh failed
+        </span>
+      )}
     </div>
   );
 }

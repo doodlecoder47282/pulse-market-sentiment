@@ -177,10 +177,18 @@ function QuotePill({ q, compact = false }: { q: MacroQuote; compact?: boolean })
 // -------- Ticker tape (marquee) --------
 
 export function MacroTicker() {
-  const { data, isLoading } = useMacroQuery();
+  const { data, isLoading, isError } = useMacroQuery();
   const isDemo = useIsDemo();
   const [detailsOpen, setDetailsOpen] = useState(false);
 
+  // A failed first request is a failure, never an endless "Loading".
+  if (isError && !data) {
+    return (
+      <div className="border-y border-border/50 bg-black/20 py-1.5" data-testid="macro-tape-failed">
+        <div className="px-4 text-xs text-amber-400">Tape request failed; no prices to show</div>
+      </div>
+    );
+  }
   if (isLoading || !data) {
     return (
       <div className="border-y border-border/50 bg-black/20 py-1.5">
@@ -221,6 +229,12 @@ export function MacroTicker() {
         <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-indigo-400/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label">
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-indigo-300" />
           <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-200">Sample</span>
+        </div>
+      ) : isError ? (
+        // The latest refresh failed: the rows are the last good response, not live.
+        <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-amber-500/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label" title="The latest tape request failed; these are the last prices received">
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">Refresh failed</span>
         </div>
       ) : !live ? (
         <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label" title="Regular stock session closed: stock and ETF rows show their regular-session close; crypto and FX keep updating">

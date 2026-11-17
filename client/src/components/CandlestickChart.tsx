@@ -26,7 +26,7 @@ export type GammaLevels = {
   zeroGamma: number | null;
   flip: number | null;
   maxPain: number | null;
-  regime: "positive" | "negative";
+  regime: "positive" | "negative" | "neutral" | "unknown";
   profile?: { strike: number; gex: number }[];
 };
 

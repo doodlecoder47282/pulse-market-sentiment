@@ -19,7 +19,8 @@ export type GammaLevels = {
   putWallGex?: number;
   zeroGamma: number | null;
   maxPain?: number | null;
-  regime: "positive" | "negative";
+  /** "neutral": net gamma inside the server's materiality band; "unknown": the chain could not give a sign. */
+  regime: "positive" | "negative" | "neutral" | "unknown";
   totalGex?: number;
 };
 
@@ -116,6 +117,7 @@ export default function GammaContextBanner({
   if (!levels || spot == null) return null;
 
   const regimePositive = levels.regime === "positive";
+  const regimeNegative = levels.regime === "negative";
   const tvNote =
     engine === "tv"
       ? "TV engine · overlay stripped, levels shown here"
@@ -132,12 +134,19 @@ export default function GammaContextBanner({
           className={
             regimePositive
               ? "border-emerald-500/50 text-emerald-400"
-              : "border-rose-500/50 text-rose-400"
+              : regimeNegative
+                ? "border-rose-500/50 text-rose-400"
+                : "border-border/60 text-muted-foreground"
           }
+          data-testid="gamma-banner-regime"
         >
           {regimePositive
             ? "POS GAMMA · mean-revert"
-            : "NEG GAMMA · trend / breakout"}
+            : regimeNegative
+              ? "NEG GAMMA · trend / breakout"
+              : levels.regime === "neutral"
+                ? "NET GAMMA NEAR ZERO · no regime read"
+                : "GAMMA SIGN UNKNOWN"}
         </Badge>
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           {symbol} · {timeframe}
