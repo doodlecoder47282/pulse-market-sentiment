@@ -2245,3 +2245,28 @@ Review (MERGE-READY), three should-fixes taken: the Edge Lab brief wrote "regime
 persists" sentences around the new missing-data label; it now says the matrix was not read. The week
 comparison is windowed (7 to 13 days back), so a monthly series shows a dash instead of its month-over-month
 change under "1w", and the month comparison is 28 to 45 days back (30 skipped February).
+2026-11-16: Audit batch, Signals / Chart shell (feat/audit-signals; audit items S1, S2, S3, S4, S8, S9, S13,
+S14, S16, S18). S1/S14: the chart's gamma banner read anything that was not "positive" as "NEG GAMMA - trend
+/ breakout" (an unknown sign on a single name included), and the SPY levels route rebuilt the regime as
+totalGex >= 0 while the Signals tile used the snapshot's own regime with its +-$50M neutral band, so the
+two could disagree; the route sends the snapshot's regime, the banner has four states (positive, negative,
+net gamma near zero, sign unknown) and the Signals tile's neutral sub-label no longer says "trend/breakout".
+S18: the SPY levels route stamped the snapshot's capture time as the levels' time; it sends the chain's own
+time (gammaAsOf), null when there is none. S16: a DTE bucket with no call open interest reported a put/call
+ratio of 0.00 (reads as "all calls"); it is null and shows a dash. S2: "N closed today" counted every closed
+position in the follow-through store (up to 90 days); it reads "N closed (stored)". S13: an unavailable
+whale scan with an empty list read "no whales pass the surgical gate"; it says the scan is unavailable and
+why. S3: a dismissed flow alert came back on the next 30-second poll (ids are deterministic); dismissed ids
+are remembered for the page load. S4: after a symbol change the previous symbol's chain and put/call ratio
+were the comparison baseline, so a P/C "shift" and volume jumps were read between two tickers; the baseline
+is cleared. S8/S9: the macro tape and the header quote strip never read the request's error state, so a
+failed refresh kept showing the last prices as live and a failed first load was an endless "Loading"; both
+show "refresh failed", and VIX with no change received is neutral, not red. Still open from this group:
+S5, S6, S7, S10, S11, S12, S15, S17, S19-S24.
+Review of feat/audit-signals: HOLD, one must-fix taken: remembering dismissed ids also hid every later P/C
+shift for the symbol (one id per symbol, and a shift is an event between two polls, not a standing
+condition); a P/C shift is never suppressed and a dismissed alert returns if its severity rises
+(shared/flowAlerts.ts afterDismissal, tested). Should-fixes taken: a partial whale scan with an empty list
+says it is partial; the header quote strip shows "quotes failed" on a failed first load (it rendered
+nothing). Left open, same class as S16: the snapshot's top-level pcrOi / pcrVol are still 0 with no call
+open interest and composite.ts reads that as call-heavy.

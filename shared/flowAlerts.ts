@@ -40,3 +40,20 @@ export function mergeAlerts(prev: FlowAlert[], incoming: FlowAlert[], cap = 30):
   }
   return [...fresh, ...prev.map((a) => byId.get(a.id) ?? a)].slice(0, cap);
 }
+
+/**
+ * Which of a poll's alerts to show given what the user dismissed (id -> severity at dismissal).
+ * A dismissed standing condition (WALL, HEAVY STRIKE, UNUSUAL_VOL, BLOCK: fixed or cumulative all day) stays
+ * hidden, because its id is the same on every poll; it returns only if its severity has risen since.
+ * A PC_SHIFT is an event between two polls with one id per symbol, so a dismissal never hides a later one.
+ */
+export function afterDismissal(incoming: FlowAlert[], dismissed: Map<string, AlertSeverity>): FlowAlert[] {
+  const rank = { low: 0, med: 1, high: 2 } as const;
+  return incoming.filter((a) => {
+    if (a.type === "PC_SHIFT") return true;
+    const was = dismissed.get(a.id);
+    if (was == null) return true;
+    if (rank[a.severity] > rank[was]) { dismissed.delete(a.id); return true; }
+    return false;
+  });
+}

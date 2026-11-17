@@ -1292,10 +1292,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             flip: g.zeroGamma,
             maxPain: g.maxPain,
             totalGex: g.totalGex,
-            regime: g.totalGex >= 0 ? "positive" : "negative",
+            // The snapshot's own regime (neutral inside +-$50M net GEX), the same value the Signals tile shows.
+            regime: g.regime,
             profile: g.profile,
           },
-          asOf: snap.capturedAt,
+          // The chain's data time, like the per-ticker branch below; the snapshot's capture time is not the chain's.
+          asOf: snap.gammaAsOf ?? null,
         });
       }
       // Per-ticker path — builds gamma from Schwab callExpDateMap/putExpDateMap

@@ -1016,8 +1016,8 @@ export default function WhaleFlowPanel() {
           <span className="text-muted-foreground text-xs" data-testid="whale-flow-tracking-count">
             {trackingPositions.length} tracking
           </span>
-          <span className="text-muted-foreground text-xs" data-testid="whale-flow-closed-count">
-            {closedPositions.length} closed today
+          <span className="text-muted-foreground text-xs" data-testid="whale-flow-closed-count" title="Closed positions kept in the follow-through store (up to 90 days), not only today's">
+            {closedPositions.length} closed (stored)
           </span>
           {cfg && (
             <span className="text-muted-foreground text-[11px] font-mono ml-auto" data-testid="whale-flow-gate">
@@ -1039,9 +1039,15 @@ export default function WhaleFlowPanel() {
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 py-4 text-center text-xs text-amber-400" data-testid="fresh-whales-error">
               whale feed didn't load — couldn't reach the flow scanner
             </div>
+          ) : whaleGroups.length === 0 && previewQuery.data?.dataState === "unavailable" ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 py-4 text-center text-xs text-amber-400" data-testid="fresh-whales-unavailable">
+              whale scan unavailable{previewQuery.data.dataStateReason ? `: ${previewQuery.data.dataStateReason}` : ""}; an empty list here is not "no whales"
+            </div>
           ) : whaleGroups.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/30 py-4 text-center text-xs text-muted-foreground" data-testid="fresh-whales-empty">
-              no whales pass the surgical gate right now — scan runs every 30s
+              {previewQuery.data?.dataState === "partial"
+                ? `none found in the tickers that could be read; the scan is partial${previewQuery.data.dataStateReason ? ` (${previewQuery.data.dataStateReason})` : ""}`
+                : "no whales pass the surgical gate right now — scan runs every 30s"}
             </div>
           ) : (
             <div className="space-y-2" data-testid="fresh-whales-list">

@@ -239,8 +239,9 @@ export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date
     }
     return {
       label, dteMax,
-      pcrOi:  cOi  ? pOi  / cOi  : 0,
-      pcrVol: cVol ? pVol / cVol : 0,
+      // No call open interest (or volume) in the bucket: no ratio, never 0.00 (which reads as "all calls").
+      pcrOi:  cOi  ? pOi  / cOi  : null,
+      pcrVol: cVol ? pVol / cVol : null,
       callOi: cOi, putOi: pOi,
     };
   });

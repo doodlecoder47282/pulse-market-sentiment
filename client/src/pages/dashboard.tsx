@@ -854,7 +854,7 @@ export default function Dashboard() {
                       label="Regime"
                       value={gamma.regime === "positive" ? "Positive γ" : gamma.regime === "negative" ? "Negative γ" : "Near Flip"}
                       tone={gamma.regime === "positive" ? "bull" : gamma.regime === "negative" ? "bear" : "warn"}
-                      sub={gamma.regime === "positive" ? "mean-reversion" : "trend/breakout"}
+                      sub={gamma.regime === "positive" ? "mean-reversion" : gamma.regime === "negative" ? "trend/breakout" : "net GEX within ±$50M"}
                     />
                     <KeyStat label="Call Wall" value={fmt.num(gamma.callWall, 0)} sub="resistance" tone="neutral" />
                     <KeyStat label="Put Wall" value={fmt.num(gamma.putWall, 0)} sub="support" tone="neutral" />
@@ -875,7 +875,7 @@ export default function Dashboard() {
                             label="PCR (OI)"
                             value={fmt.num(active.pcrOi, 2)}
                             sub={`${active.label} · ${fmt.int(active.putOi)}P / ${fmt.int(active.callOi)}C`}
-                            tone={active.pcrOi > 1.5 ? "warn" : "neutral"}
+                            tone={active.pcrOi != null && active.pcrOi > 1.5 ? "warn" : "neutral"}
                           />
                           <div className="flex flex-wrap gap-1">
                             {buckets.map((b) => (
