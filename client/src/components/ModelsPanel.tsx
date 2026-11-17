@@ -43,6 +43,7 @@ import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ChainAudit from "@/components/ChainAudit";
 import DataAgeChip from "@/components/DataAgeChip";
+import GammaBasisStamp from "@/components/GammaBasisStamp";
 import { BacktestBadge, BacktestPanel, type BacktestHorizon } from "@/components/BacktestOverlay";
 import PivotProjection from "@/components/models/PivotProjection";
 import MLAccuracyCard from "@/components/models/MLAccuracyCard";
@@ -2081,6 +2082,9 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           </span>
           <span className="text-border">|</span>
           <span className="text-foreground font-bold">SPOT {fmtK(horizon.spot)}</span>
+          <span className="text-border">|</span>
+          <GammaBasisStamp oiBasis={(horizon as any).oiBasis ?? null} weighting={(horizon as any).weighting ?? null} testId="models-gamma-basis" />
+          <span className="text-border">|</span>
           <DataAgeChip asOfMs={(horizon as any).chainAsOfMs ?? null} stale={(horizon as any).chainStale ?? null} lastSession={(horizon as any).chainLastSession ?? null} maxAgeMs={session === "live" ? ((horizon as any).chainMaxAgeMs ?? null) : null} label={`${(horizon as any).chainSymbol ?? "chain"} chain`} />
           <span className="text-border">|</span>
           <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
