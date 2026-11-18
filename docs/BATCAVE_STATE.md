@@ -2618,3 +2618,18 @@ shared grader queue and the under-representation of graduates that change pool a
 Not taken: a separate grader budget for second looks (disclosed instead); an engine-level test of
 maybeSecondLook (wiring is pinned by source assertions and SQL tests). Suite: 1159 pass, 4 known failures.
 
+2026-11-18: Crypto alpha brief (feat/crypto-alpha-brief; owner request, first asked 2026-11-16). A "Crypto
+alpha brief" card sits under the tab's headline, open by default: six sections of plain sentences built by
+shared/cryptoBrief.ts from the feed, health and record payloads the tab already loads (no new request, no
+model). Market backdrop (desk risk and its reason, BTC/ETH/SOL against their 24 h average, perpetual funding
+and open interest averaged over the venues read), what the news is talking about (terms in two or more
+headlines and the tracked coins carrying them), on the desk now (each Enter and Watch with cap, liquidity, age,
+volume pace, buy share and what it is waiting on), attention (Bluesky and pump.fun, labelled low grade; paid
+boosts named), risk (hard kills, unread checks and flags per listed coin, the record's counts and rug rate),
+and what was not read (late or failing collectors). A source that was not read gets a line saying so. Coin
+lines jump to the coin's card. Tests: tests/quant/crypto-alpha-brief.test.ts (10). Not verified: rendered
+appearance (no local build). Not in this version: a separate page per coin; sources the desk does not collect
+yet (dev-wallet sells, curve progress, unique buyers).
+Next step: move the listed universe to coins that have survived (new rule version, reviewed), using the
+second-look record once it has 50 priced rows.
+

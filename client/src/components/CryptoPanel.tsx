@@ -17,6 +17,7 @@ import { CRYPTO_RULES } from "@shared/cryptoRules";
 const TARGET_CAP = `$${(CRYPTO_RULES.universe.targetMcapUsd / 1e6).toLocaleString("en-US")}M`;
 import BundleRow from "./BundleRow";
 import CoinDesk from "./CoinDesk";
+import CryptoAlphaBrief from "./CryptoAlphaBrief";
 import type { CardBundle } from "@shared/cryptoBundle";
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
@@ -25,7 +26,7 @@ import type { LaunchEvidence } from "@shared/cryptoLaunch";
 import { apiJson } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -539,6 +540,19 @@ export default function CryptoPanel() {
   const enters = feed?.candidates.filter((c) => c.verdict === "ENTER") ?? [];
   const watches = feed?.candidates.filter((c) => c.verdict === "WATCH") ?? [];
   const passes = feed?.candidates.filter((c) => c.verdict === "PASS").slice(0, 20) ?? [];
+  const jumpTo = (c: { chain: string; pairAddress: string }) => {
+    setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`);
+    setTimeout(() => document.getElementById(`crypto-card-${c.chain}-${c.pairAddress}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+  };
+  // The alpha brief reads the same three payloads as the rest of the tab (shared/cryptoBrief.ts).
+  const briefInputs = useMemo(() => ({
+    feed: feed ?? null, health: healthQ.data ?? null,
+    record: sigQ.data ? {
+      desk: sigQ.data.desk ?? null, coins: sigQ.data.stats, enterCoins: sigQ.data.stats.enterCoins ?? null,
+      ruggedRateObserved: sigQ.data.stats.survivorship?.coins.ruggedRateObserved ?? null, rulesVersion: sigQ.data.rules?.version ?? null,
+    } : null,
+    codeText: VERDICT_CODE_TEXT as Record<string, string>,
+  }), [feed, healthQ.data, sigQ.data]);
 
   return (
     <div className="space-y-4" data-testid="crypto-panel">
@@ -547,6 +561,9 @@ export default function CryptoPanel() {
           setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`);
           setTimeout(() => document.getElementById(`crypto-card-${c.chain}-${c.pairAddress}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
         }} />
+
+      {/* the alpha brief: every source the desk reads, in plain sentences, with what was not read */}
+      <CryptoAlphaBrief inputs={briefInputs} onPick={jumpTo} />
 
       {/* plain-English guide: labels, opening a coin in fomo, the desk's words */}
       <CryptoHowTo />
