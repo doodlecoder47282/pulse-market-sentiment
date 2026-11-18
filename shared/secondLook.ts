@@ -144,7 +144,7 @@ export function secondLookReadout(looks: LookRow[], firsts: ReplayRow[], targetM
   const g = sorted.filter(isGraded);
   const paired = sorted.filter((r) => firstOf.has(r.coinKey));
   const pairedFirsts = paired.map((r) => firstOf.get(r.coinKey)!);
-  const count = (rows: ReplayRow[], f: (r: ReplayRow) => boolean) => rows.filter(f).length;
+  const count = <T extends ReplayRow>(rows: T[], f: (r: T) => boolean) => rows.filter(f).length;
   const multiples = paired
     .map((r) => { const f = firstOf.get(r.coinKey)!; return fin(r.mcapAtSignal) && fin(f.mcapAtSignal) && f.mcapAtSignal > 0 ? r.mcapAtSignal / f.mcapAtSignal : null; })
     .filter(fin);
