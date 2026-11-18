@@ -41,11 +41,12 @@ export const VERDICT_CODE_TEXT: Record<VerdictCode, string> = {
   risk_off: "desk risk off: BTC 5% or more under its 24 h VWAP",
   risk_unknown: "desk risk unknown: majors not readable",
   stale_data: "pair data not refreshed recently: held at WATCH",
-  watch_faded: "score over 50 but the flow has gone: volume pace under the hour's on the last three refreshes, past the first hour",
+  watch_faded: "score over 50 but slowing: 5-minute volume pace under the hour's on the last three refreshes, past the first hour",
 };
 
 /**
- * A forming setup whose flow has gone (rule book watch.fade). `readings` are the volume-acceleration
+ * A forming setup that is slowing (rule book watch.fade): a relative measure, the 5-minute pace against the hour's,
+ * with no absolute-volume term. `readings` are the volume-acceleration
  * readings, oldest first, ending with the current one. Faded only on OBSERVED low readings: fewer than
  * `polls` readings, any unread one, or an unknown age, is not faded.
  */

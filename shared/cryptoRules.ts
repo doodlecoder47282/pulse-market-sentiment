@@ -75,8 +75,8 @@ export const CRYPTO_RULES = {
     minScore: 50,
     /**
      * A forming setup is "waiting on flow". Past this age, with volume acceleration read and under
-     * `belowVolAccel` on every one of the last `polls` refreshes, the flow it was waiting on has gone and the
-     * row is a PASS (code watch_faded). An unread acceleration is not a low one and never fades a row.
+     * `belowVolAccel` on every one of the last `polls` refreshes, the setup is slowing, not forming, and the
+     * row is a PASS (code watch_faded). Relative pace only: there is no absolute-volume term. An unread acceleration is not a low one and never fades a row.
      */
     fade: { afterMinutes: 60, belowVolAccel: 1, polls: 3 },
   },
@@ -193,7 +193,7 @@ export function describeCryptoRules(r: CryptoRules = CRYPTO_RULES): CryptoRuleIt
     { path: "freshness.enterMaxAgeMinutes", value: `${r.freshness.enterMaxAgeMinutes} min`, text: "an ENTER with pair data older than this is held at WATCH when read (no new exposure on stale data)" },
     { path: "deskRisk.offBelowPct", value: `${r.deskRisk.offBelowPct}%`, text: "BTC vs its Kraken 24 h VWAP; stale or unread majors are unknown (fails closed)" },
     { path: "watch.minScore", value: String(r.watch.minScore), text: "score floor to list a forming setup" },
-    { path: "watch.fade", value: `after ${r.watch.fade.afterMinutes} min, accel < ${r.watch.fade.belowVolAccel}x on ${r.watch.fade.polls} refreshes in a row`, text: "a forming setup whose flow has gone is a PASS, not a WATCH; unread acceleration never fades a row" },
+    { path: "watch.fade", value: `after ${r.watch.fade.afterMinutes} min, accel < ${r.watch.fade.belowVolAccel}x on ${r.watch.fade.polls} refreshes in a row`, text: "a forming setup whose 5-minute volume pace stays under the hour's is a PASS, not a WATCH; unread acceleration never fades a row" },
     { path: "mcapCeiling.watchMinScore", value: String(r.mcapCeiling.watchMinScore), text: "above the entry ceiling: retrace WATCH from this score, else PASS" },
     { path: "flags", value: `sniper < ${r.flags.sniperZoneMinutes} min; dead pool < $${r.flags.deadPoolMinVolume24hUsd} after ${r.flags.deadPoolMinAgeMinutes} min; top-10 > ${r.flags.top10MaxPct}%; LP lock < ${r.flags.lpLockMinPct}%; liq > ${r.flags.liqOverMcapMultiple}x mcap`, text: "flags move the structure score; none is a kill on its own" },
     { path: "security.retryMinutes", value: `${r.security.retryMinutes} min`, text: "authorities re-read while active; unread top-10 retried" },

@@ -1295,11 +1295,12 @@ function scoreCandidate(c: Candidate): void {
       reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
-  } else if (c.score >= CRYPTO_RULES.watch.minScore && watchFaded(c.ageMinutes, fadeReadings(c))) {
-    // Scored like a forming setup, but past its first hour with the volume pace under the hour's on every
-    // recent refresh: the flow it would be waiting on has gone. Not listed as a WATCH and not logged as one.
+  } else if (c.score >= CRYPTO_RULES.watch.minScore && !pairDataStale(c.lastRefreshAt, now).stale && watchFaded(c.ageMinutes, fadeReadings(c))) {
+    // Scored like a forming setup, but past its first hour with the 5-minute volume pace under the hour's on
+    // every recent refresh. Not listed as a WATCH and not logged as one. Fresh reads only: a pair that has
+    // stopped refreshing is not faded on old readings (it stays as it was until it is read again or dropped).
     code = "watch_faded";
-    reasons.push(`score ${c.score} but flow has gone: volume pace under ${CRYPTO_RULES.watch.fade.belowVolAccel}x on the last ${CRYPTO_RULES.watch.fade.polls} refreshes (now ${c.volAccel?.toFixed(1)}x), ${((c.ageMinutes ?? 0) / 60).toFixed(1)} h old`);
+    reasons.push(`score ${c.score} but the 5-minute volume pace was under ${CRYPTO_RULES.watch.fade.belowVolAccel}x the hour's on the last ${CRYPTO_RULES.watch.fade.polls} refreshes (latest ${c.volAccel?.toFixed(2)}x), ${((c.ageMinutes ?? 0) / 60).toFixed(1)} h old`);
   } else if (c.score >= CRYPTO_RULES.watch.minScore) {
     verdict = "WATCH"; code = "forming";
     reasons.push(`score ${c.score} — setup forming, waiting on flow confirmation`);
