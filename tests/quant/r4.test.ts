@@ -429,7 +429,7 @@ test("crypto peak: helper, label and wiring", () => {
   assert.match(peakSamplingNote(200, 75_000, 90), /lower bounds/);
   assert.equal(summarizeDeskStats(null, null, null, "x").peakSampling, "x");
   const eng = src("server/cryptoEngine.ts");
-  assert.match(eng, /persistSignal\(c\);\n\s*recordPeakSample\(c\);/);
+  assert.match(eng, /persistSignal\(c\);\n\s*maybeSecondLook\(c\);\n\s*recordPeakSample\(c\);/); // the look row is sampled in the same pass
   assert.match(eng, /LIMIT \?`,\n\s*\)\.all\(CRYPTO_GRADER_BATCH\)/);
   assert.equal(CRYPTO_GRADER_BATCH, 60);
   // ENTER held at WATCH when holder concentration is unavailable (fail-closed)

@@ -1292,6 +1292,59 @@ function ReplayCard() {
             </section>
           )}
 
+          {r.secondLook && (() => {
+            const k = r.secondLook;
+            const cov = k.coverage;
+            return (
+              <section data-testid="crypto-replay-second-look">
+                <div className="text-[11px] font-medium text-muted-foreground">6 · Second look: the same coins {k.minutesAfterFirstSignal} minutes after their first signal ({k.version})</div>
+                <p className="mt-0.5 text-muted-foreground">
+                  The first signal is written about two and a half minutes into a coin's life, before the holder, authority and Jupiter reads land. Each tracked coin now gets one more row a fixed time later, measured from its own cap at that moment by the same grader. A recording, not a verdict.
+                </p>
+                {k.written === 0 ? (
+                  <div className="mt-1 font-mono tabular-nums text-amber-300/90" data-testid="crypto-second-look-empty">No second look written yet. The record starts with the first coin that is still tracked {k.minutesAfterFirstSignal} minutes after its first signal.</div>
+                ) : (
+                  <>
+                    <div className="mt-1 font-mono tabular-nums text-muted-foreground" data-testid="crypto-second-look-counts">
+                      written <span className="text-foreground">{k.written}</span> · open {k.open} · graded {k.graded} ({k.priced} priced) · hard kill standing at the look {k.hardKilledAtLook}
+                      {k.noRow != null ? ` · no row: ${k.noRow.windowMissed} dropped or not refreshed before the look, ${k.noRow.unmeasurable} cap or pool unread or zero, ${k.noRow.aboveTarget} at or above the target (pools)` : " · pools without a row: count not read"}
+                    </div>
+                    <div className="font-mono tabular-nums text-muted-foreground">
+                      median {k.medianMinutesAfterFirst ?? "—"} min after the first signal · median cap at the look {k.medianCapAtLook != null ? `$${k.medianCapAtLook.toLocaleString("en-US")}` : "—"} · median cap vs first signal {k.medianCapMultipleSinceFirst != null ? `${k.medianCapMultipleSinceFirst}x` : "—"}
+                    </div>
+                    <div className="font-mono tabular-nums text-muted-foreground" data-testid="crypto-second-look-coverage">
+                      read at the first signal vs at the look, over {cov.of} coins: top-10 holders {cov.top10.first} vs {cov.top10.look} · both authorities {cov.authorities.first} vs {cov.authorities.look} · Jupiter checked {cov.jupiterChecked.first} vs {cov.jupiterChecked.look}
+                    </div>
+                    {k.insufficient ? (
+                      <div className="mt-1 font-mono tabular-nums text-amber-300/90" data-testid="crypto-second-look-insufficient">
+                        INSUFFICIENT DATA · {k.all.n} priced, {k.all.wins} touched the target or 2x from the look · counts only under 50
+                      </div>
+                    ) : (
+                      <div className="mt-1 grid grid-cols-1 gap-1 font-mono tabular-nums sm:grid-cols-2">
+                        {[k.all, k.notKilled, k.leftCurve, k.sameCoinsFirstSignal].map((x) => (
+                          <div key={x.label} className="rounded border border-border/30 p-1.5">
+                            <div className="text-foreground">{x.label}</div>
+                            {x.n < 50 ? (
+                              <div className="text-amber-300/90">{x.n} priced, {x.wins} touched the target or 2x · counts only under 50</div>
+                            ) : (
+                              <>
+                                <div>n {x.n} · wins {x.wins} ({pct(x.winShare)}{x.winLo != null ? `, CI ${x.winLo}–${x.winHi}` : ""})</div>
+                                <div>mean net {pct(x.meanNetGradedPct)} · median {pct(x.medianNetGradedPct)}</div>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                  {k.caveats.map((c, i) => <li key={i}>{c}</li>)}
+                </ul>
+              </section>
+            );
+          })()}
+
           <p className="text-muted-foreground">{r.samplingLimit}</p>
           <p className="text-muted-foreground/80">{r.scope}</p>
         </div>

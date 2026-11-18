@@ -81,6 +81,6 @@ test("wiring: engine uses capOf at the entry row, the peak and plan samplers, th
   assert.doesNotMatch(e, /mcap = live\.marketCap/);
   assert.match(e, /json_extract\(features_json, '\$\.mcapBasis'\) AS mcap_basis/);
   assert.match(e, /const dsFresh = c\.lastRefreshAt != null && Date\.now\(\) - c\.lastRefreshAt < MOMENTUM_CYCLE_MS;\s*if \(!dsFresh\) \{/);
-  assert.match(e, /for \(const k of evictOverCap\(\[\.\.\.tracked\.entries\(\)\], MAX_TRACKED, now\)\) tracked\.delete\(k\);/);
+  assert.match(e, /for \(const k of evictOverCap\(\[\.\.\.tracked\.entries\(\)\], MAX_TRACKED, now\)\) \{ const gone = tracked\.get\(k\); if \(gone\) noteEvictedBeforeLook\(gone\); tracked\.delete\(k\); \}/);
   assert.doesNotMatch(e, /\(b\[1\]\.score \?\? -1\) - \(a\[1\]\.score \?\? -1\)/);
 });

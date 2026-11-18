@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 
 export function cryptoAuditStats(db: Database.Database) {
-  const rows = db.prepare("SELECT outcome, COUNT(*) AS n FROM crypto_signals GROUP BY outcome")
+  const rows = db.prepare("SELECT outcome, COUNT(*) AS n FROM crypto_signals WHERE verdict != 'LOOK2' GROUP BY outcome")
     .all() as Array<{ outcome: string; n: number }>;
   const count = (outcome: string) => rows.find(r => r.outcome === outcome)?.n ?? 0;
   const total = rows.reduce((sum, r) => sum + r.n, 0);

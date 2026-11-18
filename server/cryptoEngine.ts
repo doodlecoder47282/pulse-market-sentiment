@@ -42,7 +42,7 @@
 import { sqlite } from "./storage";
 import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, describeCryptoRules } from "../shared/cryptoRules";
-import { buildReplay, type ReplayRow, type GateEvidence, buildGateEvidence, sustainedFlow, parseGateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
+import { buildReplay, firstPerCoin, type ReplayRow, type GateEvidence, buildGateEvidence, sustainedFlow, parseGateEvidence, type CryptoReplay } from "../shared/cryptoReplay";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -50,6 +50,7 @@ import { readDerivs, lastDerivs } from "./sources/cryptoDerivs";
 import { derivsRecord, type DerivsSnapshot } from "../shared/cryptoFunding";
 import { volumeAcceleration } from "../shared/cryptoFlow";
 import { candidatesReadout } from "../shared/cryptoCandidates";
+import { SECOND_LOOK_VERDICT, SECOND_LOOK_VERSION, secondLookDue, secondLookReadout, type LookRow, type SecondLookMeta } from "../shared/secondLook";
 import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type JupState } from "./sources/dexCross";
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
@@ -88,6 +89,10 @@ export interface Candidate {
   discoveredVia: "new_pools" | "trending" | "boosts";
   firstSeenAt: number;
   pairCreatedAt: number | null;
+  /** The coin's first logged signal (read from the store), and when its second look was written (0 = window passed). Server-side bookkeeping. */
+  firstSignal?: { at: number; cap: number | null; liquidity: number | null } | null;
+  firstSignalAskedAt?: number;
+  secondLookAt?: number | null;
 
   // live stats (momentum engine refresh)
   priceUsd: number | null;
@@ -382,28 +387,32 @@ function gateEvidence(c: Pick<Candidate, "hist" | "jupState" | "jupGapPct" | "bu
   return buildGateEvidence({ hist: c.hist, jupState: c.jupState, jupGapPct: c.jupGapPct, buys1h: c.buys1h, sells1h: c.sells1h, deskRisk: currentDeskRisk().state });
 }
 
-function persistSignal(c: Candidate): void {
-  if (!c.verdict || c.verdict === "PASS") return;
+/** Returns whether a row was written. */
+function persistSignal(c: Candidate, look: SecondLookMeta | null = null): boolean {
+  // A second look (shared/secondLook.ts) is written whatever the verdict; every other row needs ENTER or WATCH.
+  if (!look && (!c.verdict || c.verdict === "PASS")) return false;
   // Read once, here, so the stored figure is what was known when the signal was written (it is never
   // rewritten on the row afterwards).
   if (c.chain === "solana" && c.launchCtx == null) {
     try { c.launchCtx = launchContextFor(c.tokenAddress, c.pairCreatedAt); } catch { c.launchCtx = null; }
   }
   try {
-    sqlite.prepare(`
+    const res = sqlite.prepare(`
       INSERT OR IGNORE INTO crypto_signals
         (id, detected_at, chain, pair_address, token_address, symbol, name, verdict, verdict_code,
          score, mcap_at_signal, price_at_signal, liquidity_at_signal,
          features_json, risk_json, outcome)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
     `).run(
-      `${c.chain}:${c.pairAddress}:${Date.now()}`,
+      `${c.chain}:${c.pairAddress}:${Date.now()}${look ? ":look2" : ""}`,
       Date.now(), c.chain, c.pairAddress, c.tokenAddress, c.symbol, c.name,
       // The same market-cap basis the verdict and the grader use (marketCap,
       // else FDV): a pair with marketCap null and FDV present used to be
       // ENTER-able with mcap_at_signal NULL, which the grader read as 0.
-      c.verdict, c.verdictCode, c.score, capOf(c).cap, c.priceUsd, c.liquidityUsd,
+      look ? SECOND_LOOK_VERDICT : c.verdict, c.verdictCode, c.score, capOf(c).cap, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
+        // Second-look rows only: when it was written relative to the first signal and what stood at the look.
+        ...(look ? { look } : {}),
         rulesVersion: CRYPTO_RULES_VERSION,
         score: c.score,
         mcapBasis: capOf(c).basis,
@@ -432,8 +441,85 @@ function persistSignal(c: Candidate): void {
       }),
       JSON.stringify(c.risk),
     );
+    return Number((res as any)?.changes ?? 0) > 0;
   } catch (e: any) {
     console.warn(`[crypto:persist] ${e?.message ?? e}`);
+    return false;
+  }
+}
+
+// ─── Second look (shared/secondLook.ts) ─────────────────────────────────
+// One more row per coin, a fixed time after its first logged signal, so the record holds the coin's state
+// once the holder, authority and Jupiter reads have landed. A recording: it moves no verdict and is kept
+// out of the first-signal counts, the expectancy sample, the signal list and the exit-plan book.
+const coinWhere = (c: Candidate) => (c.tokenAddress ? { sql: "token_address = ?", key: c.tokenAddress } : { sql: "pair_address = ?", key: c.pairAddress });
+
+// Coins that reached the decision without a row, by reason (crypto_desk_state, read by exact key).
+type SecondLookNoRow = "missed" | "unmeasurable" | "above_target";
+const noRowKey = (why: SecondLookNoRow) => `second_look_no_row:${why}`;
+function secondLookNoRowCounts(): { windowMissed: number; unmeasurable: number; aboveTarget: number } | null {
+  try {
+    const get = (why: SecondLookNoRow) => {
+      const r = sqlite.prepare(`SELECT value FROM crypto_desk_state WHERE key = ?`).get(noRowKey(why)) as any;
+      const n = Number(r?.value);
+      return r && Number.isFinite(n) ? n : 0;
+    };
+    return { windowMissed: get("missed"), unmeasurable: get("unmeasurable"), aboveTarget: get("above_target") };
+  } catch { return null; }
+}
+function bumpSecondLookNoRow(why: SecondLookNoRow): void {
+  sqlite.prepare(`INSERT INTO crypto_desk_state (key, value, reason, updated_at) VALUES (?, '1', 'coins that reached their second-look decision without a row', ?)
+    ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT), updated_at = excluded.updated_at`).run(noRowKey(why), Date.now());
+}
+/** This candidate was tracked from its first signal on: a window that fell across a restart or a re-track is not this instance's to count. */
+const witnessedFirstSignal = (c: Candidate) => c.firstSignal != null && c.firstSignal.at >= c.firstSeenAt;
+/** A tracked coin dropped (stale, grown out or over the cap) before its second look was decided. */
+function noteEvictedBeforeLook(c: Candidate): void {
+  try { if (c.secondLookAt == null && witnessedFirstSignal(c)) bumpSecondLookNoRow("missed"); } catch { /* bookkeeping only */ }
+}
+
+function maybeSecondLook(c: Candidate): void {
+  try {
+    if (c.secondLookAt != null) return;
+    const w = coinWhere(c);
+    // The coin's first logged signal, asked at most once a minute until one exists.
+    if (c.firstSignal == null) {
+      if (Date.now() - (c.firstSignalAskedAt ?? 0) < 60_000) return;
+      c.firstSignalAskedAt = Date.now();
+      const row = sqlite.prepare(`SELECT detected_at, mcap_at_signal, liquidity_at_signal FROM crypto_signals WHERE chain = ? AND ${w.sql} AND verdict != '${SECOND_LOOK_VERDICT}' ORDER BY detected_at ASC, id ASC LIMIT 1`).get(c.chain, w.key) as any;
+      if (!row) return;
+      c.firstSignal = { at: Number(row.detected_at), cap: row.mcap_at_signal ?? null, liquidity: row.liquidity_at_signal ?? null };
+      // Once per coin, across restarts and across the coin's other pools.
+      const have = sqlite.prepare(`SELECT detected_at FROM crypto_signals WHERE chain = ? AND ${w.sql} AND verdict = '${SECOND_LOOK_VERDICT}' LIMIT 1`).get(c.chain, w.key) as any;
+      if (have) { c.secondLookAt = Number(have.detected_at); return; }
+    }
+    const due = secondLookDue({ firstSignalAt: c.firstSignal.at, alreadyAt: null, dataAt: c.lastRefreshAt, cap: capOf(c).cap, liquidityUsd: c.liquidityUsd });
+    if (!due.due) {
+      if (due.why === "too_early") return;
+      // Decided once, at the first refresh at or after the delay: a coin is not re-asked until it happens to
+      // qualify, so nothing the coin does inside the window chooses whether it gets a row.
+      c.secondLookAt = 0;
+      if (due.why === "unmeasurable") bumpSecondLookNoRow("unmeasurable");
+      else if (due.why === "at_or_above_target") bumpSecondLookNoRow("above_target");
+      // Past the window: counted only when this candidate was tracked from its first signal on.
+      else if (due.why === "too_late" && witnessedFirstSignal(c)) bumpSecondLookNoRow("missed");
+      return;
+    }
+    // Another pool of the same coin may have written it since this candidate was first checked.
+    const have = sqlite.prepare(`SELECT detected_at FROM crypto_signals WHERE chain = ? AND ${w.sql} AND verdict = '${SECOND_LOOK_VERDICT}' LIMIT 1`).get(c.chain, w.key) as any;
+    if (have) { c.secondLookAt = Number(have.detected_at); return; }
+    const wrote = persistSignal(c, {
+      version: SECOND_LOOK_VERSION,
+      minutesAfterFirst: due.minutesAfterFirst,
+      verdictAtLook: c.verdict, verdictCodeAtLook: c.verdictCode,
+      hardKill: c.hardKill === true,
+      leftCurve: leftBondingCurve(c.dexId), dexId: c.dexId || null,
+      firstCap: c.firstSignal.cap, firstLiquidity: c.firstSignal.liquidity,
+    });
+    // Not written (a failed insert): left unset so the next refresh inside the window tries again.
+    if (wrote) c.secondLookAt = Date.now();
+  } catch (e: any) {
+    console.warn(`[crypto:second-look] ${e?.message ?? e}`);
   }
 }
 
@@ -581,7 +667,7 @@ async function scannerTick(): Promise<void> {
   for (const [k, c] of tracked) {
     const stale = now - (c.lastRefreshAt ?? c.firstSeenAt) > CANDIDATE_TTL_MS;
     const grewOut = (capOf(c).cap ?? 0) > MCAP_CEILING * 4; // 6M+: past our window entirely
-    if (stale || grewOut) tracked.delete(k);
+    if (stale || grewOut) { noteEvictedBeforeLook(c); tracked.delete(k); }
   }
   if (tracked.size > MAX_TRACKED) {
     // Over the cap: an arrival not yet scored is kept for at least one momentum
@@ -589,7 +675,7 @@ async function scannerTick(): Promise<void> {
     // arrival, so new pools were evicted the tick they appeared and the universe
     // froze ~15 min after a restart). Then the lowest-ranked go first: PASS
     // before WATCH before ENTER, lower score first, older first.
-    for (const k of evictOverCap([...tracked.entries()], MAX_TRACKED, now)) tracked.delete(k);
+    for (const k of evictOverCap([...tracked.entries()], MAX_TRACKED, now)) { const gone = tracked.get(k); if (gone) noteEvictedBeforeLook(gone); tracked.delete(k); }
   }
 }
 
@@ -748,6 +834,7 @@ async function momentumTick(): Promise<void> {
       c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: capOf(c).cap });
       if (c.hist.length > 20) c.hist.shift();
       persistSignal(c);
+      maybeSecondLook(c);
       recordPeakSample(c);
     }
   }
@@ -1729,7 +1816,7 @@ export function getCryptoSignals(): {
   // coin counts ride along for reference.
   const LIST_LIMIT = 100;
   const signals = sqlite.prepare(
-    `SELECT * FROM crypto_signals ORDER BY detected_at DESC LIMIT ?`,
+    `SELECT * FROM crypto_signals WHERE verdict != '${SECOND_LOOK_VERDICT}' ORDER BY detected_at DESC LIMIT ?`,
   ).all(LIST_LIMIT) as any[];
   const stats = summarizeDeskStats(
     sqlite.prepare(CRYPTO_SIGNAL_COUNTS_SQL).get() as any,
@@ -1759,7 +1846,7 @@ let replayCache: { at: number; data: CryptoReplay } | null = null;
 export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
   if (replayCache && now - replayCache.at < 5 * 60_000) return replayCache.data;
   const rows = sqlite.prepare(`SELECT id, detected_at, pair_address, token_address, symbol, verdict, verdict_code, outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at, peak_liquidity, last_mcap, last_liquidity, horizon_mcap, horizon_liquidity, horizon_at, features_json FROM crypto_signals`).all() as any[];
-  const like: ReplayRow[] = rows.map((s) => {
+  const like: LookRow[] = rows.map((s) => {
     const f = safeParse(s.features_json) ?? {};
     return {
       id: String(s.id), detectedAt: Number(s.detected_at), verdict: String(s.verdict ?? ""), verdictCode: s.verdict_code ?? null, symbol: s.symbol ?? null,
@@ -1777,10 +1864,18 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
         boosted: f.boosted ?? null, pumpfunGraduate: f.pumpfunGraduate ?? null, bskyMentions1h: f.bskyMentions1h ?? null,
         gates: parseGateEvidence(f.gates),
       },
+      look: f.look && typeof f.look === "object" ? f.look : null,
     };
   });
+  // Second looks (shared/secondLook.ts) are a separate record: kept out of the replay and the candidate sets,
+  // which are about first signals, and read on their own against the same coins' first signals.
+  const firstRows = like.filter((r) => r.verdict !== SECOND_LOOK_VERDICT);
+  const lookRows = like.filter((r) => r.verdict === SECOND_LOOK_VERDICT);
   // Candidate rule sets over the same rows (shared/cryptoCandidates.ts): a what-if readout, never a verdict.
-  const data = { ...buildReplay(like, now), candidates: candidatesReadout(like) };
+  const data = {
+    ...buildReplay(firstRows, now), candidates: candidatesReadout(firstRows),
+    secondLook: { ...secondLookReadout(lookRows, firstPerCoin(firstRows)), noRow: secondLookNoRowCounts() },
+  };
   replayCache = { at: now, data };
   return data;
 }

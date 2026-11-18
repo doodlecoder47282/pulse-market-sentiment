@@ -125,6 +125,18 @@ carry it; a gate on it would be a new pinned rule version chosen from that
 record. OKX response shape follows its public docs and was not reachable from
 the build sandbox: Settings -> Verify live data is the first live check.
 
+Second look (shared/secondLook.ts, version second-look-2026.11.17-1; not a rule-book threshold, so the rule
+version does not move). Each coin's first signal is written about two and a half minutes into its life, before
+the holder, authority and Jupiter reads land, and the 2026-11-17 candidate readout found no rule set on those
+rows that held up. Each tracked coin now gets ONE more row, written on the first fresh refresh between 30 and
+90 minutes after its first logged signal, whatever it has done (time is the only trigger). The row is stored in
+crypto_signals with verdict LOOK2 and is graded, peak-sampled and horizon-marked from its own cap and liquidity
+by the same code as every other row. It is never a coin's first signal: it is excluded from the desk counts, the
+expectancy sample, the signal list, the replay sections 1 to 5 and the exit-plan book, and read only in replay
+section 6, against the same coins' first signals. No row is written at or above the target cap, or when the cap
+or pool reads missing or zero through the whole window (nothing can be measured from it); those pool windows are
+counted. Any rule built on second looks is a new rule-book version, reviewed, and judged on rows after it.
+
 ## 4. Calibration: how a rule may change
 
 1. The record decides. `summarizeExpectancy` grades first-ENTER-per-coin

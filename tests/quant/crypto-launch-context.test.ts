@@ -37,7 +37,7 @@ test("the listener's queries, run against SQLite: same symbol inside 24 h before
   const outSql = q(/sqlite\.prepare\(`(SELECT outcome, COUNT\(\*\) AS n FROM \([\s\S]*?GROUP BY outcome)`\)/);
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE pump_launches (mint TEXT PRIMARY KEY, launch_slot INTEGER NOT NULL, launched_at INTEGER NOT NULL, record_json TEXT NOT NULL, updated_at INTEGER NOT NULL, symbol_norm TEXT, deployer TEXT)`);
-  db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, detected_at INTEGER, token_address TEXT, outcome TEXT)`);
+  db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, detected_at INTEGER, token_address TEXT, outcome TEXT, verdict TEXT DEFAULT 'WATCH')`);
   const H = 3_600_000, T = 1_800_000_000_000;
   const ins = db.prepare("INSERT INTO pump_launches VALUES (?, 1, ?, '{}', 0, ?, ?)");
   ins.run("Apump", T - 30 * H, "bawsaq", "DEV1"); // same symbol but older than 24 h; same deployer
@@ -48,7 +48,9 @@ test("the listener's queries, run against SQLite: same symbol inside 24 h before
   ins.run("Fpump", T - 2 * H, "other", "DEV1");
   assert.equal((db.prepare(sameSql).get("bawsaq", "Dpump", T, T - SAME_SYMBOL_HOURS * H) as any).n, 2);
   assert.equal((db.prepare(priorSql).get("DEV1", "Dpump", T) as any).n, 3);
-  const sig = db.prepare("INSERT INTO crypto_signals VALUES (?, ?, ?, ?)");
+  const sig = db.prepare("INSERT INTO crypto_signals (id, detected_at, token_address, outcome) VALUES (?, ?, ?, ?)");
+  // A second-look row (shared/secondLook.ts) is never a coin's outcome, even when it is the coin's only row.
+  db.prepare("INSERT INTO crypto_signals VALUES ('look', 0, 'Fpump', 'HIT_5M', 'LOOK2')").run();
   sig.run("s1", 1, "Apump", "RUGGED"); sig.run("s2", 2, "Apump", "DEAD"); // a coin's first row is its outcome
   sig.run("s3", 3, "Bpump", "HIT_5M"); sig.run("s4", 4, "Cpump", "RUGGED"); // Cpump is another deployer's
   const rows = db.prepare(outSql).all("DEV1", "Dpump", T) as any[];
