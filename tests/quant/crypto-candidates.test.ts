@@ -107,7 +107,7 @@ test("declared sets and wiring: five sets, no live rule is touched, the readout 
   assert.ok(r.caveats.some((c) => /not out-of-sample/.test(c)));
   assert.ok(r.caveats.some((c) => /structure rules block only on a recorded objection/.test(c)));
   const e = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
-  assert.match(e, /const data = \{ \.\.\.buildReplay\(like, now\), candidates: candidatesReadout\(like\) \};/);
+  assert.match(e, /\.\.\.buildReplay\(firstRows, now\), candidates: candidatesReadout\(firstRows\)/);
   assert.match(readFileSync(new URL("../../client/src/components/CryptoPanel.tsx", import.meta.url), "utf8"), /data-testid="crypto-replay-candidates"/);
 });
 

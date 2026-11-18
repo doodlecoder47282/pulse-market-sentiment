@@ -400,6 +400,8 @@ export interface CryptoReplay {
   reeval: ReevalReadout;
   /** Candidate rule sets read on the same rows; attached by the server (shared/cryptoCandidates.ts). */
   candidates?: import("./cryptoCandidates").CandidatesReadout;
+  /** The second-look record (shared/secondLook.ts); attached by the server. */
+  secondLook?: import("./secondLook").SecondLookReadout;
   samplingLimit: string;
   scope: string;
 }

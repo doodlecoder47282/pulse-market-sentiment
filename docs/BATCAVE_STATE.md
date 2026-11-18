@@ -2590,3 +2590,20 @@ are a quarter of the session, 97.5 minutes, not 1.5 hours): each note now says w
 the minutes. The badge is "read strength" (top score scaled by sample quality), no longer the same label as
 the headline's top score. "Pin pressure" is gone from the chart tab's headline bullet. The weights
 themselves are unchanged.
+
+2026-11-17: Crypto second look (feat/crypto-second-look; shared/secondLook.ts, version
+second-look-2026.11.17-1). Live candidate readout read the same day (3,154 graded first signals): no set held
+up. Newer half: structure only 59 of 197 wins, mean net -64.0%; two-sided tape 18 of 97, -67.7%; attention
+8 of 44, -59.8%; past the first minutes 7 of 55, -69.9%; combined 28 priced (counts only). Median net -90% to
+-100% for every set; top-10 holders unrecorded on all 3,154 rows. Conclusion: no ENTER rule is taken from the
+first-signal record. Built instead: one more row per tracked coin, 30 to 90 minutes after its first logged
+signal (time is the only trigger), verdict LOOK2 in crypto_signals, graded from its own cap by the existing
+grader; excluded from desk counts, expectancy, signal list, replay sections 1 to 5, candidate sets and the
+exit-plan book; read in replay section 6 (coverage of reads at the first signal vs the look, outcomes from the
+look, the same coins from their first signal). Rule-book version unchanged (no verdict, score or grade moved).
+Tests: tests/quant/crypto-second-look.test.ts (8); full suite 1157 pass, 4 known local failures.
+Known limits: only coins still tracked get a row (the tracked list drops low scores first); unmeasurable
+pools get no row and are counted per pool, not per coin; nothing is back-filled; the grader now carries up to
+one extra open row per coin.
+Next step: after 50 priced second looks exist, read section 6 and decide whether a later-state ENTER rule is
+worth declaring (new rule-book version, reviewed, judged only on rows after it).

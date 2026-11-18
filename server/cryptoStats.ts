@@ -181,7 +181,7 @@ export const CRYPTO_SIGNAL_COUNTS_SQL = `
     COALESCE(SUM(CASE WHEN outcome = 'RUGGED'  THEN 1 ELSE 0 END), 0) AS rugged,
     COALESCE(SUM(CASE WHEN outcome = 'DEAD'    THEN 1 ELSE 0 END), 0) AS dead,
     COALESCE(SUM(CASE WHEN outcome = 'NO_DATA' THEN 1 ELSE 0 END), 0) AS noData
-  FROM crypto_signals`;
+  FROM crypto_signals WHERE verdict != 'LOOK2'`;
 
 export function summarizeSignalCounts(row: Partial<CryptoSignalCounts> | null | undefined): CryptoSignalStats {
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
@@ -257,7 +257,8 @@ const COIN_KEY = "COALESCE(NULLIF(token_address, ''), pair_address)";
  * once. Same columns as CRYPTO_SIGNAL_COUNTS_SQL.
  */
 export function cryptoCoinCountsSql(verdict?: "ENTER" | "WATCH"): string {
-  const where = verdict ? `WHERE verdict = '${verdict}'` : "";
+  // Second-look rows (shared/secondLook.ts, verdict LOOK2) are a separate record and never a coin's first signal.
+  const where = verdict ? `WHERE verdict = '${verdict}'` : "WHERE verdict != 'LOOK2'";
   return `
   WITH firsts AS (
     SELECT outcome, ROW_NUMBER() OVER (PARTITION BY ${COIN_KEY} ORDER BY detected_at ASC, id ASC) AS rn
