@@ -2703,4 +2703,13 @@ default and the rich/cheap labels should not be relied on. Tests: tests/quant/pl
 verified: rendered appearance. Not yet covered: the rest of the Models tab (pivot ladder, scenario box,
 market-maker matrix, cone, pivot projection), Signals, Heatseeker, Trade Desk, Regime, Edge Lab.
 Next step: the same plain-word line on the remaining Models panels, then one "Today" block at the top.
+Review of the plain-word reads: HOLD, five sentences wrong or unsupported, all corrected against
+server/chainAudit.ts. The flip strike claimed a direction the server does not send (now "the running balance
+changes side at X", no direction); a dealer score of 0 from unread deltas or open interest read as "balanced"
+(now "not read"); walls were called the largest positions (they are the largest call and put gamma: now
+"hedging pressure"); the volatility-premium line printed "0, 0 and 0" when Schwab's field mirrors the market
+(now says there is no separate estimate); unusual volume read "none" with no open interest and hid the server's
+20-row cap. Also taken: held open interest is stated on the lines that depend on it, the settlement line keeps
+the server's ranking, the term-structure line says what it compares (nearest against farthest) and has a flat
+case. Tests: 10.
 

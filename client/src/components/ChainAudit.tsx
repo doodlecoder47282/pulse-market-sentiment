@@ -150,6 +150,8 @@ interface ChainAuditResult {
   contractsProcessed: number;
   expiriesFound: number;
   dataQuality: "full" | "partial" | "minimal";
+  /** Where the open interest in this read came from: live, held from an earlier session, or none. */
+  oiState?: { source?: string; sessionDate?: string | null; note?: string | null };
 }
 
 interface ChainAuditResponse {
@@ -479,7 +481,7 @@ export default function ChainAudit() {
       {audit && data && (
         <div className="space-y-6">
           {/* Row 1: 4 KPI cards */}
-          <Section title="Key Levels" testId="section-kpi" plain={plainKeyLevels({ spot: data.spot, flipStrike: audit.dex.flipStrike, flipMethod: audit.dex.flipMethod, score: audit.dealerScore?.score })}>
+          <Section title="Key Levels" testId="section-kpi" plain={plainKeyLevels({ spot: data.spot, flipStrike: audit.dex.flipStrike, flipMethod: audit.dex.flipMethod, score: audit.dealerScore?.score, dexState: audit.dex.dexState, oi: audit.oiState })}>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <KPICard
                 label={audit.dex.flipMethod === "peak_fallback" ? "DEX Peak Strike (no flip)" : "DEX Flip Strike"}
@@ -518,7 +520,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 2: GEX Decay Ladder */}
-          <Section title="GEX Decay Ladder — by DTE Bucket" testId="section-gex-decay" plain={plainGexLadder(audit.gexDecay, data.spot)}>
+          <Section title="GEX Decay Ladder — by DTE Bucket" testId="section-gex-decay" plain={plainGexLadder(audit.gexDecay, data.spot, audit.oiState)}>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <GEXBucketCard label="0DTE" bucket={audit.gexDecay.zerodte} testId="gex-bucket-0dte" />
               <GEXBucketCard label="1–2 DTE" bucket={audit.gexDecay.short} testId="gex-bucket-short" />
@@ -635,7 +637,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 4: DEX Profile chart */}
-          <Section title="DEX — Delta Exposure Profile" testId="section-dex" plain={plainDex(audit.dex)}>
+          <Section title="DEX — Delta Exposure Profile" testId="section-dex" plain={plainDex(audit.dex, audit.oiState)}>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
               <div className="lg:col-span-2">
                 <Card className="bg-card/60 border-border/40">
@@ -793,7 +795,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 6: Unusual Volume Table */}
-          <Section title="Unusual Volume — Vol/OI Ratio > 2x" testId="section-unusual-vol" plain={plainUnusualVolume(audit.unusualVolume)}>
+          <Section title="Unusual Volume — Vol/OI Ratio > 2x" testId="section-unusual-vol" plain={plainUnusualVolume(audit.unusualVolume, audit.oiState)}>
             {audit.unusualVolume.length === 0 ? (
               <div className="font-mono text-[11px] text-muted-foreground text-center py-4">no unusual volume — flow is quiet at current thresholds</div>
             ) : (
