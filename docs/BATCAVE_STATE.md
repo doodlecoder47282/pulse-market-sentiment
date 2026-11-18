@@ -2618,3 +2618,13 @@ shared grader queue and the under-representation of graduates that change pool a
 Not taken: a separate grader budget for second looks (disclosed instead); an engine-level test of
 maybeSecondLook (wiring is pinned by source assertions and SQL tests). Suite: 1159 pass, 4 known failures.
 
+2026-11-18: Crypto card order (feat/crypto-card-order; owner decision 2026-11-17: one top-to-bottom order per
+coin). An open coin card now reads 1 Verdict, 2 Why, 3 Risk (kill flags, authorities, top-10, LP lock, bundle,
+name and deployer history, Jupiter check, liquidity history and exit stress), 4 Exit plan (size and stops, then
+the rule-book plan in the coin desk), 5 Record; then the AI prompt and FOMO link, the grid of readings, and a
+collapsed "More detail" (pool structure and cost, candles, social attention, sources). Layout and labels only:
+no reading, rule, verdict or copy claim changed; nothing was removed. Tests: tests/quant/crypto-card-order.test.ts
+(4); suite 1163 pass, 4 known local failures. Not verified: rendered appearance (no local build in this
+workspace; CI builds and runs the phone UX audit).
+Next step: the per-coin crypto Alpha feed page.
+
