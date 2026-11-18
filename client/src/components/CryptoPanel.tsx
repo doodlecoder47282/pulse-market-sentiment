@@ -1307,7 +1307,7 @@ function ReplayCard() {
                   <>
                     <div className="mt-1 font-mono tabular-nums text-muted-foreground" data-testid="crypto-second-look-counts">
                       written <span className="text-foreground">{k.written}</span> · open {k.open} · graded {k.graded} ({k.priced} priced) · hard kill standing at the look {k.hardKilledAtLook}
-                      {k.windowPassedNoRow != null ? ` · pool windows passed without a row ${k.windowPassedNoRow}` : " · windows passed without a row: not counted"}
+                      {k.noRow != null ? ` · no row: ${k.noRow.windowMissed} dropped or not refreshed before the look, ${k.noRow.unmeasurable} cap or pool unread or zero, ${k.noRow.aboveTarget} at or above the target (pools)` : " · pools without a row: count not read"}
                     </div>
                     <div className="font-mono tabular-nums text-muted-foreground">
                       median {k.medianMinutesAfterFirst ?? "—"} min after the first signal · median cap at the look {k.medianCapAtLook != null ? `$${k.medianCapAtLook.toLocaleString("en-US")}` : "—"} · median cap vs first signal {k.medianCapMultipleSinceFirst != null ? `${k.medianCapMultipleSinceFirst}x` : "—"}
@@ -1324,8 +1324,14 @@ function ReplayCard() {
                         {[k.all, k.notKilled, k.leftCurve, k.sameCoinsFirstSignal].map((x) => (
                           <div key={x.label} className="rounded border border-border/30 p-1.5">
                             <div className="text-foreground">{x.label}</div>
-                            <div>n {x.n} · wins {x.wins} ({pct(x.winShare)}{x.winLo != null ? `, CI ${x.winLo}–${x.winHi}` : ""})</div>
-                            <div>mean net {pct(x.meanNetGradedPct)} · median {pct(x.medianNetGradedPct)}</div>
+                            {x.n < 50 ? (
+                              <div className="text-amber-300/90">{x.n} priced, {x.wins} touched the target or 2x · counts only under 50</div>
+                            ) : (
+                              <>
+                                <div>n {x.n} · wins {x.wins} ({pct(x.winShare)}{x.winLo != null ? `, CI ${x.winLo}–${x.winHi}` : ""})</div>
+                                <div>mean net {pct(x.meanNetGradedPct)} · median {pct(x.medianNetGradedPct)}</div>
+                              </>
+                            )}
                           </div>
                         ))}
                       </div>

@@ -271,7 +271,7 @@ export function launchContextFor(mint: string, launchedAtGuess: number | null, n
       const rows = sqlite.prepare(`SELECT outcome, COUNT(*) AS n FROM (
           SELECT token_address, outcome, ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY detected_at ASC, id ASC) AS rn
           FROM crypto_signals
-          WHERE token_address IN (SELECT mint FROM pump_launches WHERE deployer = ? AND mint != ? AND launched_at < ?)
+          WHERE verdict != 'LOOK2' AND token_address IN (SELECT mint FROM pump_launches WHERE deployer = ? AND mint != ? AND launched_at < ?)
         ) WHERE rn = 1 GROUP BY outcome`).all(r.deployer, mint, r.launchedAt) as Array<{ outcome: string | null; n: number }>;
       outcomes = foldOutcomes(rows);
     }

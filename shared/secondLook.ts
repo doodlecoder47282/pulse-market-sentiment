@@ -11,8 +11,8 @@
 //
 // What it is. A recording, not a verdict. The trigger is time alone (minutesAfterFirstSignal after the coin's
 // first logged row), so no outcome and no score chooses which coins get one; the coin must still be tracked
-// and its pair data fresh, and its cap must be read and under the ride target (at or above it there is no
-// entry to measure). The row is stored in crypto_signals with verdict LOOK2 so the existing grader, peak
+// at the first refresh at or after the delay, where the decision is made once: its cap and pool must be
+// read and above zero and the cap under the ride target (at or above it there is no entry to measure). The row is stored in crypto_signals with verdict LOOK2 so the existing grader, peak
 // sampler and horizon pass measure it from ITS OWN cap and liquidity, on the same rules as every other row.
 // It never enters the expectancy sample, the first-signal counts, the signal list or the exit-plan book.
 //
@@ -103,8 +103,12 @@ export interface SecondLookReadout {
   medianCapMultipleSinceFirst: number | null;
   /** Looks written with a hard kill standing. */
   hardKilledAtLook: number;
-  /** Tracked coins whose window passed without a row (attached by the server; null when not counted). */
-  windowPassedNoRow: number | null;
+  /**
+   * Tracked pools that reached the decision without a row, by reason (attached by the server; null when the
+   * count could not be read). windowMissed: dropped from the tracked list, or not refreshed, before the look.
+   * unmeasurable: cap or pool missing or zero at the look. aboveTarget: cap at or above the target at the look.
+   */
+  noRow: { windowMissed: number; unmeasurable: number; aboveTarget: number } | null;
   coverage: ReadCoverage;
   /** Every graded look, measured from the look's own cap and liquidity. */
   all: SplitReadout;
@@ -159,7 +163,7 @@ export function secondLookReadout(looks: LookRow[], firsts: ReplayRow[], targetM
     medianCapAtLook: (() => { const m = median(sorted.map((r) => r.mcapAtSignal).filter(fin)); return m == null ? null : Math.round(m); })(),
     medianCapMultipleSinceFirst: r2(median(multiples)),
     hardKilledAtLook: count(sorted, (r) => r.look?.hardKill === true),
-    windowPassedNoRow: null,
+    noRow: null,
     coverage: {
       of: paired.length,
       top10: { first: count(pairedFirsts, top10Read), look: count(paired, top10Read) },
@@ -176,7 +180,8 @@ export function secondLookReadout(looks: LookRow[], firsts: ReplayRow[], targetM
       `One row per coin, written on the first fresh refresh between ${SECOND_LOOK_PARAMS.minutesAfterFirstSignal} and ${SECOND_LOOK_PARAMS.maxMinutesAfterFirstSignal} minutes after its first logged signal, whatever the coin had done by then. Time is the only trigger; no score or outcome selects the row.`,
       "Only coins the desk was still tracking get one. The tracked list is capped and drops the lowest-scored names first, so the second looks lean toward coins that still scored: this is a record of survivors of the desk's own list, not of every launch.",
       "Each row is measured from its own cap and liquidity at the look, by the same grader as every other row: a win is a sampled touch of the target or of 2x from the look, and net figures sell when the row was graded, net of pool fees and impact.",
-      "A coin with a hard kill standing at the look is still written (the count says how many), and the 'no hard kill' line leaves those out using only what was read at the look. A coin whose cap or pool read missing or zero through the whole window gets no row, because nothing can be measured from it; those are counted, with coins whose data went stale or whose window fell while the desk was not running, as pool windows passed without a row (a count of pools, so a coin with two tracked pools can count twice). They are mostly dead pools, so the rows that exist understate how many coins had collapsed.",
+      "The decision is made once, on the first fresh refresh at or after the delay. A coin with a hard kill standing is still written (the count says how many), and the 'no hard kill' line leaves those out using only what was read at the look. No row is written when the cap or pool reads missing or zero at that refresh (nothing can be measured from it), when the cap is at or above the target (no entry to measure), or when the coin was dropped from the tracked list or stopped being returned by the feed before the look. Each of the three is counted per tracked pool, so a coin with two pools can count twice. Windows that fell across a restart or a re-track are not counted. A pump.fun coin that moves to a new pool before the look is read only if the desk also tracks the new pool, so graduates are under-represented.",
+      "Second looks are open rows in the same grader queue as first signals (oldest first, a fixed number per pass), so with a backlog every open row, first signals included, is revisited somewhat less often once coins are no longer tracked.",
       "The first-signal line covers the same coins from their earlier, lower entry, so the two lines are two entries into the same coins, not two independent samples.",
       "Rows detected before this recording began do not exist: the second-look record starts at its first row and nothing is back-filled.",
       `Under ${SECOND_LOOK_MIN_SAMPLE} priced rows the readout shows counts only. A second look is a recording, never a verdict, and none of this is a claim of edge.`,

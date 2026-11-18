@@ -454,17 +454,28 @@ function persistSignal(c: Candidate, look: SecondLookMeta | null = null): boolea
 // out of the first-signal counts, the expectancy sample, the signal list and the exit-plan book.
 const coinWhere = (c: Candidate) => (c.tokenAddress ? { sql: "token_address = ?", key: c.tokenAddress } : { sql: "pair_address = ?", key: c.pairAddress });
 
-const SECOND_LOOK_MISSED_KEY = "second_look_window_passed";
-function secondLookMissed(): number | null {
+// Coins that reached the decision without a row, by reason (crypto_desk_state, read by exact key).
+type SecondLookNoRow = "missed" | "unmeasurable" | "above_target";
+const noRowKey = (why: SecondLookNoRow) => `second_look_no_row:${why}`;
+function secondLookNoRowCounts(): { windowMissed: number; unmeasurable: number; aboveTarget: number } | null {
   try {
-    const r = sqlite.prepare(`SELECT value FROM crypto_desk_state WHERE key = ?`).get(SECOND_LOOK_MISSED_KEY) as any;
-    const n = Number(r?.value);
-    return r && Number.isFinite(n) ? n : 0;
+    const get = (why: SecondLookNoRow) => {
+      const r = sqlite.prepare(`SELECT value FROM crypto_desk_state WHERE key = ?`).get(noRowKey(why)) as any;
+      const n = Number(r?.value);
+      return r && Number.isFinite(n) ? n : 0;
+    };
+    return { windowMissed: get("missed"), unmeasurable: get("unmeasurable"), aboveTarget: get("above_target") };
   } catch { return null; }
 }
-function bumpSecondLookMissed(): void {
-  sqlite.prepare(`INSERT INTO crypto_desk_state (key, value, reason, updated_at) VALUES (?, '1', 'coins whose second-look window passed without a row', ?)
-    ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT), updated_at = excluded.updated_at`).run(SECOND_LOOK_MISSED_KEY, Date.now());
+function bumpSecondLookNoRow(why: SecondLookNoRow): void {
+  sqlite.prepare(`INSERT INTO crypto_desk_state (key, value, reason, updated_at) VALUES (?, '1', 'coins that reached their second-look decision without a row', ?)
+    ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT), updated_at = excluded.updated_at`).run(noRowKey(why), Date.now());
+}
+/** This candidate was tracked from its first signal on: a window that fell across a restart or a re-track is not this instance's to count. */
+const witnessedFirstSignal = (c: Candidate) => c.firstSignal != null && c.firstSignal.at >= c.firstSeenAt;
+/** A tracked coin dropped (stale, grown out or over the cap) before its second look was decided. */
+function noteEvictedBeforeLook(c: Candidate): void {
+  try { if (c.secondLookAt == null && witnessedFirstSignal(c)) bumpSecondLookNoRow("missed"); } catch { /* bookkeeping only */ }
 }
 
 function maybeSecondLook(c: Candidate): void {
@@ -482,12 +493,16 @@ function maybeSecondLook(c: Candidate): void {
       const have = sqlite.prepare(`SELECT detected_at FROM crypto_signals WHERE chain = ? AND ${w.sql} AND verdict = '${SECOND_LOOK_VERDICT}' LIMIT 1`).get(c.chain, w.key) as any;
       if (have) { c.secondLookAt = Number(have.detected_at); return; }
     }
-    // Stale pair data is not a look at the coin (the same test every other row uses).
-    if (pairDataStale(c.lastRefreshAt, Date.now()).stale) return;
     const due = secondLookDue({ firstSignalAt: c.firstSignal.at, alreadyAt: null, dataAt: c.lastRefreshAt, cap: capOf(c).cap, liquidityUsd: c.liquidityUsd });
     if (!due.due) {
-      // Past the window without a row (unmeasurable pool, stale data, or the desk was not running): counted, and not asked again.
-      if (due.why === "too_late") { c.secondLookAt = 0; bumpSecondLookMissed(); }
+      if (due.why === "too_early") return;
+      // Decided once, at the first refresh at or after the delay: a coin is not re-asked until it happens to
+      // qualify, so nothing the coin does inside the window chooses whether it gets a row.
+      c.secondLookAt = 0;
+      if (due.why === "unmeasurable") bumpSecondLookNoRow("unmeasurable");
+      else if (due.why === "at_or_above_target") bumpSecondLookNoRow("above_target");
+      // Past the window: counted only when this candidate was tracked from its first signal on.
+      else if (due.why === "too_late" && witnessedFirstSignal(c)) bumpSecondLookNoRow("missed");
       return;
     }
     // Another pool of the same coin may have written it since this candidate was first checked.
@@ -652,7 +667,7 @@ async function scannerTick(): Promise<void> {
   for (const [k, c] of tracked) {
     const stale = now - (c.lastRefreshAt ?? c.firstSeenAt) > CANDIDATE_TTL_MS;
     const grewOut = (capOf(c).cap ?? 0) > MCAP_CEILING * 4; // 6M+: past our window entirely
-    if (stale || grewOut) tracked.delete(k);
+    if (stale || grewOut) { noteEvictedBeforeLook(c); tracked.delete(k); }
   }
   if (tracked.size > MAX_TRACKED) {
     // Over the cap: an arrival not yet scored is kept for at least one momentum
@@ -660,7 +675,7 @@ async function scannerTick(): Promise<void> {
     // arrival, so new pools were evicted the tick they appeared and the universe
     // froze ~15 min after a restart). Then the lowest-ranked go first: PASS
     // before WATCH before ENTER, lower score first, older first.
-    for (const k of evictOverCap([...tracked.entries()], MAX_TRACKED, now)) tracked.delete(k);
+    for (const k of evictOverCap([...tracked.entries()], MAX_TRACKED, now)) { const gone = tracked.get(k); if (gone) noteEvictedBeforeLook(gone); tracked.delete(k); }
   }
 }
 
@@ -1859,7 +1874,7 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
   // Candidate rule sets over the same rows (shared/cryptoCandidates.ts): a what-if readout, never a verdict.
   const data = {
     ...buildReplay(firstRows, now), candidates: candidatesReadout(firstRows),
-    secondLook: { ...secondLookReadout(lookRows, firstPerCoin(firstRows)), windowPassedNoRow: secondLookMissed() },
+    secondLook: { ...secondLookReadout(lookRows, firstPerCoin(firstRows)), noRow: secondLookNoRowCounts() },
   };
   replayCache = { at: now, data };
   return data;

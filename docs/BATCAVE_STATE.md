@@ -2607,3 +2607,14 @@ pools get no row and are counted per pool, not per coin; nothing is back-filled;
 one extra open row per coin.
 Next step: after 50 priced second looks exist, read section 6 and decide whether a later-state ENTER rule is
 worth declaring (new rule-book version, reviewed, judged only on rows after it).
+Review of the second look: HOLD, one must-fix taken: the "window passed without a row" counter was bumped by
+every candidate instance, so a restart or a re-track counted old coins again (and on first deploy every
+tracked coin older than 90 minutes). It now counts only a candidate tracked from its first signal on.
+Should-fixes taken: the decision is made once, at the first refresh at or after the delay (a coin above the
+target or unmeasurable then is not re-asked until it qualifies); no-row reasons are counted separately
+(dropped or not refreshed, unmeasurable, at or above target), including coins evicted before the look; each
+readout line shows counts only under 50 priced; the deployer-outcome query excludes LOOK2 explicitly; the
+shared grader queue and the under-representation of graduates that change pool are stated in the caveats.
+Not taken: a separate grader budget for second looks (disclosed instead); an engine-level test of
+maybeSecondLook (wiring is pinned by source assertions and SQL tests). Suite: 1159 pass, 4 known failures.
+

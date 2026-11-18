@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { secondLookDue, secondLookReadout, SECOND_LOOK_PARAMS, SECOND_LOOK_VERSION, SECOND_LOOK_VERDICT, type LookRow } from "../../shared/secondLook";
 import type { ReplayRow } from "../../shared/cryptoReplay";
 import { CRYPTO_RULES } from "../../shared/cryptoRules";
-import { CRYPTO_SIGNAL_COUNTS_SQL, cryptoCoinCountsSql } from "../../server/cryptoStats";
+import { CRYPTO_SIGNAL_COUNTS_SQL, cryptoCoinCountsSql, CRYPTO_PEAK_SAMPLE_SQL, peakSampleParams } from "../../server/cryptoStats";
 
 const T0 = 1_800_000_000_000;
 const MIN = 60_000;
@@ -65,7 +65,7 @@ test("the readout compares what was read at the first signal with what was read 
   assert.deepEqual(r.coverage.authorities, { first: 0, look: 2 });
   assert.deepEqual(r.coverage.jupiterChecked, { first: 0, look: 2 });
   assert.equal(r.medianCapMultipleSinceFirst, 3);
-  assert.equal(r.windowPassedNoRow, null, "the server attaches the count; the pure readout does not invent one");
+  assert.equal(r.noRow, null, "the server attaches the counts; the pure readout does not invent them");
 });
 
 test("open rows are not graded, under 50 priced it is counts only, and a hard kill is a state at the look, not an outcome", () => {
@@ -127,6 +127,30 @@ test("the engine writes the look through the same writer, once per coin, and kee
   const panel = readFileSync(new URL("../../client/src/components/CryptoPanel.tsx", import.meta.url), "utf8");
   assert.match(panel, /data-testid="crypto-replay-second-look"/);
   assert.match(panel, /A recording, not a verdict\./);
+});
+
+test("the decision is made once and a missed window is counted only by the candidate that saw the first signal", () => {
+  const eng = readFileSync(new URL("../../server/cryptoEngine.ts", import.meta.url), "utf8");
+  // Anything but "too early" closes the question for this candidate.
+  assert.match(eng, /if \(due\.why === "too_early"\) return;\n[^\n]*\n[^\n]*\n\s*c\.secondLookAt = 0;/);
+  assert.match(eng, /due\.why === "too_late" && witnessedFirstSignal\(c\)\) bumpSecondLookNoRow\("missed"\)/);
+  assert.match(eng, /c\.firstSignal\.at >= c\.firstSeenAt/, "a window that fell across a restart or a re-track is not counted");
+  assert.match(eng, /if \(stale \|\| grewOut\) \{ noteEvictedBeforeLook\(c\); tracked\.delete\(k\); \}/, "a coin dropped before its look is counted");
+  assert.match(eng, /if \(gone\) noteEvictedBeforeLook\(gone\); tracked\.delete\(k\)/);
+  assert.match(readFileSync(new URL("../../server/pumpListener.ts", import.meta.url), "utf8"), /WHERE verdict != 'LOOK2' AND token_address IN/);
+});
+
+test("a look and a first signal on the same pair keep their own peaks", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, verdict TEXT, outcome TEXT, features_json TEXT,
+    mcap_at_signal REAL, peak_mcap REAL, peak_at INTEGER, peak_liquidity REAL, last_mcap REAL, last_liquidity REAL)`);
+  const ins = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, verdict, outcome, features_json, mcap_at_signal, peak_mcap, peak_at) VALUES (?, 'solana', 'P1', ?, 'OPEN', '{"mcapBasis":"marketCap"}', ?, ?, ?)`);
+  ins.run("first", "WATCH", 40_000, 300_000, 5);        // ran to 300k before the look
+  ins.run("look", SECOND_LOOK_VERDICT, 120_000, null, null); // written after the run, at 120k
+  db.prepare(CRYPTO_PEAK_SAMPLE_SQL).run(peakSampleParams(150_000, "marketCap", 10, 30_000, "solana", "P1"));
+  const get = (id: string) => db.prepare(`SELECT peak_mcap, peak_at, last_mcap FROM crypto_signals WHERE id = ?`).get(id) as any;
+  assert.deepEqual([get("first").peak_mcap, get("first").peak_at, get("first").last_mcap], [300_000, 5, 150_000], "the earlier peak is not lowered or re-dated");
+  assert.deepEqual([get("look").peak_mcap, get("look").peak_at], [150_000, 10], "the look's peak starts at the look, not at the coin's earlier high");
 });
 
 test("the second-look parameters are pinned to their version", () => {
