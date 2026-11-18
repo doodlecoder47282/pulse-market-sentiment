@@ -28,14 +28,17 @@ test("risk holds the kill flags, authorities, bundle, deployer history, price ch
   }
   const more = panel.slice(panel.indexOf('data-testid="crypto-card-more-body"'), panel.indexOf("{isOpen && <CoinLinks"));
   for (const m of ["crypto-structure-", "crypto-candles-", "social · bsky", "data: DexScreener"]) assert.ok(more.includes(m), `More detail is missing ${m}`);
-  for (const m of ["c.rugFlags.map", "price check · Jupiter"]) assert.ok(!more.includes(m), `${m} must not be collapsed`);
+  for (const m of ["c.rugFlags.map", "price check · Jupiter", "mint {c.mintAuthorityActive", "<BundleRow", "crypto-launch-context-", "crypto-liq-history-"]) assert.ok(!more.includes(m), `${m} must not be collapsed`);
 });
 
 test("an empty reason list says so, and the detail toggle is a real button outside the card button with a phone-sized target", () => {
   assert.match(panel, /c\.verdictReasons\.length === 0 \? <p className="text-muted-foreground">no reasons recorded for this read<\/p>/);
   const toggle = panel.slice(panel.indexOf('data-testid="crypto-card-more"'), panel.indexOf('data-testid="crypto-card-more-body"'));
   assert.match(toggle, /<button type="button" onClick=\{\(\) => setMore\(\(v\) => !v\)\} aria-expanded=\{more\} className="[^"]*min-h-\[44px\]/);
-  assert.ok(panel.indexOf("    </button>\n    {isOpen && <CoinDesk c={c} />}") < panel.indexOf('data-testid="crypto-card-more"'), "the toggle is not nested in the card button");
+  const closed = panel.indexOf("    </button>\n    {isOpen && <CoinDesk c={c} />}");
+  assert.ok(closed >= 0, "the card button closes before the coin desk");
+  assert.ok(closed < panel.indexOf('data-testid="crypto-card-more"'), "the toggle is not nested in the card button");
+  assert.match(toggle, /lg:min-h-0/, "the 44 px target holds on tablets and landscape phones, not only under 640 px");
 });
 
 test("in the coin desk the exit plan and the record come before the grid of readings", () => {

@@ -2622,8 +2622,11 @@ maybeSecondLook (wiring is pinned by source assertions and SQL tests). Suite: 11
 coin). An open coin card now reads 1 Verdict, 2 Why, 3 Risk (kill flags, authorities, top-10, LP lock, bundle,
 name and deployer history, Jupiter check, liquidity history and exit stress), 4 Exit plan (size and stops, then
 the rule-book plan in the coin desk), 5 Record; then the AI prompt and FOMO link, the grid of readings, and a
-collapsed "More detail" (pool structure and cost, candles, social attention, sources). Layout and labels only:
-no reading, rule, verdict or copy claim changed; nothing was removed. Tests: tests/quant/crypto-card-order.test.ts
+collapsed "More detail" (pool structure and cost, candles, social attention, sources). Layout and labels: no
+reading, rule, verdict or claim changed and nothing was removed. Added text: the verdict word in block 1, "no
+reasons recorded for this read" when the reason list is empty, and the labels "5 · Record", "Readings" and the
+toggle line. Review: MERGE-READY; taken: the toggle keeps its 44 px target up to the lg breakpoint, and the
+order test no longer passes on a missing marker. Tests: tests/quant/crypto-card-order.test.ts
 (4); suite 1163 pass, 4 known local failures. Not verified: rendered appearance (no local build in this
 workspace; CI builds and runs the phone UX audit).
 Next step: the per-coin crypto Alpha feed page.

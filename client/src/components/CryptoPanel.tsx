@@ -930,7 +930,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     {isOpen && <CoinDesk c={c} />}
     {isOpen && (
       <div className="mt-1 rounded-xl border border-border/50 bg-card/40 p-3" data-testid="crypto-card-more">
-        <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left text-[11px] font-medium text-muted-foreground sm:min-h-0" data-testid="crypto-card-more-toggle">
+        <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left text-[11px] font-medium text-muted-foreground lg:min-h-0" data-testid="crypto-card-more-toggle">
           <span>More detail · pool structure and cost, candles, social attention, sources</span>
           <span>{more ? "hide" : "show"}</span>
         </button>
