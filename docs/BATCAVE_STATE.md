@@ -2665,3 +2665,30 @@ when gamma was not priced; the chain line is dashed (only its end is data); deal
 pin, flip and ORB colours; line width reset; heading "Centre of the close"; the logic moved to
 shared/odteProjection.ts with behavioural tests (6).
 
+2026-11-18: Crypto alpha brief (feat/crypto-alpha-brief; owner request, first asked 2026-11-16). A "Crypto
+alpha brief" card sits under the tab's headline, open by default: six sections of plain sentences built by
+shared/cryptoBrief.ts from the feed, health and record payloads the tab already loads (no new request, no
+model). Market backdrop (desk risk and its reason, BTC/ETH/SOL against their 24 h average, perpetual funding
+and open interest averaged over the venues read), what the news is talking about (terms in two or more
+headlines and the tracked coins carrying them), on the desk now (each Enter and Watch with cap, liquidity, age,
+volume pace, buy share and what it is waiting on), attention (Bluesky and pump.fun, labelled low grade; paid
+boosts named), risk (hard kills, unread checks and flags per listed coin, the record's counts and rug rate),
+and what was not read (late or failing collectors). A source that was not read gets a line saying so. Coin
+lines jump to the coin's card. Tests: tests/quant/crypto-alpha-brief.test.ts (10). Not verified: rendered
+appearance (no local build). Not in this version: a separate page per coin; sources the desk does not collect
+yet (dev-wallet sells, curve progress, unique buyers).
+Next step: move the listed universe to coins that have survived (new rule version, reviewed), using the
+second-look record once it has 50 priced rows.
+Review of the alpha brief: HOLD, seven must-fixes taken, each a sentence the data did not support. A stale
+Kraken VWAP was compared against (now Kraken's own mid against its own VWAP, current reads only); a diverged
+pair got a price (now "venues disagree, no reference price"); expired social counts were printed as this
+hour's (now only a current read counts); Pass coins were links to cards that are not open (now only Enter and
+Watch link); an empty news source was counted as unread; "no tracked coin matches" was false for hard-killed
+or unserved coins; the rug rate had no n and ignored the no-data limit (now "rugged of graded", and no rate
+while the no-data share is over the rule book's limit). Also taken: each average states its own venue count,
+an asset with no venue read says so, context older than the feed is dated, lists are capped with the remainder
+stated, unread authorities qualify "no hard kill", flags are counted once, the target cap and the no-data
+limit are read from the rule book, and a failed feed request is stated. Left for the owner: the name
+"alpha brief" (edge wording under the copy rule; asked for by that name), and whether the card should be
+collapsed by default on phones. Tests: 13.
+
