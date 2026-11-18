@@ -2618,6 +2618,53 @@ shared grader queue and the under-representation of graduates that change pool a
 Not taken: a separate grader budget for second looks (disclosed instead); an engine-level test of
 maybeSecondLook (wiring is pinned by source assertions and SQL tests). Suite: 1159 pass, 4 known failures.
 
+2026-11-18: Crypto card order (feat/crypto-card-order; owner decision 2026-11-17: one top-to-bottom order per
+coin). An open coin card now reads 1 Verdict, 2 Why, 3 Risk (kill flags, authorities, top-10, LP lock, bundle,
+name and deployer history, Jupiter check, liquidity history and exit stress), 4 Exit plan (size and stops, then
+the rule-book plan in the coin desk), 5 Record; then the AI prompt and FOMO link, the grid of readings, and a
+collapsed "More detail" (pool structure and cost, candles, social attention, sources). Layout and labels: no
+reading, rule, verdict or claim changed and nothing was removed. Added text: the verdict word in block 1, "no
+reasons recorded for this read" when the reason list is empty, and the labels "5 · Record", "Readings" and the
+toggle line. Review: MERGE-READY; taken: the toggle keeps its 44 px target up to the lg breakpoint, and the
+order test no longer passes on a missing marker. Tests: tests/quant/crypto-card-order.test.ts
+(4); suite 1163 pass, 4 known local failures. Not verified: rendered appearance (no local build in this
+workspace; CI builds and runs the phone UX audit).
+Next step: the per-coin crypto Alpha feed page.
+2026-11-18: Crypto Watch fade (feat/crypto-watch-expiry; rule book 2026.11.18-1, watch.fade). Owner report:
+the tab keeps listing meme coins with nothing behind them. Read live the same morning: Watch held three coins
+1.3 to 1.6 days old ($24k to $110k cap), two at 0.5x and 0.7x volume acceleration with about $3k of hourly
+volume, labelled "setup forming, waiting on flow confirmation". Cause: the forming branch needed only a score
+of 50 and had no way to end. Now a row past its first hour whose acceleration was observed under 1x on each of
+the last three refreshes is a PASS with code watch_faded (unread acceleration, fewer than three refreshes or an
+unknown age never fades a row). ENTER, the score and every grade are unchanged; no new WATCH row is logged for
+a faded coin. Tests: tests/quant/crypto-watch-fade.test.ts (5); suite 1164 pass, 4 known local failures.
+Also found: the CI demo whale-flow check assumes a sample sweep by 09:45 ET, but sample sweep minutes are
+uniform over the session (first one today at minute 80), so the check fails on some mornings; unrelated to
+any change, to be fixed separately.
+Known limits: the record still has no ENTER and the entry point is still the coin's first minutes; this only
+stops dead coins being listed as forming.
+Next step: move the listed universe to coins that have survived (new rule version, reviewed), using the
+second-look record once it has 50 priced rows.
+2026-11-18: Wiener map projected lines (feat/wiener-projected-lines; owner request: the map should project
+price to the close with a line or several). The chart now draws three lines from now to the close, each with
+its end price labelled: random walk centre (solid cyan; flat, because the model has zero drift), options chain
+(solid amber; median of the chain's own settle distribution, drawn straight to it; not drawn when the
+distribution is unreadable or a strike is priced out of line inside its body), dealer rules (dotted violet;
+the existing heuristic path, now on by default and switchable). A "Projected close" block above the chart
+lists the three end prices with the distance from the current price and what each is. No model, odds, level or
+grade changed; the scorecard still grades only the random walk. Tests: tests/quant/wiener-projected-lines.test.ts
+(3). Not verified: rendered appearance (no local build here).
+Next step: the per-coin crypto Alpha feed page.
+Review of the Wiener lines: HOLD, three must-fixes taken. (1) The chain line was suppressed only for a clipped
+strike inside the body while the page's own comparison text says "median not read" for any clipped strike: now
+the same rule, plus no line when half the distribution sits in an open tail. (2) The gap to the chain median was
+described as a lean when it can be the chain's forward against an old index print: the forward part is now
+named, a gap under half a strike is called not readable, and the chain line is drawn only in the live session
+(the number is still listed outside it). (3) "Today's" wording on a next-session map. Also taken: no dealer line
+when gamma was not priced; the chain line is dashed (only its end is data); dealer line pink, away from the
+pin, flip and ORB colours; line width reset; heading "Centre of the close"; the logic moved to
+shared/odteProjection.ts with behavioural tests (6).
+
 2026-11-18: Crypto alpha brief (feat/crypto-alpha-brief; owner request, first asked 2026-11-16). A "Crypto
 alpha brief" card sits under the tab's headline, open by default: six sections of plain sentences built by
 shared/cryptoBrief.ts from the feed, health and record payloads the tab already loads (no new request, no

@@ -9,14 +9,17 @@
  *   - map levels with the model's touch and close odds;
  *   - the model's close distribution (wide screens: beside the chart);
  *   - the morning odds' running scorecard from the settle ledger.
- * The dealer-positioning path (pin pull, charm tilt) is an optional overlay,
- * labelled as a heuristic. Nothing here is a forecast or a direction.
+ * Three projected lines run to the close: the random walk's centre (flat: zero
+ * drift), the options chain's own median settle, and the dealer-positioning
+ * path (pin pull, charm tilt; a heuristic, can be switched off). Each is the
+ * centre of a distribution, not a forecast or a direction call.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
 import AsOfNote from "@/components/AsOfNote";
+import { projectedClose } from "@shared/odteProjection";
 type BandKey = "p025" | "p10" | "p25" | "p50" | "p75" | "p90" | "p975";
 interface WienerBand { minute: number; et: string; q: Record<BandKey, number> }
 interface WienerLevel {
@@ -43,8 +46,8 @@ interface OdteResponse {
   chainStale?: boolean; chainAgeMs?: number | null; chainAsOfMs?: number | null;
   wiener?: WienerMapT;
   /** The chain's own settle distribution (Breeden-Litzenberger on 0DTE mids), same bucket spacing. */
-  impliedClose?: { state: "ok" | "unavailable"; reason: string | null; method: string; sigma: number | null; mean: number | null;
-    buckets: Array<{ lo: number | null; hi: number | null; p: number }>; diagnostics: { strikes: number; clipped: number; renormalised: number; lowTail?: number; highTail?: number } };
+  impliedClose?: { state: "ok" | "unavailable"; reason: string | null; method: string; sigma: number | null; mean: number | null; median?: number | null; bucket?: number | null;
+    buckets: Array<{ lo: number | null; hi: number | null; p: number }>; diagnostics: { strikes: number; clipped: number; clippedInBody?: number; renormalised: number; lowTail?: number; highTail?: number } };
   closeComparison?: { tvDistance: number; binWidth: number; sigmaDiff: number; medianShift: number; forwardMinusSpot: number; pAboveSpotImplied: number; text: string } | null;
   todayPath?: Array<{ min: number; close: number }>;
   path?: OverlayPoint[];
@@ -76,7 +79,8 @@ export default function OdteForward() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [wrapW, setWrapW] = useState(0);
   const [hoverMin, setHoverMin] = useState<number | null>(null);
-  const [showOverlay, setShowOverlay] = useState(false);
+  // The dealer-rule path is one of the three projected lines, so it is drawn unless switched off; it stays labelled a heuristic.
+  const [showOverlay, setShowOverlay] = useState(true);
   const [showLevels, setShowLevels] = useState(true);
   const [showGuide, setShowGuide] = useState(false);
 
@@ -112,6 +116,20 @@ export default function OdteForward() {
     return { startAbs, endAbs, x0, path };
   }, [data, w, ok]);
 
+  // The centre of the close, three ways (shared/odteProjection.ts): each is the middle of a distribution
+  // read from a different source, none a call on direction. A read its source does not stand behind is
+  // not drawn, and the reason is shown instead.
+  const proj = useMemo(() => {
+    if (!data || !w || !ok || !w.bands.length) return null;
+    return projectedClose({
+      spot: w.spot, walkMedian: w.bands[w.bands.length - 1].q.p50, sessionState: data.session.state,
+      implied: data.impliedClose, forwardMinusSpot: data.closeComparison?.forwardMinusSpot ?? null,
+      dealerEnd: data.path?.length ? data.path[data.path.length - 1].median : null, gexValid: data.gexValid,
+    });
+  }, [data, w, ok]);
+  const drawImplied = proj?.implied?.draw ? proj.implied.end : null;
+  const drawDealer = showOverlay && proj?.dealer ? proj.dealer.end : null;
+
   const H = 360;
   useEffect(() => {
     const cv = canvasRef.current;
@@ -131,6 +149,8 @@ export default function OdteForward() {
     const iw = W - padL - padR, ih = H - padT - padB;
     const last = w.bands[w.bands.length - 1].q;
     let lo = Math.min(last.p025, w.spot ?? Infinity), hi = Math.max(last.p975, w.spot ?? -Infinity);
+    // Keep the projected end points on the chart even when one sits outside the 95% band.
+    for (const v of [drawImplied, drawDealer]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
     for (const p of geo.path) { lo = Math.min(lo, p.close); hi = Math.max(hi, p.close); }
     const pad = (hi - lo || 1) * 0.06;
     lo -= pad; hi += pad;
@@ -160,17 +180,26 @@ export default function OdteForward() {
     fillBand("p025", "p975", 0.07);
     fillBand("p10", "p90", 0.10);
     fillBand("p25", "p75", 0.14);
-    ctx.strokeStyle = "rgba(79,209,232,0.8)"; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    // Projected line 1: the random walk's centre (solid cyan). Flat at the current price: zero drift.
+    ctx.strokeStyle = "rgba(79,209,232,0.95)"; ctx.lineWidth = 2;
     ctx.beginPath();
     w.bands.forEach((pt, i) => { const x = X(geo.startAbs + pt.minute), y = Y(pt.q.p50); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.stroke(); ctx.setLineDash([]);
+    ctx.stroke();
+    // Projected line 2: the options chain's own centre of the close (long-dashed amber). Only the end point
+    // is read from the chain, so the line to it is dashed and drawn straight; live session only.
+    if (proj && drawImplied != null) {
+      ctx.strokeStyle = "rgba(251,191,36,0.95)"; ctx.lineWidth = 2; ctx.setLineDash([9, 5]);
+      ctx.beginPath(); ctx.moveTo(X(geo.startAbs), Y(proj.spot)); ctx.lineTo(X(geo.endAbs), Y(drawImplied)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.lineWidth = 1;
 
-    // dealer overlay (heuristic), only when asked
-    if (showOverlay && data.path?.length) {
-      ctx.strokeStyle = "rgba(251,191,36,0.85)"; ctx.setLineDash([2, 3]); ctx.lineWidth = 1.2;
+    // Projected line 3: the dealer-rule path (dotted pink, heuristic, not graded); not drawn without priced gamma.
+    if (drawDealer != null && data.path?.length) {
+      ctx.strokeStyle = "rgba(244,114,182,0.95)"; ctx.setLineDash([2, 3]); ctx.lineWidth = 1.6;
       ctx.beginPath();
       data.path.forEach((pt, i) => { const x = X(geo.startAbs + pt.minute), y = Y(pt.median); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.stroke(); ctx.setLineDash([]);
+      ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
     }
 
     // today's path so far
@@ -228,6 +257,23 @@ export default function OdteForward() {
       }
     }
 
+    // End-point labels for the projected lines, at the close edge of the plot, stacked so they do not overlap.
+    if (proj) {
+      const ends: Array<{ y: number; text: string; color: string }> = [{ y: Y(proj.walk), text: `walk ${Math.round(proj.walk)}`, color: "rgb(79,209,232)" }];
+      if (drawImplied != null) ends.push({ y: Y(drawImplied), text: `options ${Math.round(drawImplied)}`, color: "rgb(251,191,36)" });
+      if (drawDealer != null) ends.push({ y: Y(drawDealer), text: `dealer ${Math.round(drawDealer)}`, color: "rgb(244,114,182)" });
+      ends.sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ends.length; i++) if (ends[i].y < ends[i - 1].y + 12) ends[i].y = ends[i - 1].y + 12;
+      ctx.font = "10px ui-monospace, monospace"; ctx.textAlign = "right";
+      for (const e of ends) {
+        const y = Math.max(padT + 8, Math.min(padT + ih - 2, e.y - 3));
+        const tw = ctx.measureText(e.text).width;
+        ctx.fillStyle = "rgba(10,10,10,0.75)"; ctx.fillRect(padL + iw - tw - 6, y - 9, tw + 4, 12);
+        ctx.fillStyle = e.color; ctx.fillText(e.text, padL + iw - 4, y);
+      }
+      ctx.textAlign = "left";
+    }
+
     // now / spot
     if (w.spot != null) {
       const x = X(geo.startAbs), y = Y(w.spot);
@@ -237,7 +283,7 @@ export default function OdteForward() {
       const x = X(hoverMin);
       ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih); ctx.stroke();
     }
-  }, [data, w, ok, geo, wrapW, hoverMin, showOverlay]);
+  }, [data, w, ok, geo, wrapW, hoverMin, showOverlay, proj, drawImplied, drawDealer]);
 
   const onMove = (clientX: number | undefined) => {
     if (clientX == null || !geo || !wrapRef.current) return;
@@ -336,6 +382,32 @@ export default function OdteForward() {
             <Chip label="Pin · walls · flip" testId="odte-walls" value={`${levels.pin ?? "n/a"} · ${levels.putWall ?? "n/a"}–${levels.callWall ?? "n/a"} · ${levels.gammaFlip ?? "n/a"}`} sub={data.netGex != null ? `0DTE net GEX ${fmtUsd(data.netGex)}` : "gamma not priced"} />
           </div>
 
+          {proj && (() => {
+            const next = w!.horizon === "next_session";
+            const day = next ? "the next session's" : "today's";
+            const from = session.state === "intraday" ? "now" : "the last price";
+            const sgn = (g: number) => `${g >= 0 ? "+" : "−"}${Math.abs(g).toFixed(1)} pts vs ${from}`;
+            return (
+            <div className="mb-2 rounded border border-border/60 p-2 text-[11px] leading-relaxed" data-testid="odte-projected-close">
+              <div className="font-semibold uppercase tracking-[0.14em] text-muted-foreground">Centre of the close · three reads</div>
+              <ul className="mt-1 space-y-0.5 font-mono">
+                <li data-testid="odte-proj-walk"><span className="text-cyan-300">━ random walk</span> {Math.round(proj.walk)} <span className="font-sans text-muted-foreground">(no drift, so the centre is the current price by construction; the shaded bands are the spread around it)</span></li>
+                <li data-testid="odte-proj-implied"><span className="text-amber-300">╌ options chain</span> {proj.implied
+                  ? <>{Math.round(proj.implied.end)} <span className="font-sans text-muted-foreground">({sgn(proj.implied.gap)}
+                      {proj.implied.forwardGap != null ? `, of which ${proj.implied.forwardGap >= 0 ? "+" : "−"}${Math.abs(proj.implied.forwardGap).toFixed(1)} pts is the chain's forward sitting away from the last index print` : ""}
+                      {proj.implied.withinGrid ? "; under half a strike, so no lean is readable" : ""}; median of the settle distribution priced in {day} options; only the end point is read, the dashed line to it is drawn straight
+                      {proj.implied.draw ? "" : "; no line outside the live session, where the index print is not live"})</span></>
+                  : <span className="font-sans text-muted-foreground">{proj.impliedWhy}; no line is drawn</span>}</li>
+                <li data-testid="odte-proj-dealer"><span className="text-pink-300">┅ dealer rules</span> {proj.dealer
+                  ? <>{Math.round(proj.dealer.end)} <span className="font-sans text-muted-foreground">({sgn(proj.dealer.gap)}; rules of thumb on dealer positioning, a heuristic, not graded{showOverlay ? "" : "; line switched off"})</span></>
+                  : <span className="font-sans text-muted-foreground">{proj.dealerWhy}; no line is drawn</span>}</li>
+              </ul>
+              <div className="mt-1 text-muted-foreground">
+                Each line ends at the middle of one distribution of {day} close, so half of that distribution lies either side of it. A gap between two ends is the distance between those centres; it includes any distance between the chain's forward and the last index print, and under half a strike it is not a reading. None of them is a forecast, and the scorecard below grades only the random walk's odds.
+              </div>
+            </div>
+            );
+          })()}
           <div
             ref={wrapRef}
             className="relative touch-pan-y select-none"
@@ -346,7 +418,7 @@ export default function OdteForward() {
             onTouchEnd={() => setHoverMin(null)}
             data-testid="odte-cone"
             role="group"
-            aria-label="Today's path so far and the Wiener model's percentile bands to the close"
+            aria-label="Today's path so far, the Wiener model's percentile bands to the close, and the projected close lines"
           >
             <canvas ref={canvasRef} role="img" aria-label="0DTE Wiener map chart" />
             {readout && (
@@ -371,15 +443,15 @@ export default function OdteForward() {
             </button>
             <button type="button" onClick={() => setShowOverlay((v) => !v)} aria-pressed={showOverlay} data-testid="button-toggle-overlay"
               className="min-h-[44px] rounded border border-border px-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground">
-              {showOverlay ? "Hide dealer overlay" : "Dealer overlay (heuristic)"}
+              {showOverlay ? "Hide dealer line" : "Show dealer line (heuristic)"}
             </button>
           </div>
           <div className="mt-1 text-[11px] text-muted-foreground" data-testid="odte-close-range">
             Model close: 50% between {w!.bands[w!.bands.length - 1].q.p25} and {w!.bands[w!.bands.length - 1].q.p75}; 80% between {w!.bands[w!.bands.length - 1].q.p10} and {w!.bands[w!.bands.length - 1].q.p90}; 95% between {w!.bands[w!.bands.length - 1].q.p025} and {w!.bands[w!.bands.length - 1].q.p975}.
           </div>
           {showOverlay && (
-            <div className="mt-1 text-[11px] text-amber-300/90" data-testid="odte-overlay-note">
-              Amber dotted line: {data.pathBasis ?? "dealer-positioning rules of thumb"}. Not part of the Wiener baseline and not graded.
+            <div className="mt-1 text-[11px] text-pink-300/90" data-testid="odte-overlay-note">
+              Pink dotted line: {data.pathBasis ?? "dealer-positioning rules of thumb"}. Not part of the Wiener baseline and not graded.
             </div>
           )}
 

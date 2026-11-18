@@ -26,7 +26,7 @@ import type { LaunchEvidence } from "@shared/cryptoLaunch";
 import { apiJson } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -755,6 +755,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     : "border-border/50 hover:border-border";
   const cap = capOf(c);
   const mcapPct = cap.cap != null ? Math.min(100, (cap.cap / 1_000_000) * 100) : 0;
+  const [more, setMore] = useState(false);
   return (
     <div id={`crypto-card-${c.chain}-${c.pairAddress}`} className="scroll-mt-24">
     <button
@@ -836,38 +837,123 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
         <Stat label="buys 5m" value={c.netBuyRatio5m != null ? `${Math.round(c.netBuyRatio5m * 100)}%` : "—"} hot={(c.netBuyRatio5m ?? 0) >= 0.65} />
       </div>
 
-      {/* expanded: reasons + risk + rug flags */}
+      {/* expanded, in one fixed order: verdict, why, risk, exit plan (then the record in CoinDesk); the rest sits under "More detail" */}
       {isOpen && (
-        <div className="mt-3 space-y-2 border-t border-border/40 pt-2.5">
-          <div className="text-[11px] leading-snug text-foreground/90">
-            {c.verdictCode && <p className="font-mono text-[11px] font-medium text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
-            {c.verdictReasons.map((r, i) => <p key={i}>· {r}</p>)}
-          </div>
-          {c.rugFlags.length > 0 && (
-            <div className="rounded-md bg-rose-500/8 p-2">
-              {c.rugFlags.map((f, i) => (
-                <p key={i} className="flex items-start gap-1 text-[11px] leading-snug text-rose-300">
-                  <Skull className="mt-px h-2.5 w-2.5 shrink-0" />{f}
-                </p>
-              ))}
+        <div className="mt-3 space-y-3 border-t border-border/40 pt-2.5" data-testid="crypto-card-order">
+          <CardBlock n={1} title="Verdict">
+            <p className="text-[12px] leading-snug text-foreground" data-testid="crypto-card-verdict">
+              <span className="font-semibold">{c.verdict ?? "no verdict yet"}</span>
+              {c.verdictCode && <span className="text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}> · code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</span>}
+            </p>
+          </CardBlock>
+          <CardBlock n={2} title="Why">
+            <div className="text-[11px] leading-snug text-foreground/90">
+              {c.verdictReasons.length === 0 ? <p className="text-muted-foreground">no reasons recorded for this read</p> : c.verdictReasons.map((r, i) => <p key={i}>· {r}</p>)}
             </div>
-          )}
-          {c.risk && (
-            <div className="grid grid-cols-2 gap-1.5 rounded-md bg-muted/30 p-2 font-mono text-[11px] tabular-nums sm:grid-cols-3">
-              <Stat label="max size" value={`$${c.risk.maxPositionUsd}`} />
-              <Stat label="stop" value={`${c.risk.suggestedStopPct}%`} />
-              <Stat label="liq bail" value={`${c.risk.liquidityExitStopPct}% liq`} />
-              <Stat label="target" value={fmtUsd(c.risk.targetMcap, 0)} />
-              <Stat label="multiple" value={c.risk.targetMultiple ? `${c.risk.targetMultiple}x` : "—"} />
-              <Stat label="round trip" value={c.structure?.cost.roundTripPct != null ? `${c.structure.cost.roundTripPct}%` : "not reported"} />
-              {sizingBasisDrift(c.liquidityUsd, c.risk.sizedOnLiquidityUsd) && (
-                // The card's liq is newer than the read the size was computed from: say so, so the size can be recomputed.
-                <div className="col-span-2 text-[11px] text-amber-200/90 sm:col-span-3" data-testid="crypto-sizing-basis">
-                  size and round trip from the earlier read at {fmtUsd(c.risk.sizedOnLiquidityUsd as number, 0)} liquidity; re-sized on the next refresh
-                </div>
+          </CardBlock>
+          <CardBlock n={3} title="Risk">
+            {c.rugFlags.length > 0 && (
+              <div className="rounded-md bg-rose-500/8 p-2">
+                {c.rugFlags.map((f, i) => (
+                  <p key={i} className="flex items-start gap-1 text-[11px] leading-snug text-rose-300">
+                    <Skull className="mt-px h-2.5 w-2.5 shrink-0" />{f}
+                  </p>
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              {c.securityCheckedAt == null ? (
+                <span className="rounded bg-muted/40 px-1.5 py-0.5 text-muted-foreground">on-chain check pending</span>
+              ) : (
+                <>
+                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.mintAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                    mint {c.mintAuthorityActive ? "ACTIVE" : "revoked ✓"}
+                  </span>
+                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.freezeAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                    freeze {c.freezeAuthorityActive ? "ACTIVE" : "none ✓"}
+                  </span>
+                  {c.top10Pct == null && c.top10Method?.startsWith("unavailable") && (
+                    <span title={c.top10Method} className="rounded px-1.5 py-0.5 font-semibold bg-amber-500/15 text-amber-300">
+                      top10 unavailable
+                    </span>
+                  )}
+                  {c.top10Pct != null && (
+                    <span title={c.top10Method ?? undefined} className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                      top10 {c.top10Pct}%{c.top10Method?.includes("INCLUDING") ? " (incl. pool?)" : ""}
+                    </span>
+                  )}
+                  {c.rcLpLockedPct != null && (
+                    <span className={`rounded px-1.5 py-0.5 font-semibold ${c.rcLpLockedPct < 50 ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                      LP {c.rcLpLockedPct}% locked
+                    </span>
+                  )}
+                </>
               )}
             </div>
+            {c.chain === "solana" && <BundleRow bundle={c.bundle} />}
+            {c.chain === "solana" && c.launchCtx && (
+              <div className="text-[11px] text-muted-foreground" data-testid={`crypto-launch-context-${c.pairAddress}`} title={c.launchCtx.method}>
+                <span className="text-foreground/80">name and deployer · </span>
+                <span className={c.launchCtx.state === "ok" && ((c.launchCtx.sameSymbol24h ?? 0) >= 2 || (c.launchCtx.deployerOutcomes?.rugged ?? 0) > 0) ? "text-amber-300" : undefined}>{c.launchCtx.text}</span>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              price check · Jupiter{" "}
+              <span className={c.jupState === "diverge" || c.jupState === "no-reliable-price" ? "text-rose-300" : c.jupState === "agree" ? "text-emerald-300" : c.jupState === "watch" ? "text-amber-300" : undefined}>
+                {c.jupState === "agree" || c.jupState === "watch" || c.jupState === "diverge"
+                  ? `${c.jupState} (${c.jupGapPct}% vs DexScreener)`
+                  : c.jupState === "no-reliable-price" ? "has no reliable price for this mint"
+                  : c.jupState === "failed" ? "request failed (not cross-checked; ENTER held at WATCH)"
+                  : "not checked yet (ENTER held at WATCH until checked)"}
+              </span>
+            </p>
+            {c.structure?.liquidityVelocity && c.structure.exitStress && (
+              <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-liq-history-${c.pairAddress.slice(0, 8)}`}>
+                {/* Amber only past the rule book's own liquidity stop (sizing.liquidityExitStopPct), not a fresh number. */}
+                <span className={c.structure.liquidityVelocity.state === "ok" && (c.structure.liquidityVelocity.changePct ?? 0) <= CRYPTO_RULES.sizing.liquidityExitStopPct ? "text-amber-300/90" : ""}>
+                  {c.structure.liquidityVelocity.text}
+                </span>
+                {c.structure.exitStress.state === "ok" ? (
+                  <>
+                    {" · "}if liquidity were pulled, the {`$${Math.round(c.structure.exitStress.sizeUsd)}`} round trip would cost{" "}
+                    {c.structure.exitStress.rows.filter((r) => r.pullPct > 0).map((r) => `${r.pullPct}%: ${r.cost.dataState === "observed_zero" ? "no exit" : r.cost.roundTripPct == null ? "no exit at this size" : `${r.cost.roundTripPct}%`}`).join(", ")}
+                    {c.structure.exitStress.firstRuinousPullPct == null ? "" : c.structure.exitStress.firstRuinousPullPct === 0 ? ` (already over ${c.structure.exitStress.ruinPct}% of size with no pull)` : ` (over ${c.structure.exitStress.ruinPct}% of size from a ${c.structure.exitStress.firstRuinousPullPct}% pull)`}
+                    {" "}(arithmetic at each depth, not a forecast)
+                  </>
+                ) : ` · ${c.structure.exitStress.text}`}
+              </p>
+            )}
+          </CardBlock>
+          {c.risk && (
+            <CardBlock n={4} title="Exit plan · size and stops">
+              <div className="grid grid-cols-2 gap-1.5 rounded-md bg-muted/30 p-2 font-mono text-[11px] tabular-nums sm:grid-cols-3">
+                <Stat label="max size" value={`$${c.risk.maxPositionUsd}`} />
+                <Stat label="stop" value={`${c.risk.suggestedStopPct}%`} />
+                <Stat label="liq bail" value={`${c.risk.liquidityExitStopPct}% liq`} />
+                <Stat label="target" value={fmtUsd(c.risk.targetMcap, 0)} />
+                <Stat label="multiple" value={c.risk.targetMultiple ? `${c.risk.targetMultiple}x` : "—"} />
+                <Stat label="round trip" value={c.structure?.cost.roundTripPct != null ? `${c.structure.cost.roundTripPct}%` : "not reported"} />
+                {sizingBasisDrift(c.liquidityUsd, c.risk.sizedOnLiquidityUsd) && (
+                  // The card's liq is newer than the read the size was computed from: say so, so the size can be recomputed.
+                  <div className="col-span-2 text-[11px] text-amber-200/90 sm:col-span-3" data-testid="crypto-sizing-basis">
+                    size and round trip from the earlier read at {fmtUsd(c.risk.sizedOnLiquidityUsd as number, 0)} liquidity; re-sized on the next refresh
+                  </div>
+                )}
+              </div>
+            </CardBlock>
           )}
+        </div>
+      )}
+    </button>
+    {isOpen && <CoinDesk c={c} />}
+    {isOpen && (
+      <div className="mt-1 rounded-xl border border-border/50 bg-card/40 p-3" data-testid="crypto-card-more">
+        <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left text-[11px] font-medium text-muted-foreground lg:min-h-0" data-testid="crypto-card-more-toggle">
+          <span>More detail · pool structure and cost, candles, social attention, sources</span>
+          <span>{more ? "hide" : "show"}</span>
+        </button>
+        {more && (
+          <div className="mt-2 space-y-2" data-testid="crypto-card-more-body">
           {c.structure && (
             <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-structure-${c.pairAddress.slice(0, 8)}`}>
               structure · {c.structure.line.note}
@@ -877,22 +963,6 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               {" · "}{c.structure.category.reasons.join("; ")}
             </p>
           )}
-          {c.structure?.liquidityVelocity && c.structure.exitStress && (
-            <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-liq-history-${c.pairAddress.slice(0, 8)}`}>
-              {/* Amber only past the rule book's own liquidity stop (sizing.liquidityExitStopPct), not a fresh number. */}
-              <span className={c.structure.liquidityVelocity.state === "ok" && (c.structure.liquidityVelocity.changePct ?? 0) <= CRYPTO_RULES.sizing.liquidityExitStopPct ? "text-amber-300/90" : ""}>
-                {c.structure.liquidityVelocity.text}
-              </span>
-              {c.structure.exitStress.state === "ok" ? (
-                <>
-                  {" · "}if liquidity were pulled, the {`$${Math.round(c.structure.exitStress.sizeUsd)}`} round trip would cost{" "}
-                  {c.structure.exitStress.rows.filter((r) => r.pullPct > 0).map((r) => `${r.pullPct}%: ${r.cost.dataState === "observed_zero" ? "no exit" : r.cost.roundTripPct == null ? "no exit at this size" : `${r.cost.roundTripPct}%`}`).join(", ")}
-                  {c.structure.exitStress.firstRuinousPullPct == null ? "" : c.structure.exitStress.firstRuinousPullPct === 0 ? ` (already over ${c.structure.exitStress.ruinPct}% of size with no pull)` : ` (over ${c.structure.exitStress.ruinPct}% of size from a ${c.structure.exitStress.firstRuinousPullPct}% pull)`}
-                  {" "}(arithmetic at each depth, not a forecast)
-                </>
-              ) : ` · ${c.structure.exitStress.text}`}
-            </p>
-          )}
           {c.structure?.candles && (c.verdict === "ENTER" || c.verdict === "WATCH") && (
             <p className={`text-[11px] leading-snug ${c.structure.candles.state === "stale" ? "text-amber-300/90" : "text-muted-foreground"}`} data-testid={`crypto-candles-${c.pairAddress.slice(0, 8)}`}>
               {c.structure.candles.text}
@@ -900,42 +970,6 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 <> (high = highest high in the candles read, dip = first local low after it, reclaim = latest close against that high; a candle is a traded minute; recorded with the signal, no rule reads it yet)</>
               )}
             </p>
-          )}
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-            {c.securityCheckedAt == null ? (
-              <span className="rounded bg-muted/40 px-1.5 py-0.5 text-muted-foreground">on-chain check pending</span>
-            ) : (
-              <>
-                <span className={`rounded px-1.5 py-0.5 font-semibold ${c.mintAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                  mint {c.mintAuthorityActive ? "ACTIVE" : "revoked ✓"}
-                </span>
-                <span className={`rounded px-1.5 py-0.5 font-semibold ${c.freezeAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                  freeze {c.freezeAuthorityActive ? "ACTIVE" : "none ✓"}
-                </span>
-                {c.top10Pct == null && c.top10Method?.startsWith("unavailable") && (
-                  <span title={c.top10Method} className="rounded px-1.5 py-0.5 font-semibold bg-amber-500/15 text-amber-300">
-                    top10 unavailable
-                  </span>
-                )}
-                {c.top10Pct != null && (
-                  <span title={c.top10Method ?? undefined} className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                    top10 {c.top10Pct}%{c.top10Method?.includes("INCLUDING") ? " (incl. pool?)" : ""}
-                  </span>
-                )}
-                {c.rcLpLockedPct != null && (
-                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.rcLpLockedPct < 50 ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                    LP {c.rcLpLockedPct}% locked
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-          {c.chain === "solana" && <BundleRow bundle={c.bundle} />}
-          {c.chain === "solana" && c.launchCtx && (
-            <div className="text-[11px] text-muted-foreground" data-testid={`crypto-launch-context-${c.pairAddress}`} title={c.launchCtx.method}>
-              <span className="text-foreground/80">name and deployer · </span>
-              <span className={c.launchCtx.state === "ok" && ((c.launchCtx.sameSymbol24h ?? 0) >= 2 || (c.launchCtx.deployerOutcomes?.rugged ?? 0) > 0) ? "text-amber-300" : undefined}>{c.launchCtx.text}</span>
-            </div>
           )}
           {c.socialCheckedAt != null && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -962,23 +996,23 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             </div>
           )}
           <p className="text-[11px] text-muted-foreground">
-            price check · Jupiter{" "}
-            <span className={c.jupState === "diverge" || c.jupState === "no-reliable-price" ? "text-rose-300" : c.jupState === "agree" ? "text-emerald-300" : c.jupState === "watch" ? "text-amber-300" : undefined}>
-              {c.jupState === "agree" || c.jupState === "watch" || c.jupState === "diverge"
-                ? `${c.jupState} (${c.jupGapPct}% vs DexScreener)`
-                : c.jupState === "no-reliable-price" ? "has no reliable price for this mint"
-                : c.jupState === "failed" ? "request failed (not cross-checked; ENTER held at WATCH)"
-                : "not checked yet (ENTER held at WATCH until checked)"}
-            </span>
-          </p>
-          <p className="text-[11px] text-muted-foreground">
             {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}… · data: DexScreener (aggregator API), Solana RPC, rugcheck
           </p>
-        </div>
-      )}
-    </button>
-    {isOpen && <CoinDesk c={c} />}
+          </div>
+        )}
+      </div>
+    )}
     {isOpen && <CoinLinks chain={c.chain} mint={c.tokenAddress} symbol={c.symbol} />}
+    </div>
+  );
+}
+
+/** One numbered block of an open card. The order is fixed: verdict, why, risk, exit plan, then the record. */
+function CardBlock({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <div data-testid={`crypto-card-block-${n}`}>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{n} · {title}</div>
+      <div className="space-y-1.5">{children}</div>
     </div>
   );
 }
