@@ -2632,4 +2632,16 @@ appearance (no local build). Not in this version: a separate page per coin; sour
 yet (dev-wallet sells, curve progress, unique buyers).
 Next step: move the listed universe to coins that have survived (new rule version, reviewed), using the
 second-look record once it has 50 priced rows.
+Review of the alpha brief: HOLD, seven must-fixes taken, each a sentence the data did not support. A stale
+Kraken VWAP was compared against (now Kraken's own mid against its own VWAP, current reads only); a diverged
+pair got a price (now "venues disagree, no reference price"); expired social counts were printed as this
+hour's (now only a current read counts); Pass coins were links to cards that are not open (now only Enter and
+Watch link); an empty news source was counted as unread; "no tracked coin matches" was false for hard-killed
+or unserved coins; the rug rate had no n and ignored the no-data limit (now "rugged of graded", and no rate
+while the no-data share is over the rule book's limit). Also taken: each average states its own venue count,
+an asset with no venue read says so, context older than the feed is dated, lists are capped with the remainder
+stated, unread authorities qualify "no hard kill", flags are counted once, the target cap and the no-data
+limit are read from the rule book, and a failed feed request is stated. Left for the owner: the name
+"alpha brief" (edge wording under the copy rule; asked for by that name), and whether the card should be
+collapsed by default on phones. Tests: 13.
 

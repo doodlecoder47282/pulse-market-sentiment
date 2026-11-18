@@ -548,11 +548,12 @@ export default function CryptoPanel() {
   const briefInputs = useMemo(() => ({
     feed: feed ?? null, health: healthQ.data ?? null,
     record: sigQ.data ? {
-      desk: sigQ.data.desk ?? null, coins: sigQ.data.stats, enterCoins: sigQ.data.stats.enterCoins ?? null,
+      desk: sigQ.data.desk ?? null, coins: sigQ.data.stats, enterCoins: sigQ.data.stats.enterCoins ?? null, noDataShare: sigQ.data.stats.noDataShare ?? null,
       ruggedRateObserved: sigQ.data.stats.survivorship?.coins.ruggedRateObserved ?? null, rulesVersion: sigQ.data.rules?.version ?? null,
     } : null,
+    feedError: feedQ.isError,
     codeText: VERDICT_CODE_TEXT as Record<string, string>,
-  }), [feed, healthQ.data, sigQ.data]);
+  }), [feed, healthQ.data, sigQ.data, feedQ.isError]);
 
   return (
     <div className="space-y-4" data-testid="crypto-panel">
