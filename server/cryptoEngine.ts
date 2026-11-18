@@ -69,7 +69,7 @@ import { startPumpListener, pumpListenerCheck, pumpListenerStatus, launchBundle,
 import type { LaunchContext } from "../shared/launchContext";
 import { samplePlans, exitPlanRecord } from "./exitPlanBook";
 import { slotEvidence, creatorEvidence, sumOwnerTokenUi, feePayerOf, type LaunchEvidence, type SigRow } from "../shared/cryptoLaunch";
-import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
+import { deskRiskFromMajors, pairDataStale, servedVerdict, staleDataReason, VERDICT_CODE_TEXT, watchFaded, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
 import { emptySourceHealth, type SourceHealth } from "../shared/cryptoVerify";
 import { capOf, capOnBasis, evictOverCap, MOMENTUM_CYCLE_MS } from "../shared/cryptoCap";
@@ -1129,6 +1129,17 @@ export function accelAgeMinutes(pairCreatedAt: number | null, lastRefreshAt: num
   return Math.max(0, ((lastRefreshAt ?? now) - pairCreatedAt) / 60_000);
 }
 
+/**
+ * Volume-acceleration readings for the watch-fade rule, oldest first, one per pair refresh. The current poll
+ * is pushed onto hist only after scoring, so it is appended here; a re-score between refreshes (security,
+ * social ticks) finds it already there and must not count it twice.
+ */
+function fadeReadings(c: Candidate): Array<number | null> {
+  const past = c.hist.map((h) => h.volAccel);
+  const last = c.hist[c.hist.length - 1];
+  return last && last.t === c.lastRefreshAt ? past : [...past, c.volAccel];
+}
+
 function scoreCandidate(c: Candidate): void {
   const now = Date.now();
   // Captured before anything below and before the caller pushes this poll onto
@@ -1284,6 +1295,11 @@ function scoreCandidate(c: Candidate): void {
       reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
+  } else if (c.score >= CRYPTO_RULES.watch.minScore && watchFaded(c.ageMinutes, fadeReadings(c))) {
+    // Scored like a forming setup, but past its first hour with the volume pace under the hour's on every
+    // recent refresh: the flow it would be waiting on has gone. Not listed as a WATCH and not logged as one.
+    code = "watch_faded";
+    reasons.push(`score ${c.score} but flow has gone: volume pace under ${CRYPTO_RULES.watch.fade.belowVolAccel}x on the last ${CRYPTO_RULES.watch.fade.polls} refreshes (now ${c.volAccel?.toFixed(1)}x), ${((c.ageMinutes ?? 0) / 60).toFixed(1)} h old`);
   } else if (c.score >= CRYPTO_RULES.watch.minScore) {
     verdict = "WATCH"; code = "forming";
     reasons.push(`score ${c.score} — setup forming, waiting on flow confirmation`);

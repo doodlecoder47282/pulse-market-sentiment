@@ -28,7 +28,7 @@ test("every verdict code has a meaning and none says buy, sell or enter a trade"
     assert.ok(text.length > 8, code);
     assert.ok(!/\b(buy|sell) (now|it|this)\b/i.test(text), code);
   }
-  assert.equal(Object.keys(VERDICT_CODE_TEXT).length, 15);
+  assert.equal(Object.keys(VERDICT_CODE_TEXT).length, 16);
 });
 
 test("desk risk: a stale or failed venue read is unknown, never on or off; the reason names the venue", () => {

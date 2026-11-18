@@ -113,6 +113,12 @@ Version 2026.11.17-1 (flow.accelMinAgeMinutes = 10): volume acceleration is the 
 pace of the last hour, or of the coin's own life when it is younger than an hour, and is not read on a coin
 under 10 minutes old. Before, the hour's volume was divided by 60 for every coin, so anything under 5 minutes
 old read exactly 12x (shared/cryptoFlow.ts).
+Version 2026.11.18-1 (watch.fade = after 60 min, accel under 1x on 3 refreshes in a row): a row that scores
+like a forming setup but is past its first hour with the 5-minute volume pace under the hour's on each of the
+last three refreshes is a PASS (code watch_faded), not a WATCH. Read live on 2026-11-18: the Watch list held
+three coins 1.3 to 1.6 days old, two at 0.5x and 0.7x acceleration and about $3k of hourly volume, labelled
+"setup forming, waiting on flow confirmation". Only an observed low reading fades a row: an unread acceleration,
+fewer than three refreshes, or an unknown age does not. ENTER, the score and every grade are unchanged.
 
 Funding and open interest are a recorded, descriptive regime readout, not a
 rule. Funding is the exchange's decimal rate per funding interval (positive:
