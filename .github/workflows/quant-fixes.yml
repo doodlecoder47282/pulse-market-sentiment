@@ -568,11 +568,16 @@ jobs:
               const sigma = (await wp.locator('[data-testid="odte-em-sigma"]').innerText()).trim();
               const btns = await wp.evaluate(() => ["button-toggle-levelmap", "button-toggle-overlay"].map((id) => { const r = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect(); return r ? Math.round(r.height) : 0; }));
               const overflowX = await wp.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+              // The dealer line is on by default: its note shows, the toggle hides it, and it is switched back on for the shot.
+              const proj = await wp.locator('[data-testid="odte-projected-close"]').count();
+              const noteOn = await wp.locator('[data-testid="odte-overlay-note"]').count();
               await wp.locator('[data-testid="button-toggle-overlay"]').click();
-              const note = await wp.locator('[data-testid="odte-overlay-note"]').count();
+              const noteOff = await wp.locator('[data-testid="odte-overlay-note"]').count();
+              await wp.locator('[data-testid="button-toggle-overlay"]').click();
+              const note = noteOn === 1 && noteOff === 0 && proj === 1 ? 1 : 0;
               await wp.locator('[data-testid="odte-forward-panel"]').screenshot({ path: "rep/demo/19-odte-wiener-402.png" });
               okW = !!cv && cv.height >= 300 && rows > 0 && /^±[0-9]/.test(sigma) && btns.every((h) => h >= 44) && !overflowX && note === 1;
-              detail = `chart ${cv ? Math.round(cv.width) + "x" + Math.round(cv.height) : "missing"}, ${rows} level rows, sigma ${sigma}, toggles ${btns.join("/")}px, overlay note ${note}, overflowX ${overflowX}`;
+              detail = `chart ${cv ? Math.round(cv.width) + "x" + Math.round(cv.height) : "missing"}, ${rows} level rows, sigma ${sigma}, toggles ${btns.join("/")}px, centre block ${proj}, dealer note on/off ${noteOn}/${noteOff}, overflowX ${overflowX}`;
             } else {
               const why = panel ? (await wp.locator('[data-testid="odte-wiener-unavailable"]').innerText()).trim() : (await wp.locator('[data-testid="odte-forward-error"]').innerText()).trim();
               // Unavailable is only the honest answer between Friday's close and Monday's open (the
