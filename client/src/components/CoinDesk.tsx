@@ -99,27 +99,6 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
 
   return (
     <div className="mt-1 space-y-2 rounded-xl border border-border/50 bg-card/40 p-3" data-testid="crypto-coin-desk">
-      <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6" data-testid="crypto-coin-facts">
-        <Fact k={cap.basis === "fdv" ? "cap (FDV)" : "cap"} v={usd(cap.cap)} />
-        <Fact k="liq" v={usd(c.liquidityUsd)} />
-        <Fact k="liq/cap" v={liqToCap == null ? "—" : `${liqToCap.toFixed(1)}%`} tone={liqToCap != null && liqToCap < 5 ? "warn" : undefined} />
-        <Fact k="age" v={age(c.ageMinutes)} />
-        <Fact k="vol 5m" v={usd(c.vol5m, 1)} />
-        <Fact k="vol 24h" v={usd(c.vol24h, 0)} />
-        <Fact k="buys/sells 5m" v={c.buys5m == null && c.sells5m == null ? "—" : `${c.buys5m ?? "?"}/${c.sells5m ?? "?"}`} />
-        <Fact k="chg 5m" v={pct(c.chg5m)} tone={c.chg5m != null ? (c.chg5m >= 0 ? "good" : "bad") : undefined} />
-        <Fact k="chg 24h" v={pct(c.chg24h)} tone={c.chg24h != null ? (c.chg24h >= 0 ? "good" : "bad") : undefined} />
-        <Fact k="mint auth" v={auth(c.mintAuthorityActive)} tone={c.mintAuthorityActive ? "bad" : c.mintAuthorityActive === false ? "good" : "warn"} />
-        <Fact k="freeze auth" v={auth(c.freezeAuthorityActive)} tone={c.freezeAuthorityActive ? "bad" : c.freezeAuthorityActive === false ? "good" : "warn"} />
-        <Fact k="top 10" v={c.top10Pct == null ? "unread" : `${c.top10Pct.toFixed(1)}%`} tone={c.top10Pct == null ? "warn" : c.top10Pct > 45 ? "bad" : undefined} />
-        <Fact k="LP locked" v={c.rcLpLockedPct == null ? "unread" : `${c.rcLpLockedPct}%`} tone={c.rcLpLockedPct == null ? "warn" : c.rcLpLockedPct < 50 ? "bad" : "good"} />
-        <Fact k="creator buy" v={b?.state === "ok" && b.creatorBoughtPct != null ? `${b.creatorBoughtPct.toFixed(1)}%` : "unread"} tone={b?.state === "ok" ? undefined : "warn"} />
-        <Fact k="launch block" v={b?.state === "ok" && b.sameBlockPct != null ? `${b.sameBlockWallets ?? "?"}w ${b.sameBlockPct.toFixed(1)}%` : "unread"} tone={b?.state === "ok" ? ((b.sameBlockPct ?? 0) >= 20 ? "bad" : undefined) : "warn"} />
-        <Fact k="still held" v={b?.state === "ok" && b.stillHeldPct != null ? `${b.stillHeldPct.toFixed(1)}%` : "unread"} tone={b?.state === "ok" ? ((b.stillHeldPct ?? 0) >= 10 ? "bad" : undefined) : "warn"} />
-        <Fact k="jupiter" v={c.jupState ?? "unchecked"} tone={c.jupState === "agree" ? "good" : c.jupState === "diverge" || c.jupState === "no-reliable-price" ? "bad" : "warn"} />
-        <Fact k="boost" v={c.boosted ? "paid" : "none"} tone={c.boosted ? "warn" : undefined} />
-      </div>
-
       {showPlan ? (
         <div className="space-y-1" data-testid="crypto-exit-plan">
           <div className="flex items-center gap-1.5 text-[12px] font-semibold">
@@ -150,6 +129,7 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
               </form>
             )}
           </div>
+          <div className="pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">5 · Record</div>
           <div className="text-[11px] text-muted-foreground" data-testid="crypto-plan-record">
             plan record{rec?.currentVersion ? ` (rules ${rec.currentVersion})` : ""}: {rec ? rec.label : sig.isLoading ? "loading" : "unavailable (record not read)"}{rec?.ready && rec.medianPct != null ? ` · median ${pct(rec.medianPct, 1)} per $100 net` : ""}
           </div>
@@ -179,6 +159,28 @@ export default function CoinDesk({ c }: { c: DeskCoin }) {
           FOMO's per-token page pattern is {FOMO_TOKEN_LINK_STATUS}; if it lands on FOMO's home page, paste the copied mint into its search. Any order is yours to place there; the desk places none.
         </div>
       )}
+      {/* Every reading in one grid, after the plan and the record: reference, not the first thing to read. */}
+      <div className="pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Readings</div>
+      <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6" data-testid="crypto-coin-facts">
+        <Fact k={cap.basis === "fdv" ? "cap (FDV)" : "cap"} v={usd(cap.cap)} />
+        <Fact k="liq" v={usd(c.liquidityUsd)} />
+        <Fact k="liq/cap" v={liqToCap == null ? "—" : `${liqToCap.toFixed(1)}%`} tone={liqToCap != null && liqToCap < 5 ? "warn" : undefined} />
+        <Fact k="age" v={age(c.ageMinutes)} />
+        <Fact k="vol 5m" v={usd(c.vol5m, 1)} />
+        <Fact k="vol 24h" v={usd(c.vol24h, 0)} />
+        <Fact k="buys/sells 5m" v={c.buys5m == null && c.sells5m == null ? "—" : `${c.buys5m ?? "?"}/${c.sells5m ?? "?"}`} />
+        <Fact k="chg 5m" v={pct(c.chg5m)} tone={c.chg5m != null ? (c.chg5m >= 0 ? "good" : "bad") : undefined} />
+        <Fact k="chg 24h" v={pct(c.chg24h)} tone={c.chg24h != null ? (c.chg24h >= 0 ? "good" : "bad") : undefined} />
+        <Fact k="mint auth" v={auth(c.mintAuthorityActive)} tone={c.mintAuthorityActive ? "bad" : c.mintAuthorityActive === false ? "good" : "warn"} />
+        <Fact k="freeze auth" v={auth(c.freezeAuthorityActive)} tone={c.freezeAuthorityActive ? "bad" : c.freezeAuthorityActive === false ? "good" : "warn"} />
+        <Fact k="top 10" v={c.top10Pct == null ? "unread" : `${c.top10Pct.toFixed(1)}%`} tone={c.top10Pct == null ? "warn" : c.top10Pct > 45 ? "bad" : undefined} />
+        <Fact k="LP locked" v={c.rcLpLockedPct == null ? "unread" : `${c.rcLpLockedPct}%`} tone={c.rcLpLockedPct == null ? "warn" : c.rcLpLockedPct < 50 ? "bad" : "good"} />
+        <Fact k="creator buy" v={b?.state === "ok" && b.creatorBoughtPct != null ? `${b.creatorBoughtPct.toFixed(1)}%` : "unread"} tone={b?.state === "ok" ? undefined : "warn"} />
+        <Fact k="launch block" v={b?.state === "ok" && b.sameBlockPct != null ? `${b.sameBlockWallets ?? "?"}w ${b.sameBlockPct.toFixed(1)}%` : "unread"} tone={b?.state === "ok" ? ((b.sameBlockPct ?? 0) >= 20 ? "bad" : undefined) : "warn"} />
+        <Fact k="still held" v={b?.state === "ok" && b.stillHeldPct != null ? `${b.stillHeldPct.toFixed(1)}%` : "unread"} tone={b?.state === "ok" ? ((b.stillHeldPct ?? 0) >= 10 ? "bad" : undefined) : "warn"} />
+        <Fact k="jupiter" v={c.jupState ?? "unchecked"} tone={c.jupState === "agree" ? "good" : c.jupState === "diverge" || c.jupState === "no-reliable-price" ? "bad" : "warn"} />
+        <Fact k="boost" v={c.boosted ? "paid" : "none"} tone={c.boosted ? "warn" : undefined} />
+      </div>
     </div>
   );
 }
