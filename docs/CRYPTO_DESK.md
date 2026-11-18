@@ -113,6 +113,22 @@ Version 2026.11.17-1 (flow.accelMinAgeMinutes = 10): volume acceleration is the 
 pace of the last hour, or of the coin's own life when it is younger than an hour, and is not read on a coin
 under 10 minutes old. Before, the hour's volume was divided by 60 for every coin, so anything under 5 minutes
 old read exactly 12x (shared/cryptoFlow.ts).
+Version 2026.11.18-1 (watch.fade = after 60 min, accel under 1x on 3 refreshes in a row): a row that scores
+like a forming setup but is past its first hour with the 5-minute volume pace under the hour's on each of the
+last three refreshes is a PASS (code watch_faded), not a WATCH. Read live on 2026-11-18: the Watch list held
+three coins 1.3 to 1.6 days old, two at 0.5x and 0.7x acceleration and about $3k of hourly volume, labelled
+"setup forming, waiting on flow confirmation". Only an observed low reading fades a row: an unread acceleration,
+fewer than three refreshes, or an unknown age does not. ENTER, the score and every grade are unchanged.
+Limits of the fade rule, stated: it is a relative measure (5-minute pace against the hour's) with no absolute
+volume floor, so a busy coin that is merely slowing fades too, and a steady coin near 1x can move between
+WATCH and PASS (no new row is written for the same pair and day). Three refreshes span about 2.5 minutes with
+90 or fewer tracked pools and about 7.5 minutes at 220, so they can sit inside one 5-minute window. A pair
+whose data is stale is not faded. A faded coin is a PASS for every purpose: no candle reads or bundle retries,
+and it ranks with PASS rows when the tracked list is over its cap; its open rows are still peak-sampled,
+graded and given a second look while it is tracked. A coin first seen already old is listed as forming for its
+first two refreshes. The retrace WATCH above the cap ceiling (mcap_ceiling) is not covered by this rule. The
+contract autopsy is a single read, so it cannot show a fade. In the verdict path the fade sits after the
+ENTER chain and before forming.
 
 Funding and open interest are a recorded, descriptive regime readout, not a
 rule. Funding is the exchange's decimal rate per funding interval (positive:

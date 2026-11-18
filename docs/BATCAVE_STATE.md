@@ -2630,4 +2630,19 @@ order test no longer passes on a missing marker. Tests: tests/quant/crypto-card-
 (4); suite 1163 pass, 4 known local failures. Not verified: rendered appearance (no local build in this
 workspace; CI builds and runs the phone UX audit).
 Next step: the per-coin crypto Alpha feed page.
+2026-11-18: Crypto Watch fade (feat/crypto-watch-expiry; rule book 2026.11.18-1, watch.fade). Owner report:
+the tab keeps listing meme coins with nothing behind them. Read live the same morning: Watch held three coins
+1.3 to 1.6 days old ($24k to $110k cap), two at 0.5x and 0.7x volume acceleration with about $3k of hourly
+volume, labelled "setup forming, waiting on flow confirmation". Cause: the forming branch needed only a score
+of 50 and had no way to end. Now a row past its first hour whose acceleration was observed under 1x on each of
+the last three refreshes is a PASS with code watch_faded (unread acceleration, fewer than three refreshes or an
+unknown age never fades a row). ENTER, the score and every grade are unchanged; no new WATCH row is logged for
+a faded coin. Tests: tests/quant/crypto-watch-fade.test.ts (5); suite 1164 pass, 4 known local failures.
+Also found: the CI demo whale-flow check assumes a sample sweep by 09:45 ET, but sample sweep minutes are
+uniform over the session (first one today at minute 80), so the check fails on some mornings; unrelated to
+any change, to be fixed separately.
+Known limits: the record still has no ENTER and the entry point is still the coin's first minutes; this only
+stops dead coins being listed as forming.
+Next step: move the listed universe to coins that have survived (new rule version, reviewed), using the
+second-look record once it has 50 priced rows.
 

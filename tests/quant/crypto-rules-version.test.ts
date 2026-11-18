@@ -39,6 +39,8 @@ const PINNED: Record<string, string> = {
   // with the pace of the coin's own life when younger than an hour, and is not read at all under the minimum
   // age. Scores of young coins fall, so fewer minute-2 rows reach WATCH; the records partition here.
   "2026.11.17-1": "2bc17f1dd3ec58352cdaec6a7c078b113ca46ed7684328466972786ea94ef3ad",
+  // watch.fade added: a forming setup past its first hour with acceleration under 1x on three refreshes in a row is a PASS (watch_faded). ENTER and every grade unchanged.
+  "2026.11.18-1": "86a1bcc933e32c060108a07a18993042806c18ed9883b040782efaa695f454d1",
 };
 
 test("crypto rule book content is pinned to its version", () => {
