@@ -2645,4 +2645,23 @@ Known limits: the record still has no ENTER and the entry point is still the coi
 stops dead coins being listed as forming.
 Next step: move the listed universe to coins that have survived (new rule version, reviewed), using the
 second-look record once it has 50 priced rows.
+2026-11-18: Wiener map projected lines (feat/wiener-projected-lines; owner request: the map should project
+price to the close with a line or several). The chart now draws three lines from now to the close, each with
+its end price labelled: random walk centre (solid cyan; flat, because the model has zero drift), options chain
+(solid amber; median of the chain's own settle distribution, drawn straight to it; not drawn when the
+distribution is unreadable or a strike is priced out of line inside its body), dealer rules (dotted violet;
+the existing heuristic path, now on by default and switchable). A "Projected close" block above the chart
+lists the three end prices with the distance from the current price and what each is. No model, odds, level or
+grade changed; the scorecard still grades only the random walk. Tests: tests/quant/wiener-projected-lines.test.ts
+(3). Not verified: rendered appearance (no local build here).
+Next step: the per-coin crypto Alpha feed page.
+Review of the Wiener lines: HOLD, three must-fixes taken. (1) The chain line was suppressed only for a clipped
+strike inside the body while the page's own comparison text says "median not read" for any clipped strike: now
+the same rule, plus no line when half the distribution sits in an open tail. (2) The gap to the chain median was
+described as a lean when it can be the chain's forward against an old index print: the forward part is now
+named, a gap under half a strike is called not readable, and the chain line is drawn only in the live session
+(the number is still listed outside it). (3) "Today's" wording on a next-session map. Also taken: no dealer line
+when gamma was not priced; the chain line is dashed (only its end is data); dealer line pink, away from the
+pin, flip and ORB colours; line width reset; heading "Centre of the close"; the logic moved to
+shared/odteProjection.ts with behavioural tests (6).
 
