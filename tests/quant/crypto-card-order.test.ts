@@ -34,7 +34,7 @@ test("risk holds the kill flags, authorities, bundle, deployer history, price ch
 test("an empty reason list says so, and the detail toggle is a real button outside the card button with a phone-sized target", () => {
   assert.match(panel, /c\.verdictReasons\.length === 0 \? <p className="text-muted-foreground">no reasons recorded for this read<\/p>/);
   const toggle = panel.slice(panel.indexOf('data-testid="crypto-card-more"'), panel.indexOf('data-testid="crypto-card-more-body"'));
-  assert.match(toggle, /<button type="button"[^>]*aria-expanded=\{more\}[^>]*min-h-\[44px\]/);
+  assert.match(toggle, /<button type="button" onClick=\{\(\) => setMore\(\(v\) => !v\)\} aria-expanded=\{more\} className="[^"]*min-h-\[44px\]/);
   assert.ok(panel.indexOf("    </button>\n    {isOpen && <CoinDesk c={c} />}") < panel.indexOf('data-testid="crypto-card-more"'), "the toggle is not nested in the card button");
 });
 
