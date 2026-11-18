@@ -2618,3 +2618,14 @@ shared grader queue and the under-representation of graduates that change pool a
 Not taken: a separate grader budget for second looks (disclosed instead); an engine-level test of
 maybeSecondLook (wiring is pinned by source assertions and SQL tests). Suite: 1159 pass, 4 known failures.
 
+2026-11-18: Wiener map projected lines (feat/wiener-projected-lines; owner request: the map should project
+price to the close with a line or several). The chart now draws three lines from now to the close, each with
+its end price labelled: random walk centre (solid cyan; flat, because the model has zero drift), options chain
+(solid amber; median of the chain's own settle distribution, drawn straight to it; not drawn when the
+distribution is unreadable or a strike is priced out of line inside its body), dealer rules (dotted violet;
+the existing heuristic path, now on by default and switchable). A "Projected close" block above the chart
+lists the three end prices with the distance from the current price and what each is. No model, odds, level or
+grade changed; the scorecard still grades only the random walk. Tests: tests/quant/wiener-projected-lines.test.ts
+(3). Not verified: rendered appearance (no local build here).
+Next step: the per-coin crypto Alpha feed page.
+
