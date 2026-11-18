@@ -19,6 +19,7 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
+import { plainVixTerm } from "@shared/plainReads";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -2133,6 +2134,12 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           <span>DATA: PULSE / BATCAVE MODEL</span>
         </div>
       </div>
+
+      {/* the VIX strip in ordinary words (shared/plainReads.ts) */}
+      <p className="border-b border-border/30 border-l-2 border-l-cyan-400/60 bg-cyan-400/5 px-3 py-1.5 text-[13px] leading-snug text-foreground/90" data-testid="models-vix-plain">
+        <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">In plain words</span>
+        {plainVixTerm(horizon.vol.vix, horizon.vol.termRatio)}
+      </p>
 
       {/* ── VIX + confidence strip ── */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/30 bg-black/40 px-3 py-1 font-mono text-[11px] text-muted-foreground">

@@ -2692,3 +2692,15 @@ limit are read from the rule book, and a failed feed request is stated. Left for
 "alpha brief" (edge wording under the copy rule; asked for by that name), and whether the card should be
 collapsed by default on phones. Tests: 13.
 
+2026-11-18: Plain-word reads, first slice (feat/plain-reads; owner request: simplify the terms so a reader gets
+the answer without thinking). shared/plainReads.ts: pure functions that turn a panel's numbers into one or two
+ordinary sentences. Wired above every section of the Live Chain Audit on the Models tab (key levels, gamma by
+expiry, term structure and skew, delta exposure, settlement odds, unusual volume, volatility premium,
+second-order greeks) and above the VIX strip in the Models header, each marked "In plain words". The tables are
+unchanged underneath. A reading that was not read says so. One accuracy catch built in: when Schwab's model
+volatility is the same on every expiry (read live today: 29.0% on all of them) the line says it looks like a
+default and the rich/cheap labels should not be relied on. Tests: tests/quant/plain-reads.test.ts (10). Not
+verified: rendered appearance. Not yet covered: the rest of the Models tab (pivot ladder, scenario box,
+market-maker matrix, cone, pivot projection), Signals, Heatseeker, Trade Desk, Regime, Edge Lab.
+Next step: the same plain-word line on the remaining Models panels, then one "Today" block at the top.
+
