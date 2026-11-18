@@ -1,4 +1,4 @@
-import { CRYPTO_RULES } from "./cryptoRules";
+import { CRYPTO_RULES, type CryptoRules } from "./cryptoRules";
 // shared/cryptoVerdict.ts
 //
 // Coded verdict reasons for the crypto scanner and the desk's persistent
@@ -22,7 +22,8 @@ export type VerdictCode =
   | "top10_unread"
   | "risk_off"
   | "risk_unknown"
-  | "stale_data";
+  | "stale_data"
+  | "watch_faded";
 
 export const VERDICT_CODE_TEXT: Record<VerdictCode, string> = {
   enter: "every gate met",
@@ -40,7 +41,21 @@ export const VERDICT_CODE_TEXT: Record<VerdictCode, string> = {
   risk_off: "desk risk off: BTC 5% or more under its 24 h VWAP",
   risk_unknown: "desk risk unknown: majors not readable",
   stale_data: "pair data not refreshed recently: held at WATCH",
+  watch_faded: "score over 50 but slowing: 5-minute volume pace under the hour's on the last three refreshes, past the first hour",
 };
+
+/**
+ * A forming setup that is slowing (rule book watch.fade): a relative measure, the 5-minute pace against the hour's,
+ * with no absolute-volume term. `readings` are the volume-acceleration
+ * readings, oldest first, ending with the current one. Faded only on OBSERVED low readings: fewer than
+ * `polls` readings, any unread one, or an unknown age, is not faded.
+ */
+export function watchFaded(ageMinutes: number | null, readings: Array<number | null>, rules: CryptoRules = CRYPTO_RULES): boolean {
+  const f = rules.watch.fade;
+  if (ageMinutes == null || !Number.isFinite(ageMinutes) || ageMinutes < f.afterMinutes) return false;
+  const recent = readings.slice(-f.polls);
+  return recent.length >= f.polls && recent.every((v) => typeof v === "number" && Number.isFinite(v) && v < f.belowVolAccel);
+}
 
 export interface DeskRisk {
   state: "on" | "off" | "unknown";
