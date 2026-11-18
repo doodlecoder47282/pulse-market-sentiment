@@ -198,8 +198,11 @@ function desk(i: BriefInputs): BriefLine[] {
   return out;
 }
 
-/** A social read the server still stands behind: collected (fully or partly) and not expired. */
-const socialRead = (c: BriefCoin) => (c.socialStatus === "ok" || c.socialStatus === "partial") && fin(c.bskyMentions1h);
+/**
+ * A social read the server still stands behind. Only "ok": the server expires an ok read to stale after 15
+ * minutes, but a partial one is never aged, so its counts can be old and are treated as not current.
+ */
+const socialRead = (c: BriefCoin) => c.socialStatus === "ok" && fin(c.bskyMentions1h);
 
 function attention(i: BriefInputs): BriefLine[] {
   const feed = i.feed;
@@ -229,7 +232,7 @@ function risk(i: BriefInputs): BriefLine[] {
     const killed = cs.filter((c) => c.hardKill);
     const authUnread = cs.filter((c) => c.securityCheckedAt == null).length;
     const unreadNote = authUnread ? ` Mint and freeze authority are unread on ${authUnread} of ${cs.length} served coins, so an authority kill cannot show on those yet.` : "";
-    out.push({ text: (killed.length ? `${plural(killed.length, "served coin")} with a hard kill standing (liquidity missing or under the floor, a drained or collapsing pool, active mint or freeze authority, honeypot pattern): ${killed.slice(0, 6).map((c) => c.symbol).join(", ")}${killed.length > 6 ? ", ..." : ""}.` : "No served coin has a hard kill standing.") + unreadNote, tone: killed.length ? "bad" : authUnread ? "warn" : null });
+    out.push({ text: (killed.length ? `${plural(killed.length, "served coin")} with a hard kill standing (liquidity missing or under the floor, a drained or collapsing pool, liquidity far out of line with the cap, active mint or freeze authority, honeypot pattern): ${killed.slice(0, 6).map((c) => c.symbol).join(", ")}${killed.length > 6 ? ", ..." : ""}.` : "No served coin has a hard kill standing.") + unreadNote, tone: killed.length ? "bad" : authUnread ? "warn" : null });
     const rows: BriefLine[] = [];
     for (const c of cs.filter(listed)) {
       const gaps: string[] = [];
@@ -252,7 +255,10 @@ function risk(i: BriefInputs): BriefLine[] {
     const rate = i.record?.ruggedRateObserved;
     const limit = CRYPTO_RULES.grading.maxNoDataShare;
     if (fin(r.graded) && r.graded > 0 && fin(rate)) {
-      out.push(fin(share) && share <= limit
+      const minN = CRYPTO_RULES.grading.minSample;
+      out.push(r.graded < minN
+        ? { text: `${r.rugged} of ${r.graded} graded coins rugged. No rate is quoted under ${minN} graded coins.`, tone: "warn" }
+        : fin(share) && share <= limit
         ? { text: `${r.rugged} of ${r.graded} graded coins rugged (${Math.round(rate * 100)}%).`, tone: null }
         : { text: `${r.rugged} of ${r.graded} graded coins rugged. No rate is quoted: ${fin(share) ? `${Math.round(share * 100)}% of resolved coins could not be priced, over the ${Math.round(limit * 100)}% limit, and an unpriced coin is often a rug` : "the share of coins that could not be priced was not reported"}.`, tone: "warn" });
     }

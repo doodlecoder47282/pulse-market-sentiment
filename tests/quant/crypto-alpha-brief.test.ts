@@ -128,6 +128,9 @@ test("an expired social read is not shown as current, and only listed coins are 
   const att = b.sections.find((s) => s.id === "attention")!.lines;
   assert.ok(!att.some((l) => /OLD: .*40 Bluesky/.test(l.text)), "a stale count is not printed as this hour's");
   assert.ok(att.some((l) => /No current social read for 1 listed coin \(OLD\)/.test(l.text)));
+  const partial = buildCryptoBrief(full({ candidates: [coin({ symbol: "HALF", bskyMentions1h: 12, socialStatus: "partial" })] }));
+  assert.doesNotMatch(text(partial, "attention"), /HALF: .*12 Bluesky/, "a partial read is never aged by the server, so it is not printed as this hour's");
+  assert.match(text(partial, "attention"), /No current social read for 1 listed coin \(HALF\)/);
   const passed = [...att, ...b.sections.find((s) => s.id === "narrative")!.lines].filter((l) => /PASSED/.test(l.text));
   assert.ok(passed.length >= 2, "a Pass coin is still described");
   assert.ok(passed.every((l) => l.coin === undefined), "but is not a link: its card is in a collapsed, truncated section");
@@ -143,6 +146,9 @@ test("lists are capped with the remainder stated, unread authorities qualify 'no
   assert.match(r, /3 more listed coins have an unread check or a flag; see their cards\./);
   assert.match(text(b, "coverage"), /The last feed request failed: this brief is built from the last successful read/);
   assert.match(text(buildCryptoBrief({ ...full(), record: { ...full().record!, coins: { total: 10, hit5m: 0, doubled: 0, rugged: 0, dead: 0, open: 10 } } }), "risk"), /unpriced count not reported/);
+  const small = text(buildCryptoBrief({ ...full(), record: { ...full().record!, noDataShare: 0, ruggedRateObserved: 1 / 3, coins: { total: 5, hit5m: 0, doubled: 0, rugged: 1, dead: 2, noData: 0, open: 2, graded: 3 } } }), "risk");
+  assert.match(small, /1 of 3 graded coins rugged\. No rate is quoted under 50 graded coins\./);
+  assert.doesNotMatch(small, /33%/);
 });
 
 test("the brief describes: no advice, forecast or edge wording anywhere, and no emojis", () => {
