@@ -62,3 +62,28 @@ test("joinHits: the window is measured from the previous crossing; other levels 
   assert.equal(apart.length, 3);
   assert.deepEqual(joinHits([]), []);
 });
+
+test("joinHits: when only the newest rows were read, a run touching the cut is marked as a floor", () => {
+  const all = Array.from({ length: 400 }, (_, i) => row(i, { id: i }));
+  const newest = all.slice(100);
+  const [line] = joinHits(newest, HIT_JOIN_MIN, newest[0].at);
+  assert.deepEqual([line.count, line.fromBefore, line.firstAt], [300, true, 100 * 60_000]);
+  const clear = joinHits([row(0), row(40), row(41)], HIT_JOIN_MIN, 0);
+  assert.deepEqual(clear.map((l) => [l.count, l.fromBefore]), [[2, false], [1, true]]);
+  assert.ok(joinHits([row(0), row(1)]).every((l) => l.fromBefore === false), "no cut given: nothing is marked");
+});
+
+test("joinHits: a level whose price moved is a separate line, and equal times keep id order", () => {
+  assert.equal(joinHits([row(0), row(1, { levelPrice: 26.3 })]).length, 2);
+  const [l] = joinHits([row(5, { id: 2, direction: "down" }), row(5, { id: 1, direction: "up" })]);
+  assert.deepEqual([l.count, l.direction], [2, "down"]);
+});
+
+test("range levels merge with a calendar level at the same price into one labelled line", async () => {
+  const { mergeLevels } = await import("../../shared/levelBoard");
+  const m = mergeLevels([{ key: "pdl", label: "prior-day low", price: 95, group: "prior day" }, { key: "l20", label: "20-session low", price: 95, group: "range" }], 100);
+  assert.equal(m.length, 1);
+  assert.deepEqual(m[0].key.split("+").sort(), ["l20", "pdl"]);
+  assert.match(m[0].label, /prior-day low/);
+  assert.match(m[0].label, /20-session low/);
+});

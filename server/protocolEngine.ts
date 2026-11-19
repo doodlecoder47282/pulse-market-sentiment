@@ -193,7 +193,7 @@ export interface ProtocolLog {
   lastTickError: string | null;
   protocols: ProtocolView[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
-  hits: Array<{ at: number; firstAt: number; count: number; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
+  hits: Array<{ at: number; firstAt: number; count: number; fromBefore: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
 
@@ -216,10 +216,15 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
     expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
   }));
   // Repeat crossings of one level are joined into one line (shared/protocols.ts joinHits); the newest 30 lines are shown.
-  const rawHits = (sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT 300`).all() as any[])
-    .map((r) => ({ at: r.at, symbol: r.symbol, levelKey: r.level_key, label: r.level_label, levelPrice: r.level_price, direction: r.direction, price: r.price }));
-  const hits = joinHits(rawHits).slice(0, 30).map((h) => ({
-    at: h.at, firstAt: h.firstAt, count: h.count, symbol: h.symbol, label: h.label, levelPrice: h.levelPrice, direction: h.direction, price: h.price,
+  const HIT_READ = 300;
+  const hitRows = sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT ?`).all(HIT_READ + 1) as any[];
+  // More rows exist than were read (or the table has been pruned at its cap): the oldest run may start earlier than the rows show.
+  const total = (sqlite.prepare(`SELECT COUNT(*) AS n FROM level_hits`).get() as any)?.n ?? 0;
+  const cut = hitRows.length > HIT_READ || total >= HIT_KEEP;
+  const rawHits = hitRows.slice(0, HIT_READ)
+    .map((r) => ({ id: r.id, at: r.at, symbol: r.symbol, levelKey: r.level_key, label: r.level_label, levelPrice: r.level_price, direction: r.direction, price: r.price }));
+  const hits = joinHits(rawHits, undefined, cut && rawHits.length ? rawHits[rawHits.length - 1].at : null).slice(0, 30).map((h) => ({
+    at: h.at, firstAt: h.firstAt, count: h.count, fromBefore: h.fromBefore, symbol: h.symbol, label: h.label, levelPrice: h.levelPrice, direction: h.direction, price: h.price,
     watchedBy: h.symbol === "$SPX" ? protocolsWatching(h.levelKey, book) : [],
   }));
   return {
