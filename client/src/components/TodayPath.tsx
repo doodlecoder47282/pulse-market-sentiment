@@ -28,7 +28,9 @@ export default function TodayPath({ onOpenMap, active = true }: { onOpenMap?: ()
     queryKey: ["/api/odte/forward"],
     queryFn: async () => (await apiRequest("GET", "/api/odte/forward?symbol=%24SPX")).json(),
     // Polls only while the opening tab is showing; the data stays for the other tabs without a timer.
-    refetchInterval: active ? 60_000 : false, staleTime: 30_000, retry: false,
+    // `enabled` matters as much as the interval: turning it back on with data older than staleTime fetches
+    // at once, so returning to the tab never shows an old read labelled "now".
+    enabled: active, refetchInterval: active ? 60_000 : false, staleTime: 30_000, retry: false,
   });
   const d = q.data;
   const w = d?.wiener;

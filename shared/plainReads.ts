@@ -340,7 +340,7 @@ export function readToday(m: {
     const rel = (x: number) => (x === m.spot ? "at the price" : `${pts(x - (m.spot as number))} ${x > (m.spot as number) ? "above" : "below"} the price`);
     parts.push(fin(m.flip) ? `The level where hedging would switch from one to the other (the gamma flip) is ${strike(m.flip)}, ${rel(m.flip)}.` : "No level where hedging switches was found inside the range read.");
     const side = (x: number | null | undefined, isPin: boolean | undefined, word: "above" | "below") =>
-      !fin(x) ? `No strike ${word} the price within 2% has the model's dealer hedging damping moves.`
+      !fin(x) ? `No strike ${word} the price within 2% stands out as one where the model has dealer hedging damping moves.`
       : isPin ? `No such strike stands out ${word} the price, so the pin (${strike(x)}), the largest one near the price, is shown there.`
       : `${word === "above" ? "Above" : "Below"} the price, the largest strike within 2% where the model has dealer hedging damping moves is ${strike(x)}.`;
     parts.push(side(m.above, m.aboveIsPin, "above"), side(m.below, m.belowIsPin, "below"));

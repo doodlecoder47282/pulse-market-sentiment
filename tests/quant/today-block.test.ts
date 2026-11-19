@@ -39,7 +39,7 @@ test("the detail names each level for what it is: the sign, the 2% window, the e
   assert.match(d, /straddle prices a range of 7,242 to 7,405\./);
   assert.match(d, /They describe positioning; they do not forecast direction\.$/);
   const gaps = readToday({ ...base, above: null, below: null, flip: null, dataState: "stale" }).detail!;
-  assert.match(gaps, /No level where hedging switches was found inside the range read\. No strike above the price within 2% has the model's dealer hedging damping moves\. No strike below the price within 2% has/);
+  assert.match(gaps, /No level where hedging switches was found inside the range read\. No strike above the price within 2% stands out as one where the model has dealer hedging damping moves\. No strike below the price within 2% stands out/);
   assert.match(gaps, /This is from the last chain read, not a live one\./);
   const pin = readToday({ ...base, above: 7325, aboveIsPin: true }).detail!;
   assert.match(pin, /No such strike stands out above the price, so the pin \(7,325\), the largest one near the price, is shown there\./, "the sentence agrees with the tile when the pin fills the slot");
@@ -77,7 +77,7 @@ test("the card opens with the read, closes with the path, sits above the stock s
   assert.ok(card.indexOf('data-testid="today-levels"') < card.indexOf("<TodayPath"), "the path comes after the levels");
   assert.match(card, /\{symbol === "\$SPX" && <TodayPath onOpenMap=\{onOpenMap\} active=\{active\} \/>\}/, "the path is the index's: not shown for another symbol");
   assert.match(card, /above, below, aboveIsPin, belowIsPin, flip,/, "the sentence is built from the same values the tiles show");
-  assert.match(card, /refetchInterval: active \? 60_000 : false/);
+  assert.match(card, /enabled: active,\n\s*refetchInterval: active \? 60_000 : false/, "re-enabling refetches stale data at once: no old read on return to the tab");
   assert.match(card, /<div className="hidden space-y-1 sm:block">/, "the position bar repeats the tiles and is left off phones");
   const dash = readFileSync(new URL("../../client/src/pages/dashboard.tsx", import.meta.url), "utf8");
   assert.ok(dash.indexOf('data-testid="today-block"') < dash.indexOf('data-testid="stock-research-workspace"'));
@@ -89,7 +89,7 @@ test("the card opens with the read, closes with the path, sits above the stock s
 test("the path draws only what the helpers allow, shares the map's request, keeps one height and names a stale read", () => {
   const p = readFileSync(new URL("../../client/src/components/TodayPath.tsx", import.meta.url), "utf8");
   assert.match(p, /queryKey: \["\/api\/odte\/forward"\]/, "the same query key as the Wiener map: no second request");
-  assert.match(p, /refetchInterval: active \? 60_000 : false/);
+  assert.match(p, /enabled: active, refetchInterval: active \? 60_000 : false, staleTime: 30_000/, "an old path is never shown as 'now' on return to the tab");
   assert.match(p, /const drawImplied = proj\.implied\?\.draw \? proj\.implied\.end : null;/);
   assert.match(p, /pathView\(w\.bands, proj\.spot, drawImplied, proj\.dealer \? \(d\.path \?\? null\) : null\)/, "no dealer line without priced gamma");
   assert.match(p, /\{proj\.impliedWhy\}; no line is drawn/);

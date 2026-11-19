@@ -37,6 +37,8 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
     queryKey: ["/api/odte/map", symbol],
     queryFn: async () => (await apiRequest("GET", `/api/odte/map?symbol=${encodeURIComponent(symbol)}`)).json(),
     // Polls only while the opening tab is showing (the card stays mounted above the tabs).
+    // `enabled` is what refetches on return: re-enabled with data older than staleTime, it fetches at once.
+    enabled: active,
     refetchInterval: active ? 60_000 : false,
     staleTime: 30_000,
     retry: false,
