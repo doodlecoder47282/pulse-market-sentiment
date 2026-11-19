@@ -2734,6 +2734,7 @@ inside the live view, where its description is true. Also taken: baseline rows n
 for the server, flow alerts distinguish status loading, chain unread and last-session chain, held open
 interest is marked on the short answer, "likely new positions", "buying each flagged whale contract".
 
+
 2026-11-18 (evening): Today block (feat/today-block, stacked on the answer-first reads). Understood as: one
 block at the very top with the plain read, the few levels that matter, and the projected path. The existing
 Today card (spot, wall above, gamma flip, largest level below, from the 0DTE map) now opens with one plain
