@@ -2863,3 +2863,11 @@ the real count, about 63 sessions) as a "range" group (shared/levelBoard.ts rang
 level by one ticker within 10 minutes of each other are shown as one line with the count, first time and last
 direction (shared/protocols.ts joinHits); every crossing is still stored and counted.
 Tests: tests/quant/board-depth.test.ts (5).
+
+**Replay accepts an older copy of minute bars (2026-11-19).** Seen live after #119 deployed: "Replay
+unavailable: newest 1-minute bars not fetched (ok, stale: self-throttle (100 requests/min))". The replay
+refused any re-served copy, but minute bars of sessions that had finished when the copy was made do not
+change. It now stores them, measures the forming-bar guard from when the payload was produced, and says in
+its note that sessions after the copy are not in the replay yet. Open: the server sat at its own 100
+requests-a-minute Schwab limit for several minutes after a deploy, after the close; what is spending that
+budget has not been looked at.

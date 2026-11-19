@@ -64,17 +64,21 @@ async function compute(nowMs: number): Promise<ProtocolReplayView> {
   let refreshNote: string | null = null;
   try {
     const ph = await getPriceHistory(SYMBOL, "day", 10, "minute", 1, false);
-    if (ph.dataState === "ok" && !ph.stale) {
+    // A copy re-served after a failed refresh is still good for sessions that had finished when it was made: old
+    // minute bars do not change. The forming-bar guard is measured from when the payload was produced, not from now.
+    const madeAt = typeof ph.asOfMs === "number" && Number.isFinite(ph.asOfMs) ? ph.asOfMs : null;
+    if (ph.dataState === "ok" && madeAt != null) {
       const up = sqlite.prepare(`INSERT OR REPLACE INTO index_minute_bars (symbol, t, o, h, l, c) VALUES (?, ?, ?, ?, ?, ?)`);
       const fin = (n: unknown) => typeof n === "number" && Number.isFinite(n);
       sqlite.transaction(() => {
         for (const c of ph.candles) {
           // A bar that may still be forming is left for the next read.
-          if (![c.datetime, c.open, c.high, c.low, c.close].every(fin) || !regular(c.datetime) || nowMs - c.datetime < 120_000) continue;
+          if (![c.datetime, c.open, c.high, c.low, c.close].every(fin) || !regular(c.datetime) || madeAt - c.datetime < 120_000) continue;
           up.run(SYMBOL, c.datetime, c.open, c.high, c.low, c.close);
         }
       })();
       sqlite.prepare(`DELETE FROM index_minute_bars WHERE symbol = ? AND t < ?`).run(SYMBOL, nowMs - KEEP_MS);
+      if (ph.stale) refreshNote = `the 1-minute bars are a copy from ${new Date(madeAt).toISOString().slice(0, 16).replace("T", " ")} UTC (a refresh failed${ph.reason ? `: ${ph.reason}` : ""}); sessions after it are not in the replay yet`;
     } else refreshNote = `newest 1-minute bars not fetched (${ph.dataState}${ph.stale ? ", stale" : ""}${ph.reason ? `: ${ph.reason}` : ""}); stored bars are used`;
   } catch (e: any) {
     refreshNote = `newest 1-minute bars not fetched (${String(e?.message ?? e).slice(0, 100)}); stored bars are used`;
