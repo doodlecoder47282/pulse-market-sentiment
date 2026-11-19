@@ -62,8 +62,10 @@ export interface DeskBoard {
 const DAILY_TTL_MS = 30 * 60_000;
 const INTRA_TTL_MS = 60_000;
 const BOARD_TTL_MS = 20_000;
-/** A read that came back empty or failed is not asked for again for this long (a refused endpoint cools down app-wide). */
-const NEGATIVE_TTL_MS = 5 * 60_000;
+/** A refused read (HTTP 4xx) is not asked for again for five minutes: a refused endpoint cools down app-wide. Anything else empty, one minute. */
+const REFUSED_TTL_MS = 5 * 60_000;
+const EMPTY_TTL_MS = 60_000;
+const negTtl = (reason: string) => (/\bHTTP 4\d\d\b|\b40[13]\b/.test(reason) ? REFUSED_TTL_MS : EMPTY_TTL_MS);
 
 /** What the board reads from; replaced in tests. */
 export interface DeskBoardDeps {
@@ -88,7 +90,7 @@ async function dailyBars(deps: DeskBoardDeps, symbol: string, forSession: string
   // A cache entry built for another session is a miss: at the close today's bar turns from "in progress" into the prior day.
   if (hit && hit.forSession === forSession && nowMs - hit.at < DAILY_TTL_MS) return hit.read;
   const neg = negative.get(`d:${symbol}`);
-  if (neg && nowMs - neg.at < NEGATIVE_TTL_MS) return { bars: [], reason: neg.reason, asOfMs: null };
+  if (neg && nowMs - neg.at < negTtl(neg.reason)) return { bars: [], reason: neg.reason, asOfMs: null };
   let read: DailyRead;
   try {
     const ph = await deps.getPriceHistory(symbol, "month", 3, "daily", 1);
@@ -116,7 +118,7 @@ export async function intraBars(symbol: string, nowMs: number, deps: DeskBoardDe
   const hit = intraCache.get(symbol);
   if (hit && nowMs - hit.at < INTRA_TTL_MS) return hit;
   const neg = negative.get(`i:${symbol}`);
-  if (neg && nowMs - neg.at < NEGATIVE_TTL_MS) return { bars: [], reason: neg.reason };
+  if (neg && nowMs - neg.at < negTtl(neg.reason)) return { bars: [], reason: neg.reason };
   let out: { bars: IntraBar[]; reason: string | null };
   try {
     const ph = await deps.getPriceHistory(symbol, "day", 1, "minute", 5, false);
@@ -190,6 +192,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     Promise.all(BOARD_TICKERS.map((t) => sessionOpen && t.kind !== "future" ? intraBars(t.symbol, nowMs, deps) : Promise.resolve(null))),
   ]);
 
+  let spxRaw: BoardLevel[] = [];
   const tickers: BoardTicker[] = BOARD_TICKERS.map((t, idx) => {
     const q = quotes.get(t.symbol) ?? null;
     const price = priced(t.symbol) ? (q!.last as number) : null;
@@ -217,7 +220,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       if (!sl.length) reasons.push(`today's open and opening range not read: ${i.reason ?? "no bar starting at 09:30 in the feed"}`);
     }
     if (levels.length && reasons.length) levelsState = "partial";
-    if (t.symbol === "$SPX") levels = levels.concat(opt.levels);
+    if (t.symbol === "$SPX") { levels = levels.concat(opt.levels); spxRaw = levels; }
     const merged = mergeLevels(levels, price);
     const n = nearestLevels(levels, price);
     return {
@@ -238,8 +241,8 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     vix: vixRead(by("$VIX").changePct),
     cases: {
       symbol: "$SPX", price: spx.price,
-      bull: deskCase(spx.levels, spx.price, "bull"),
-      bear: deskCase(spx.levels, spx.price, "bear"),
+      bull: deskCase(spxRaw, spx.price, "bull"),
+      bear: deskCase(spxRaw, spx.price, "bear"),
       optionsState: opt.state, optionsReason: opt.reason, optionsAsOfMs: opt.asOfMs,
     },
     note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars; the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",

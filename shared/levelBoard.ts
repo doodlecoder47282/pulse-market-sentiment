@@ -109,7 +109,8 @@ export function sessionLevels(intra: IntraBar[], todayEt: string, nowMs: number)
 }
 
 /**
- * Levels closer together than MERGE_PCT of the price become one line. The line sits at the highest of them
+ * Levels within MERGE_PCT of the price of the highest one in a run become one line (a line never spans more
+ * than that, so a chain of close levels cannot swallow a level the price is sitting on). The line sits at the highest of them
  * and its label carries each level with its own price, so no level is shown at a price that is not its own.
  * Sorted high to low.
  */
@@ -119,7 +120,7 @@ export function mergeLevels(levels: BoardLevel[], price: number | null | undefin
   const groups: BoardLevel[][] = [];
   for (const l of sorted) {
     const g = groups[groups.length - 1];
-    if (g && Math.abs(g[g.length - 1].price - l.price) <= tol) g.push(l); else groups.push([l]);
+    if (g && Math.abs(g[0].price - l.price) <= tol) g.push(l); else groups.push([l]);
   }
   return groups.map((g) => g.length === 1 ? { ...g[0] } : {
     ...g[0], key: g.map((l) => l.key).join("+"),
@@ -132,11 +133,20 @@ export interface Nearest { at: BoardLevel[]; above: BoardLevel[]; below: BoardLe
 export function nearestLevels(levels: BoardLevel[], price: number | null | undefined): Nearest {
   if (!ok(price)) return { at: [], above: [], below: [] };
   const tol = price * AT_LEVEL_PCT;
-  const m = mergeLevels(levels, price);
+  // Each level is placed by its own price first, then close ones are joined inside their side. Above the
+  // price a joined line is restated at its nearest (lowest) member, so the distance shown is to the nearest.
+  const raw = levels.filter((l) => ok(l.price));
+  const nearestFirstAbove = (m: BoardLevel[]) => m.map((l) => ({ ...l })).sort((a, b) => a.price - b.price);
+  const aboveRaw = raw.filter((l) => l.price > price + tol);
+  const above = nearestFirstAbove(mergeLevels(aboveRaw, price).map((line) => {
+    const parts = line.key.split("+");
+    const low = Math.min(...aboveRaw.filter((l) => parts.includes(l.key)).map((l) => l.price));
+    return Number.isFinite(low) ? { ...line, price: low } : line;
+  }));
   return {
-    at: m.filter((l) => Math.abs(l.price - price) <= tol),
-    above: m.filter((l) => l.price > price + tol).sort((a, b) => a.price - b.price),
-    below: m.filter((l) => l.price < price - tol).sort((a, b) => b.price - a.price),
+    at: mergeLevels(raw.filter((l) => Math.abs(l.price - price) <= tol), price),
+    above,
+    below: mergeLevels(raw.filter((l) => l.price < price - tol), price).sort((a, b) => b.price - a.price),
   };
 }
 
