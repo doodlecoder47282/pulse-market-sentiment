@@ -151,8 +151,10 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
               </div>
               <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
                 <span title="bar extent: the lower of the magnet, flip and straddle low">{lvl(lo + 5)}</span>
-                <span className="text-amber-300">flip {lvl(flip)}</span>
+                {/* the two labels in price order, so each sits on the side of the bar its mark is on */}
+                {flip != null && flip <= spot && <span className="text-amber-300">flip {lvl(flip)}</span>}
                 <span className="text-foreground">spot {lvl(spot)}</span>
+                {flip != null && flip > spot && <span className="text-amber-300">flip {lvl(flip)}</span>}
                 <span title="bar extent: the higher of the wall, flip and straddle high">{lvl(hi - 5)}</span>
               </div>
             </div>
