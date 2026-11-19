@@ -3754,6 +3754,16 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.status(500).json({ error: "protocols_failed", message: e?.message ?? String(e) });
     }
   });
+  // PROTOCOL REPLAY (server/protocolReplay.ts): the price-only rule run over stored past sessions, counts only, kept apart from the live record.
+  app.get("/api/desk/protocols/replay", async (_req, res) => {
+    try {
+      const { getProtocolReplay } = await import("./protocolReplay");
+      res.json(await getProtocolReplay());
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "protocol_replay_failed", message: e?.message ?? String(e) });
+    }
+  });
   app.get("/api/setups", (_req, res) => {
     try { res.json(getSetupLog()); }
     catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }
