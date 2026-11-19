@@ -3744,6 +3744,16 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.status(500).json({ error: "desk_board_failed", message: e?.message ?? String(e) });
     }
   });
+  // SCOREBOARD (server/scoreboard.ts): every graded record the desk keeps, side by side, counts only.
+  app.get("/api/scoreboard", async (_req, res) => {
+    try {
+      const { getScoreboard } = await import("./scoreboard");
+      res.json(await getScoreboard());
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "scoreboard_failed", message: e?.message ?? String(e) });
+    }
+  });
   // PROTOCOL LOG (server/protocolEngine.ts): the if-then book for the index, which conditions are met now, the counts-only record, and the level-hit log.
   app.get("/api/desk/protocols", async (_req, res) => {
     try {

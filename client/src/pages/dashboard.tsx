@@ -55,6 +55,7 @@ import SchwabRequiredNotice from "@/components/SchwabRequiredNotice";
 import DemoStrip from "@/components/DemoStrip";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TodayCard from "@/components/TodayCard";
+import ScoreboardCard from "@/components/ScoreboardCard";
 
 import TickerScanCard from "@/components/TickerScanCard";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
@@ -573,6 +574,12 @@ export default function Dashboard() {
           <div hidden={activeTab !== "signals"} className="mb-4" data-testid="today-block">
             <ErrorBoundary label="Today"><TodayCard active={activeTab === "signals"} onOpenDesk={() => setActiveTab("tradedesk")} onOpenMap={() => setActiveTab("heatseeker")} /></ErrorBoundary>
           </div>
+          {/* Scoreboard: every graded record the desk keeps, one sentence, rows on tap. Mounted only on Signals so it does not poll from other tabs. */}
+          {activeTab === "signals" && (
+            <div className="mb-4" data-testid="scoreboard-block">
+              <ErrorBoundary label="Scoreboard"><ScoreboardCard /></ErrorBoundary>
+            </div>
+          )}
           {/* Stock research (Trade Brief): kept mounted, shown on the Signals tab. */}
           <div hidden={activeTab !== "signals"} data-testid="stock-research-workspace">
             <ErrorBoundary label="Stock research"><TradeBriefSearch /></ErrorBoundary>
