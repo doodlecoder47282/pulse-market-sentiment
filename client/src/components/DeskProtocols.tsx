@@ -25,6 +25,16 @@ interface Log {
   note: string;
 }
 
+interface Replay {
+  state: "ok" | "unavailable"; reason: string | null; asOfMs: number; refreshNote: string | null; answer: string; limits: string[];
+  replay: null | {
+    sessionsReplayed: number; firstSession: string | null; lastSession: string | null;
+    skipped: Array<{ date: string; reason: string }>;
+    events: Array<{ date: string; armedAt: number; levelLabel: string; levelPrice: number; entry: number; expectPrice: number; cancelPrice: number; status: string; reason: string | null }>;
+    record: { graded: number; tested: boolean; text: string };
+  };
+}
+
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
@@ -44,6 +54,13 @@ export default function DeskProtocols() {
     queryFn: async () => (await apiRequest("GET", "/api/desk/protocols")).json(),
     refetchInterval: 30_000,
     staleTime: 15_000,
+    retry: false,
+  });
+  const [showReplay, setShowReplay] = useState(false);
+  const rq = useQuery<Replay>({
+    queryKey: ["/api/desk/protocols/replay"],
+    queryFn: async () => (await apiRequest("GET", "/api/desk/protocols/replay")).json(),
+    staleTime: 10 * 60_000,
     retry: false,
   });
   if (q.isLoading) return <Card data-testid="desk-protocols"><CardContent className="p-4 text-sm text-muted-foreground">Reading the protocol book…</CardContent></Card>;
@@ -98,6 +115,40 @@ export default function DeskProtocols() {
               </div>
             );
           })}
+        </div>
+        <div className="rounded-md border border-border/60 p-2.5" data-testid="desk-protocols-replay">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Replay on past sessions · not the live record</div>
+          {rq.isLoading ? <p className="text-[12px] text-muted-foreground">Replaying past sessions…</p>
+            : rq.isError || !rq.data ? <p className="text-[12px] text-amber-400">Replay not read: the request failed.</p>
+            : rq.data.state !== "ok" || !rq.data.replay ? <p className="break-words text-[12px] text-amber-400">Replay unavailable: {rq.data.reason ?? "no reason given"}</p>
+            : (
+              <>
+                <p className="break-words text-[12px] leading-snug text-foreground" data-testid="desk-protocols-replay-answer">{rq.data.answer}</p>
+                <p className="break-words text-[11px] text-muted-foreground">Sweep under a level and reclaim, replay record: {rq.data.replay.record.text} Computed {day(rq.data.asOfMs)} {hhmm(rq.data.asOfMs)} ET.</p>
+                {rq.data.refreshNote && <p className="break-words text-[11px] text-amber-400">{rq.data.refreshNote}</p>}
+                <button type="button" className="mt-1 min-h-[44px] text-[11px] text-muted-foreground underline lg:min-h-0" aria-expanded={showReplay} onClick={() => setShowReplay(!showReplay)}>
+                  {showReplay ? "hide detail" : "each replayed arm, skipped sessions and limits"}
+                </button>
+                {showReplay && (
+                  <div className="mt-1 space-y-1.5 text-[12px]">
+                    <ul className="space-y-0.5">
+                      {rq.data.replay.events.map((e) => (
+                        <li key={e.armedAt} className="break-words">
+                          <span className="font-mono text-muted-foreground">{e.date} {hhmm(e.armedAt)}</span> at <span className="font-mono">{px(e.entry)}</span> after a sweep of {px(e.levelPrice)} <span className="text-muted-foreground">({e.levelLabel})</span>
+                          {" · "}<span className="text-foreground">{STATUS[e.status] ?? e.status}</span>{e.reason ? <span className="text-muted-foreground"> ({e.reason})</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                    {rq.data.replay.skipped.length > 0 && (
+                      <p className="break-words text-[11px] text-muted-foreground">Not replayed: {rq.data.replay.skipped.map((x) => `${x.date} (${x.reason})`).join("; ")}.</p>
+                    )}
+                    <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground">
+                      {rq.data.limits.map((x) => <li key={x} className="break-words">{x}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
         </div>
         {l.recent.length > 0 && (
           <div data-testid="desk-protocols-recent">

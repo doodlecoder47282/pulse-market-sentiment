@@ -33,6 +33,9 @@ export const MACRO_COVERAGE: Record<MacroEvent["name"], string> = {
   PCE: "October 2026 onward (Nov 25 to verify against bea.gov)",
 };
 
+/** First date from which all four tier-1 releases are loaded (CPI is the last, from November 2026). A session before it cannot have its release window checked. */
+export const MACRO_COMPLETE_FROM = "2026-11-01";
+
 export const MACRO_EVENTS: MacroEvent[] = [
   { date: "2026-01-09", time: "08:30", name: "NFP", tier: 1, note: "December 2025 data" },
   { date: "2026-01-28", time: "14:00", name: "FOMC", tier: 1, note: "decision; meeting Jan 27-28" },
