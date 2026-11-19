@@ -10,12 +10,16 @@ import { editionFromEnv } from "../shared/edition";
 import { getPriceHistory } from "./schwab";
 import { etDate, etClock, sessionCloseMinutes, REGULAR_OPEN_MIN } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
-import { replaySweepReclaim, replayAnswer, type ReplayResult } from "../shared/protocolReplay";
+import { replaySession, combineReplays, sessionsOf, replayAnswer, REPLAY_MIN_COVERAGE, type ReplayResult, type SessionReplay } from "../shared/protocolReplay";
+import { PROTOCOL_BOOK_VERSION } from "../shared/protocols";
 import type { DayBar, IntraBar } from "../shared/levelBoard";
 
 const SYMBOL = "$SPX";
 const CACHE_MS = 30 * 60_000;
+const NEG_CACHE_MS = 60_000;
 const KEEP_MS = 400 * 86_400_000;
+/** A finished session's replay never changes while its bars, the daily bars before it and the book stay the same: kept per date. */
+const sessionMemo = new Map<string, { sig: string; out: SessionReplay }>();
 
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS index_minute_bars (
@@ -41,7 +45,8 @@ const LIMITS = [
   "The replay uses the close of each completed 1-minute bar as the price; the live desk reads a live price every 60 seconds.",
   "Only prior-day, prior-week, pivot and opening-range levels are replayed. Sweeps of option landmarks (magnet below, straddle low) need past option chains, which are not stored.",
   "The wall rule is not replayed: it needs the option wall, the tech read and the VIX read as they were at each minute.",
-  "Arms on the same or neighbouring days are not independent events. Counts only.",
+  "Arms on the same or neighbouring days are not independent events. Counts only; a replay never makes a rule tested.",
+  `A session is replayed only with at least ${Math.round(REPLAY_MIN_COVERAGE * 100)}% of its 1-minute bars, the daily bar of the session before it, and a release calendar that covers it; others are listed as not replayed. An arm with a minute missing before its outcome is not graded.`,
 ];
 
 let cache: { at: number; view: ProtocolReplayView } | null = null;
@@ -80,13 +85,29 @@ async function compute(nowMs: number): Promise<ProtocolReplayView> {
   const dh = await getPriceHistory(SYMBOL, "year", 2, "daily", 1);
   const daily: DayBar[] = (dh.candles ?? []).map((c) => ({ date: dailyBarEtDate(c.datetime, etDate), open: c.open, high: c.high, low: c.low, close: c.close }));
   if (!daily.length) return { ...base, state: "unavailable", reason: `no daily index bars for the levels${dh.reason ? `: ${dh.reason}` : ""}`, refreshNote, answer: "No past session could be replayed: the daily bars the levels come from were not read.", replay: null };
-  const replay = replaySweepReclaim(daily, minute, nowMs);
+  if (dh.stale || dh.dataState !== "ok") refreshNote = [refreshNote, `daily bars for the levels are ${dh.stale ? "a stale copy" : dh.dataState}${dh.reason ? ` (${dh.reason})` : ""}`].filter(Boolean).join("; ");
+  const outs: SessionReplay[] = [];
+  for (const [date, bars] of sessionsOf(minute)) {
+    // What a session's replay depends on: its own bars, the daily bars before it, and the book.
+    const before = daily.filter((b) => b.date < date);
+    const lastD = before[before.length - 1];
+    const sig = `${PROTOCOL_BOOK_VERSION}|${bars.length}|${bars[bars.length - 1].t}|${before.length}|${lastD ? `${lastD.date}:${lastD.high}:${lastD.low}:${lastD.close}` : "none"}`;
+    const hit = sessionMemo.get(date);
+    if (hit && hit.sig === sig) { outs.push(hit.out); continue; }
+    const out = replaySession(date, bars, daily, nowMs);
+    // A session still in progress is not kept: it becomes replayable at the close.
+    if (out.skipped !== "session still in progress") sessionMemo.set(date, { sig, out });
+    outs.push(out);
+    // Yield between sessions: a first run over many stored sessions must not hold the event loop.
+    await new Promise<void>((r) => setImmediate(r));
+  }
+  const replay = combineReplays(outs);
   return { ...base, state: "ok", reason: null, refreshNote, answer: replayAnswer(replay), replay };
 }
 
 export async function getProtocolReplay(nowMs: number = Date.now()): Promise<ProtocolReplayView> {
-  if (cache && nowMs - cache.at < CACHE_MS) return cache.view;
+  if (cache && nowMs - cache.at < (cache.view.state === "ok" ? CACHE_MS : NEG_CACHE_MS)) return cache.view;
   if (inFlight) return inFlight;
-  inFlight = compute(nowMs).then((view) => { if (view.state === "ok") cache = { at: nowMs, view }; return view; }).finally(() => { inFlight = null; });
+  inFlight = compute(nowMs).then((view) => { cache = { at: nowMs, view }; return view; }).finally(() => { inFlight = null; });
   return inFlight;
 }

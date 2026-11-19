@@ -1,7 +1,7 @@
 // The replay runs the live sweep rule over past sessions and grades each arm with the live grader.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { replaySweepReclaim, joinBars, replayAnswer } from "../../shared/protocolReplay";
+import { replaySweepReclaim, replaySession, combineReplays, joinBars, replayAnswer } from "../../shared/protocolReplay";
 import { etWallToEpochMs } from "../../shared/exchangeCalendar";
 import type { DayBar, IntraBar } from "../../shared/levelBoard";
 
@@ -74,4 +74,49 @@ test("a tier-1 release near the sweep keeps the rule from arming, as it does liv
   const ev = [{ date: D, time: "10:35", name: "CPI" as const, tier: 1 as const }];
   const r = replaySweepReclaim(daily, sweepDay(), AFTER, { events: ev });
   assert.ok(!r.events.some((e) => e.armedAt < etWallToEpochMs(D, 10 * 60 + 50)), "nothing arms inside the release window");
+});
+
+test("a session past the release calendar's validity is skipped, not counted as a quiet session", () => {
+  const r = replaySweepReclaim(daily, sweepDay(), AFTER, { validThrough: "2026-11-11" });
+  assert.equal(r.sessionsReplayed, 0);
+  assert.match(r.skipped[0].reason, /only valid through 2026-11-11/);
+});
+
+test("prior-day levels must come from the session right before: an older newest daily bar skips the session", () => {
+  const r = replaySweepReclaim(daily.slice(0, 1), sweepDay(), AFTER);
+  assert.match(r.skipped[0].reason, /newest daily bar before this session is 2026-11-10, not 2026-11-11/);
+});
+
+test("a minute missing between the arm and its outcome leaves the arm ungraded", () => {
+  const full = sweepDay({ 100: { high: 7020 } });
+  const holed = full.filter((_, i) => i < 80 || i > 90); // 11 of 390 missing: coverage still passes
+  const e = replaySweepReclaim(daily, holed, AFTER).events[0];
+  assert.equal(e.status, "ungraded");
+  assert.match(e.reason ?? "", /1-minute bars missing/);
+  assert.match(replayAnswer(replaySweepReclaim(daily, holed, AFTER)), /1 could not be graded/);
+});
+
+test("the replay record never reads as tested, whatever the count", () => {
+  const one = replaySession(D, sweepDay({ 100: { high: 7020 } }), daily, AFTER);
+  const many = combineReplays(Array.from({ length: 40 }, (_, i) => ({ ...one, date: `2026-11-${String(i).padStart(2, "0")}` })));
+  assert.equal(many.record.graded, 40);
+  assert.equal(many.record.tested, false);
+  assert.match(many.record.text, /never counts as tested/);
+  assert.doesNotMatch(many.record.text, /Too few to judge/);
+});
+
+test("thirty sessions replay inside a time budget (the server runs this on its event loop)", () => {
+  const days = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"];
+  const t0 = Date.now();
+  let armed = 0;
+  for (let k = 0; k < 3; k++) for (const d of days) {
+    const o = etWallToEpochMs(d, 9 * 60 + 30);
+    const bars = sweepDay().map((b, i) => ({ ...b, t: o + i * 60_000 }));
+    const prior = [{ date: "2026-10-30", open: 7020, high: 7060, low: 7000, close: 7030 }, ...days.filter((x) => x < d).map((x) => ({ date: x, open: 7020, high: 7060, low: 7000, close: 7030 }))];
+    const r = replaySession(d, bars, prior, AFTER + 30 * 86_400_000);
+    armed += r.events?.length ?? 0;
+  }
+  const ms = Date.now() - t0;
+  assert.ok(armed >= 30, "each synthetic session arms");
+  assert.ok(ms < 3000, `30 sessions took ${ms} ms`);
 });
