@@ -110,7 +110,7 @@ test("answer first: every read has a short answer that stands alone, with the lo
   ];
   for (const r of reads) {
     assert.ok(words(r.answer) <= 26, `answer too long for a phone (${words(r.answer)} words): ${r.answer}`);
-    assert.match(r.answer, /[.]$/);
+    assert.match(r.answer, /[.)]$/);
     assert.ok(r.detail && r.detail.length > r.answer.length / 2, `detail present: ${r.answer}`);
     assert.doesNotMatch(`${r.answer} ${r.detail}`, /\b(buy|sell|should|recommend|bullish|bearish|will (rise|fall|drop|rally)|expect a|likely to)\b/i);
   }
@@ -125,15 +125,16 @@ test("the short answers say the same thing as the sentences behind them", () => 
   const g = { zerodte: b(0, 0), short: b(-1, 5), weekly: b(-1, 5), monthly: b(-1, 5) };
   assert.equal(readGexLadder(g, 1).answer, "Model read: dealer hedging adds to moves at every expiry read.");
   assert.equal(readGexLadder(g, 1, { source: "none" }).answer, "Dealer hedging by expiry was not read.");
-  assert.equal(readKeyLevels({ spot: 7324, flipStrike: 7525, flipMethod: "sign_change", score: -40 }).answer, "Positioning changes side at 7,525 (201 points above the price); more puts than calls are held near the price.");
-  assert.equal(readKeyLevels({ spot: 7324, flipStrike: 7650, flipMethod: "peak_fallback", score: 2 }).answer, "Calls and puts are held in about equal weight near the price.", "a fallback strike is not offered as a change of side");
+  assert.equal(readKeyLevels({ spot: 7324, flipStrike: 7525, flipMethod: "sign_change", score: -40 }).answer, "Positioning changes side at 7,525 (201 points above the price); more put exposure than call exposure is held near the price.");
+  assert.equal(readKeyLevels({ spot: 7324, flipStrike: 7650, flipMethod: "peak_fallback", score: 2 }).answer, "Call and put exposure are held in about equal weight near the price.", "a fallback strike is not offered as a change of side");
   assert.equal(readKeyLevels({ spot: 1, flipStrike: 1, score: 0, dexState: "unavailable" }).answer, "The balance of calls against puts was not read.");
   assert.equal(readDex({ totalNetDex: 0, totalCallDex: 0, totalPutDex: 0, dexState: "unavailable" }).answer, "Delta exposure was not read.");
   assert.equal(readPinning([{ strike: 7335, prob: 2.1 }, { strike: 7340, prob: 2.1 }], { state: "ok", reason: null }).answer, "No single strike stands out as the priced settle.");
-  assert.match(readPinning([{ strike: 100, prob: 9 }, { strike: 101, prob: 3 }], { state: "ok", reason: null }).answer, /lean toward a settle near 100; odds from prices, not a forecast\./);
+  assert.match(readPinning([{ strike: 100, prob: 9 }, { strike: 101, prob: 3 }], { state: "ok", reason: null }).answer, /^The single most likely settle strike in option prices is 100; odds from prices, not a forecast\.$/);
   assert.equal(readUnusualVolume([], { source: "none" }).answer, "Unusual volume could not be judged on this read.");
   assert.equal(readVrp([{ marketIV: 0.2, theoreticalIV: 0.29, signal: "fair" }, { marketIV: 0.2, theoreticalIV: 0.29, signal: "iv_cheap" }, { marketIV: 0.2, theoreticalIV: 0.29, signal: "iv_cheap" }]).answer, "The rich and cheap labels below are not reliable on this read.");
-  assert.equal(readVixTerm(24.56, 0.989).answer, "VIX 24.6: bigger daily swings than usual are priced, more so in the near term than further out.");
+  assert.equal(readVixTerm(24.56, 0.989).answer, "VIX 24.6: bigger daily swings than usual are priced; near-term volatility is priced above later volatility.");
+  assert.equal(readVixTerm(13.5, 1.15).answer, "VIX 13.5: small daily swings are priced; near-term volatility is priced below later volatility, the usual shape.", "the term clause must not read backwards when the level is small");
   assert.equal(readVixTerm(null, 1.1).answer, "The VIX was not read.");
 });
 
@@ -141,7 +142,7 @@ test("the model box: the model's read in words, the flip and walls placed agains
   const r = readModel({ spot: 7324, zeroGamma: 7572, callWall: 7522, putWall: 7271, gammaZone: "y-" });
   assert.equal(r.answer, "Model read: dealer hedging adds to moves here.");
   assert.match(r.detail!, /\(the gamma flip\) is 7,572, 248 points above the price\./);
-  assert.match(r.detail!, /The largest call hedging level is 7,522 \(198 points above the price\) and the largest put hedging level is 7,271 \(53 points below the price\)\./);
+  assert.match(r.detail!, /The largest call hedging level at or above the price is 7,522 \(198 points above the price\) and the largest put hedging level at or below the price is 7,271 \(53 points below the price\)\./);
   assert.match(r.detail!, /assumption about who holds what, not a measurement, and it says nothing about direction\.$/);
   assert.equal(readModel({ spot: 7324, zeroGamma: 7300, callWall: null, putWall: null, gammaZone: "y+" }).answer, "Model read: dealer hedging damps moves here.");
   const unread = readModel({ spot: 7324, zeroGamma: null, callWall: null, putWall: null, gammaZone: "y?" });
@@ -150,16 +151,24 @@ test("the model box: the model's read in words, the flip and walls placed agains
 });
 
 test("the cone, whale follow-through, graded alerts and flow alerts: counts with their n, and unread said", () => {
-  assert.equal(readCone({ spot: 7340, days: 10, q10: 6964.68, q90: 7736.66 }).answer, "From recent volatility alone, 8 in 10 outcomes 10 sessions out fall between 6,965 and 7,737. No direction is assumed.");
+  assert.equal(readCone({ spot: 7340, days: 10, q10: 6964.68, q90: 7736.66 }).answer, "The model puts 8 in 10 outcomes 10 sessions out between 6,965 and 7,737, from recent movement scaled by the VIX. No direction is assumed.");
   assert.equal(readCone(null).answer, "The forward range was not read.");
-  assert.equal(readWhalePerformance({ count: 49, wins: 4, losses: 45, winRate: 4 / 49, avgPct: -0.62 }, 7).answer, "Following whale trades over the last 7 days: 4 of 49 closed positions made money after costs; the average result was −62%.");
+  assert.equal(readWhalePerformance({ count: 49, wins: 4, losses: 45, winRate: 4 / 49, avgPct: -0.62 }, 7).answer, "Buying each flagged whale contract over the last 7 days: 4 of 49 closed positions made money after costs; the average result was −62%.");
   assert.equal(readWhalePerformance({ count: 0, wins: 0, losses: 0, winRate: null, avgPct: null, excludedNoFee: 22 }, 7).answer, "No whale position closed with a scoreable result in the last 7 days (22 left out for a missing quote or fee).");
   assert.equal(readWhalePerformance(null, 30).answer, "Whale follow-through was not read.");
-  assert.equal(readEdgeWhale({ graded: 99, pending: 57, hit30Rate: 0.0505 }, 30).answer, "Of 99 graded whale alerts in the last 30 days, 5 reached +30% (5%).");
+  assert.match(readWhalePerformance({ count: 3, wins: 1, losses: 2, winRate: 1 / 3, avgPct: -0.004 }, 7).answer, /the average result was about 0%\./, "a small average is not printed as minus zero");
+  assert.equal(readEdgeWhale({ graded: 99, pending: 57, hit30Rate: 0.0505 }, 30).answer, "Of 99 graded whale alerts in the last 30 days, 5 finished up 30% or more at expiry (5%).");
   assert.equal(readEdgeWhale({ graded: 0, pending: 12, hit30Rate: 0 }, 14).answer, "No whale alert has been graded in the last 14 days (12 pending).");
   assert.equal(readFlowAlerts({ total: 15, high: 1, connected: true }).answer, "15 flow alerts showing, 1 marked high. Each flags size on the options chain, not direction.");
   assert.equal(readFlowAlerts({ total: 0, high: 0, connected: true }).answer, "No flow alert is showing right now.");
   assert.equal(readFlowAlerts({ total: 3, high: 0, connected: false }).answer, "Flow alerts are not updating: the chain feed is not connected.");
+  assert.equal(readFlowAlerts({ total: 0, high: 0, connected: null }).answer, "Checking whether the chain feed is connected.", "a status still loading is not 'not connected'");
+  assert.equal(readFlowAlerts({ total: 0, high: 0, connected: true, chainRead: false }).answer, "The options chain has not been read yet, so there is nothing to judge.", "an unread chain is not a quiet one");
+  assert.equal(readFlowAlerts({ total: 15, high: 1, connected: true, chainRead: true, lastSession: true }).answer, "15 flow alerts showing from the last session's chain, 1 marked high. Each flags size on the options chain, not direction.");
+  assert.match(readEdgeWhale({ graded: 99, pending: 57, hit30Rate: 0.0505 }, 30).detail!, /A gain that was given back before expiry is not a hit\./);
+  assert.match(readCone({ spot: 1, days: 10, q10: 1, q90: 2 }).detail!, /scaled up or down by the VIX\..*Its coverage has not been tested\./);
+  assert.match(READ_MM_MATRIX.detail!, /VIX-implied one-standard-deviation move scaled by a hand-set multiplier/);
+  assert.equal(readGexLadder({ zerodte: b(0, 0), short: b(-1, 5), weekly: b(-1, 5), monthly: b(-1, 5) }, 1, { source: "held", sessionDate: "2026-11-18" }).answer, "Model read: dealer hedging adds to moves at every expiry read. (Open interest from 2026-11-18.)", "a read resting on held open interest says so in the answer, not only behind the tap");
 });
 
 test("every wired panel shows its read through the shared component, answer first with the rest behind a tap", () => {
@@ -175,9 +184,9 @@ test("every wired panel shows its read through the shared component, answer firs
   const wired: Array<[string, string]> = [
     ["components/ModelsPanel.tsx", 'testId="models-model-plain"'], ["components/ModelsPanel.tsx", 'testId="models-vix-plain"'], ["components/ModelsPanel.tsx", "READ_MM_MATRIX"],
     ["components/BacktestOverlay.tsx", "READ_VOL_BAND_BACKTEST"], ["components/models/MultiDayCone.tsx", "readCone({"], ["components/models/PivotProjection.tsx", "READ_PIVOT_PROJECTION"],
-    ["components/WhaleFlowPanel.tsx", 'readWhalePerformance(rows.find((r) => r.source === "whale") ?? null, snap.windowDays)'], ["components/EdgeStatsPanel.tsx", "readEdgeWhale(data.whaleAlerts, data.windowDays)"],
-    ["components/FlowAlertsPanel.tsx", "readFlowAlerts({ total: totalCount, high: highCount, connected: isConnected })"], ["pages/dashboard.tsx", "READ_HEATSEEKER"],
+    ["components/WhaleFlowPanel.tsx", 'readWhalePerformance(rows.find((r) => r.source === "whale") ?? snap.overall, snap.windowDays)'], ["components/EdgeStatsPanel.tsx", "readEdgeWhale(data.whaleAlerts, data.windowDays)"],
+    ["components/FlowAlertsPanel.tsx", "connected: statusData == null ? null : isConnected, chainRead: chainLabel != null"], ["components/Heatseeker.tsx", "READ_HEATSEEKER"],
   ];
   for (const [f, needle] of wired) assert.ok(read(f).includes(needle), `${f}: ${needle}`);
-  assert.match(read("components/BacktestOverlay.tsx"), /\{!data\?\.dealerLevelsFromChains && <PlainRead read=\{READ_VOL_BAND_BACKTEST\}/, "not shown once real dealer levels are tested");
+  assert.match(read("components/BacktestOverlay.tsx"), /\{data && !data\.dealerLevelsFromChains && <PlainRead read=\{READ_VOL_BAND_BACKTEST\}/, "only once the server has answered, and not once real dealer levels are tested");
 });

@@ -95,6 +95,9 @@ const LABELS: Record<BacktestLevelKind, string> = {
   vommaPocket: "Vomma Pocket",
 };
 
+/** The two comparison rows the server adds beside the stand-in levels. */
+const BASELINE_LABELS: Record<string, string> = { baselineSpot: "Baseline: current price", baselineRandom: "Baseline: random level" };
+
 function useBacktest() {
   return useQuery<BacktestSummary>({
     queryKey: ["/api/backtest/levels"],
@@ -211,7 +214,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
       className="rounded-lg border border-violet-500/20 bg-black/30"
       data-testid="backtest-section"
     >
-      {!data?.dealerLevelsFromChains && <PlainRead read={READ_VOL_BAND_BACKTEST} testId="backtest-plain" className="m-2" />}
+      {data && !data.dealerLevelsFromChains && <PlainRead read={READ_VOL_BAND_BACKTEST} testId="backtest-plain" className="m-2" />}
       <button
         onClick={() => setOpen(!open)}
         className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 border-b border-violet-500/20 px-3 py-2 text-left font-mono text-[11px] uppercase tracking-widest text-violet-300/80 hover:bg-violet-500/5"
@@ -318,7 +321,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
                   <tbody>
                     {rows.map(r => { const v = shown(r); return (
                       <tr key={r.levelKind} className="border-b border-border/20 hover:bg-violet-500/5" data-testid={`bt-row-${r.levelKind}`}>
-                        <td className="px-2 py-1.5 text-white">{LABELS[r.levelKind] ?? r.levelKind}</td>
+                        <td className="px-2 py-1.5 text-white">{LABELS[r.levelKind] ?? BASELINE_LABELS[r.levelKind as string] ?? r.levelKind}</td>
                         <td className={`px-2 py-1.5 text-right font-semibold ${rateColor(v.touch, "touch")}`} title={v.lo != null && v.hi != null ? `95% CI ${pct(v.lo)}-${pct(v.hi)}` : undefined}>
                           {pct(v.touch)}{v.lo != null && v.hi != null && <span className="ml-1 font-normal text-muted-foreground">[{pct(v.lo)}-{pct(v.hi)}]</span>}
                         </td>
