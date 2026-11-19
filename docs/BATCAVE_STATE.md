@@ -2831,3 +2831,17 @@ sandbox: if ES and NQ still read unavailable after this deploy, the board's reas
 read only, and the server logs once which keys came back. Futures are price-only on the board: no futures bars
 are asked for, so a refusal cannot cool the price-history endpoint down for the SPX charts.
 Tests: tests/quant/schwab-futures.test.ts (4), one more in desk-board.test.ts.
+
+**Protocol replay on past sessions (2026-11-19).** Why: the owner's complaint that months of fixes show no
+improvement. Diagnosis given to the owner: fixes were judged by "is the panel correct and labelled", never by
+a number that says whether what the desk flags mattered; every record is far below its floor (setups 3 of 100,
+settle ledger 2 of 50, protocols 1 of 30) because each gains one session a day. First step: the price-only
+rule (sweep under a level and reclaim) is replayed over past SPX sessions with the live evaluator and grader
+(shared/protocolReplay.ts), minute by minute, seeing only completed bars. 1-minute bars are stored
+(index_minute_bars) so the span grows past the ten sessions one Schwab request returns. Shown on the Protocols
+card as "Replay on past sessions · not the live record", counts only, never merged into the live record;
+limits are listed (bar-close price, no option landmarks, wall rule not replayable, arms not independent,
+sessions before 2026-11-01 skipped because CPI/PCE are not loaded earlier). Route:
+GET /api/desk/protocols/replay. Tests: tests/quant/protocol-replay.test.ts (5).
+Next in this line: one scoreboard of everything the desk flags, then deeper levels below the price and
+collapsing repeat level crossings.
