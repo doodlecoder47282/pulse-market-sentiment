@@ -49,6 +49,12 @@ export interface ScoreInputs {
   settle?: { days: number; floor: number; settleInStraddle: { yes: number; of: number } } | null;
 }
 
+/** Setup kinds in words, as the setup log names them; an unknown kind keeps its id with underscores opened out. */
+export const SETUP_KIND_TEXT: Record<string, string> = {
+  fade_call_wall: "fade at the call wall", fade_put_wall: "fade at the put wall", breakout_above: "breakout above the call wall", breakout_below: "breakout below the put wall",
+};
+const kindText = (k: string) => SETUP_KIND_TEXT[k] ?? k.replace(/_/g, " ");
+
 const fin = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 const stateOf = (n: number, floor: number | null): ScoreState => (n <= 0 ? "none" : floor == null ? "no_floor" : n >= floor ? "enough" : "too_few");
 const DESK = "Desk";
@@ -99,7 +105,7 @@ export function buildScoreboard(x: ScoreInputs): ScoreRow[] {
   if (x.off || !x.setups) gone("setups", "Setups", G.setup, DESK);
   else if (!x.setups.summary.length) rows.push({ id: "setups", what: "Setups", graded: G.setup, n: 0, floor: x.setups.minSample, result: "none graded", state: "none", where: DESK });
   else for (const s of x.setups.summary) rows.push({
-    id: `setup:${s.ruleVersion}:${s.kind}`, what: `Setup: ${s.kind} (rules ${s.ruleVersion})`, graded: G.setup, n: s.n, floor: x.setups.minSample,
+    id: `setup:${s.ruleVersion}:${s.kind}`, what: `Setup: ${kindText(s.kind)} (rules ${s.ruleVersion})`, graded: G.setup, n: s.n, floor: x.setups.minSample,
     result: `${s.positive} of ${s.n} ended with a gain`, state: stateOf(s.n, x.setups.minSample), where: DESK,
   });
 

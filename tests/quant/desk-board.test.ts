@@ -262,3 +262,36 @@ test("build: a missing quote carries the source's own stated reason when it gave
   const none = deps(); none.quoteRefusal = async () => null;
   assert.equal((await buildDeskBoard(NOON, none)).tickers.find((x) => x.symbol === "/NQ")!.quoteReason, "Schwab returned no quote for /NQ");
 });
+
+test("build: when the source refuses daily bars, the copy kept from the last good read is used and named", async () => {
+  _resetDeskBoardCache();
+  const store = new Map<string, { bars: any[]; asOfMs: number | null }>();
+  const good = deps();
+  good.saveDaily = async (s, bars, asOfMs) => { store.set(s, { bars, asOfMs }); };
+  good.loadDaily = async (s) => store.get(s) ?? null;
+  const first = await buildDeskBoard(NOON, good);
+  assert.ok(store.has("$SPX") && store.has("SPY"), "a good read is kept");
+  assert.doesNotMatch(first.tickers.find((x) => x.symbol === "$SPX")!.levelsReason ?? "", /copy kept/);
+
+  _resetDeskBoardCache(); // a restart: the in-memory caches are gone, the store is not
+  const refused = deps({ daily: (sym) => ({ symbol: sym, candles: [], source: "schwab", dataState: "unavailable", reason: "self-throttle (100 requests/min); no cached Schwab response" }) });
+  refused.saveDaily = good.saveDaily; refused.loadDaily = good.loadDaily;
+  const b = await buildDeskBoard(NOON, refused);
+  const spx = b.tickers.find((x) => x.symbol === "$SPX")!;
+  assert.ok(spx.levels.some((l) => l.key.split("+").includes("pdl")), "levels come from the kept copy");
+  assert.equal(spx.levelsState, "partial");
+  assert.match(spx.levelsReason ?? "", /daily bars are the copy kept from 2026-11-11 \d\d:\d\d ET; the fresh read failed \(.*self-throttle/);
+  assert.equal(spx.priorSession, "2026-11-10");
+  // The same answer while the refusal is remembered (no second request, still the kept copy).
+  const again = await buildDeskBoard(NOON + 30_000, refused);
+  assert.match(again.tickers.find((x) => x.symbol === "$SPX")!.levelsReason ?? "", /copy kept/);
+});
+
+test("build: with no kept copy a refused read stays unavailable with the source's reason", async () => {
+  _resetDeskBoardCache();
+  const refused = deps({ daily: (sym) => ({ symbol: sym, candles: [], source: "schwab", dataState: "unavailable", reason: "self-throttle" }) });
+  refused.loadDaily = async () => null;
+  const spx = (await buildDeskBoard(NOON, refused)).tickers.find((x) => x.symbol === "$SPX")!;
+  assert.equal(spx.levelsState, "unavailable");
+  assert.match(spx.levelsReason ?? "", /self-throttle/);
+});
