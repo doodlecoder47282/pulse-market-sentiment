@@ -15,7 +15,7 @@ import { isRegularSessionOpen, sessionCloseMinutes, REGULAR_OPEN_MIN, etClock } 
 import { etWallToUtcMs } from "./validationMath";
 import { minutesToNextTier1 } from "../shared/macroCalendar";
 import {
-  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, protocolsWatching,
+  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching,
   type ProtocolCtx, type ProtocolEval, type ProtocolRecord, type ProtocolDef,
 } from "../shared/protocols";
 import type { IntraBar, BoardLevel } from "../shared/levelBoard";
@@ -193,7 +193,7 @@ export interface ProtocolLog {
   lastTickError: string | null;
   protocols: ProtocolView[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
-  hits: Array<{ at: number; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
+  hits: Array<{ at: number; firstAt: number; count: number; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
 
@@ -215,9 +215,12 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
     id: r.id, bookVersion: r.book_version, protocol: r.protocol, armedAt: r.armed_at, entry: r.entry, levelLabel: r.level_label, levelPrice: r.level_price,
     expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
   }));
-  const hits = (sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT 30`).all() as any[]).map((r) => ({
-    at: r.at, symbol: r.symbol, label: r.level_label, levelPrice: r.level_price, direction: r.direction, price: r.price,
-    watchedBy: r.symbol === "$SPX" ? protocolsWatching(r.level_key, book) : [],
+  // Repeat crossings of one level are joined into one line (shared/protocols.ts joinHits); the newest 30 lines are shown.
+  const rawHits = (sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT 300`).all() as any[])
+    .map((r) => ({ at: r.at, symbol: r.symbol, levelKey: r.level_key, label: r.level_label, levelPrice: r.level_price, direction: r.direction, price: r.price }));
+  const hits = joinHits(rawHits).slice(0, 30).map((h) => ({
+    at: h.at, firstAt: h.firstAt, count: h.count, symbol: h.symbol, label: h.label, levelPrice: h.levelPrice, direction: h.direction, price: h.price,
+    watchedBy: h.symbol === "$SPX" ? protocolsWatching(h.levelKey, book) : [],
   }));
   return {
     bookVersion: PROTOCOL_BOOK_VERSION, minGraded: PROTOCOL_MIN_GRADED, edition: editionFromEnv(),

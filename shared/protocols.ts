@@ -291,6 +291,33 @@ export function levelHits(prev: number | null | undefined, cur: number | null | 
   return out;
 }
 
+/** Crossings of one level by one ticker this close together are shown as one line. */
+export const HIT_JOIN_MIN = 10;
+export interface HitRow { at: number; symbol: string; levelKey: string; label: string; levelPrice: number; direction: string; price: number }
+export interface HitLine extends HitRow { count: number; firstAt: number }
+/**
+ * A price sitting on a level crosses it again and again; each crossing is true, and a screen of them hides the
+ * other levels. Crossings of the same level by the same ticker, each within HIT_JOIN_MIN minutes of the one
+ * before, become one line: the count, the first and last time, and the last crossing's direction and price.
+ * Nothing is dropped from the count. Newest line first.
+ */
+export function joinHits(rows: HitRow[], joinMin: number = HIT_JOIN_MIN): HitLine[] {
+  const asc = rows.slice().sort((a, b) => a.at - b.at);
+  const open = new Map<string, HitLine>();
+  const out: HitLine[] = [];
+  for (const r of asc) {
+    const id = `${r.symbol}|${r.levelKey}|${r.levelPrice}`;
+    const cur = open.get(id);
+    if (cur && r.at - cur.at <= joinMin * 60_000) {
+      cur.count += 1; cur.at = r.at; cur.direction = r.direction; cur.price = r.price;
+    } else {
+      const line: HitLine = { ...r, count: 1, firstAt: r.at };
+      open.set(id, line); out.push(line);
+    }
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
 /** Names of the protocols that watch a level (matched by any part of a merged key). */
 export function protocolsWatching(levelKey: string, book: ProtocolDef[] = protocolBook()): string[] {
   const parts = levelKey.split("+");

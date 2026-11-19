@@ -2831,3 +2831,12 @@ sandbox: if ES and NQ still read unavailable after this deploy, the board's reas
 read only, and the server logs once which keys came back. Futures are price-only on the board: no futures bars
 are asked for, so a refusal cannot cool the price-history endpoint down for the SPX charts.
 Tests: tests/quant/schwab-futures.test.ts (4), one more in desk-board.test.ts.
+
+**Board depth and joined crossings (2026-11-19).** Seen live on a day SPX fell 1.5%: the price was under every
+prior-day, week and month level, so the bear case read "no further mapped level below" and SPY and QQQ showed
+"below: none mapped"; VIX crossed one level three times in five minutes and each crossing was its own line.
+Now: the board adds the 20-session high and low and the high and low of every daily bar read (labelled with
+the real count, about 63 sessions) as a "range" group (shared/levelBoard.ts rangeLevels), and crossings of one
+level by one ticker within 10 minutes of each other are shown as one line with the count, first time and last
+direction (shared/protocols.ts joinHits); every crossing is still stored and counted.
+Tests: tests/quant/board-depth.test.ts (5).

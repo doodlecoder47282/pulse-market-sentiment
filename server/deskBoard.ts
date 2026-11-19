@@ -14,7 +14,7 @@ import { etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
 import { editionFromEnv } from "../shared/edition";
 import {
-  boardSession, calendarLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
+  boardSession, calendarLevels, rangeLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
   type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead,
 } from "../shared/levelBoard";
 
@@ -226,6 +226,8 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
 
     const d = dailies[idx];
     let levels: BoardLevel[] = calendarLevels(d.bars, forSession, { pivots: t.kind !== "vol" });
+    // Only alongside the calendar levels: a board with no prior day stays "unavailable" rather than showing ranges alone.
+    if (levels.length) levels = [...levels, ...rangeLevels(d.bars, forSession)];
     const done = d.bars.filter((b) => b.date < forSession).map((b) => b.date).sort();
     const priorSession = done[done.length - 1] ?? null;
     let levelsState: BoardTicker["levelsState"] = levels.length ? "ok" : "unavailable";

@@ -12,7 +12,7 @@ import { etClock, REGULAR_OPEN_MIN, nextTradingDay, sessionCloseMinutes, isTradi
 
 export interface DayBar { date: string; open: number; high: number; low: number; close: number }
 export interface IntraBar { t: number; open: number; high: number; low: number; close: number }
-export type LevelGroup = "today" | "prior day" | "week" | "month" | "pivot" | "options";
+export type LevelGroup = "today" | "prior day" | "week" | "month" | "pivot" | "options" | "range";
 export interface BoardLevel { key: string; label: string; price: number; group: LevelGroup }
 
 /** Minutes of the opening range (09:30 to 10:00 ET). */
@@ -83,6 +83,31 @@ export function calendarLevels(daily: DayBar[], todayEt: string, opts: { pivots?
   }
   const mo = bars.find((b) => b.date.slice(0, 7) === todayEt.slice(0, 7) && b.date <= todayEt);
   if (mo) out.push({ key: "mo", label: "month open", price: mo.open, group: "month" });
+  return out;
+}
+
+/** Sessions in the short range; and the least number of completed bars the long range is formed from. */
+export const RANGE_SHORT = 20;
+export const RANGE_LONG_MIN = 40;
+
+/**
+ * The high and low of the last RANGE_SHORT completed sessions, and of every completed bar that was read when
+ * there are at least RANGE_LONG_MIN of them (labelled with the actual count, since the window is whatever the
+ * read returned). These sit further from the price than the prior day, week and month, so a day that runs
+ * through all of those still has a level on the far side. A window with too few bars forms no level.
+ */
+export function rangeLevels(daily: DayBar[], todayEt: string): BoardLevel[] {
+  const done = daily.filter(barOk).filter((b) => b.date < todayEt).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const out: BoardLevel[] = [];
+  if (done.length >= RANGE_SHORT) {
+    const w = done.slice(-RANGE_SHORT);
+    out.push({ key: "h20", label: `${RANGE_SHORT}-session high`, price: Math.max(...w.map((b) => b.high)), group: "range" });
+    out.push({ key: "l20", label: `${RANGE_SHORT}-session low`, price: Math.min(...w.map((b) => b.low)), group: "range" });
+  }
+  if (done.length >= RANGE_LONG_MIN) {
+    out.push({ key: "hAll", label: `${done.length}-session high`, price: Math.max(...done.map((b) => b.high)), group: "range" });
+    out.push({ key: "lAll", label: `${done.length}-session low`, price: Math.min(...done.map((b) => b.low)), group: "range" });
+  }
   return out;
 }
 
