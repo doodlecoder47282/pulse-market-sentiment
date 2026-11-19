@@ -2871,3 +2871,16 @@ change. It now stores them, measures the forming-bar guard from when the payload
 its note that sessions after the copy are not in the replay yet. Open: the server sat at its own 100
 requests-a-minute Schwab limit for several minutes after a deploy, after the close; what is spending that
 budget has not been looked at.
+
+**Daily price history survives a restart (2026-11-19).** Measured live in the minute after a deploy: 100 of
+100 Schwab requests used, all by the first page load (whale flow 20, macro 14 daily histories, regime 10 daily
+histories, 36 not itemised); the in-memory cache is empty after a restart, so whatever loads last reads
+"unavailable" (the level board, at one point the quotes). Two changes in the transport: (1) daily
+price-history payloads are also written to SQLite (schwab_daily_cache, server/schwabCacheStore.ts) and put
+back into the cache once after a restart with their real fetch time and original expiry, so the cache rules
+treat them as if the process had not restarted; (2) with the market closed, daily bars read after the session
+settled cannot have changed, so when at least half the per-minute limit is in use they are served as the
+last-session copy without a request (schwabDataPolicy.serveSettledDailyUnderPressure; a forced refresh is
+never short-circuited). Only daily bars are kept. Not addressed: the option-chain share of the startup load;
+a restart during the session still refetches daily bars (today's bar moves). Diagnostics report how many
+payloads were restored. Tests: tests/quant/daily-bars-restart.test.ts (4).

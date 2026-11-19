@@ -8,6 +8,7 @@
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
 import { futuresQuoteEntry, invalidSymbolsOf, isFutureRoot } from "./schwabFutures";
 import { regularFields } from "./schwabQuoteFields";
+import { saveDailyPayload, restoreDailyPayloads } from "./schwabCacheStore";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { applyOiHold, type ChainOiState } from "./oiHold";
 import type { ChainSegmentLike } from "./schwabDataPolicy";
@@ -21,7 +22,7 @@ import {
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   chainAsOf, chainLadderSegments, mergeChainSegments,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
-  type ChainCoverage, type ChainAsOfBasis, schwabHistoryWindow,
+  type ChainCoverage, type ChainAsOfBasis, schwabHistoryWindow, serveSettledDailyUnderPressure,
 } from "./schwabDataPolicy";
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
@@ -349,6 +350,22 @@ export function sweepSchwabCache(nowMs: number = Date.now()): number {
   return n;
 }
 
+// After a restart: daily price-history payloads kept on disk go back into the cache once, with their real
+// fetch time and original expiry, so the first page load does not ask Schwab for every panel's history at once.
+// A restored entry carries no fingerprint: an evidence receipt for it stays unverified.
+let _dailyRestored = false;
+let _dailyRestoredCount = 0;
+function restoreDailyCacheOnce(): void {
+  if (_dailyRestored) return;
+  _dailyRestored = true;
+  for (const e of restoreDailyPayloads()) {
+    if (_cache.has(e.cacheKey)) continue;
+    _cache.set(e.cacheKey, { data: e.data, fetchedAt: e.fetchedAt, expiresAt: e.expiresAt, kind: "daily_bars" });
+    _dailyRestoredCount++;
+  }
+  if (_dailyRestoredCount) console.log(`[schwab] restored ${_dailyRestoredCount} daily price-history payloads kept from before the restart`);
+}
+
 // Self-throttle: track requests in last 60s. Schwab limit ~120/min on marketdata.
 // We cap at 100/min to leave headroom.
 const _reqLog: number[] = [];
@@ -465,6 +482,7 @@ async function schwabFetchMetaOnce(
   let token = await getAccessToken();
   if (!token) return { data: null, freshness: null, reason: "Schwab not connected" };
   let retried401 = false;
+  restoreDailyCacheOnce();
 
   // Build cache key — exclude endDate from key for pricehistory minute bars
   // because we use endDate=now() to force Schwab to return today's tape, but
@@ -538,6 +556,10 @@ async function schwabFetchMetaOnce(
     }
   };
   _trimReqLog();
+  // Settled daily bars under budget pressure: served as the last-session copy, no request (schwabDataPolicy).
+  if (!opts?.skipCache && serveSettledDailyUnderPressure(kind, _cache.get(cacheKey)?.fetchedAt, _reqLog.length, requestLimit)) {
+    return serveStale("request budget in use; daily bars cannot have changed since the session settled");
+  }
   if (_reqLog.length >= requestLimit) {
     const entry = _cache.get(cacheKey);
     if (entry && staleServeDecision(entry.fetchedAt, kind, "self-throttle").serve) {
@@ -594,6 +616,8 @@ async function schwabFetchMetaOnce(
         const fetchedAt = Date.now();
         const fingerprint = opts?.onAcquisition || ttl > 0 ? fingerprintPayload(data) : undefined;
         if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl, fingerprint, kind });
+        // Daily bars are also kept on disk so a restart does not start cold (server/schwabCacheStore.ts).
+        if (ttl > 0 && kind === "daily_bars") saveDailyPayload(cacheKey, data, fetchedAt, fetchedAt + ttl);
         if (fetchedAt - _lastCacheSweep > CACHE_SWEEP_MS) sweepSchwabCache(fetchedAt);
         return deliver({ data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes }, "transport_response", fetchedAt, fingerprint);
       }
@@ -674,6 +698,7 @@ export function getSchwabDiagnostics() {
   }
   return {
     cacheEntries: _cache.size,
+    dailyRestoredAtStart: _dailyRestoredCount,
     cacheEvictedTotal: _cacheEvicted,
     requestsLastMinute: _reqLog.length,
     requestsByCaller: Object.entries(_reqWho.reduce((m, r) => { m[r.k] = (m[r.k] ?? 0) + 1; return m; }, {} as Record<string, number>))

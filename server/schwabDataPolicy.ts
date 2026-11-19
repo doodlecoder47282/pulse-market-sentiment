@@ -200,6 +200,20 @@ export function staleServeDecision(
   };
 }
 
+/** Share of the per-minute request limit in use at which a settled daily copy is served instead of refreshed. */
+export const SETTLED_DAILY_PRESSURE = 0.5;
+/**
+ * Market closed, and the cached daily bars were read after the last session settled: Schwab has nothing newer
+ * until the next open, so refreshing them returns the same bars. When at least half the per-minute request
+ * limit is already in use (a restart, a tab opening), that copy is served and the request is not made, leaving
+ * the budget for data that does move. Below that pressure the usual TTL refresh still runs.
+ */
+export function serveSettledDailyUnderPressure(kind: SchwabDataKind, fetchedAtMs: number | null | undefined, used: number, limit: number, nowMs: number = Date.now()): boolean {
+  if (kind !== "daily_bars" || fetchedAtMs == null || !Number.isFinite(fetchedAtMs) || !(limit > 0)) return false;
+  if (used < limit * SETTLED_DAILY_PRESSURE) return false;
+  return isLastSessionCopy(kind, fetchedAtMs, nowMs);
+}
+
 /**
  * A cached payload that can never be served again: older than the longest
  * serve age of its kind (the closed-market cap is the larger) AND older than
