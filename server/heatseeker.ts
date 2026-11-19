@@ -14,6 +14,7 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { contractYears, ivForClock } from "./chainClock";
+import { timeToExpiry } from "./timeToExpiry";
 import { contractExposure, deltaRQ } from "./greekExposure";
 import {
   bsGamma, cumulativeStrikeFlip, dealerConventionSensitivity, dividendYieldFor, flipInputs, FLIP_RATE,
@@ -89,6 +90,8 @@ export interface HeatseekerResult {
   /** "unavailable": no chain / no expiry, every total is null (missing, not 0). */
   dataState: "ok" | "unavailable";
   reason?: string | null;
+  /** Nearest expiry that has not settled (what "no expiry asked" resolves to); null when none. */
+  nearestLiveExpiry?: string | null;
   totals: {
     /** Net dealer GEX, $ per 1% move, over EVERY strike of this expiry,
      *  re-priced gamma: equals gexAtSpotRepriced, so its sign is the regime
@@ -192,8 +195,13 @@ export function buildHeatseeker(
 
   // 2. Pick target expiry. Caller-supplied date → exact match if present, else
   // closest available expiry by absolute calendar distance (prefer on/after when
-  // distances tie). No target → nearest expiry (preserves legacy 0DTE behavior).
-  let picked = sortedExps[0];
+  // distances tie). No target → nearest expiry that has NOT settled: after the
+  // close today's key is still listed but every contract in it is dropped
+  // (T = 0), so picking it drew "unavailable" all evening while tomorrow's
+  // chain was sitting there (same rule as server/odteForward.ts).
+  const nowMs = nowMsArg ?? Date.now();
+  const settled = (date: string) => { try { return timeToExpiry(date, { nowMs }).expired; } catch { return false; } };
+  let picked = sortedExps.find((e) => !settled(e.date)) ?? sortedExps[0];
   if (targetExpiry) {
     const exact = sortedExps.find((e) => e.date === targetExpiry);
     if (exact) {
@@ -226,7 +234,6 @@ export function buildHeatseeker(
   // AM-settled SPX vs PM SPXW, 13:00 close on half days, 15-minute floor.
   // A contract that has settled (T = 0) is dropped. Replaces dte/365 and the
   // hard-coded 16:00 close.
-  const nowMs = nowMsArg ?? Date.now();
   // ONE Black-Scholes basis for every term (GEX, vanna, charm, flip): the
   // flip's rate and this underlying's dividend yield (S&P 500 index yield for
   // SPX/SPY/XSP, 0 for anything else unless known).
@@ -581,7 +588,10 @@ export function buildHeatseeker(
     stickyZones,
     pivotBands,
     dataState: strikes.length > 0 ? "ok" : "unavailable",
-    reason: strikes.length > 0 ? null : "no strikes with data inside the display window",
+    reason: strikes.length > 0 ? null
+      : settled(expiry) ? `the ${expiry} expiry has settled: its contracts carry no exposure. Pick a later expiry.`
+      : "no strikes with data inside the display window",
+    nearestLiveExpiry: sortedExps.find((e) => !settled(e.date))?.date ?? null,
     totals,
     flipInputs: flipInputs({ weight: "open_interest", universe: "single-expiry", expiryKeys: [expKey] }),
     dealerSensitivity,

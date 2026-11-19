@@ -949,7 +949,7 @@ export default function MLProjectionPanel() {
           <div className="min-w-0 max-w-full space-y-1">
             <CardTitle className="flex flex-wrap items-center gap-2">
               <Activity className="w-4 h-4 shrink-0" />
-              SPY — Projected Path
+              <span data-testid="ml-projection-title">{hasBands ? "SPY — Projected Path" : "SPY — today's tape (no projected path drawn)"}</span>
               <Badge
                 variant="outline"
                 className={`text-[11px] font-mono ${learned ? "border-emerald-500/50 text-emerald-400" : "border-amber-500/50 text-amber-400"}`}
@@ -990,8 +990,8 @@ export default function MLProjectionPanel() {
           </div>
         )}
         {hasCandles && !hasBands && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            no band drawn — {served?.reason ?? "waiting for the projection service"}
+          <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground" data-testid="ml-no-band">
+            No projected path is drawn here: {served?.reason ?? "waiting for the projection service"}. The projected path for today ($SPX) is at the top of the Signals tab, in the Today block.
             <Button
               size="sm"
               variant="ghost"

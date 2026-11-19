@@ -2,6 +2,22 @@
 
 Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
+
+## 2026-11-18: the defects the owner named on the live site
+
+- Heatseeker "$SPX UNAVAILABLE: no strikes with data inside the display window" every evening: with no expiry asked,
+  the builder picked today's expiry after it had settled and then dropped every contract in it. It now picks the
+  nearest expiry that has not settled (the rule the 0DTE map already used); a settled expiry asked for by date says so.
+- "SPY - Projected Path" on Models: on Railway the Python sidecar is not installed, so no band has ever been drawn
+  there. With no band the panel is titled "today's tape (no projected path drawn)", gives the reason in neutral
+  text and says the projected path for today is in the Today block on Signals. An empty tape now carries the feed's
+  own reason instead of "feed failed or empty".
+- Models path chart, numbers unreadable on the left: a level within 6% of the chart range of the price had its
+  label painted over by the path start. Those labels sit on the right edge (`shared/chartLabels.ts`).
+- "Levels default to QQQ": no panel defaults to QQQ (Heatseeker defaults to $SPX, pivot projection to SPY). QQQ is
+  only shown when its button is tapped; the likely cause was Heatseeker $SPX being unavailable (first item).
+- Tests: `tests/quant/named-defects.test.ts`.
+
 ## 2026-10-08: quant-fixes branch (PR to main)
 
 Completed objective: apply the 37 fixes from the quant code review (Claude Doc

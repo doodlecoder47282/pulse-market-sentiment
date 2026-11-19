@@ -745,7 +745,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
   const pivotBands = data.pivotBands ?? [];
   // The live 0DTE tracker covers $SPX's nearest expiry only (ATM ±20 strikes).
-  const isNearestExpiry = (data.availableExpiries?.[0]?.date ?? expiry) === expiry;
+  const isNearestExpiry = ((data as any).nearestLiveExpiry ?? data.availableExpiries?.[0]?.date ?? expiry) === expiry;
   const trackerCovers = symbol === "$SPX" && isNearestExpiry;
 
   // Dead-chain guard: overnight (or feed-down) the fresh 0DTE expiry has zero
