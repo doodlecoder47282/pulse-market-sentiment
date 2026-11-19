@@ -25,7 +25,7 @@ export function isContractOf(root: string, key: string): boolean {
  * answer has none, or more than one candidate contract (the root is then ambiguous and no price is chosen).
  */
 export function futuresQuoteEntry(data: unknown, root: string): { key: string; entry: any } | null {
-  if (!data || typeof data !== "object" || !isFutureRoot(root)) return null;
+  if (!data || typeof data !== "object" || Array.isArray(data) || !isFutureRoot(root)) return null;
   const obj = data as Record<string, any>;
   if (obj[root] && typeof obj[root] === "object") return { key: root, entry: obj[root] };
   const found: Array<{ key: string; entry: any }> = [];

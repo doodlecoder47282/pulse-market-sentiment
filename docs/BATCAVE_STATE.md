@@ -2826,5 +2826,8 @@ quote". The quotes reader only looked for an answer keyed exactly "/ES"; a root 
 the contract Schwab resolved it to (/ESZ26). The reader now accepts the root key or exactly one contract key of
 that root (server/schwabFutures.ts), and when Schwab's answer names the symbol under errors.invalidSymbols the
 board says so in Schwab's terms instead of the generic line. Not verified against live Schwab from the build
-sandbox: if ES and NQ still read unavailable after this deploy, the board's reason line states which case it is.
+sandbox: if ES and NQ still read unavailable after this deploy, the board's reason line states which case it is
+(unrecognised symbol, no entry, entry with no price, not connected, no answer), each reason belonging to that
+read only, and the server logs once which keys came back. Futures are price-only on the board: no futures bars
+are asked for, so a refusal cannot cool the price-history endpoint down for the SPX charts.
 Tests: tests/quant/schwab-futures.test.ts (4), one more in desk-board.test.ts.
