@@ -98,12 +98,16 @@ test("nearest levels, merging and the cases", () => {
   assert.equal(mergeLevels([{ key: "x", label: "pin", price: 7300, group: "options" }, { key: "y", label: "gamma flip", price: 7300, group: "options" }], 7324)[0].label, "pin + gamma flip");
   const n = nearestLevels(ls, 7324);
   assert.deepEqual(n.at.map((l) => l.label), ["pin"]);
-  assert.equal(n.above[0].price, 7351);
+  assert.equal(n.above[0].price, 7350, "a joined line above the price is stated at its nearest member");
+  // A run of close levels does not chain into one line, and a price sitting on a level is at it.
+  const run: BoardLevel[] = [100.06, 100.02, 99.98, 99.94, 99.9].map((p, i) => ({ key: `k${i}`, label: `L${i}`, price: p, group: "pivot" as const }));
+  assert.ok(mergeLevels(run, 99.9).length > 1);
+  assert.ok(nearestLevels(run, 99.9).at.length > 0);
   assert.equal(n.below[0].price, 7300);
   const bull = deskCase(ls, 7324, "bull");
-  assert.equal(bull.text, "Bull case: above 7,351 (pivot R1 7,351 + prior-day high 7,350) the next levels up are 7,400 (wall above) and 7,450 (prior-week high). The first level under the price is 7,300 (gamma flip).");
+  assert.equal(bull.text, "Bull case: above 7,350 (pivot R1 7,351 + prior-day high 7,350) the next levels up are 7,400 (wall above) and 7,450 (prior-week high). The first level under the price is 7,300 (gamma flip).");
   const bear = deskCase(ls, 7324, "bear");
-  assert.equal(bear.text, "Bear case: below 7,300 (gamma flip) the next level down is 7,250 (prior-day low). The first level over the price is 7,351 (pivot R1 7,351 + prior-day high 7,350).");
+  assert.equal(bear.text, "Bear case: below 7,300 (gamma flip) the next level down is 7,250 (prior-day low). The first level over the price is 7,350 (pivot R1 7,351 + prior-day high 7,350).");
   assert.equal(deskCase(ls, 7500, "bull").text, "Bull case: no mapped level above the price.");
   assert.equal(deskCase(ls, null, "bear").text, "Bear case: no price read.");
   assert.equal(deskCase([ls[0]], 7324, "bull").text, "Bull case: above 7,350 (prior-day high) no further mapped level above.");
@@ -215,15 +219,24 @@ test("build: at the close the daily read is taken again, and a pre-close payload
   assert.match(spx.levelsReason ?? "", /the daily bar for 2026-11-11 was read before that session closed/);
 });
 
-test("build: an empty read is not asked for again inside five minutes", async () => {
+test("build: a refused read is not asked for again inside five minutes, an empty one inside one", async () => {
   _resetDeskBoardCache();
   const calls: string[] = [];
   const d = deps({ calls, daily: (sym) => ({ symbol: sym, candles: [], source: "schwab", dataState: "unavailable", reason: "HTTP 403" }) });
   const b = await buildDeskBoard(NOON, d);
   assert.equal(b.tickers[0].levelsState, "unavailable");
   assert.match(b.tickers[0].levelsReason ?? "", /no daily bars from Schwab for \$SPX: HTTP 403/);
-  await buildDeskBoard(NOON + 60_000, d);
+  await buildDeskBoard(NOON + 4 * 60_000, d);
   assert.equal(calls.filter((c) => c === "$SPX:month").length, 1);
   await buildDeskBoard(NOON + 6 * 60_000, d);
   assert.equal(calls.filter((c) => c === "$SPX:month").length, 2);
+  // An empty read that is not a refusal is tried again after a minute.
+  _resetDeskBoardCache();
+  const calls2: string[] = [];
+  const d2 = deps({ calls: calls2, daily: (sym) => ({ symbol: sym, candles: [], source: "schwab", dataState: "unavailable", reason: "Schwab not connected" }) });
+  await buildDeskBoard(NOON, d2);
+  await buildDeskBoard(NOON + 30_000, d2);
+  assert.equal(calls2.filter((c) => c === "$SPX:month").length, 1);
+  await buildDeskBoard(NOON + 90_000, d2);
+  assert.equal(calls2.filter((c) => c === "$SPX:month").length, 2);
 });

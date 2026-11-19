@@ -26,7 +26,7 @@ interface Board {
 
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
 const pct = (n: number | null | undefined) => (n == null ? "" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`);
-const clock = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }) + " ET");
+const clock = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) + " ET");
 const dist = (lv: BoardLevel | null, price: number | null) => (lv && price ? `${lv.price > price ? "+" : "-"}${px(Math.abs(lv.price - price))}` : "");
 
 function CaseBox({ c, tone }: { c: DeskCase; tone: "bull" | "bear" }) {
@@ -61,7 +61,7 @@ export default function DeskBoard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${b.sessionOpen ? "" : "Last session: "}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
+        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${b.sessionOpen ? "" : "Market closed, last prices: "}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
         <div className="grid gap-2 md:grid-cols-2">
           <CaseBox c={b.cases.bull} tone="bull" />
           <CaseBox c={b.cases.bear} tone="bear" />
@@ -74,8 +74,8 @@ export default function DeskBoard() {
           </p>
         )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-          <span data-testid="desk-board-tech">{b.sessionOpen ? "" : "Last session: "}{b.tech.text}</span>
-          <span data-testid="desk-board-vix">{b.vix.text}</span>
+          <span data-testid="desk-board-tech">{b.sessionOpen ? "" : "Market closed, last prices: "}{b.tech.text}</span>
+          <span data-testid="desk-board-vix">{b.sessionOpen ? "" : "Market closed, last prices: "}{b.vix.text}</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {b.tickers.map((t) => (
