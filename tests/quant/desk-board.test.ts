@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { buildDeskBoard, _resetDeskBoardCache, type DeskBoardDeps } from "../../server/deskBoard";
 import {
   calendarLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead, boardAnswer, boardSession, weekStart, priorMonth,
   type DayBar, type BoardLevel,
@@ -55,6 +56,9 @@ test("board session: today until the close, then the next trading day", () => {
   assert.deepEqual(boardSession(Date.UTC(2026, 10, 11, 16, 0)), { forSession: "2026-11-11", sessionOpen: true, today: "2026-11-11" });  // 11:00 ET
   assert.deepEqual(boardSession(Date.UTC(2026, 10, 11, 22, 0)), { forSession: "2026-11-12", sessionOpen: false, today: "2026-11-11" }); // 17:00 ET
   assert.equal(boardSession(Date.UTC(2026, 10, 14, 16, 0)).forSession, "2026-11-16"); // Saturday
+  assert.equal(boardSession(Date.UTC(2026, 10, 26, 16, 0)).forSession, "2026-11-27"); // Thanksgiving
+  assert.deepEqual(boardSession(Date.UTC(2026, 10, 27, 17, 30)), { forSession: "2026-11-27", sessionOpen: true, today: "2026-11-27" }); // half day, 12:30 ET
+  assert.equal(boardSession(Date.UTC(2026, 10, 27, 18, 0)).forSession, "2026-11-30"); // half day, 13:00 ET: closed
 });
 
 test("session levels: the open at once, the opening range only after 10:00 ET", () => {
@@ -68,6 +72,10 @@ test("session levels: the open at once, the opening range only after 10:00 ET", 
   ];
   const early = sessionLevels(bars, "2026-11-11", at(9, 58));
   assert.deepEqual(early.map((l) => [l.key, l.price]), [["open", 111.5]]);
+  // At 10:00 with no bar at or after 10:00 yet, the 09:55 bar may be half formed: no range.
+  assert.deepEqual(sessionLevels(bars.filter((b) => b.t !== at(10, 0)), "2026-11-11", at(10, 0)).map((l) => l.key), ["open"]);
+  // A feed that starts after 09:30 has no open to show.
+  assert.deepEqual(sessionLevels(bars.filter((b) => b.t !== at(9, 30)), "2026-11-11", at(10, 5)), []);
   const later = sessionLevels(bars, "2026-11-11", at(10, 5));
   assert.deepEqual(later.map((l) => [l.key, l.price]), [["open", 111.5], ["orh", 113], ["orl", 111]]);
   assert.deepEqual(sessionLevels(bars, "2026-11-12", at(10, 5)), []);
@@ -85,27 +93,29 @@ test("nearest levels, merging and the cases", () => {
   ];
   const m = mergeLevels(ls, 7324);
   assert.equal(m.length, 6);
-  assert.equal(m.find((l) => l.price === 7351)!.label, "pivot R1 + prior-day high");
+  assert.equal(m.find((l) => l.price === 7351)!.label, "pivot R1 7,351 + prior-day high 7,350");
+  assert.equal(new Set(m.map((l) => l.key)).size, m.length);
+  assert.equal(mergeLevels([{ key: "x", label: "pin", price: 7300, group: "options" }, { key: "y", label: "gamma flip", price: 7300, group: "options" }], 7324)[0].label, "pin + gamma flip");
   const n = nearestLevels(ls, 7324);
   assert.deepEqual(n.at.map((l) => l.label), ["pin"]);
   assert.equal(n.above[0].price, 7351);
   assert.equal(n.below[0].price, 7300);
   const bull = deskCase(ls, 7324, "bull");
-  assert.equal(bull.text, "Bull case: above 7,351 (pivot R1 + prior-day high) the next levels up are 7,400 (wall above) and 7,450 (prior-week high). The case is off back under 7,300 (gamma flip).");
+  assert.equal(bull.text, "Bull case: above 7,351 (pivot R1 7,351 + prior-day high 7,350) the next levels up are 7,400 (wall above) and 7,450 (prior-week high). The first level under the price is 7,300 (gamma flip).");
   const bear = deskCase(ls, 7324, "bear");
-  assert.equal(bear.text, "Bear case: below 7,300 (gamma flip) the next level down is 7,250 (prior-day low). The case is off back over 7,351 (pivot R1 + prior-day high).");
+  assert.equal(bear.text, "Bear case: below 7,300 (gamma flip) the next level down is 7,250 (prior-day low). The first level over the price is 7,351 (pivot R1 7,351 + prior-day high 7,350).");
   assert.equal(deskCase(ls, 7500, "bull").text, "Bull case: no mapped level above the price.");
   assert.equal(deskCase(ls, null, "bear").text, "Bear case: no price read.");
   assert.equal(deskCase([ls[0]], 7324, "bull").text, "Bull case: above 7,350 (prior-day high) no further mapped level above.");
-  for (const t of [bull.text, bear.text]) assert.doesNotMatch(t, /will|should|expect|likely|target|buy|sell|%/i);
+  for (const t of [bull.text, bear.text]) assert.doesNotMatch(t, /will|should|expect|likely|target|buy|sell|%|is off/i);
 });
 
 test("tech and VIX reads state the numbers they come from", () => {
   assert.deepEqual([techRead(0.8, 0.2).state, techRead(-0.5, 0.1).state, techRead(0.3, 0.2).state, techRead(null, 0.2).state], ["leading", "lagging", "in line", "unknown"]);
-  assert.equal(techRead(0.8, 0.2).text, "QQQ +0.80% against SPY +0.20%: tech is leading by 0.60 points.");
-  assert.equal(techRead(0.3, 0.2).text, "QQQ +0.30% against SPY +0.20%: tech is in line.");
+  assert.equal(techRead(0.8, 0.2).text, "QQQ +0.80% against SPY +0.20%: tech leading by 0.60 percentage points (hand-set line: 0.25).");
+  assert.equal(techRead(0.3, 0.2).text, "QQQ +0.30% against SPY +0.20%: tech in line (hand-set line: 0.25).");
   assert.deepEqual([vixRead(3).state, vixRead(-2).state, vixRead(0.4).state, vixRead(undefined).state], ["firm", "soft", "flat", "unknown"]);
-  assert.equal(vixRead(-3.53).text, "VIX -3.53% on the day: soft.");
+  assert.equal(vixRead(-3.53).text, "VIX -3.53% on the day: soft (hand-set line: 1%).");
 });
 
 test("the board's one-line answer", () => {
@@ -123,6 +133,97 @@ test("wiring: the board is served and sits at the top of the Trade Desk", () => 
   const desk = readFileSync(new URL("../../client/src/components/TradeDesk.tsx", import.meta.url), "utf8");
   assert.ok(desk.indexOf("<DeskBoard />") > 0 && desk.indexOf("<DeskBoard />") < desk.indexOf("<OdteMapCard />"));
   const srv = readFileSync(new URL("../../server/deskBoard.ts", import.meta.url), "utf8");
-  assert.match(srv, /Schwab returned no quote for \$\{t\.symbol\}/);
+  assert.match(srv, /returned no quote for \$\{t\.symbol\}/);
   assert.match(srv, /"\/ES"/);
+});
+
+// ── the server build, with injected reads ──────────────────────────────────────────────────────────────
+const dayMs = (d: string) => Date.parse(d + "T05:00:00Z");
+const candles = (bars: DayBar[]) => bars.map((b) => ({ datetime: dayMs(b.date), open: b.open, high: b.high, low: b.low, close: b.close, volume: 1 }));
+function deps(o: { quotes?: any[]; daily?: (sym: string) => any; intra?: (sym: string) => any; calls?: string[]; edition?: string } = {}): DeskBoardDeps {
+  return {
+    getQuotes: async () => o.quotes ?? [
+      { symbol: "$SPX", last: 113, changePercent: 0.5, stale: false }, { symbol: "SPY", last: 113, changePercent: 0.2, stale: false },
+      { symbol: "QQQ", last: 113, changePercent: 0.8, stale: false }, { symbol: "$VIX", last: 20, changePercent: -2, stale: false },
+      { symbol: "/ES", last: 113, changePercent: null, prevClose: 100, stale: false },
+    ],
+    getPriceHistory: async (sym, periodType) => {
+      o.calls?.push(`${sym}:${periodType}`);
+      if (periodType === "month") return o.daily ? o.daily(sym) : { symbol: sym, candles: candles(daily), source: "schwab", dataState: "ok", asOfMs: Date.UTC(2026, 10, 11, 16, 0) };
+      return o.intra ? o.intra(sym) : { symbol: sym, candles: [], source: "schwab", dataState: "empty", reason: "no bars yet" };
+    },
+    optionLevels: async () => ({ levels: [{ key: "wallAbove", label: "wall above", price: 120, group: "options" }], state: "ok", reason: null, asOfMs: 1 }),
+    edition: () => o.edition ?? "personal",
+  } as DeskBoardDeps;
+}
+const NOON = Date.UTC(2026, 10, 11, 17, 0); // 12:00 ET, Wed
+
+test("build: quotes are keyed as asked, a future falls back to its previous close, and a missing quote says so", async () => {
+  _resetDeskBoardCache();
+  const calls: string[] = [];
+  const b = await buildDeskBoard(NOON, deps({ calls }));
+  const t = (s: string) => b.tickers.find((x) => x.symbol === s)!;
+  assert.equal(t("$SPX").price, 113);
+  assert.equal(t("/ES").changePct, 13);
+  assert.deepEqual([t("/NQ").quoteState, t("/NQ").quoteReason], ["unavailable", "Schwab returned no quote for /NQ"]);
+  assert.ok(!calls.includes("/NQ:month"), "no bars are asked for a future with no quote");
+  assert.ok(!calls.some((c) => c.startsWith("/ES:day")), "no intraday bars for futures");
+  assert.equal(b.tech.state, "leading");
+  assert.equal(b.vix.state, "soft");
+  assert.equal(t("$SPX").priorSession, "2026-11-10");
+  assert.equal(t("$SPX").levelsState, "partial", "session open but no 09:30 bar read");
+  assert.match(t("$SPX").levelsReason ?? "", /today's open and opening range not read: no bars yet/);
+  assert.ok(t("$SPX").levels.some((l) => l.key.split("+").includes("wallAbove")));
+  assert.ok(!t("SPY").levels.some((l) => l.group === "options"));
+  _resetDeskBoardCache();
+  const demo = await buildDeskBoard(NOON, deps({ edition: "demo" }));
+  assert.equal(demo.tickers.find((x) => x.symbol === "/NQ")!.quoteReason, "the sample feed returned no quote for /NQ");
+});
+
+test("build: stale and unknown-age quotes are not shown as live in session", async () => {
+  _resetDeskBoardCache();
+  const b = await buildDeskBoard(NOON, deps({ quotes: [{ symbol: "$SPX", last: 113, changePercent: 0, stale: true }, { symbol: "SPY", last: 113, changePercent: 0, stale: null }, { symbol: "QQQ", last: 113, changePercent: 0, stale: false }] }));
+  const st = (s: string) => b.tickers.find((x) => x.symbol === s)!.quoteState;
+  assert.deepEqual([st("$SPX"), st("SPY"), st("QQQ"), st("$VIX")], ["stale", "age_unknown", "ok", "unavailable"]);
+  _resetDeskBoardCache();
+  const closed = await buildDeskBoard(Date.UTC(2026, 10, 11, 23, 0), deps({ quotes: [{ symbol: "SPY", last: 113, changePercent: 0, stale: null }] }));
+  assert.equal(closed.tickers.find((x) => x.symbol === "SPY")!.quoteState, "ok", "closed: the last price is the last price");
+});
+
+test("build: a newest bar that is not the expected prior session is partial, with the date", async () => {
+  _resetDeskBoardCache();
+  const old = daily.filter((b) => b.date <= "2026-11-09");
+  const b = await buildDeskBoard(NOON, deps({ daily: (sym) => ({ symbol: sym, candles: candles(old), source: "schwab", dataState: "ok", asOfMs: NOON }) }));
+  const spx = b.tickers.find((x) => x.symbol === "$SPX")!;
+  assert.equal(spx.levelsState, "partial");
+  assert.match(spx.levelsReason ?? "", /the newest completed daily bar is 2026-11-09, not 2026-11-10/);
+});
+
+test("build: at the close the daily read is taken again, and a pre-close payload is flagged, not trusted", async () => {
+  _resetDeskBoardCache();
+  const calls: string[] = [];
+  const pre = Date.UTC(2026, 10, 11, 20, 45);  // 15:45 ET
+  const post = Date.UTC(2026, 10, 11, 21, 1);  // 16:01 ET
+  const d = deps({ calls, daily: (sym) => ({ symbol: sym, candles: candles(daily), source: "schwab", dataState: "ok", asOfMs: pre }) });
+  await buildDeskBoard(pre, d);
+  const n1 = calls.filter((c) => c === "$SPX:month").length;
+  const b = await buildDeskBoard(post, d);
+  assert.equal(calls.filter((c) => c === "$SPX:month").length, n1 + 1, "the session flipped: the cached read is not reused");
+  const spx = b.tickers.find((x) => x.symbol === "$SPX")!;
+  assert.equal(b.forSession, "2026-11-12");
+  assert.equal(spx.levelsState, "partial");
+  assert.match(spx.levelsReason ?? "", /the daily bar for 2026-11-11 was read before that session closed/);
+});
+
+test("build: an empty read is not asked for again inside five minutes", async () => {
+  _resetDeskBoardCache();
+  const calls: string[] = [];
+  const d = deps({ calls, daily: (sym) => ({ symbol: sym, candles: [], source: "schwab", dataState: "unavailable", reason: "HTTP 403" }) });
+  const b = await buildDeskBoard(NOON, d);
+  assert.equal(b.tickers[0].levelsState, "unavailable");
+  assert.match(b.tickers[0].levelsReason ?? "", /no daily bars from Schwab for \$SPX: HTTP 403/);
+  await buildDeskBoard(NOON + 60_000, d);
+  assert.equal(calls.filter((c) => c === "$SPX:month").length, 1);
+  await buildDeskBoard(NOON + 6 * 60_000, d);
+  assert.equal(calls.filter((c) => c === "$SPX:month").length, 2);
 });
