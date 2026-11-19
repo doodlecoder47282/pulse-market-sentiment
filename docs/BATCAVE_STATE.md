@@ -10,7 +10,7 @@ Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
   nearest key with an unsettled contract; a settled expiry asked for by date says so. The default chain window is 5
   days (was 2) so the next expiry is in the read over a weekend or holiday.
 - "SPY - Projected Path" on Models: on Railway the Python sidecar is not installed, so no band has ever been drawn
-  there. With no band the panel is titled "today's tape (no projected path drawn)", gives the reason in neutral
+  there. With no band the panel is titled "intraday tape (no projected path drawn)" (or "no projected path drawn" with no bars), gives the reason in neutral
   text and says where a projected path for $SPX is when one is available (Today block on Signals). An empty tape now carries the feed's
   own reason instead of "feed failed or empty".
 - Models path chart, numbers unreadable on the left: a level within 6% of the chart range of the price had its
