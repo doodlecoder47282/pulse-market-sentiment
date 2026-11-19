@@ -165,6 +165,8 @@ test("the cone, whale follow-through, graded alerts and flow alerts: counts with
   assert.equal(readFlowAlerts({ total: 0, high: 0, connected: null }).answer, "Checking whether the chain feed is connected.", "a status still loading is not 'not connected'");
   assert.equal(readFlowAlerts({ total: 0, high: 0, connected: true, chainRead: false }).answer, "The options chain has not been read yet, so there is nothing to judge.", "an unread chain is not a quiet one");
   assert.equal(readFlowAlerts({ total: 15, high: 1, connected: true, chainRead: true, lastSession: true }).answer, "15 flow alerts showing from the last session's chain, 1 marked high. Each flags size on the options chain, not direction.");
+  assert.equal(readFlowAlerts({ total: 15, high: 0, connected: true, chainRead: true, stale: true }).answer, "15 flow alerts showing from an older copy of the chain. Each flags size on the options chain, not direction.", "a stale in-session copy is not the last session's chain");
+  assert.equal(readFlowAlerts({ total: 4, high: 0, connected: true, chainRead: false }).answer, "4 flow alerts from an earlier read; the latest chain read failed.");
   assert.match(readEdgeWhale({ graded: 99, pending: 57, hit30Rate: 0.0505 }, 30).detail!, /A gain that was given back before expiry is not a hit\./);
   assert.match(readCone({ spot: 1, days: 10, q10: 1, q90: 2 }).detail!, /scaled up or down by the VIX\..*Its coverage has not been tested\./);
   assert.match(READ_MM_MATRIX.detail!, /VIX-implied one-standard-deviation move scaled by a hand-set multiplier/);
@@ -185,7 +187,7 @@ test("every wired panel shows its read through the shared component, answer firs
     ["components/ModelsPanel.tsx", 'testId="models-model-plain"'], ["components/ModelsPanel.tsx", 'testId="models-vix-plain"'], ["components/ModelsPanel.tsx", "READ_MM_MATRIX"],
     ["components/BacktestOverlay.tsx", "READ_VOL_BAND_BACKTEST"], ["components/models/MultiDayCone.tsx", "readCone({"], ["components/models/PivotProjection.tsx", "READ_PIVOT_PROJECTION"],
     ["components/WhaleFlowPanel.tsx", 'readWhalePerformance(rows.find((r) => r.source === "whale") ?? snap.overall, snap.windowDays)'], ["components/EdgeStatsPanel.tsx", "readEdgeWhale(data.whaleAlerts, data.windowDays)"],
-    ["components/FlowAlertsPanel.tsx", "connected: statusData == null ? null : isConnected, chainRead: chainLabel != null"], ["components/Heatseeker.tsx", "READ_HEATSEEKER"],
+    ["components/FlowAlertsPanel.tsx", 'chainRead: chainLabel != null, lastSession: chainLabel === "closed", stale: chainLabel === "stale"'], ["components/Heatseeker.tsx", "READ_HEATSEEKER"],
   ];
   for (const [f, needle] of wired) assert.ok(read(f).includes(needle), `${f}: ${needle}`);
   assert.match(read("components/BacktestOverlay.tsx"), /\{data && !data\.dealerLevelsFromChains && <PlainRead read=\{READ_VOL_BAND_BACKTEST\}/, "only once the server has answered, and not once real dealer levels are tested");
