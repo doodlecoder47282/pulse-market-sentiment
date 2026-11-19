@@ -4,6 +4,30 @@ Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
 
 
+
+## 2026-11-18: protocol book and level-hit log (item 5, part 2)
+
+- `shared/protocols.ts`, book `2026.11.18-1`: three if-then rules for SPX taken from the owner's own description,
+  every threshold hand-set and untested. (1) At the wall above, VIX firm, tech lagging: the rule's outcome is 20
+  points down in 90 minutes; cancelled 10 points above the wall. (2) Sweep and reclaim: 2 to 10 points under a
+  support level inside 20 minutes of completed bars, latest completed close back above; outcome 15 points up in 90
+  minutes; cancelled at or under the sweep low. (3) News window: tier-1 release within 30 minutes ahead or 15
+  behind; not graded; the other two cannot arm with it. Nothing arms in the first 15 or last 90 minutes, so every
+  horizon ends inside the session.
+- `server/protocolEngine.ts`: each session minute reads the board, logs levels each ticker crossed (`level_hits`,
+  last 500; only a level at the same price on both reads counts) and logs a protocol when every condition is met
+  (`protocol_events`); grades on 1-minute SPX bars every five minutes. An unread input is never "met": a stale or
+  age-unknown quote leaves the price, the tech read or the VIX read unread, and a stale option map leaves the wall
+  unread. Demo stores nothing. No message or order is sent.
+- Record is counts only ("untested: 0 graded" until graded; "too few to judge" under 30). No rate is formed. A rule
+  can arm again after its horizon; same-day events are not independent (stated on the card).
+- Copy: the outcome is attributed to the rule's author, never stated as the desk's forecast; structure is a
+  category ("bearish, defined risk"), no instrument named.
+- `GET /api/desk/protocols`; `DeskProtocols.tsx` under the level board.
+- Open for the owner: his own rules to replace or extend the starter three; the sample floor (30 here, 50 in the
+  crypto brief); whether level hits should also go to Discord (nothing is sent today).
+- Tests: `tests/quant/protocols.test.ts`.
+
 ## 2026-11-18: level board on the Trade Desk (item 5, part 1)
 
 - `GET /api/desk/board` (`server/deskBoard.ts`, pure parts in `shared/levelBoard.ts`): SPX, SPY, QQQ, VIX, /ES, /NQ.
