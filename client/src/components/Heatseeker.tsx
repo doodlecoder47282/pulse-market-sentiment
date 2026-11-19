@@ -150,6 +150,8 @@ interface HeatseekerData {
   };
   availableExpiries?: { date: string; dte: number }[];
   requestedExpiry?: string | null;
+  /** Nearest expiry that has not settled; null when the chain read holds none. */
+  nearestLiveExpiry?: string | null;
 }
 
 // ─── Expiry picker helpers ─────────────────────────────────────────────────
@@ -745,8 +747,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
   const pivotBands = data.pivotBands ?? [];
   // The live 0DTE tracker covers $SPX's nearest expiry only (ATM ±20 strikes).
-  const isNearestExpiry = (data.availableExpiries?.[0]?.date ?? expiry) === expiry;
-  const trackerCovers = symbol === "$SPX" && isNearestExpiry;
+  const isNearestExpiry = (data.nearestLiveExpiry ?? data.availableExpiries?.[0]?.date ?? expiry) === expiry;
 
   // Dead-chain guard: overnight (or feed-down) the fresh 0DTE expiry has zero
   // OI and zero volume everywhere, so every exposure and sticky score is 0.
@@ -782,7 +783,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 
   // Snapshot of the live odte-tracker — provides bid/ask/volume/OI/notional per contract key.
   // Separate 4s poll (matches tracker poll cadence). Paused while nothing is selected.
-  const { data: odteSnap } = useQuery<{ contracts: OdteContract[] }>({
+  const { data: odteSnap } = useQuery<{ contracts: OdteContract[]; expiry?: string | null }>({
     queryKey: ["/api/odte-tracker"],
     queryFn: async () => {
       const r = await apiRequest("GET", "/api/odte-tracker");
@@ -792,6 +793,8 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
     enabled: !!selected,
     staleTime: 3_500,
   });
+  // The tracker holds one expiry (today's, in session). After the close the nearest unsettled expiry is a later one it has no ticks for.
+  const trackerCovers = symbol === "$SPX" && isNearestExpiry && odteSnap?.expiry === expiry;
 
   // Max absolute values for heatmap normalization
   const maxAbsGex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netGex)), 1), [strikes]);

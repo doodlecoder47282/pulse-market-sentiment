@@ -23,6 +23,7 @@ import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import { READ_MM_MATRIX, readModel, readVixTerm } from "@shared/plainReads";
 import { HOLDS_PRICE_TAG, TWO_ODDS_NOTE, rangeOdds } from "@shared/scenarioRegions";
+import { levelLabelSide } from "@shared/chartLabels";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -1079,6 +1080,11 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
   }, [horizon, yMin, yMax]);
 
   const probs = a.scenarioProb;
+  // Where each path (and each close-target dot) ends on the right edge: a label there would be covered.
+  const pathEnds = [
+    ...horizon.paths.map((p) => p.waypoints[p.waypoints.length - 1]?.price),
+    a.closeTargets?.bull?.price, a.closeTargets?.base?.price, a.closeTargets?.bear?.price,
+  ];
 
   return (
     <div className="flex-1 min-w-0">
@@ -1193,7 +1199,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   ifOverflow="extendDomain"
                   label={showLabel ? {
                     value: `${shortName} ${fmtK(lv.price)}`,
-                    position: "insideTopLeft",
+                    position: levelLabelSide(lv.price, horizon.spot, yMin, yMax, pathEnds) === "right" ? "insideTopRight" : "insideTopLeft",
                     fill: color,
                     fontSize: 10,
                     fontWeight: 600,

@@ -2,6 +2,23 @@
 
 Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
+
+## 2026-11-18: the defects the owner named on the live site
+
+- Heatseeker "$SPX UNAVAILABLE: no strikes with data inside the display window" every evening: with no expiry asked,
+  the builder picked today's expiry after it had settled and then dropped every contract in it. It now picks the
+  nearest key with an unsettled contract; a settled expiry asked for by date says so. The default chain window is 5
+  days (was 2) so the next expiry is in the read over a weekend or holiday.
+- "SPY - Projected Path" on Models: on Railway the Python sidecar is not installed, so no band has ever been drawn
+  there. With no band the panel is titled "intraday tape (no projected path drawn)" (or "no projected path drawn" with no bars), gives the reason in neutral
+  text and says where a projected path for $SPX is when one is available (Today block on Signals). An empty tape now carries the feed's
+  own reason instead of "feed failed or empty".
+- Models path chart, numbers unreadable on the left: a level within 6% of the chart range of the price had its
+  label painted over by the path start. Those labels sit on the right edge (`shared/chartLabels.ts`).
+- "Levels default to QQQ": no panel defaults to QQQ (Heatseeker defaults to $SPX, pivot projection to SPY). QQQ is
+  only shown when its button is tapped; the likely cause was Heatseeker $SPX being unavailable (first item).
+- Tests: `tests/quant/named-defects.test.ts`.
+
 ## 2026-10-08: quant-fixes branch (PR to main)
 
 Completed objective: apply the 37 fixes from the quant code review (Claude Doc
@@ -2734,7 +2751,6 @@ inside the live view, where its description is true. Also taken: baseline rows n
 for the server, flow alerts distinguish status loading, chain unread and last-session chain, held open
 interest is marked on the short answer, "likely new positions", "buying each flagged whale contract".
 
-
 2026-11-18 (evening): Today block (feat/today-block, stacked on the answer-first reads). Understood as: one
 block at the very top with the plain read, the few levels that matter, and the projected path. The existing
 Today card (spot, wall above, gamma flip, largest level below, from the 0DTE map) now opens with one plain
@@ -2751,7 +2767,6 @@ last read ... from the last price"; the read is scoped to the nearest expiry; th
 of the options gap and labels a held chain "the last read"; loading, unavailable and drawn share one height;
 the card polls only while its tab shows; the position bar is left off phones; the explanation sits behind a
 tap; the chart geometry is a pure function with tests for degenerate inputs.
-
 
 2026-11-18 (night): One set of odds and a scope line for levels (feat/one-set-of-levels, stacked on the Today
 block). Understood as: the same level or the same three words must not show two different numbers without
