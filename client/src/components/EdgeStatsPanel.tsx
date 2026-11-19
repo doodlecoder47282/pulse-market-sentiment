@@ -1,5 +1,7 @@
 // Closed-loop edge stats — rolling hit-rates by symbol/type/premium/vol-oi/delta,
 // regime calibration, threshold suggestions. Data: GET /api/edge/stats.
+import PlainRead from "@/components/PlainRead";
+import { readEdgeWhale } from "@shared/plainReads";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -451,6 +453,7 @@ export default function EdgeStatsPanel() {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        <PlainRead read={readEdgeWhale(data.whaleAlerts, data.windowDays)} testId="edge-whale-plain" />
         <HeadlineCards w={data.whaleAlerts} r={data.regimeCalls} />
 
         <Tabs defaultValue="matrix" className="w-full">
