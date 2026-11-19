@@ -210,6 +210,8 @@ export function evalSweepReclaim(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RUL
   const sweep = current ? findSweep(c, r) : null;
   const conditions: Condition[] = [
     { name: "sweep under a support level and reclaim", met: !current ? null : !!sweep, detail: !c.bars.length ? "no index bars read today" : !current ? `fewer than two completed bars in the last ${r.sweepReclaim.lookbackMin} minutes: bars not current` : sweep ? `traded to ${k(sweep.low)}, ${(sweep.level.price - sweep.low).toFixed(1)} points under ${k(sweep.level.price)} (${sweep.level.label}), last completed close ${k(sweep.close)}` : `no sweep of ${r.sweepReclaim.minSweepPts} to ${r.sweepReclaim.maxSweepPts} points under a support level in the last ${r.sweepReclaim.lookbackMin} minutes` },
+    // The reclaim close can be minutes old: the live price has to still be above the level.
+    { name: "SPX above the level now", met: !fin(c.spx) || !sweep ? null : c.spx > sweep.level.price, detail: !fin(c.spx) ? "no live SPX price read" : !sweep ? "no sweep to compare with" : `SPX ${k(c.spx)} against ${k(sweep.level.price)}` },
     { name: "no tier-1 release near", met: news.inWindow == null ? null : !news.inWindow, detail: news.detail },
     sessionCondition(c, r),
   ];

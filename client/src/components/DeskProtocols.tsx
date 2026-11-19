@@ -1,7 +1,7 @@
 // client/src/components/DeskProtocols.tsx
 //
 // The protocol book on the Trade Desk (server/protocolEngine.ts, shared/protocols.ts): each if-then rule with
-// its trigger, what is expected after it, what cancels it, a structure type, which conditions are met right
+// its trigger, the outcome its author states, what cancels it, a structure type, which conditions are met right
 // now, and a counts-only record. Below it, the log of board levels each ticker crossed today.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";

@@ -109,10 +109,12 @@ async function tick(): Promise<void> {
       // A read that is not live breaks the chain: the next live read starts fresh instead of logging a cross that spans the gap.
       if (t.quoteState !== "ok" || t.price == null) { lastRead.delete(t.symbol); continue; }
       const prev = lastRead.get(t.symbol);
+      // Landmarks from an option map that is not current are not levels to log a cross of.
+      const lv = t.levels.filter((l) => l.group !== "options" || board.cases.optionsState === "ok");
       if (prev && prev.date === today) {
-        for (const h of levelHits(prev.price, t.price, t.levels, prev.levels)) ins.run(now, t.symbol, h.key, h.label, h.price, h.direction, t.price);
+        for (const h of levelHits(prev.price, t.price, lv, prev.levels)) ins.run(now, t.symbol, h.key, h.label, h.price, h.direction, t.price);
       }
-      lastRead.set(t.symbol, { price: t.price, date: today, levels: t.levels });
+      lastRead.set(t.symbol, { price: t.price, date: today, levels: lv });
     }
     sqlite.prepare(`DELETE FROM level_hits WHERE id <= (SELECT MAX(id) FROM level_hits) - ?`).run(HIT_KEEP);
 

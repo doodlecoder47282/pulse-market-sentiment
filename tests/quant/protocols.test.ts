@@ -69,6 +69,8 @@ test("sweep and reclaim: under a support level by 2 to 10 points, then back abov
   // Bars older than the lookback do not count.
   assert.equal(findSweep({ bars: [bar(40, 7304, 7305, 7295, 7297), bar(5, 7301, 7303, 7300.5, 7302)], levels, nowMs: T0 }), null);
   assert.equal(evalSweepReclaim(ctx({ bars: [] })).conditions[0].met, null);
+  assert.equal(evalSweepReclaim(ctx({ spx: 7298, bars })).armed, false, "price already back under the level");
+  assert.equal(evalSweepReclaim(ctx({ spx: null, bars })).armed, false);
   // The bar still forming is not used: its close is a live print.
   const forming = [bar(10, 7306, 7308, 7303, 7304), bar(5, 7304, 7305, 7295, 7297), bar(0, 7297, 7303, 7296, 7302)];
   assert.equal(findSweep({ bars: forming, levels, nowMs: T0 }), null);
