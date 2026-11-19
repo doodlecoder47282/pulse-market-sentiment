@@ -56,6 +56,7 @@ export interface ProtocolDef {
 }
 
 /** Support levels a sweep can run under. */
+// The range lows (l20, lAll) are left out on purpose: adding a level a rule watches is a rule change and needs a new book version.
 export const SWEEP_LEVEL_KEYS = ["pdl", "orl", "magnetBelow", "s1", "pwl", "straddleLow"];
 
 export function protocolBook(r: ProtocolRules = PROTOCOL_RULES): ProtocolDef[] {
@@ -289,6 +290,35 @@ export function levelHits(prev: number | null | undefined, cur: number | null | 
     else if (prev > l.price && cur <= l.price) out.push({ key: l.key, label: l.label, price: l.price, direction: "down" });
   }
   return out;
+}
+
+/** Crossings of one level by one ticker this close together are shown as one line. */
+export const HIT_JOIN_MIN = 10;
+export interface HitRow { id?: number; at: number; symbol: string; levelKey: string; label: string; levelPrice: number; direction: string; price: number }
+export interface HitLine extends HitRow { count: number; firstAt: number; /** true: older crossings of this run may lie before the rows read, so the count is a floor and firstAt is not its start. */ fromBefore: boolean }
+/**
+ * A price sitting on a level crosses it again and again; each crossing is true, and a screen of them hides the
+ * other levels. Crossings of the same level by the same ticker, each within HIT_JOIN_MIN minutes of the one
+ * before, become one line: the count, the first and last time, and the last crossing's direction and price.
+ * Every row given is counted. `cutAtMs`: pass the time of the oldest row when the rows are only the newest
+ * part of the log; a run that starts within the join window of that cut may continue before it, and is
+ * marked `fromBefore` so its count is shown as a floor. Newest line first.
+ */
+export function joinHits(rows: HitRow[], joinMin: number = HIT_JOIN_MIN, cutAtMs: number | null = null): HitLine[] {
+  const asc = rows.slice().sort((a, b) => a.at - b.at || (a.id ?? 0) - (b.id ?? 0));
+  const open = new Map<string, HitLine>();
+  const out: HitLine[] = [];
+  for (const r of asc) {
+    const id = `${r.symbol}|${r.levelKey}|${r.levelPrice}`;
+    const cur = open.get(id);
+    if (cur && r.at - cur.at <= joinMin * 60_000) {
+      cur.count += 1; cur.at = r.at; cur.direction = r.direction; cur.price = r.price;
+    } else {
+      const line: HitLine = { ...r, count: 1, firstAt: r.at, fromBefore: cutAtMs != null && r.at - cutAtMs <= joinMin * 60_000 };
+      open.set(id, line); out.push(line);
+    }
+  }
+  return out.sort((a, b) => b.at - a.at);
 }
 
 /** Names of the protocols that watch a level (matched by any part of a merged key). */

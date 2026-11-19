@@ -14,7 +14,7 @@ import { etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
 import { editionFromEnv } from "../shared/edition";
 import {
-  boardSession, calendarLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
+  boardSession, calendarLevels, rangeLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
   type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead,
 } from "../shared/levelBoard";
 
@@ -226,13 +226,15 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
 
     const d = dailies[idx];
     let levels: BoardLevel[] = calendarLevels(d.bars, forSession, { pivots: t.kind !== "vol" });
+    // Only alongside the calendar levels: a board with no prior day stays "unavailable" rather than showing ranges alone.
+    if (levels.length) levels = [...levels, ...rangeLevels(d.bars, forSession)];
     const done = d.bars.filter((b) => b.date < forSession).map((b) => b.date).sort();
     const priorSession = done[done.length - 1] ?? null;
     let levelsState: BoardTicker["levelsState"] = levels.length ? "ok" : "unavailable";
     const reasons: string[] = [];
     if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
-    else if (priorSession !== expectedPrior) reasons.push(`the newest completed daily bar is ${priorSession}, not ${expectedPrior}: "prior-day" levels are from ${priorSession}`);
-    else if (readBeforeClose(d, forSession)) reasons.push(`the daily bar for ${priorSession} was read before that session closed`);
+    else if (priorSession !== expectedPrior) reasons.push(`the newest completed daily bar is ${priorSession}, not ${expectedPrior}: "prior-day" levels are from ${priorSession}, and the range levels end there`);
+    else if (readBeforeClose(d, forSession)) reasons.push(`the daily bar for ${priorSession} was read before that session closed, so levels that use it (prior day, pivots, ranges) may be short of its final high or low`);
     const i = intras[idx];
     if (i) {
       const sl = sessionLevels(i.bars, today, nowMs);
@@ -265,7 +267,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       bear: deskCase(spxRaw, spx.price, "bear"),
       optionsState: opt.state, optionsReason: opt.reason, optionsAsOfMs: opt.asOfMs,
     },
-    note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars; the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",
+    note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars, as do the 20-session high and low and the high and low of every daily bar read (about three months; the label carries the count); the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",
   };
 }
 

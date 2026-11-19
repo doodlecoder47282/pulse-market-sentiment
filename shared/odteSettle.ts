@@ -119,6 +119,9 @@ export function wienerScoringStartMs(first: Pick<OdteMap, "chainAsOfMs"> | null 
   return typeof firstAt === "number" && Number.isFinite(firstAt) ? firstAt : null;
 }
 
+/** Settled days the ledger needs before its counts are read as more than counts. */
+export const SETTLE_MIN_DAYS = 50;
+
 export interface SettleTally {
   days: number;
   settleInStraddle: { yes: number; of: number };
@@ -150,8 +153,8 @@ export function tallySettles(evals: SettleEvaluation[], withZones = true): Settl
     medianAbsPinDistance: med == null ? null : r2(med),
     dipTouchedAndHeld: withZones ? zoneCount("dip") : { yes: 0, of: 0 },
     fadeTouchedAndHeld: withZones ? zoneCount("fade") : { yes: 0, of: 0 },
-    note: evals.length < 50
-      ? `${evals.length} settled day${evals.length === 1 ? "" : "s"}: counts only, no claim of edge before 50 and a graded no-data share under 20%`
+    note: evals.length < SETTLE_MIN_DAYS
+      ? `${evals.length} settled day${evals.length === 1 ? "" : "s"}: counts only, no claim of edge before ${SETTLE_MIN_DAYS} and a graded no-data share under 20%`
       : `${evals.length} settled days: counts of what happened, still not a calibrated probability`,
   };
 }
