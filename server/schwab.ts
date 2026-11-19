@@ -616,9 +616,9 @@ async function schwabFetchMetaOnce(
         const fetchedAt = Date.now();
         const fingerprint = opts?.onAcquisition || ttl > 0 ? fingerprintPayload(data) : undefined;
         if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl, fingerprint, kind });
+        if (fetchedAt - _lastCacheSweep > CACHE_SWEEP_MS) sweepSchwabCache(fetchedAt);
         // Daily bars are also kept on disk so a restart does not start cold (server/schwabCacheStore.ts).
         if (ttl > 0 && kind === "daily_bars") saveDailyPayload(cacheKey, data, fetchedAt, fetchedAt + ttl);
-        if (fetchedAt - _lastCacheSweep > CACHE_SWEEP_MS) sweepSchwabCache(fetchedAt);
         return deliver({ data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes }, "transport_response", fetchedAt, fingerprint);
       }
       // 401 → the access token is not accepted. Once per call, and at most
