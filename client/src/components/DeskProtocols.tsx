@@ -21,7 +21,7 @@ interface Log {
   bookVersion: string; minGraded: number; running: boolean; sessionOpen: boolean; evaluatedAt: number | null; lastTickError: string | null;
   protocols: Proto[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
-  hits: Array<{ at: number; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
+  hits: Array<{ at: number; firstAt?: number; count?: number; fromBefore?: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
 
@@ -173,7 +173,10 @@ export default function DeskProtocols() {
               {l.hits.map((h, i) => (
                 <li key={`${h.at}-${h.symbol}-${i}`} className="break-words">
                   <span className="font-mono text-muted-foreground">{day(h.at)} {hhmm(h.at)}</span>{" "}
-                  <span className="font-semibold">{h.symbol.replace(/^[$/]/, "")}</span> crossed {h.direction} through <span className="font-mono">{px(h.levelPrice)}</span> <span className="text-muted-foreground">({h.label})</span>
+                  <span className="font-semibold">{h.symbol.replace(/^[$/]/, "")}</span>{" "}
+                  {(h.count ?? 1) > 1 && h.firstAt != null
+                    ? <>crossed <span className="font-mono">{px(h.levelPrice)}</span> <span className="text-muted-foreground">({h.label})</span> {h.fromBefore ? `at least ${h.count} times, from before ${hhmm(h.firstAt)}` : `${h.count} times from ${hhmm(h.firstAt)}`}, last {h.direction}</>
+                    : <>{h.fromBefore ? "crossed (earlier crossings may precede the log) " : "crossed "}{h.direction} through <span className="font-mono">{px(h.levelPrice)}</span> <span className="text-muted-foreground">({h.label})</span></>}
                   {h.watchedBy.length > 0 && <span className="text-violet-300"> · watched by: {h.watchedBy.join("; ")}</span>}
                 </li>
               ))}
