@@ -24,6 +24,8 @@ import { apiRequest } from "@/lib/queryClient";
 
 // ─── Types (mirror server/chainAudit.ts) ─────────────────────────────────────
 
+import { plainDex, plainGexLadder, plainKeyLevels, plainPinning, plainSkew, plainTermStructure, plainUnusualVolume, plainVrp } from "@shared/plainReads";
+
 interface DEXResult {
   profile: { strike: number; callDex: number; putDex: number; netDex: number }[];
   maxPositive: { strike: number; value: number } | null;
@@ -148,6 +150,8 @@ interface ChainAuditResult {
   contractsProcessed: number;
   expiriesFound: number;
   dataQuality: "full" | "partial" | "minimal";
+  /** Where the open interest in this read came from: live, held from an earlier session, or none. */
+  oiState?: { source?: string; sessionDate?: string | null; note?: string | null };
 }
 
 interface ChainAuditResponse {
@@ -310,12 +314,23 @@ function VRPSignalBadge({ signal }: { signal: VRPEntry["signal"] }) {
 
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 
-function Section({ title, children, testId }: { title: string; children: React.ReactNode; testId?: string }) {
+/** The sentence a reader needs before the table: what this panel is saying, in ordinary words (shared/plainReads.ts). */
+function Plain({ text, testId }: { text: string; testId?: string }) {
+  return (
+    <p className="rounded border-l-2 border-cyan-400/60 bg-cyan-400/5 px-2.5 py-1.5 text-[13px] leading-snug text-foreground/90" data-testid={testId}>
+      <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">In plain words</span>
+      {text}
+    </p>
+  );
+}
+
+function Section({ title, children, testId, plain }: { title: string; children: React.ReactNode; testId?: string; plain?: string }) {
   return (
     <div className="space-y-2" data-testid={testId}>
       <div className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground border-b border-border/30 pb-1">
         {title}
       </div>
+      {plain && <Plain text={plain} testId={testId ? `${testId}-plain` : undefined} />}
       {children}
     </div>
   );
@@ -466,7 +481,7 @@ export default function ChainAudit() {
       {audit && data && (
         <div className="space-y-6">
           {/* Row 1: 4 KPI cards */}
-          <Section title="Key Levels" testId="section-kpi">
+          <Section title="Key Levels" testId="section-kpi" plain={plainKeyLevels({ spot: data.spot, flipStrike: audit.dex.flipStrike, flipMethod: audit.dex.flipMethod, score: audit.dealerScore?.score, dexState: audit.dex.dexState, oi: audit.oiState })}>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <KPICard
                 label={audit.dex.flipMethod === "peak_fallback" ? "DEX Peak Strike (no flip)" : "DEX Flip Strike"}
@@ -505,7 +520,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 2: GEX Decay Ladder */}
-          <Section title="GEX Decay Ladder — by DTE Bucket" testId="section-gex-decay">
+          <Section title="GEX Decay Ladder — by DTE Bucket" testId="section-gex-decay" plain={plainGexLadder(audit.gexDecay, data.spot, audit.oiState)}>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <GEXBucketCard label="0DTE" bucket={audit.gexDecay.zerodte} testId="gex-bucket-0dte" />
               <GEXBucketCard label="1–2 DTE" bucket={audit.gexDecay.short} testId="gex-bucket-short" />
@@ -515,7 +530,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 3: Term Structure + IV Skew */}
-          <Section title="Vol Surface" testId="section-vol-surface">
+          <Section title="Vol Surface" testId="section-vol-surface" plain={`${plainTermStructure(audit.termStructure)} ${plainSkew(audit.skew)}`}>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {/* Term Structure Chart */}
               <Card className="bg-card/60 border-border/40">
@@ -622,7 +637,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 4: DEX Profile chart */}
-          <Section title="DEX — Delta Exposure Profile" testId="section-dex">
+          <Section title="DEX — Delta Exposure Profile" testId="section-dex" plain={plainDex(audit.dex, audit.oiState)}>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
               <div className="lg:col-span-2">
                 <Card className="bg-card/60 border-border/40">
@@ -715,7 +730,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 5: Pinning Probability */}
-          <Section title="Settlement Probability per Strike — Nearest Expiry (risk-neutral)" testId="section-pinning">
+          <Section title="Settlement Probability per Strike — Nearest Expiry (risk-neutral)" testId="section-pinning" plain={plainPinning(audit.pinning, audit.pinningMeta)}>
             {audit.pinning.length === 0 ? (
               <div className="font-mono text-[11px] text-muted-foreground text-center py-4">
                 unavailable{audit.pinningMeta?.reason ? `: ${audit.pinningMeta.reason}` : " (chain may be thin)"}
@@ -780,7 +795,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 6: Unusual Volume Table */}
-          <Section title="Unusual Volume — Vol/OI Ratio > 2x" testId="section-unusual-vol">
+          <Section title="Unusual Volume — Vol/OI Ratio > 2x" testId="section-unusual-vol" plain={plainUnusualVolume(audit.unusualVolume, audit.oiState)}>
             {audit.unusualVolume.length === 0 ? (
               <div className="font-mono text-[11px] text-muted-foreground text-center py-4">no unusual volume — flow is quiet at current thresholds</div>
             ) : (
@@ -849,7 +864,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 7: VRP Table */}
-          <Section title="Vol Risk Premium (VRP) — Theoretical vs Market IV" testId="section-vrp">
+          <Section title="Vol Risk Premium (VRP) — Theoretical vs Market IV" testId="section-vrp" plain={plainVrp(audit.vrp)}>
             <Card className="bg-card/60 border-border/40">
               <CardContent className="px-0 pb-2 pt-0">
                 {/* VRP reading guide — how to trade the signal */}
@@ -939,7 +954,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 8: Vanna + Charm exposure charts */}
-          <Section title="Second-Order Greek Exposures" testId="section-greeks2">
+          <Section title="Second-Order Greek Exposures" testId="section-greeks2" plain="How dealer hedging would shift if volatility or the calendar moves, with price held still. Reference detail: nothing here changes the reads above.">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {/* Vanna */}
               <Card className="bg-card/60 border-border/40">
