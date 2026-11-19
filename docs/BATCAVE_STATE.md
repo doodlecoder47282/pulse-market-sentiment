@@ -2845,3 +2845,11 @@ sessions before 2026-11-01 skipped because CPI/PCE are not loaded earlier). Rout
 GET /api/desk/protocols/replay. Tests: tests/quant/protocol-replay.test.ts (5).
 Next in this line: one scoreboard of everything the desk flags, then deeper levels below the price and
 collapsing repeat level crossings.
+
+**Replay accepts an older copy of minute bars (2026-11-19).** Seen live after #119 deployed: "Replay
+unavailable: newest 1-minute bars not fetched (ok, stale: self-throttle (100 requests/min))". The replay
+refused any re-served copy, but minute bars of sessions that had finished when the copy was made do not
+change. It now stores them, measures the forming-bar guard from when the payload was produced, and says in
+its note that sessions after the copy are not in the replay yet. Open: the server sat at its own 100
+requests-a-minute Schwab limit for several minutes after a deploy, after the close; what is spending that
+budget has not been looked at.
