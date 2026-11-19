@@ -4035,8 +4035,10 @@ Describe the above in the JSON schema specified in the system prompt: what the n
 
       // DTE window: enough days to include the requested expiry. Schwab's toDate
       // can be exclusive in practice, so we add a 7-day buffer past the target.
-      // Default 2-day for 0DTE/weekly to keep the payload small.
-      let chainDteWindow = 2;
+      // Default 5 days: after the close today's key has settled and the next expiry can be
+      // four calendar days out (Friday evening before a Monday holiday; Thursday evening
+      // before Good Friday). Two days left the chain holding only the settled key.
+      let chainDteWindow = 5;
       if (targetExpiry) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);

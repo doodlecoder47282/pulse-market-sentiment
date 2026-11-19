@@ -47,7 +47,23 @@ test("heatseeker: every listed expiry settled still answers with a reason", () =
   const a = buildHeatseeker(twoDays(), "$SPX", 6700, null, later);
   assert.equal(a.dataState, "unavailable");
   assert.equal(a.nearestLiveExpiry, null);
-  assert.match(a.reason ?? "", /has settled/);
+  assert.equal(a.reason, "the 2026-10-08 expiry has settled: its contracts carry no exposure, and no later expiry is in this chain read.");
+});
+
+test("heatseeker: a key holding only AM-settled SPX is settled once the open has passed, and the pick moves on", () => {
+  const c = twoDays();
+  // 2026-10-08 key: AM-settled SPX only (root SPX, not SPXW).
+  for (const map of [c.callExpDateMap, c.putExpDateMap]) for (const k of Object.keys(map["2026-10-08:0"])) {
+    for (const o of map["2026-10-08:0"][k]) o.symbol = String(o.symbol).replace("SPXW ", "SPX  ");
+  }
+  const a = buildHeatseeker(c, "$SPX", 6700, null, Date.UTC(2026, 9, 8, 15, 0)); // 11:00 ET
+  assert.equal(a.expiry, "2026-10-09");
+  assert.equal(a.dataState, "ok");
+});
+
+test("heatseeker route: the default chain window reaches the next expiry over a long weekend", () => {
+  const routes = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
+  assert.match(routes, /let chainDteWindow = 5;/);
 });
 
 test("SPY tape: an empty tape carries the feed's own reason when there is one", () => {
@@ -63,8 +79,8 @@ test("SPY tape: an empty tape carries the feed's own reason when there is one", 
 
 test("SPY panel: with no band it is not titled a projected path and says where today's path is", () => {
   const p = readFileSync(new URL("../../client/src/components/MLProjectionPanel.tsx", import.meta.url), "utf8");
-  assert.match(p, /hasBands \? "SPY — Projected Path" : "SPY — today's tape \(no projected path drawn\)"/);
-  assert.match(p, /No projected path is drawn here: \{served\?\.reason \?\? "waiting for the projection service"\}\. The projected path for today \(\$SPX\) is at the top of the Signals tab, in the Today block\./);
+  assert.match(p, /hasBands \? "SPY — Projected Path" : hasCandles \? "SPY — intraday tape \(no projected path drawn\)" : "SPY — no projected path drawn"/);
+  assert.match(p, /No projected path is drawn here: \{served\?\.reason \?\? "waiting for the projection service"\}\. A projected path to the close for \$SPX, when one is available, is in the Today block at the top of the Signals tab\./);
 });
 
 test("Models chart: a level close to the price is labelled on the right, clear of the path start", () => {
@@ -72,7 +88,9 @@ test("Models chart: a level close to the price is labelled on the right, clear o
   assert.equal(levelLabelSide(7271, 7324, 7124, 7773), "left");
   assert.equal(levelLabelSide(7522, 7324, 7124, 7773), "left");
   assert.equal(levelLabelSide(7332, null, 7124, 7773), "left");
+  assert.equal(levelLabelSide(7332, 7324, 7124, 7773, [7582, 7340, 7196]), "left", "a path ending beside the level keeps the label off the right edge");
+  assert.equal(levelLabelSide(7332, 7324, 7124, 7773, [7582, 7572, 7196, null]), "right");
   assert.equal(levelLabelSide(7332, 7324, 7500, 7500), "left");
   const m = readFileSync(new URL("../../client/src/components/ModelsPanel.tsx", import.meta.url), "utf8");
-  assert.match(m, /levelLabelSide\(lv\.price, horizon\.spot, yMin, yMax\) === "right" \? "insideTopRight" : "insideTopLeft"/);
+  assert.match(m, /levelLabelSide\(lv\.price, horizon\.spot, yMin, yMax, pathEnds\) === "right" \? "insideTopRight" : "insideTopLeft"/);
 });

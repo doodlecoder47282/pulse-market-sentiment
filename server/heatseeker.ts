@@ -200,8 +200,25 @@ export function buildHeatseeker(
   // (T = 0), so picking it drew "unavailable" all evening while tomorrow's
   // chain was sitting there (same rule as server/odteForward.ts).
   const nowMs = nowMsArg ?? Date.now();
-  const settled = (date: string) => { try { return timeToExpiry(date, { nowMs }).expired; } catch { return false; } };
-  let picked = sortedExps.find((e) => !settled(e.date)) ?? sortedExps[0];
+  // A key has settled when every contract in it has (AM SPX and PM SPXW can share a date key and
+  // settle at different times, so the date alone does not decide it); a key with no contracts
+  // falls back to the PM settlement of its date.
+  const keySettled = (key: string, date: string): boolean => {
+    let seen = 0;
+    for (const map of [chain.callExpDateMap || {}, chain.putExpDateMap || {}]) {
+      const strikesObj = (map as any)[key];
+      if (!strikesObj) continue;
+      for (const k of Object.keys(strikesObj)) for (const c of strikesObj[k] || []) {
+        seen++;
+        if (contractYears(key, c, nowMs) > 0) return false;
+      }
+    }
+    if (seen > 0) return true;
+    try { return timeToExpiry(date, { nowMs }).expired; } catch { return false; }
+  };
+  const settledByKey = new Map(sortedExps.map((e) => [e.key, keySettled(e.key, e.date)] as const));
+  const nearestLive = sortedExps.find((e) => !settledByKey.get(e.key)) ?? null;
+  let picked = nearestLive ?? sortedExps[0];
   if (targetExpiry) {
     const exact = sortedExps.find((e) => e.date === targetExpiry);
     if (exact) {
@@ -589,9 +606,11 @@ export function buildHeatseeker(
     pivotBands,
     dataState: strikes.length > 0 ? "ok" : "unavailable",
     reason: strikes.length > 0 ? null
-      : settled(expiry) ? `the ${expiry} expiry has settled: its contracts carry no exposure. Pick a later expiry.`
+      : settledByKey.get(expKey) ? (nearestLive
+          ? `the ${expiry} expiry has settled: its contracts carry no exposure. Pick a later expiry.`
+          : `the ${expiry} expiry has settled: its contracts carry no exposure, and no later expiry is in this chain read.`)
       : "no strikes with data inside the display window",
-    nearestLiveExpiry: sortedExps.find((e) => !settled(e.date))?.date ?? null,
+    nearestLiveExpiry: nearestLive?.date ?? null,
     totals,
     flipInputs: flipInputs({ weight: "open_interest", universe: "single-expiry", expiryKeys: [expKey] }),
     dealerSensitivity,
