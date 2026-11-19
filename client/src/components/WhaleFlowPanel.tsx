@@ -794,7 +794,7 @@ function PerformanceCard() {
       </div>
       {/* the answer first: closed whale positions that made money after costs, in this window */}
       {snap && !perfQuery.isLoading && (
-        <PlainRead read={readWhalePerformance(rows.find((r) => r.source === "whale") ?? null, snap.windowDays)} testId="performance-plain" className="mb-2" />
+        <PlainRead read={readWhalePerformance(rows.find((r) => r.source === "whale") ?? snap.overall, snap.windowDays)} testId="performance-plain" className="mb-2" />
       )}
       {perfQuery.isLoading ? (
         <div className="space-y-1.5">

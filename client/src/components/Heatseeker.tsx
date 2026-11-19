@@ -46,6 +46,8 @@ import DepthSkewFlow from "./DepthSkewFlow";
 import UnavailablePanel from "./UnavailablePanel";
 import OdteContractChart from "./OdteContractChart";
 import { friendlyError } from "@/lib/friendlyError";
+import PlainRead from "@/components/PlainRead";
+import { READ_HEATSEEKER } from "@shared/plainReads";
 
 import { livePoll } from "@/lib/pollInterval";
 // Contract snapshot shape from /api/odte-tracker (used to enrich drill-down meta)
@@ -974,6 +976,8 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
       <PivotBandsLadder bands={pivotBands} spot={spot} expiry={expiry} dte={dte} degraded={chainDead} />
 
       {/* ── Heatmap grid ─────────────────────────────────────────────── */}
+      {/* what the grid below is, in ordinary words: live view only (the Killbox draws something else) */}
+      <PlainRead read={READ_HEATSEEKER} testId="heatseeker-plain" />
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-start justify-between gap-2">

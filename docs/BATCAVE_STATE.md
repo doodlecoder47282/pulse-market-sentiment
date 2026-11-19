@@ -2724,6 +2724,15 @@ follow-through (wins of closed positions after costs, with n), flow alerts, the 
 of graded, with n) and the Heatseeker map. The Trade Desk map, the Regime panel and the Wiener map already
 open with a plain sentence and were left as they are. No number, table or model changed. Tests:
 tests/quant/plain-reads.test.ts (14).
+Review of the answer-first reads (#110): HOLD, seven must-fixes taken, each against the code's definition. The
+VIX answer read backwards whenever the level was "small" (term clause now stands alone); the cone is realised
+volatility scaled by the VIX with untested coverage, not "recent volatility alone"; a whale "hit" is finishing
+up 30% or more at expiry, not touching +30%; an empty whale window read "not read" (now the zero-count
+sentence); the matrix move is VIX-implied times a hand-set multiplier, and its weights are nudged live; the
+walls are the largest call level at or above and put level at or below the price; the Heatseeker read moved
+inside the live view, where its description is true. Also taken: baseline rows named, the backtest read waits
+for the server, flow alerts distinguish status loading, chain unread and last-session chain, held open
+interest is marked on the short answer, "likely new positions", "buying each flagged whale contract".
 
 2026-11-18 (evening): Today block (feat/today-block, stacked on the answer-first reads). Understood as: one
 block at the very top with the plain read, the few levels that matter, and the projected path. The existing

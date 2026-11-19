@@ -469,7 +469,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
 
         <CollapsibleContent>
           <div className="border-t border-amber-500/10 px-4 pb-4 pt-3 space-y-2">
-            <PlainRead read={readFlowAlerts({ total: totalCount, high: highCount, connected: isConnected })} testId="flow-alerts-plain" />
+            <PlainRead read={readFlowAlerts({ total: totalCount, high: highCount, connected: statusData == null ? null : isConnected, chainRead: chainLabel != null, lastSession: chainLabel === "closed" || chainLabel === "stale" })} testId="flow-alerts-plain" />
             {!isConnected ? (
               /* Disconnected state */
               <div className="flex flex-col items-center gap-3 py-4 text-center">
