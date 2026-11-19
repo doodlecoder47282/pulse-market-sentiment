@@ -9,7 +9,7 @@ const full: ScoreInputs = {
   whale: { graded: 99, pending: 57, hit30Rate: 5 / 99, ungradedNoMark: 2 },
   whalePerf: { windowDays: 7, wins: 4, losses: 45, avgPct: -0.62, excludedNoQuote: 3, excludedNoFee: 24 },
   regime: { graded: 110, pending: 17, overallHitRate: 0.6, sessions: 12 },
-  setups: { minSample: 100, summary: [{ ruleVersion: "2026.10.21-1", kind: "breakout below the put wall", n: 3, positive: 0 }] },
+  setups: { minSample: 100, summary: [{ ruleVersion: "2026.10.21-1", kind: "breakout_below", n: 3, positive: 0 }] },
   protocols: { minGraded: 30, bookVersion: "2026.11.18-1", items: [
     { name: "Sweep under a level and reclaim", graded: true, record: rec(1, 1, 0, 0, 1, 2) },
     { name: "News window", graded: false, record: rec(0) },
@@ -26,6 +26,7 @@ test("each record keeps its own counts and floor, with what was left out", () =>
   assert.equal(row(rows, "whale-perf").result, "4 of 49 closed with a gain; average result −62%; 27 left out for a missing quote or fee");
   const s = rows.find((r) => r.id.startsWith("setup:"))!;
   assert.deepEqual([s.n, s.floor, s.state, s.result], [3, 100, "too_few", "0 of 3 ended with a gain"]);
+  assert.equal(s.what, "Setup: breakout below the put wall (rules 2026.10.21-1)", "the kind is worded as the setup log words it");
   const p = rows.find((r) => r.id.startsWith("protocol:"))!;
   assert.deepEqual([p.n, p.floor, p.state], [1, 30, "too_few"]);
   assert.match(p.what, /book 2026\.11\.18-1/);

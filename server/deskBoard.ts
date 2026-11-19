@@ -75,16 +75,20 @@ export interface DeskBoardDeps {
   getPriceHistory(symbol: string, periodType: "day" | "month", period: number, frequencyType: "minute" | "daily", frequency: number, ext?: boolean): Promise<PriceHistoryResponse>;
   optionLevels(nowMs: number): Promise<OptionLevels>;
   edition(): string;
+  /** Daily bars kept from the last good read of a symbol, for a read the source refuses (a restart loses the in-memory cache). */
+  loadDaily?(symbol: string): Promise<{ bars: DayBar[]; asOfMs: number | null } | null>;
+  saveDaily?(symbol: string, bars: DayBar[], asOfMs: number | null): Promise<void>;
 }
 export interface OptionLevels { levels: BoardLevel[]; state: "ok" | "stale" | "unavailable"; reason: string | null; asOfMs: number | null }
 
-interface DailyRead { bars: DayBar[]; reason: string | null; asOfMs: number | null }
+interface DailyRead { bars: DayBar[]; reason: string | null; asOfMs: number | null; /** Set when the bars are the kept copy: why the fresh read failed. */ storedBecause?: string | null }
 const dailyCache = new Map<string, { at: number; forSession: string; read: DailyRead }>();
 const intraCache = new Map<string, { at: number; bars: IntraBar[]; reason: string | null }>();
 const negative = new Map<string, { at: number; reason: string }>();
 let boardCache: { at: number; board: DeskBoard } | null = null;
 let inFlight: Promise<DeskBoard> | null = null;
 
+const hhmmEt = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const src = (deps: DeskBoardDeps) => (deps.edition() === "demo" ? "the sample feed" : "Schwab");
 
 async function dailyBars(deps: DeskBoardDeps, symbol: string, forSession: string, nowMs: number): Promise<DailyRead> {
@@ -92,7 +96,13 @@ async function dailyBars(deps: DeskBoardDeps, symbol: string, forSession: string
   // A cache entry built for another session is a miss: at the close today's bar turns from "in progress" into the prior day.
   if (hit && hit.forSession === forSession && nowMs - hit.at < DAILY_TTL_MS) return hit.read;
   const neg = negative.get(`d:${symbol}`);
-  if (neg && nowMs - neg.at < negTtl(neg.reason)) return { bars: [], reason: neg.reason, asOfMs: null };
+  if (neg && nowMs - neg.at < negTtl(neg.reason)) {
+    try {
+      const kept = await deps.loadDaily?.(symbol);
+      if (kept && kept.bars.length) return { bars: kept.bars, asOfMs: kept.asOfMs, reason: null, storedBecause: neg.reason };
+    } catch { /* no kept copy */ }
+    return { bars: [], reason: neg.reason, asOfMs: null };
+  }
   let read: DailyRead;
   try {
     const ph = await deps.getPriceHistory(symbol, "month", 3, "daily", 1);
@@ -101,7 +111,17 @@ async function dailyBars(deps: DeskBoardDeps, symbol: string, forSession: string
   } catch (e: any) {
     read = { bars: [], asOfMs: null, reason: `daily bars request failed for ${symbol}: ${String(e?.message ?? e).slice(0, 100)}` };
   }
-  if (!read.bars.length) { negative.set(`d:${symbol}`, { at: nowMs, reason: read.reason ?? "no daily bars" }); return read; }
+  if (!read.bars.length) {
+    negative.set(`d:${symbol}`, { at: nowMs, reason: read.reason ?? "no daily bars" });
+    // The source gave nothing: completed daily bars do not change, so the copy kept from the last good read is used and
+    // named as a copy. Whether it still holds the right prior session is checked by the caller, as for any read.
+    try {
+      const kept = await deps.loadDaily?.(symbol);
+      if (kept && kept.bars.length) return { bars: kept.bars, asOfMs: kept.asOfMs, reason: null, storedBecause: read.reason ?? "no daily bars" };
+    } catch { /* no kept copy: the refusal stands */ }
+    return read;
+  }
+  try { await deps.saveDaily?.(symbol, read.bars, read.asOfMs); } catch { /* keeping a copy is best effort */ }
   // A payload read before the prior session closed holds that session's bar half-formed: use it, flag it, do not keep it.
   if (!readBeforeClose(read, forSession)) dailyCache.set(symbol, { at: nowMs, forSession, read });
   return read;
@@ -156,6 +176,13 @@ async function liveOptionLevels(nowMs: number): Promise<OptionLevels> {
 }
 
 let _live: DeskBoardDeps | null = null;
+let _dailyTable = false;
+function ensureDailyTable(sqlite: { exec(sql: string): unknown }): void {
+  if (_dailyTable) return;
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS desk_daily_bars (symbol TEXT PRIMARY KEY, bars_json TEXT NOT NULL, as_of_ms INTEGER, saved_at INTEGER NOT NULL)`);
+  _dailyTable = true;
+}
+
 function liveDeps(): DeskBoardDeps {
   if (_live) return _live;
   _live = {
@@ -164,6 +191,21 @@ function liveDeps(): DeskBoardDeps {
     getPriceHistory: async (symbol, periodType, period, frequencyType, frequency, ext) => (await import("./schwab")).getPriceHistory(symbol, periodType, period, frequencyType, frequency, ext ?? false),
     optionLevels: liveOptionLevels,
     edition: () => editionFromEnv(),
+    loadDaily: async (symbol) => {
+      if (editionFromEnv() === "demo") return null;
+      const { sqlite } = await import("./storage");
+      ensureDailyTable(sqlite);
+      const r = sqlite.prepare(`SELECT bars_json, as_of_ms FROM desk_daily_bars WHERE symbol = ?`).get(symbol) as { bars_json: string; as_of_ms: number | null } | undefined;
+      if (!r) return null;
+      const bars = JSON.parse(r.bars_json);
+      return Array.isArray(bars) ? { bars, asOfMs: r.as_of_ms ?? null } : null;
+    },
+    saveDaily: async (symbol, bars, asOfMs) => {
+      if (editionFromEnv() === "demo") return;
+      const { sqlite } = await import("./storage");
+      ensureDailyTable(sqlite);
+      sqlite.prepare(`INSERT OR REPLACE INTO desk_daily_bars (symbol, bars_json, as_of_ms, saved_at) VALUES (?, ?, ?, ?)`).run(symbol, JSON.stringify(bars), asOfMs, Date.now());
+    },
   };
   return _live;
 }
@@ -235,6 +277,8 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
     else if (priorSession !== expectedPrior) reasons.push(`the newest completed daily bar is ${priorSession}, not ${expectedPrior}: "prior-day" levels are from ${priorSession}, and the range levels end there`);
     else if (readBeforeClose(d, forSession)) reasons.push(`the daily bar for ${priorSession} was read before that session closed, so levels that use it (prior day, pivots, ranges) may be short of its final high or low`);
+    // Kept copy in use: say so and why, whatever else is true of it. The prior-session checks above already ran on it.
+    if (levels.length && d.storedBecause) reasons.push(`daily bars are the copy kept from ${d.asOfMs != null ? `${etDate(d.asOfMs)} ${hhmmEt(d.asOfMs)} ET` : "an earlier read"}; the fresh read failed (${d.storedBecause})`);
     const i = intras[idx];
     if (i) {
       const sl = sessionLevels(i.bars, today, nowMs);

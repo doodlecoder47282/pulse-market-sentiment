@@ -2871,3 +2871,13 @@ change. It now stores them, measures the forming-bar guard from when the payload
 its note that sessions after the copy are not in the replay yet. Open: the server sat at its own 100
 requests-a-minute Schwab limit for several minutes after a deploy, after the close; what is spending that
 budget has not been looked at.
+
+**Level board keeps its daily bars across restarts (2026-11-19).** Seen live three times in one day: for
+several minutes after each deploy the server is at its own Schwab limit (every engine warms its cache at
+once), the in-memory cache is empty, and the level board shows "no daily bars: self-throttle; no cached Schwab
+response" for every ticker. Completed daily bars do not change, so the board now keeps the bars of its last
+good read per symbol (desk_daily_bars) and uses that copy when the source gives nothing, saying so in the
+levels reason with the copy's time and why the fresh read failed; the existing prior-session and
+read-before-close checks run on the copy as on any read. Not kept in the demo edition. The startup burst itself
+is not reduced by this; that is still open. Also: scoreboard setup rows word the kind as the setup log does
+("breakout below the put wall", not "breakout_below"). Tests: two added to tests/quant/desk-board.test.ts.
