@@ -6,7 +6,7 @@
 // the price, in order. Pure functions; the server feeds them bars and quotes (server/deskBoard.ts).
 //
 // Nothing here is a forecast or an instruction. A case lists levels in the order price would meet them and
-// the level beyond which that listing no longer applies. No odds are attached because none are measured.
+// names the first level on the other side. No odds are attached because none are measured.
 
 import { etClock, REGULAR_OPEN_MIN, nextTradingDay, sessionCloseMinutes, isTradingDay } from "./exchangeCalendar";
 
@@ -88,16 +88,18 @@ export function calendarLevels(daily: DayBar[], todayEt: string, opts: { pivots?
 
 /**
  * Levels from today's regular-session bars: the open, and the opening range once its 30 minutes are over.
- * Bars from another day or outside 09:30 onward are ignored; with none, nothing is returned.
+ * Bars from another day or before 09:30 are ignored. The open is only read from a bar that starts at 09:30
+ * (a feed that begins later would show a later price as the open), and the range only once a bar at or
+ * after 10:00 exists, which shows the last bar inside the range is complete.
  */
 export function sessionLevels(intra: IntraBar[], todayEt: string, nowMs: number): BoardLevel[] {
   const today = intra.filter(barOk).map((b) => ({ b, c: etClock(b.t) })).filter((x) => x.c.date === todayEt && x.c.minutes >= REGULAR_OPEN_MIN)
     .sort((a, b) => a.b.t - b.b.t);
-  if (!today.length) return [];
+  if (!today.length || today[0].c.minutes !== REGULAR_OPEN_MIN) return [];
   const out: BoardLevel[] = [{ key: "open", label: "today's open", price: today[0].b.open, group: "today" }];
   const orEnd = REGULAR_OPEN_MIN + OPENING_RANGE_MIN;
   const now = etClock(nowMs);
-  const rangeOver = now.date > todayEt || (now.date === todayEt && now.minutes >= orEnd);
+  const rangeOver = (now.date > todayEt || (now.date === todayEt && now.minutes >= orEnd)) && today.some((x) => x.c.minutes >= orEnd);
   const or = today.filter((x) => x.c.minutes < orEnd);
   if (rangeOver && or.length) {
     out.push({ key: "orh", label: "opening-range high", price: Math.max(...or.map((x) => x.b.high)), group: "today" });
@@ -106,18 +108,23 @@ export function sessionLevels(intra: IntraBar[], todayEt: string, nowMs: number)
   return out;
 }
 
-/** Levels closer together than MERGE_PCT of the price become one line carrying every label. Sorted high to low. */
+/**
+ * Levels closer together than MERGE_PCT of the price become one line. The line sits at the highest of them
+ * and its label carries each level with its own price, so no level is shown at a price that is not its own.
+ * Sorted high to low.
+ */
 export function mergeLevels(levels: BoardLevel[], price: number | null | undefined): BoardLevel[] {
   const sorted = levels.filter((l) => ok(l.price)).slice().sort((a, b) => b.price - a.price);
   const tol = ok(price) ? price * MERGE_PCT : 0;
-  const out: BoardLevel[] = [];
+  const groups: BoardLevel[][] = [];
   for (const l of sorted) {
-    const last = out[out.length - 1];
-    if (last && Math.abs(last.price - l.price) <= tol) {
-      out[out.length - 1] = { ...last, key: `${last.key}+${l.key}`, label: `${last.label} + ${l.label}` };
-    } else out.push({ ...l });
+    const g = groups[groups.length - 1];
+    if (g && Math.abs(g[g.length - 1].price - l.price) <= tol) g.push(l); else groups.push([l]);
   }
-  return out;
+  return groups.map((g) => g.length === 1 ? { ...g[0] } : {
+    ...g[0], key: g.map((l) => l.key).join("+"),
+    label: g.every((l) => l.price === g[0].price) ? g.map((l) => l.label).join(" + ") : g.map((l) => `${l.label} ${fmt(l.price)}`).join(" + "),
+  });
 }
 
 export interface Nearest { at: BoardLevel[]; above: BoardLevel[]; below: BoardLevel[] }
@@ -142,7 +149,7 @@ export interface DeskCase {
   trigger: BoardLevel | null;
   /** The next two levels beyond the trigger. */
   next: BoardLevel[];
-  /** The first level on the other side: beyond it this listing no longer applies. */
+  /** The first level on the other side of the price. */
   off: BoardLevel | null;
   text: string;
 }
@@ -160,7 +167,7 @@ export function deskCase(levels: BoardLevel[], price: number | null | undefined,
   if (!trigger) return { side, trigger, next, off, text: `${name}: no mapped level ${side === "bull" ? "above" : "below"} the price.` };
   const dir = side === "bull" ? "above" : "below";
   const nextTxt = next.length ? ` the next level${next.length > 1 ? "s" : ""} ${side === "bull" ? "up" : "down"} ${next.length > 1 ? "are" : "is"} ${next.map(named).join(" and ")}.` : ` no further mapped level ${side === "bull" ? "above" : "below"}.`;
-  const offTxt = off ? ` The case is off back ${side === "bull" ? "under" : "over"} ${named(off)}.` : "";
+  const offTxt = off ? ` The first level ${side === "bull" ? "under" : "over"} the price is ${named(off)}.` : "";
   return { side, trigger, next, off, text: `${name}: ${dir} ${named(trigger)}${nextTxt}${offTxt}` };
 }
 
@@ -173,7 +180,7 @@ export function techRead(qqqPct: number | null | undefined, spyPct: number | nul
   const d = qqqPct - spyPct;
   const state = d >= TECH_LEAD_PTS ? "leading" : d <= -TECH_LEAD_PTS ? "lagging" : "in line";
   const s = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
-  return { state, diffPts: d, text: `QQQ ${s(qqqPct)} against SPY ${s(spyPct)}: tech is ${state}${state === "in line" ? "" : ` by ${Math.abs(d).toFixed(2)} points`}.` };
+  return { state, diffPts: d, text: `QQQ ${s(qqqPct)} against SPY ${s(spyPct)}: tech ${state === "in line" ? "in line" : `${state} by ${Math.abs(d).toFixed(2)} percentage points`} (hand-set line: ${TECH_LEAD_PTS.toFixed(2)}).` };
 }
 
 export interface VixRead { state: "firm" | "soft" | "flat" | "unknown"; text: string }
@@ -181,7 +188,7 @@ export interface VixRead { state: "firm" | "soft" | "flat" | "unknown"; text: st
 export function vixRead(vixPct: number | null | undefined): VixRead {
   if (typeof vixPct !== "number" || !Number.isFinite(vixPct)) return { state: "unknown", text: "VIX on the day: not read." };
   const state = vixPct >= VIX_FIRM_PCT ? "firm" : vixPct <= -VIX_FIRM_PCT ? "soft" : "flat";
-  return { state, text: `VIX ${vixPct >= 0 ? "+" : ""}${vixPct.toFixed(2)}% on the day: ${state}.` };
+  return { state, text: `VIX ${vixPct >= 0 ? "+" : ""}${vixPct.toFixed(2)}% on the day: ${state} (hand-set line: ${VIX_FIRM_PCT}%).` };
 }
 
 /** One sentence for the top of the board: where the index sits between its nearest levels. */

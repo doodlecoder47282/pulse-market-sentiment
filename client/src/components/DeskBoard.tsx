@@ -14,18 +14,19 @@ import { boardAnswer, type BoardLevel, type DeskCase, type RelRead, type VixRead
 
 interface Ticker {
   symbol: string; label: string; kind: string; price: number | null; changePct: number | null;
-  quoteState: "ok" | "stale" | "unavailable"; quoteReason: string | null;
+  quoteState: "ok" | "stale" | "age_unknown" | "unavailable"; quoteReason: string | null;
   levels: BoardLevel[]; levelsState: "ok" | "partial" | "unavailable"; levelsReason: string | null; priorSession: string | null;
   at: BoardLevel[]; above: BoardLevel | null; below: BoardLevel | null;
 }
 interface Board {
   asOf: number; forSession: string; sessionOpen: boolean; tickers: Ticker[]; tech: RelRead; vix: VixRead;
-  cases: { symbol: string; price: number | null; bull: DeskCase; bear: DeskCase; optionsState: string; optionsReason: string | null };
+  cases: { symbol: string; price: number | null; bull: DeskCase; bear: DeskCase; optionsState: "ok" | "stale" | "unavailable"; optionsReason: string | null; optionsAsOfMs: number | null };
   note: string;
 }
 
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
 const pct = (n: number | null | undefined) => (n == null ? "" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`);
+const clock = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }) + " ET");
 const dist = (lv: BoardLevel | null, price: number | null) => (lv && price ? `${lv.price > price ? "+" : "-"}${px(Math.abs(lv.price - price))}` : "");
 
 function CaseBox({ c, tone }: { c: DeskCase; tone: "bull" | "bear" }) {
@@ -56,20 +57,24 @@ export default function DeskBoard() {
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm font-semibold">
           <Layers className="h-4 w-4 text-cyan-400" />
           Level board
-          <span className="text-[11px] font-normal text-muted-foreground" data-testid="desk-board-session">levels for {b.forSession}{b.sessionOpen ? "" : " · market closed, last prices"}</span>
+          <span className="text-[11px] font-normal text-muted-foreground" data-testid="desk-board-session">levels for {b.forSession}{b.sessionOpen ? "" : " · market closed, last prices"} · read {clock(b.asOf)}{b.cases.optionsAsOfMs != null ? ` · option chain ${clock(b.cases.optionsAsOfMs)}` : ""}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${b.tech.text} ${b.vix.text} ${b.note}` }} />}
+        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${b.sessionOpen ? "" : "Last session: "}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
         <div className="grid gap-2 md:grid-cols-2">
           <CaseBox c={b.cases.bull} tone="bull" />
           <CaseBox c={b.cases.bear} tone="bear" />
         </div>
         {b.cases.optionsState !== "ok" && (
-          <p className="text-[11px] text-muted-foreground" data-testid="desk-board-options-state">Option landmarks: {b.cases.optionsState}{b.cases.optionsReason ? ` (${b.cases.optionsReason})` : ""}. The cases use chart levels only where landmarks are missing.</p>
+          <p className="break-words text-[11px] text-muted-foreground" data-testid="desk-board-options-state">
+            {b.cases.optionsState === "unavailable"
+              ? `Option landmarks not read${b.cases.optionsReason ? ` (${b.cases.optionsReason})` : ""}. The cases use chart levels only.`
+              : `Option landmarks are from the last chain read${b.cases.optionsReason ? ` (${b.cases.optionsReason})` : ""} and are included.`}
+          </p>
         )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-          <span data-testid="desk-board-tech">{b.tech.text}</span>
+          <span data-testid="desk-board-tech">{b.sessionOpen ? "" : "Last session: "}{b.tech.text}</span>
           <span data-testid="desk-board-vix">{b.vix.text}</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -81,12 +86,12 @@ export default function DeskBoard() {
                   <span className="font-mono text-sm font-semibold text-foreground">{t.label}</span>{" "}
                   <span className="font-mono text-sm">{px(t.price)}</span>{" "}
                   <span className={`font-mono text-[12px] ${t.changePct == null ? "" : t.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{pct(t.changePct)}</span>
-                  {t.quoteState !== "ok" && <span className="ml-1 text-[11px] text-amber-400">{t.quoteState}</span>}
+                  {t.quoteState !== "ok" && <span className="ml-1 text-[11px] text-amber-400">{t.quoteState === "age_unknown" ? "age unknown" : t.quoteState}</span>}
                 </span>
                 <span className="shrink-0 text-[11px] text-muted-foreground">{open === t.symbol ? "less" : "all levels"}</span>
               </button>
               {t.quoteState === "unavailable" ? (
-                <p className="mt-1 break-words text-[11px] text-muted-foreground">{t.quoteReason}</p>
+                <p className="mt-1 break-words text-[11px] text-muted-foreground">{t.quoteReason}{t.levelsReason ? ` · ${t.levelsReason}` : ""}</p>
               ) : t.levelsState === "unavailable" ? (
                 <p className="mt-1 break-words text-[11px] text-muted-foreground">No levels: {t.levelsReason}</p>
               ) : (
@@ -94,6 +99,7 @@ export default function DeskBoard() {
                   {t.at.map((l) => <div key={l.key} className="text-amber-300">at {px(l.price)} <span className="font-sans text-muted-foreground">{l.label}</span></div>)}
                   <div><span className="text-muted-foreground">above</span> {t.above ? <>{px(t.above.price)} <span className="text-muted-foreground">{dist(t.above, t.price)}</span> <span className="font-sans text-muted-foreground">{t.above.label}</span></> : <span className="font-sans text-muted-foreground">none mapped</span>}</div>
                   <div><span className="text-muted-foreground">below</span> {t.below ? <>{px(t.below.price)} <span className="text-muted-foreground">{dist(t.below, t.price)}</span> <span className="font-sans text-muted-foreground">{t.below.label}</span></> : <span className="font-sans text-muted-foreground">none mapped</span>}</div>
+                  {t.quoteReason && <p className="break-words font-sans text-[11px] text-amber-400">{t.quoteReason}</p>}
                   {t.levelsState === "partial" && <p className="break-words font-sans text-[11px] text-amber-400">{t.levelsReason}</p>}
                 </div>
               )}
