@@ -10,7 +10,8 @@ import { SCORE_STATE_LABEL, type ScoreRow } from "@shared/scoreboard";
 
 interface View { asOfMs: number; answer: string; rows: ScoreRow[]; unread: Array<{ record: string; reason: string }>; note: string }
 
-const TONE: Record<string, string> = { enough: "text-emerald-400", too_few: "text-amber-400", none: "text-muted-foreground", no_floor: "text-muted-foreground", never: "text-muted-foreground", unavailable: "text-amber-400" };
+// Tone marks only whether a row could be read: reaching a floor is not good news and is not coloured as such.
+const TONE: Record<string, string> = { enough: "text-foreground", too_few: "text-muted-foreground", none: "text-muted-foreground", no_floor: "text-muted-foreground", never: "text-muted-foreground", off: "text-muted-foreground", unavailable: "text-amber-400" };
 
 export default function ScoreboardCard() {
   const [open, setOpen] = useState(false);
@@ -22,14 +23,14 @@ export default function ScoreboardCard() {
     retry: false,
   });
   if (q.isLoading) return <Card data-testid="scoreboard"><CardContent className="p-3 text-[12px] text-muted-foreground">Reading the scoreboard…</CardContent></Card>;
-  if (q.isError || !q.data) return <Card data-testid="scoreboard-unavailable"><CardContent className="p-3 text-[12px] text-amber-400">Scoreboard not read: the request failed.</CardContent></Card>;
+  if (!q.data) return <Card data-testid="scoreboard-unavailable"><CardContent className="p-3 text-[12px] text-amber-400">Scoreboard not read: the request failed.</CardContent></Card>;
   const v = q.data;
   return (
-    <Card className="border-emerald-500/20" data-testid="scoreboard">
+    <Card className="border-border/60" data-testid="scoreboard">
       <CardContent className="p-3">
         <button type="button" className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left lg:min-h-0" aria-expanded={open} onClick={() => setOpen(!open)} data-testid="scoreboard-toggle">
           <span className="min-w-0 break-words text-[13px] leading-snug">
-            <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">Scoreboard</span>
+            <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">Scoreboard</span>
             <span className="font-medium text-foreground" data-testid="scoreboard-answer">{v.answer}</span>
           </span>
           <span className="shrink-0 text-[11px] text-muted-foreground">{open ? "less" : "records"}</span>
@@ -50,6 +51,7 @@ export default function ScoreboardCard() {
               ))}
             </ul>
             {v.unread.length > 0 && <p className="break-words text-[11px] text-amber-400">Not read: {v.unread.map((u) => `${u.record} (${u.reason})`).join("; ")}.</p>}
+            {q.isError && <p className="break-words text-[11px] text-amber-400">The latest refresh failed; this is the last read, from {new Date(v.asOfMs).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} ET.</p>}
             <p className="break-words text-[11px] text-muted-foreground">{v.note}</p>
           </div>
         )}

@@ -153,7 +153,7 @@ export function tallySettles(evals: SettleEvaluation[], withZones = true): Settl
     medianAbsPinDistance: med == null ? null : r2(med),
     dipTouchedAndHeld: withZones ? zoneCount("dip") : { yes: 0, of: 0 },
     fadeTouchedAndHeld: withZones ? zoneCount("fade") : { yes: 0, of: 0 },
-    note: evals.length < 50
+    note: evals.length < SETTLE_MIN_DAYS
       ? `${evals.length} settled day${evals.length === 1 ? "" : "s"}: counts only, no claim of edge before ${SETTLE_MIN_DAYS} and a graded no-data share under 20%`
       : `${evals.length} settled days: counts of what happened, still not a calibrated probability`,
   };
