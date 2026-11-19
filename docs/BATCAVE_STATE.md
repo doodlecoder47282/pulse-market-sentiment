@@ -2725,3 +2725,12 @@ of graded, with n) and the Heatseeker map. The Trade Desk map, the Regime panel 
 open with a plain sentence and were left as they are. No number, table or model changed. Tests:
 tests/quant/plain-reads.test.ts (14).
 
+2026-11-18 (evening): Today block (feat/today-block, stacked on the answer-first reads). Understood as: one
+block at the very top with the plain read, the few levels that matter, and the projected path. The existing
+Today card (spot, wall above, gamma flip, largest level below, from the 0DTE map) now opens with one plain
+sentence (readToday: what the model says hedging does, and the move the straddle prices), closes with a small
+projected path to the close (TodayPath: the Wiener map's three centres drawn over the random walk's 50% and
+80% bands, sharing the map's request), and moved from inside the Signals tab to above the stock search, so it is
+the first thing on the opening tab. A line the source does not stand behind is not drawn and says why. No
+model, level or number changed. Tests: tests/quant/today-block.test.ts (5).
+

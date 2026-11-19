@@ -20,10 +20,14 @@ test("the answer stays outside the collapsed detail on Signals, Models and Crypt
   const sig = d.slice(d.indexOf('<TabsContent value="signals"'), d.indexOf("</TabsContent>", d.indexOf('<TabsContent value="signals"')));
   const cut = sig.indexOf('<QuickDetails id="signals-detail"');
   assert.ok(cut > 0);
-  for (const keep of ['<TabHeadline tab="signals"', "<TodayCard", "<TickerScanCard", "<WidgetStack tab=\"signals\""]) {
+  for (const keep of ['<TabHeadline tab="signals"', "<TickerScanCard", "<WidgetStack tab=\"signals\""]) {
     const at = sig.indexOf(keep);
     assert.ok(at > 0 && at < cut, `${keep} stays above the fold`);
   }
+  // The Today card is the first thing on the opening tab: above the stock search and everything in the tab body.
+  const today = d.indexOf("<TodayCard");
+  assert.ok(today > 0 && today < d.indexOf('data-testid="stock-research-workspace"') && today < d.indexOf('<TabsContent value="signals"'), "Today comes first");
+  assert.match(d, /<div hidden=\{activeTab !== "signals"\} data-testid="today-block">/);
   const models = d.slice(d.indexOf('<TabsContent value="models"'), d.indexOf("</TabsContent>", d.indexOf('<TabsContent value="models"')));
   assert.ok(models.indexOf("<ModelsPanel") < models.indexOf('<QuickDetails id="models-detail"'));
   const c = src("client/src/components/CryptoPanel.tsx");
