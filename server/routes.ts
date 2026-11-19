@@ -3734,6 +3734,16 @@ Describe the above in the JSON schema specified in the system prompt: what the n
     try { res.json(await getEventReplay(String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX")); }
     catch (e: any) { res.status(/must be 1-10/.test(String(e?.message)) ? 400 : 500).json({ error: "event_replay_failed", message: e?.message ?? String(e) }); }
   });
+  // LEVEL BOARD (server/deskBoard.ts): SPX, SPY, QQQ, VIX and index futures with hand-marked chart levels, the index's option landmarks, and two descriptive cases. No forecast, no odds.
+  app.get("/api/desk/board", async (_req, res) => {
+    try {
+      const { buildDeskBoard } = await import("./deskBoard");
+      res.json(await buildDeskBoard());
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "desk_board_failed", message: e?.message ?? String(e) });
+    }
+  });
   app.get("/api/setups", (_req, res) => {
     try { res.json(getSetupLog()); }
     catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }

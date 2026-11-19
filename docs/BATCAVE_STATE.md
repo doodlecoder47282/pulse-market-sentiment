@@ -3,6 +3,20 @@
 Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
 
+
+## 2026-11-18: level board on the Trade Desk (item 5, part 1)
+
+- `GET /api/desk/board` (`server/deskBoard.ts`, pure parts in `shared/levelBoard.ts`): SPX, SPY, QQQ, VIX, /ES, /NQ.
+  Per ticker: quote, prior-day high/low/close, prior-week and prior-month high/low/close, week and month open,
+  classic pivot P/R1/S1 (not for VIX), today's open and 30-minute opening range (once over); SPX also carries the
+  nearest-expiry map's pin, wall above, magnet below, flip and straddle range.
+- After the close the board is for the next trading day, so the session just ended is the "prior day".
+- Bull case / bear case for SPX: the levels above (below) the price in order and the first level on the other
+  side. Descriptive, no odds. Tech read = QQQ day change minus SPY (0.25 points, hand-set); VIX firm/soft at 1%.
+- Each ticker states what was not read. Whether Schwab serves /ES and /NQ quotes is known only from its answer.
+- `client/src/components/DeskBoard.tsx` sits at the top of the Trade Desk. Tests: `tests/quant/desk-board.test.ts`.
+- Next (part 2): level-hit log and the protocol engine on top of this board.
+
 ## 2026-11-18: the defects the owner named on the live site
 
 - Heatseeker "$SPX UNAVAILABLE: no strikes with data inside the display window" every evening: with no expiry asked,
