@@ -312,3 +312,41 @@ export const READ_HEATSEEKER: PlainRead = {
   answer: "A map of where dealer hedging is concentrated, strike by strike, for one expiry (the nearest unless you pick another).",
   detail: "Each row is one strike of the chosen expiry. In the GEX column the green bar is the model's dealer hedging exposure from calls, the red bar from puts, and the number is calls minus puts; bigger bars mean more hedging at that strike. It is built from open interest and the model's assumption about who holds what, not from observed trades.",
 };
+
+// ─── Today ──────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The Today card: what the 0DTE map says in one sentence. `atSpot` is the sign of net dealer gamma at the
+ * price for the nearest expiry, under the model. `above` / `below` are what the card's tiles show: the largest
+ * strike within 2% of the price on each side where the model has dealer hedging damping moves (positive
+ * gamma), or the pin when it fills an empty slot.
+ */
+export function readToday(m: {
+  spot: number | null | undefined; sessionState?: string | null; dataState?: string | null;
+  atSpot: "long" | "short" | "indeterminate" | string | null | undefined;
+  straddle: number | null | undefined; low: number | null | undefined; high: number | null | undefined;
+  above: number | null | undefined; below: number | null | undefined; aboveIsPin?: boolean; belowIsPin?: boolean;
+  flip: number | null | undefined;
+}): PlainRead {
+  if (m.dataState === "no_gex") return { answer: "No dealer levels to read yet: the options chain carries no priced gamma.", detail: "The levels on this card come from dealer gamma at each strike. Until the chain carries it there are no walls or flip to show, and nothing is shown in their place." };
+  const closed = m.sessionState === "closed";
+  const when = closed ? "on the next session's options, as last read" : "today";
+  const move = fin(m.straddle) ? ` Options price a move of about ±${Math.round(m.straddle)} points ${closed ? "by that session's close, from the last price" : "by the close"}.` : "";
+  const answer = m.atSpot === "short" ? `Model read: dealer hedging adds to moves ${when}.${move}`
+    : m.atSpot === "long" ? `Model read: dealer hedging damps moves ${when}.${move}`
+    : `The model could not read whether dealer hedging adds to moves or damps them.${move}`;
+  const parts: string[] = ["That read is for the nearest expiry only."];
+  if (fin(m.spot)) {
+    const rel = (x: number) => (x === m.spot ? "at the price" : `${pts(x - (m.spot as number))} ${x > (m.spot as number) ? "above" : "below"} the price`);
+    parts.push(fin(m.flip) ? `The level where hedging would switch from one to the other (the gamma flip) is ${strike(m.flip)}, ${rel(m.flip)}.` : "No level where hedging switches was found inside the range read.");
+    const side = (x: number | null | undefined, isPin: boolean | undefined, word: "above" | "below") =>
+      !fin(x) ? `No strike ${word} the price within 2% stands out as one where the model has dealer hedging damping moves.`
+      : isPin ? `No such strike stands out ${word} the price, so the pin (${strike(x)}), the largest one near the price, is shown there.`
+      : `${word === "above" ? "Above" : "Below"} the price, the largest strike within 2% where the model has dealer hedging damping moves is ${strike(x)}.`;
+    parts.push(side(m.above, m.aboveIsPin, "above"), side(m.below, m.belowIsPin, "below"));
+    if (fin(m.low) && fin(m.high)) parts.push(`The at-the-money straddle prices a range of ${strike(m.low)} to ${strike(m.high)}.`);
+  }
+  if (m.dataState === "stale" || m.dataState === "stale_session") parts.push("This is from the last chain read, not a live one.");
+  parts.push("Dealer levels come from open interest and an assumption about who holds what. They describe positioning; they do not forecast direction.");
+  return { answer, detail: parts.join(" ") };
+}

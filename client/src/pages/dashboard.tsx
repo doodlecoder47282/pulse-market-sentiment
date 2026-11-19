@@ -569,6 +569,10 @@ export default function Dashboard() {
               </TabsTrigger>
             </TabsList>
           </div>
+          {/* Today, first thing on the opening tab: the plain read, the levels that matter and the projected path, before search or flow */}
+          <div hidden={activeTab !== "signals"} className="mb-4" data-testid="today-block">
+            <ErrorBoundary label="Today"><TodayCard active={activeTab === "signals"} onOpenDesk={() => setActiveTab("tradedesk")} onOpenMap={() => setActiveTab("heatseeker")} /></ErrorBoundary>
+          </div>
           {/* Stock research (Trade Brief): kept mounted, shown on the Signals tab. */}
           <div hidden={activeTab !== "signals"} data-testid="stock-research-workspace">
             <ErrorBoundary label="Stock research"><TradeBriefSearch /></ErrorBoundary>
@@ -726,8 +730,6 @@ export default function Dashboard() {
             <Suspense fallback={null}><TabHeadline tab="signals" /></Suspense>
             <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="option flow data" />
 
-            {/* Answer first: spot, wall above / flip / magnet below from the 0DTE map, before any flow */}
-            <TodayCard onOpenDesk={() => setActiveTab("tradedesk")} />
 
             {/* Scan any ticker Schwab serves: instrument, quote, volume read, per-name gamma, most active contracts */}
             <TickerScanCard />

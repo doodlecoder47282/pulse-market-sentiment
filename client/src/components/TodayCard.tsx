@@ -7,7 +7,10 @@
  * comes from the map the Trade Desk already fetches (same react-query key,
  * no second request). States are kept apart: loading keeps the height,
  * unavailable says why, a map without gamma says so instead of showing
- * walls that do not exist. Descriptive only.
+ * walls that do not exist. Descriptive only. It opens with one plain
+ * sentence (shared/plainReads.ts readToday) and closes with the projected
+ * path to the close (TodayPath), so the top of the app answers "what is
+ * today" before anything else.
  */
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -16,6 +19,9 @@ import DataStateChip from "@/components/DataStateChip";
 import UnavailablePanel from "@/components/UnavailablePanel";
 import { Map as MapIcon } from "lucide-react";
 import type { OdteMap } from "@shared/odteMap";
+import PlainRead from "@/components/PlainRead";
+import TodayPath from "@/components/TodayPath";
+import { readToday } from "@shared/plainReads";
 
 type MapResp = OdteMap & { forwardAsOf: string; source: string };
 
@@ -26,11 +32,14 @@ const LEVEL_TILE = "flex items-center justify-between gap-3 rounded-md border bg
 const lvl = (n: number | null | undefined) => (n == null ? "n/a" : Math.round(n).toLocaleString("en-US"));
 const pct = (a: number | null | undefined, spot: number) => (a == null ? "" : `${a >= spot ? "+" : ""}${(((a - spot) / spot) * 100).toFixed(2)}%`);
 
-export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: string; onOpenDesk?: () => void }) {
+export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, active = true }: { symbol?: string; onOpenDesk?: () => void; onOpenMap?: () => void; active?: boolean }) {
   const q = useQuery<MapResp>({
     queryKey: ["/api/odte/map", symbol],
     queryFn: async () => (await apiRequest("GET", `/api/odte/map?symbol=${encodeURIComponent(symbol)}`)).json(),
-    refetchInterval: 60_000,
+    // Polls only while the opening tab is showing (the card stays mounted above the tabs).
+    // `enabled` is what refetches on return: re-enabled with data older than staleTime, it fetches at once.
+    enabled: active,
+    refetchInterval: active ? 60_000 : false,
     staleTime: 30_000,
     retry: false,
   });
@@ -93,6 +102,13 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
           <DataStateChip state={state} reason={m.reason} asOf={m.chainAsOfMs ?? m.asOf} stale={m.chainStale} lastSession={(m as any).chainLastSession ?? null} source="Schwab" testId="today-state" />
         </div>
 
+        {/* the answer first, in ordinary words (shared/plainReads.ts) */}
+        <PlainRead testId="today-plain" read={readToday({
+          spot, sessionState: m.session.state, dataState: m.dataState, atSpot: m.band.atSpot,
+          straddle: m.range.straddle, low: m.range.low, high: m.range.high,
+          above, below, aboveIsPin, belowIsPin, flip,
+        })} />
+
         {!priced ? (
           <div className="min-h-[96px] rounded-md border border-dashed border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-amber-300" data-testid="today-no-gex">
             {m.reason ?? "the chain carries no priced gamma yet: no walls to show"}
@@ -126,7 +142,8 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
               </div>
             </div>
 
-            <div className="space-y-1">
+            {/* the position bar repeats the tiles: from 640 px only, so the phone gets to the path sooner */}
+            <div className="hidden space-y-1 sm:block">
               <div className="relative h-2.5 rounded-full bg-gradient-to-r from-emerald-500/30 via-muted/40 to-rose-500/30">
                 {pos(flip) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-amber-400" style={{ left: pos(flip)! }} title={`flip ${lvl(flip)}`} />}
                 {pos(spot) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-foreground" style={{ left: pos(spot)! }} title={`spot ${lvl(spot)}`} />}
@@ -140,11 +157,15 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
             </div>
 
             <p className="text-xs text-muted-foreground">
-              {gammaLine}{m.range.straddle != null ? ` Straddle prices ±${Math.round(m.range.straddle)} (${lvl(m.range.low)}–${lvl(m.range.high)}).` : ""}
+              {/* the sign and the straddle are in the plain read above; only the long-gamma band adds something here */}
+              {m.band.atSpot === "long" && (m.band.low != null || m.band.high != null) ? gammaLine : ""}
               {onOpenDesk && <> <button type="button" onClick={onOpenDesk} className="inline-flex min-h-[44px] items-center text-amber-300 underline-offset-2 hover:underline sm:min-h-0" data-testid="today-open-desk">full ladder on the Trade Desk</button></>}
             </p>
           </>
         )}
+
+        {/* the projected path to the close: the Wiener map's three centres, small (index only) */}
+        {symbol === "$SPX" && <TodayPath onOpenMap={onOpenMap} active={active} />}
       </CardContent>
     </Card>
   );

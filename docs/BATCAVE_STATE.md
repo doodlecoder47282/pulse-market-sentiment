@@ -2734,3 +2734,21 @@ inside the live view, where its description is true. Also taken: baseline rows n
 for the server, flow alerts distinguish status loading, chain unread and last-session chain, held open
 interest is marked on the short answer, "likely new positions", "buying each flagged whale contract".
 
+
+2026-11-18 (evening): Today block (feat/today-block, stacked on the answer-first reads). Understood as: one
+block at the very top with the plain read, the few levels that matter, and the projected path. The existing
+Today card (spot, wall above, gamma flip, largest level below, from the 0DTE map) now opens with one plain
+sentence (readToday: what the model says hedging does, and the move the straddle prices), closes with a small
+projected path to the close (TodayPath: the Wiener map's three centres drawn over the random walk's 50% and
+80% bands, sharing the map's request), and moved from inside the Signals tab to above the stock search, so it is
+the first thing on the opening tab. A line the source does not stand behind is not drawn and says why. No
+model, level or number changed. Tests: tests/quant/today-block.test.ts (5).
+Review of the Today block (#111): HOLD, two must-fixes taken. The "largest hedging level above / below" is the
+largest POSITIVE-gamma strike within 2% of the price (a bigger negative one can sit on the same side): the
+sentence now names the sign and the window, and agrees with the tile when the pin fills an empty slot; and the
+card had no gap before the stock search. Also taken: a closed session reads "on the next session's options, as
+last read ... from the last price"; the read is scoped to the nearest expiry; the path names the forward part
+of the options gap and labels a held chain "the last read"; loading, unavailable and drawn share one height;
+the card polls only while its tab shows; the position bar is left off phones; the explanation sits behind a
+tap; the chart geometry is a pure function with tests for degenerate inputs.
+
