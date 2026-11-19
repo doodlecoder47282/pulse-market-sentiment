@@ -198,7 +198,7 @@ export function buildHeatseeker(
   // distances tie). No target → nearest expiry that has NOT settled: after the
   // close today's key is still listed but every contract in it is dropped
   // (T = 0), so picking it drew "unavailable" all evening while tomorrow's
-  // chain was sitting there (same rule as server/odteForward.ts).
+  // chain was sitting there (server/odteForward.ts skips settled keys too, by date).
   const nowMs = nowMsArg ?? Date.now();
   // A key has settled when every contract in it has (AM SPX and PM SPXW can share a date key and
   // settle at different times, so the date alone does not decide it); a key with no contracts
