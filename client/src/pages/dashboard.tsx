@@ -55,6 +55,8 @@ import SchwabRequiredNotice from "@/components/SchwabRequiredNotice";
 import DemoStrip from "@/components/DemoStrip";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TodayCard from "@/components/TodayCard";
+import PlainRead from "@/components/PlainRead";
+import { READ_HEATSEEKER } from "@shared/plainReads";
 import TickerScanCard from "@/components/TickerScanCard";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
@@ -642,6 +644,7 @@ export default function Dashboard() {
                 <OdteForward />
               </Suspense>
             </ErrorBoundary>
+            <PlainRead read={READ_HEATSEEKER} testId="heatseeker-plain" />
             <ErrorBoundary label="Heatseeker">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <Heatseeker />

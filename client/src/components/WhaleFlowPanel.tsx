@@ -3,6 +3,8 @@ import EdgeInfo from "@/components/EdgeInfo";
 // Ticker rows roll up by default; click to expand for full contract context.
 // Backend gate is the source of truth — NO adjusters in this panel.
 
+import PlainRead from "@/components/PlainRead";
+import { readWhalePerformance } from "@shared/plainReads";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -790,6 +792,10 @@ function PerformanceCard() {
           ))}
         </div>
       </div>
+      {/* the answer first: closed whale positions that made money after costs, in this window */}
+      {snap && !perfQuery.isLoading && (
+        <PlainRead read={readWhalePerformance(rows.find((r) => r.source === "whale") ?? null, snap.windowDays)} testId="performance-plain" className="mb-2" />
+      )}
       {perfQuery.isLoading ? (
         <div className="space-y-1.5">
           <Skeleton className="h-7 w-full" />

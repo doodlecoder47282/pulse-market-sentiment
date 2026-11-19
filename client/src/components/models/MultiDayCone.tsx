@@ -9,6 +9,8 @@
 //
 // Companion to MLProjectionPanel (intraday). Same Models tab.
 
+import PlainRead from "@/components/PlainRead";
+import { readCone } from "@shared/plainReads";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -135,6 +137,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
   return (
     <Card className="border-indigo-500/20 bg-gradient-to-b from-indigo-950/10 to-card">
       <CardContent className="p-4">
+        <PlainRead read={readCone({ spot: data.spot, days: lastBand.day, q10: lastBand.q10, q90: lastBand.q90 })} testId="cone-plain" className="mb-3" />
         {/* Header */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Activity className="h-4 w-4 text-indigo-400" />

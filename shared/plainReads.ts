@@ -140,3 +140,166 @@ export function plainVixTerm(vix: number | null | undefined, ratio: number | nul
     : "Volatility over the next month is priced below the next three months: the usual shape.";
   return `${level} ${term}`;
 }
+
+// ─── Answer first ────────────────────────────────────────────────────────────────────────────────
+// A PlainRead is the one short sentence a reader needs (`answer`), with the fuller explanation behind a tap
+// (`detail`). The answer must stand on its own and stay short enough to read while scrolling on a phone.
+
+export interface PlainRead { answer: string; detail?: string }
+
+export function readTermStructure(t: Parameters<typeof plainTermStructure>[0]): PlainRead {
+  const answer = !t || t.contango == null ? "Near-dated and later options could not be compared."
+    : fin(t.steepness) && Math.abs(t.steepness) < 0.0005 ? "Near-dated and later options are priced for about the same movement."
+    : t.contango ? "Near-dated options are priced for less movement than later ones: the usual shape."
+    : "Near-dated options are priced for more movement than later ones.";
+  return { answer, detail: plainTermStructure(t) };
+}
+
+export function readSkew(rows: Parameters<typeof plainSkew>[0]): PlainRead {
+  const read = (rows ?? []).filter((r) => fin(r.skew));
+  const k = read.length ? (read[0].skew as number) : null;
+  const answer = k == null ? "The cost of downside protection against upside was not read."
+    : k > 0 ? "Downside protection costs more than upside." : k < 0 ? "Upside costs more than downside protection, which is unusual for an index." : "Downside protection and upside cost the same.";
+  return { answer, detail: plainSkew(rows) };
+}
+
+/** The two halves of the volatility surface in one read. */
+export function readVolSurface(t: Parameters<typeof plainTermStructure>[0], rows: Parameters<typeof plainSkew>[0]): PlainRead {
+  const a = readTermStructure(t), b = readSkew(rows);
+  return { answer: `${a.answer} ${b.answer}`, detail: `${a.detail} ${b.detail}` };
+}
+
+export function readGexLadder(g: Parameters<typeof plainGexLadder>[0], spot: number | null | undefined, oi?: PlainOi | null): PlainRead {
+  const detail = plainGexLadder(g, spot, oi);
+  if (!g || noOi(oi)) return { answer: "Dealer hedging by expiry was not read.", detail };
+  const live = [g.zerodte, g.short, g.weekly, g.monthly].filter((b) => b.contractCount > 0 && fin(b.totalGex));
+  if (!live.length) return { answer: "No expiry had contracts to read.", detail };
+  const neg = live.filter((b) => b.totalGex < 0).length;
+  const answer = neg === live.length ? "Model read: dealer hedging adds to moves at every expiry read."
+    : neg === 0 ? "Model read: dealer hedging damps moves at every expiry read."
+    : "Model read: dealer hedging adds to moves at some expiries and damps them at others.";
+  return { answer, detail };
+}
+
+export function readKeyLevels(a: Parameters<typeof plainKeyLevels>[0]): PlainRead {
+  const detail = plainKeyLevels(a);
+  if (a.dexState === "unavailable" || noOi(a.oi)) return { answer: "The balance of calls against puts was not read.", detail };
+  const side = !fin(a.score) ? "the balance of calls against puts near the price was not read" : Math.abs(a.score) <= 10 ? "calls and puts are held in about equal weight near the price" : `more ${a.score < 0 ? "puts" : "calls"} than ${a.score < 0 ? "calls" : "puts"} are held near the price`;
+  const flip = a.flipMethod !== "peak_fallback" && fin(a.flipStrike) && fin(a.spot)
+    ? `Positioning changes side at ${strike(a.flipStrike)} (${a.flipStrike === a.spot ? "at the price" : `${pts(a.flipStrike - a.spot)} ${a.flipStrike > a.spot ? "above" : "below"} the price`}); `
+    : "";
+  const s = `${flip}${side}.`;
+  return { answer: s.charAt(0).toUpperCase() + s.slice(1), detail };
+}
+
+export function readDex(d: Parameters<typeof plainDex>[0], oi?: PlainOi | null): PlainRead {
+  const detail = plainDex(d, oi);
+  if (!d || d.dexState === "unavailable" || noOi(oi) || !fin(d.totalNetDex)) return { answer: "Delta exposure was not read.", detail };
+  return { answer: d.totalNetDex < 0 ? "In open positions, puts outweigh calls." : d.totalNetDex > 0 ? "In open positions, calls outweigh puts." : "In open positions, calls and puts balance.", detail };
+}
+
+export function readPinning(p: Parameters<typeof plainPinning>[0], meta: Parameters<typeof plainPinning>[1]): PlainRead {
+  const detail = plainPinning(p, meta);
+  const rows = (p ?? []).filter((r) => fin(r.prob) && fin(r.strike));
+  if (meta?.state === "unavailable" || !rows.length) return { answer: "Where the nearest expiry is priced to settle was not read.", detail };
+  const close = rows[1] != null && rows[1].prob >= rows[0].prob * 0.9;
+  return { answer: close ? "No single strike stands out as the priced settle." : `Option prices lean toward a settle near ${strike(rows[0].strike)}; odds from prices, not a forecast.`, detail };
+}
+
+export function readUnusualVolume(u: Parameters<typeof plainUnusualVolume>[0], oi?: PlainOi | null): PlainRead {
+  const detail = plainUnusualVolume(u, oi);
+  if (!u || noOi(oi)) return { answer: "Unusual volume could not be judged on this read.", detail };
+  if (!u.length) return { answer: "No contract traded at least twice its open positions.", detail };
+  return { answer: `${u.length >= 20 ? "At least 20" : u.length} contract${u.length === 1 ? "" : "s"} traded at least twice their open positions: new positions, side unknown.`, detail };
+}
+
+export function readVrp(rows: Parameters<typeof plainVrp>[0]): PlainRead {
+  const detail = plainVrp(rows);
+  const r = rows ?? [];
+  const model = r.map((x) => x.theoreticalIV).filter(fin);
+  if (!r.length || !model.length) return { answer: "No rich-or-cheap reading is available.", detail };
+  const rich = r.filter((x) => x.signal === "iv_rich").length, cheap = r.filter((x) => x.signal === "iv_cheap").length, fair = r.filter((x) => x.signal === "fair").length;
+  if (rich + cheap + fair === 0) return { answer: "No rich-or-cheap reading is available: the model figure just repeats the market's.", detail };
+  if (model.length >= 3 && model.every((v) => Math.abs(v - model[0]) < 0.0005)) return { answer: "The rich and cheap labels below are not reliable on this read.", detail };
+  return { answer: `Against Schwab's model figure, options are above it on ${rich} expir${rich === 1 ? "y" : "ies"} and below it on ${cheap}.`, detail };
+}
+
+export function readVixTerm(vix: number | null | undefined, ratio: number | null | undefined): PlainRead {
+  const lvl = !fin(vix) ? null : vix >= 30 ? "large daily swings are priced" : vix >= 20 ? "bigger daily swings than usual are priced" : vix >= 15 ? "ordinary daily swings are priced" : "small daily swings are priced";
+  const term = !fin(ratio) ? "" : ratio < 1 ? ", more so in the near term than further out" : ratio > 1 ? ", less so in the near term than further out" : "";
+  return { answer: lvl ? `VIX ${(vix as number).toFixed(1)}: ${lvl}${term}.` : "The VIX was not read.", detail: plainVixTerm(vix, ratio) };
+}
+
+// ─── The rest of the Models tab ─────────────────────────────────────────────────────────────────
+
+/** The daily model box: which side of the gamma flip price is on, what that means under the model, and the two walls. */
+export function readModel(m: { spot: number | null | undefined; zeroGamma: number | null | undefined; callWall: number | null | undefined; putWall: number | null | undefined; gammaZone: "y+" | "y-" | "y?" | string | null | undefined }): PlainRead {
+  const zone = m.gammaZone === "y-" ? "Model read: dealer hedging adds to moves here." : m.gammaZone === "y+" ? "Model read: dealer hedging damps moves here." : "The model could not read whether dealer hedging adds to moves or damps them.";
+  const rel = (lvl: number, spot: number) => (lvl === spot ? "at the price" : `${pts(lvl - spot)} ${lvl > spot ? "above" : "below"} the price`);
+  const parts: string[] = [];
+  if (fin(m.spot)) {
+    if (fin(m.zeroGamma)) parts.push(`The level where that would switch (the gamma flip) is ${strike(m.zeroGamma)}, ${rel(m.zeroGamma, m.spot)}.`);
+    else parts.push("The level where that would switch (the gamma flip) was not found.");
+    const walls = [fin(m.callWall) ? `the largest call hedging level is ${strike(m.callWall)} (${rel(m.callWall, m.spot)})` : null, fin(m.putWall) ? `the largest put hedging level is ${strike(m.putWall)} (${rel(m.putWall, m.spot)})` : null].filter(Boolean) as string[];
+    if (walls.length) { const w = walls.join(" and "); parts.push(`${w.charAt(0).toUpperCase()}${w.slice(1)}.`); } else parts.push("The call and put hedging levels were not read.");
+  } else parts.push("The price was not read, so the levels cannot be placed against it.");
+  parts.push("This is the model's assumption about who holds what, not a measurement, and it says nothing about direction.");
+  return { answer: zone, detail: parts.join(" ") };
+}
+
+export const READ_MM_MATRIX: PlainRead = {
+  answer: "A rule-of-thumb table set by hand, not measured odds.",
+  detail: "The highlighted cell is where price and the gamma regime sit now. The numbers in each cell are a hand-set typical move and hand-set weights for up, pinned and down. None of it has been fitted to, or tested against, what actually happened.",
+};
+
+export const READ_VOL_BAND_BACKTEST: PlainRead = {
+  answer: "This table tests volatility bands, not the dealer levels above: no dealer level has been tested.",
+  detail: "Testing a dealer level needs the option chains from past days, and none are connected. Each row here is a band a set distance from price; compare its touch rate with the two baseline rows to see whether it did better than a level placed at random.",
+};
+
+/** The 10-session cone: the middle four fifths of outcomes from recent volatility alone. */
+export function readCone(c: { spot: number | null | undefined; days: number | null | undefined; q10: number | null | undefined; q90: number | null | undefined } | null | undefined): PlainRead {
+  const detail = "The cone is built from how much price has moved lately and nothing else. It assumes no drift up or down and does not allow for calm and stormy stretches bunching together, so real tails can be wider.";
+  if (!c || !fin(c.q10) || !fin(c.q90) || !fin(c.days)) return { answer: "The forward range was not read.", detail };
+  return { answer: `From recent volatility alone, 8 in 10 outcomes ${c.days} sessions out fall between ${strike(c.q10)} and ${strike(c.q90)}. No direction is assumed.`, detail };
+}
+
+export const READ_PIVOT_PROJECTION: PlainRead = {
+  answer: "Price levels where several methods agree; the scores are set by hand, not tested.",
+  detail: "Each line is a level from one method (monthly and quarterly pivots, moving averages, gamma walls, heavy-volume prices). The count beside a level is how many methods land near it. A higher count means more agreement, not a higher chance of holding.",
+};
+
+// ─── Other tabs ─────────────────────────────────────────────────────────────────────────────────
+
+/** Whale follow-through over a window: closed positions that made money after costs. `winRate` and `avgPct` are fractions. */
+export function readWhalePerformance(r: { count: number; wins: number; losses: number; winRate: number | null; avgPct: number | null; excludedNoQuote?: number; excludedNoFee?: number } | null | undefined, windowDays: number): PlainRead {
+  const detail = "A whale row is bought at the logged ask when it was detected and sold at the logged bid at its close or expiry, after fees. Positions without both quotes, and index positions with no configured fee, are left out and counted, not scored as losses.";
+  if (!r) return { answer: "Whale follow-through was not read.", detail };
+  const scored = r.wins + r.losses;
+  const left = (r.excludedNoQuote ?? 0) + (r.excludedNoFee ?? 0);
+  if (scored === 0) return { answer: `No whale position closed with a scoreable result in the last ${windowDays} days${left ? ` (${left} left out for a missing quote or fee)` : ""}.`, detail };
+  const avg = fin(r.avgPct) ? `; the average result was ${r.avgPct >= 0 ? "+" : "−"}${Math.abs(r.avgPct * 100).toFixed(0)}%` : "";
+  return { answer: `Following whale trades over the last ${windowDays} days: ${r.wins} of ${scored} closed positions made money after costs${avg}.`, detail };
+}
+
+/** Edge Lab headline: how many graded whale alerts reached +30%. `hit30Rate` is a fraction. */
+export function readEdgeWhale(w: { graded: number; pending: number; hit30Rate: number; ungradedNoMark?: number } | null | undefined, windowDays: number): PlainRead {
+  const detail = "An alert counts as a hit when its option reached at least +30% from the logged entry before it closed. Pending alerts have not resolved, and alerts with no usable mark are not graded; neither is counted as a miss.";
+  if (!w) return { answer: "The graded record was not read.", detail };
+  if (!w.graded) return { answer: `No whale alert has been graded in the last ${windowDays} days (${w.pending} pending).`, detail };
+  const hits = Math.round(w.hit30Rate * w.graded);
+  return { answer: `Of ${w.graded} graded whale alerts in the last ${windowDays} days, ${hits} reached +30% (${(w.hit30Rate * 100).toFixed(0)}%).`, detail };
+}
+
+/** Flow alerts strip: how many, how many high, and what they are. */
+export function readFlowAlerts(a: { total: number; high: number; connected: boolean }): PlainRead {
+  const detail = "An alert is a fixed rule being met on the options chain: volume far above open interest, very heavy volume on one strike, a jump in the put/call ratio, or a very large open position at one strike (a wall). The thresholds are set by hand. An alert says something large is there; it does not say who traded or which way.";
+  if (!a.connected) return { answer: "Flow alerts are not updating: the chain feed is not connected.", detail };
+  if (a.total === 0) return { answer: "No flow alert is showing right now.", detail };
+  return { answer: `${a.total} flow alert${a.total === 1 ? "" : "s"} showing${a.high ? `, ${a.high} marked high` : ""}. Each flags size on the options chain, not direction.`, detail };
+}
+
+export const READ_HEATSEEKER: PlainRead = {
+  answer: "A map of where dealer hedging is concentrated, strike by strike.",
+  detail: "Each row is one strike. The green bar is the model's dealer hedging exposure from calls, the red bar from puts, and the number is the net of the two; bigger bars mean more hedging at that strike. It is built from open interest and the model's assumption about who holds what, not from observed trades.",
+};

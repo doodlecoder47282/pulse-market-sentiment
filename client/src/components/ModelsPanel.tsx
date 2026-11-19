@@ -19,7 +19,8 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
-import { plainVixTerm } from "@shared/plainReads";
+import PlainRead from "@/components/PlainRead";
+import { READ_MM_MATRIX, readModel, readVixTerm } from "@shared/plainReads";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -890,6 +891,7 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
 
   return (
     <div className="mt-3 border-t border-border/40 pt-2">
+      <PlainRead read={READ_MM_MATRIX} testId="mm-matrix-plain" className="mb-2" />
       <div className="flex items-baseline justify-between mb-1.5">
         <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">
           Market-maker matrix · hand-set priors (not fit to outcomes)
@@ -2135,11 +2137,16 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
         </div>
       </div>
 
-      {/* the VIX strip in ordinary words (shared/plainReads.ts) */}
-      <p className="border-b border-border/30 border-l-2 border-l-cyan-400/60 bg-cyan-400/5 px-3 py-1.5 text-[13px] leading-snug text-foreground/90" data-testid="models-vix-plain">
-        <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">In plain words</span>
-        {plainVixTerm(horizon.vol.vix, horizon.vol.termRatio)}
-      </p>
+      {/* the model box and the VIX strip, answer first (shared/plainReads.ts) */}
+      <div className="space-y-1 border-b border-border/30 px-2 py-1.5">
+        <PlainRead testId="models-model-plain" read={readModel({
+          spot: horizon.spot, gammaZone: a.gammaZone,
+          zeroGamma: horizon.levels.find((l) => l.kind === "zeroGamma")?.price,
+          callWall: horizon.levels.find((l) => l.kind === "callWall")?.price,
+          putWall: horizon.levels.find((l) => l.kind === "putWall")?.price,
+        })} />
+        <PlainRead testId="models-vix-plain" read={readVixTerm(horizon.vol.vix, horizon.vol.termRatio)} />
+      </div>
 
       {/* ── VIX + confidence strip ── */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/30 bg-black/40 px-3 py-1 font-mono text-[11px] text-muted-foreground">

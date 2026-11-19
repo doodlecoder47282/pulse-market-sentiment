@@ -9,6 +9,8 @@
  *   - <BacktestPanel defaultHorizon="daily" />           → full collapsible panel
  */
 
+import PlainRead from "@/components/PlainRead";
+import { READ_VOL_BAND_BACKTEST } from "@shared/plainReads";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { apiRequest } from "@/lib/queryClient";
@@ -209,6 +211,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
       className="rounded-lg border border-violet-500/20 bg-black/30"
       data-testid="backtest-section"
     >
+      {!data?.dealerLevelsFromChains && <PlainRead read={READ_VOL_BAND_BACKTEST} testId="backtest-plain" className="m-2" />}
       <button
         onClick={() => setOpen(!open)}
         className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 border-b border-violet-500/20 px-3 py-2 text-left font-mono text-[11px] uppercase tracking-widest text-violet-300/80 hover:bg-violet-500/5"

@@ -5,6 +5,8 @@
  * If Schwab is disconnected, shows a prompt to connect.
  */
 
+import PlainRead from "@/components/PlainRead";
+import { readFlowAlerts } from "@shared/plainReads";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -467,6 +469,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
 
         <CollapsibleContent>
           <div className="border-t border-amber-500/10 px-4 pb-4 pt-3 space-y-2">
+            <PlainRead read={readFlowAlerts({ total: totalCount, high: highCount, connected: isConnected })} testId="flow-alerts-plain" />
             {!isConnected ? (
               /* Disconnected state */
               <div className="flex flex-col items-center gap-3 py-4 text-center">

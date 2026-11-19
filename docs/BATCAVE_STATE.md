@@ -2713,3 +2713,15 @@ changes side at X", no direction); a dealer score of 0 from unread deltas or ope
 the server's ranking, the term-structure line says what it compares (nearest against farthest) and has a flat
 case. Tests: 10.
 
+2026-11-18 (evening): Plain-word reads, second slice (feat/plain-reads-2; owner: "the user can just get an
+answer right away"). Seen on the live site first: the lines from #109 render, but several run to five
+sentences, which is not an answer at a glance. Now every read is answer-first: one short sentence always
+visible (26 words at most, pinned by test) with the fuller text behind a tap (client/src/components/
+PlainRead.tsx, shared/plainReads.ts PlainRead {answer, detail}). The nine existing reads were converted. New
+reads: the daily model box (what the model says hedging does here; flip and walls against price), the
+market-maker matrix, the volatility-band backtest, the 10-session cone, the pivot projection, whale
+follow-through (wins of closed positions after costs, with n), flow alerts, the Edge Lab whale headline (hits
+of graded, with n) and the Heatseeker map. The Trade Desk map, the Regime panel and the Wiener map already
+open with a plain sentence and were left as they are. No number, table or model changed. Tests:
+tests/quant/plain-reads.test.ts (14).
+
