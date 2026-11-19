@@ -498,8 +498,6 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
     : zeroGamma?.price != null ? fmtK(zeroGamma.price) : "—";
 
   // Bull / bear scenario close range (±0.5% around bull / bear targets)
-  const bullTgt  = horizon.paths.find(p => p.kind === "bull")?.target ?? spot;
-  const bearTgt  = horizon.paths.find(p => p.kind === "bear")?.target ?? spot;
   const baseTgt  = horizon.paths.find(p => p.kind === "base")?.target ?? spot;
   const ro = {
     bull: rangeOdds(horizon.paths, "bull", spot, probs.bull),
@@ -1026,7 +1024,7 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
       <span className="text-cyan-400">BASE {probs.base}%</span>
       <span>/</span>
       <span className="text-green-400">BULL {probs.bull}%</span>
-      <span className="text-muted-foreground">{probSourceTag(a.scenarioProbSource)}</span>
+      <span className="text-muted-foreground">{probSourceTag(a.scenarioProbSource)}{a.scenarioTargets ? " · one expected move either way" : ""}</span>
       <span>|</span>
       <span>{dateStr}</span>
     </div>
@@ -1432,6 +1430,9 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
     const r = rangeOdds(horizon.paths, kind, spot, fallback);
     return r.position ? `${r.position} range ${r.pct}%${r.holdsPrice ? " · price is here" : ""}` : `${r.pct}%`;
   };
+  const chipRanges = rangeOdds(horizon.paths, "bull", spot, 0).position != null;
+  // A MAGNET base path targets a price outside the middle range, so the chip names it and carries no odds.
+  const baseIsMagnet = horizon.paths.find((p) => p.kind === "base")?.name === "MAGNET";
   const a = horizon.audit;
   const levels = horizon.levels;
 
@@ -1564,7 +1565,7 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
       )}
 
       {a.closeTargets && (
-        <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-border/20 pt-1" title={TWO_ODDS_NOTE}>
+        <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-border/20 pt-1" title={chipRanges ? TWO_ODDS_NOTE : undefined}>
           <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground w-16">Close</span>
           {a.closeTargets.bull && (
             <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px]" style={{ borderColor: `${COLORS.bull}55`, background: `${COLORS.bull}10` }}>
@@ -1577,9 +1578,9 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
           {a.closeTargets.base && (
             <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px]" style={{ borderColor: `${COLORS.base}55`, background: `${COLORS.base}10` }}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.base }} />
-              <span className="uppercase tracking-wide" style={{ color: COLORS.base }}>Base</span>
+              <span className="uppercase tracking-wide" style={{ color: COLORS.base }}>{baseIsMagnet ? "Magnet" : "Base"}</span>
               <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.base.price)}</span>
-              <span className="text-muted-foreground" data-testid="close-chip-odds-base">{chipOdds("base", a.closeTargets.base.prob)}</span>
+              <span className="text-muted-foreground" data-testid="close-chip-odds-base">{baseIsMagnet ? "path target, no odds of its own" : chipOdds("base", a.closeTargets.base.prob)}</span>
             </div>
           )}
           {a.closeTargets.bear && (
@@ -2178,7 +2179,7 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           horizon.confidence === "MODERATE" ? "text-amber-400" : "text-red-400"
         }>{horizon.confidence === "HIGH" ? "large" : horizon.confidence === "MODERATE" ? "medium" : "small"}</span></span>
         <span>·</span>
-        <span title={TWO_ODDS_NOTE} data-testid="models-headline-odds">BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}% {probSourceTag(a.scenarioProbSource)}{a.scenarioTargets ? " · one expected move either way" : ""}</span>
+        <span title={horizon.paths.some((p) => p.probabilitySource === "risk-neutral-implied" && p.region) ? TWO_ODDS_NOTE : undefined} data-testid="models-headline-odds">BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}% {probSourceTag(a.scenarioProbSource)}{a.scenarioTargets ? " · one expected move either way" : ""}</span>
       </div>
 
       {/* Batcave #3 + #4 — recal tracking + DoD term structure strip */}

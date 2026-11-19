@@ -29,7 +29,8 @@ test("exactly one range holds the price, a boundary belongs to the range above i
   }
   assert.equal(rangeOdds(implied, "base", 7384, 0).holdsPrice, true);
   assert.equal(rangeOdds(implied, "bear", 7384, 0).holdsPrice, false);
-  assert.equal(rangeOdds(implied, "bull", 7577, 0).holdsPrice, true);
+  assert.equal(rangeOdds(implied, "bull", 7577, 0).holdsPrice, false, "the server counts a close exactly on the upper split in the middle range");
+  assert.equal(rangeOdds(implied, "base", 7577, 0).holdsPrice, true);
   assert.equal(rangeOdds(implied, "bear", null, 0).holdsPrice, false);
 });
 
@@ -44,19 +45,19 @@ test("without implied odds or a region, the number is the hand-set split and kee
 
 test("the note tells the two sets apart without calling either a forecast", () => {
   assert.match(TWO_ODDS_NOTE, /at least one expected move above the current price, in between, or at least one below/);
-  assert.match(TWO_ODDS_NOTE, /split halfway between the path targets; the range that holds the current price is marked/);
+  assert.match(TWO_ODDS_NOTE, /halfway between the base path target and the bull and bear path targets; when the base target is outside those two, the current price is used in its place\. The range that holds the current price is marked\./);
   assert.match(TWO_ODDS_NOTE, /An unchanged close counts toward whichever range holds the price\./);
   assert.equal(HOLDS_PRICE_TAG, "price is in this range");
 });
 
 test("each panel states which expiries its levels add up, and the Models limits match the server", () => {
-  assert.equal(levelScopeText("models", "daily"), "These levels add up every expiry within 2 days, so they differ from other tabs. For today's trading, read the Today card on Signals, which uses the nearest expiry only.");
+  assert.equal(levelScopeText("models", "daily"), "These levels add up every expiry within 2 days, so they differ from other tabs. The Today card on Signals uses the nearest expiry only.");
   assert.match(levelScopeText("models", "quarterly"), /within 100 days/);
   assert.match(levelScopeText("models", "unknown"), /inside this view's limit/);
   assert.equal(levelScopeText("today"), levelScopeText("odteMap"));
   assert.match(levelScopeText("today"), /nearest expiry only\. Models and the chain audit add up more expiries/);
   assert.match(levelScopeText("chainAudit"), /Each column adds up its own group of expiries/);
-  assert.match(levelScopeText("pivotProjection"), /main gamma snapshot, not the nearest-expiry map/);
+  assert.match(levelScopeText("pivotProjection"), /main gamma snapshot \(the SPY chain, expiries within 45 days\), not the nearest-expiry map/);
   const models = readFileSync(new URL("../../server/models.ts", import.meta.url), "utf8");
   for (const [h, d] of Object.entries(MODEL_DTE_MAX)) assert.match(models, new RegExp(`\\b${h}: ${d},`), `server DTE_MAX.${h} is ${d}`);
 });
@@ -74,5 +75,5 @@ test("the Models tab no longer prints 'BULL region' / 'BEAR region' for range od
   assert.match(read("TodayCard.tsx"), /\{priced && <LevelScopeNote panel="today" \/>\}/, "no scope line when there are no levels to scope");
   assert.match(read("ChainAudit.tsx"), /<LevelScopeNote panel="chainAudit" \/>/);
   assert.match(read("OdteMapCard.tsx"), /<LevelScopeNote panel="odteMap" \/>/);
-  assert.match(read("models/PivotProjection.tsx"), /<LevelScopeNote panel="pivotProjection"/);
+  assert.match(read("models/PivotProjection.tsx"), /symbol === "SPY" \|\| symbol === "\^GSPC"\) && <LevelScopeNote panel="pivotProjection"/);
 });

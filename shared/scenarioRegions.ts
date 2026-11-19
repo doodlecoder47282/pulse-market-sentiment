@@ -6,8 +6,9 @@
 //   headline odds  (audit.scenarioProb)   P(close at least one expected move above the current price) /
 //                                         P(in between) / P(at least one below). Symmetric about the price.
 //                                         These are the events the calibration grades.
-//   range odds     (paths[].probability)  P(close inside each of three price ranges split halfway between
-//                                         the path targets). The ranges are wherever the path targets put
+//   range odds     (paths[].probability)  P(close inside each of three price ranges). The splits sit halfway
+//                                         between the base path target and the bull and bear targets; when
+//                                         the base target is outside those two, the current price is used. The ranges are wherever the path targets put
 //                                         them: when the base path's target is far from the price, the
 //                                         lowest (or highest) range CONTAINS the current price, and calling
 //                                         it "bear" (or "bull") would describe an unchanged close as a move.
@@ -36,9 +37,14 @@ export interface RangeOdds {
 const fin = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 const k = (n: number) => Math.round(n).toLocaleString("en-US");
 
-/** The range a price falls in; a boundary belongs to the range above it (matching "close >= split"). */
+/**
+ * The range a price falls in, on the server's convention (server/impliedScenario.ts): upper is strictly
+ * above its split, lower strictly below, and the middle range is closed at both ends.
+ */
 function holds(r: RegionLike, spot: number): boolean {
-  return (r.lo == null || spot >= r.lo) && (r.hi == null || spot < r.hi);
+  if (r.hi == null) return r.lo == null || spot > r.lo;
+  if (r.lo == null) return spot < r.hi;
+  return spot >= r.lo && spot <= r.hi;
 }
 
 /**
@@ -65,7 +71,7 @@ export function rangeOdds(paths: PathLike[], kind: PathKind, spot: number | null
 
 /** One line that tells the two sets apart; shown wherever both appear. */
 export const TWO_ODDS_NOTE =
-  "Two different questions. BULL / BASE / BEAR odds: a close at least one expected move above the current price, in between, or at least one below. Range odds: where the close lands among three price ranges split halfway between the path targets; the range that holds the current price is marked. An unchanged close counts toward whichever range holds the price.";
+  "Two different questions. BULL / BASE / BEAR odds: a close at least one expected move above the current price, in between, or at least one below. Range odds: where the close lands among three price ranges. The splits sit halfway between the base path target and the bull and bear path targets; when the base target is outside those two, the current price is used in its place. The range that holds the current price is marked. An unchanged close counts toward whichever range holds the price.";
 
 /** Short tag for the range that holds the price. */
 export const HOLDS_PRICE_TAG = "price is in this range";
