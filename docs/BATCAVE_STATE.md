@@ -4,6 +4,24 @@ Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
 
 
+
+## 2026-11-18: protocol book and level-hit log (item 5, part 2)
+
+- `shared/protocols.ts`, book `2026.11.18-1`: three if-then rules for SPX taken from the owner's own description,
+  every threshold hand-set and untested. Rejection at the wall above (at the wall, VIX firm, tech lagging; expected
+  20 points down in 90 minutes; cancelled 10 points above the wall). Sweep and reclaim (2 to 10 points under a
+  support level inside 15 minutes, close back above; expected 15 points up in 90 minutes; cancelled under the sweep
+  low). Stand aside into news (tier-1 release within 30 minutes ahead or 15 behind; not graded; blocks the others).
+- `server/protocolEngine.ts`: each session minute reads the board, logs levels each ticker crossed (`level_hits`,
+  last 500) and logs a protocol when every condition is met (`protocol_events`); grades on 1-minute SPX bars every
+  five minutes. An unread input is never "met". A stale or age-unknown SPX quote cannot arm anything. Demo stores
+  nothing. No message or order is sent.
+- Record is counts only ("untested: 0 graded" until graded; "too few to judge" under 30). No rate is formed.
+- `GET /api/desk/protocols`; `DeskProtocols.tsx` under the level board. Structure is named as a type only.
+- Open for the owner: his own rules to replace or extend the starter three; whether level hits should also go to
+  Discord (nothing is sent today).
+- Tests: `tests/quant/protocols.test.ts`.
+
 ## 2026-11-18: level board on the Trade Desk (item 5, part 1)
 
 - `GET /api/desk/board` (`server/deskBoard.ts`, pure parts in `shared/levelBoard.ts`): SPX, SPY, QQQ, VIX, /ES, /NQ.
