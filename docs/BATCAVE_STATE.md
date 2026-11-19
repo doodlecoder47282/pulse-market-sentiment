@@ -2832,6 +2832,16 @@ read only, and the server logs once which keys came back. Futures are price-only
 are asked for, so a refusal cannot cool the price-history endpoint down for the SPX charts.
 Tests: tests/quant/schwab-futures.test.ts (4), one more in desk-board.test.ts.
 
+
+**Scoreboard (2026-11-19).** Second step of the "no improvement" diagnosis: one list of every graded record
+the desk keeps, so "is it getting better" has a count for an answer. Rows: whale alerts (30 days), whale
+contracts if bought (7 days), each setup rule and kind, each graded protocol (live), the protocol replay, the
+0DTE morning map's settle ledger, regime calls. Each row carries the source's own counts and its own floor
+(setups 100, protocols 30, settle ledger 50 via the new SETTLE_MIN_DAYS constant; whale and regime records set
+none and say so); a replay is never at a floor; a record that fails to read is "not read", not zero. Nothing
+is recomputed or combined, and no row says what to do with a flag. Collapsed to one sentence under the Today
+block on Signals. shared/scoreboard.ts, server/scoreboard.ts, GET /api/scoreboard, ScoreboardCard.
+Tests: tests/quant/scoreboard.test.ts (5).
 **Protocol replay on past sessions (2026-11-19).** Why: the owner's complaint that months of fixes show no
 improvement. Diagnosis given to the owner: fixes were judged by "is the panel correct and labelled", never by
 a number that says whether what the desk flags mattered; every record is far below its floor (setups 3 of 100,

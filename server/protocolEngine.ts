@@ -197,6 +197,15 @@ export interface ProtocolLog {
   note: string;
 }
 
+/** The live record of each graded protocol under the current book, from stored events alone (no board build, no market read). */
+export function getProtocolRecords(): { bookVersion: string; minGraded: number; items: Array<{ name: string; graded: boolean; record: ProtocolRecord }> } {
+  const rows = sqlite.prepare(`SELECT protocol, status FROM protocol_events WHERE book_version = ?`).all(PROTOCOL_BOOK_VERSION) as Array<{ protocol: string; status: string }>;
+  return {
+    bookVersion: PROTOCOL_BOOK_VERSION, minGraded: PROTOCOL_MIN_GRADED,
+    items: protocolBook().map((p) => ({ name: p.name, graded: p.graded, record: protocolRecord(rows.filter((r) => r.protocol === p.id).map((r) => r.status), p.graded) })),
+  };
+}
+
 export async function getProtocolLog(nowMs: number = Date.now()): Promise<ProtocolLog> {
   const book = protocolBook();
   // The engine's own evaluation when it is fresh; otherwise evaluate now so the conditions shown are current.
