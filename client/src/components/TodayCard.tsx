@@ -20,6 +20,7 @@ import UnavailablePanel from "@/components/UnavailablePanel";
 import { Map as MapIcon } from "lucide-react";
 import type { OdteMap } from "@shared/odteMap";
 import PlainRead from "@/components/PlainRead";
+import LevelScopeNote from "@/components/LevelScopeNote";
 import TodayPath from "@/components/TodayPath";
 import { readToday } from "@shared/plainReads";
 
@@ -163,6 +164,8 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
             </p>
           </>
         )}
+
+        {priced && <LevelScopeNote panel="today" />}
 
         {/* the projected path to the close: the Wiener map's three centres, small (index only) */}
         {symbol === "$SPX" && <TodayPath onOpenMap={onOpenMap} active={active} />}
