@@ -10,11 +10,11 @@
 // market-data entitlement serves them is only known from the answer.
 
 import { getQuotes, getPriceHistory, type NormalizedQuote } from "./schwab";
-import { etClock, etDate, nextTradingDay, prevTradingDay, sessionCloseMinutes, isTradingDay } from "./exchangeCalendar";
+import { etDate, prevTradingDay } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
 import { editionFromEnv } from "../shared/edition";
 import {
-  calendarLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
+  boardSession, calendarLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
   type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead,
 } from "../shared/levelBoard";
 
@@ -116,14 +116,6 @@ async function optionLevels(nowMs: number): Promise<{ levels: BoardLevel[]; stat
   } catch (e: any) {
     return { levels: [], state: "unavailable", reason: String(e?.message ?? e).slice(0, 120) };
   }
-}
-
-/** The session the board is for: today until its close, else the next trading day. */
-export function boardSession(nowMs: number): { forSession: string; sessionOpen: boolean; today: string } {
-  const c = etClock(nowMs);
-  const close = sessionCloseMinutes(c.date);
-  const todayLive = isTradingDay(c.date) && close != null && c.minutes < close;
-  return { forSession: todayLive ? c.date : nextTradingDay(c.date), sessionOpen: todayLive && c.minutes >= 9 * 60 + 30, today: c.date };
 }
 
 export async function buildDeskBoard(nowMs: number = Date.now()): Promise<DeskBoard> {

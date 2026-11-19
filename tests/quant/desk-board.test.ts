@@ -1,0 +1,128 @@
+// The level board: hand-marked chart levels per ticker and the two descriptive cases (shared/levelBoard.ts).
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import {
+  calendarLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead, boardAnswer, boardSession, weekStart, priorMonth,
+  type DayBar, type BoardLevel,
+} from "../../shared/levelBoard";
+
+const bar = (date: string, o: number, h: number, l: number, c: number): DayBar => ({ date, open: o, high: h, low: l, close: c });
+// Oct 26-30 (prior month + two weeks back), Nov 2-6 (prior week), Nov 9-11 (this week); "today" is Wed 2026-11-11.
+const daily: DayBar[] = [
+  bar("2026-10-29", 100, 111, 95, 108), bar("2026-10-30", 108, 109, 101, 104),
+  bar("2026-11-02", 104, 106, 100, 105), bar("2026-11-05", 105, 112, 103, 110), bar("2026-11-06", 110, 111, 107, 109),
+  bar("2026-11-09", 109.5, 113, 108, 112), bar("2026-11-10", 112, 114, 110, 111),
+  bar("2026-11-11", 111.5, 115, 111, 114), // in progress: never "prior"
+];
+const price = (ls: BoardLevel[], key: string) => ls.find((l) => l.key === key)?.price;
+
+test("calendar helpers", () => {
+  assert.equal(weekStart("2026-11-11"), "2026-11-09");
+  assert.equal(weekStart("2026-11-09"), "2026-11-09");
+  assert.equal(weekStart("2026-11-15"), "2026-11-09");
+  assert.equal(priorMonth("2026-11-11"), "2026-10");
+  assert.equal(priorMonth("2026-01-05"), "2025-12");
+});
+
+test("calendar levels come from completed bars only", () => {
+  const ls = calendarLevels(daily, "2026-11-11");
+  assert.deepEqual([price(ls, "pdh"), price(ls, "pdl"), price(ls, "pdc")], [114, 110, 111]);
+  const p = (114 + 110 + 111) / 3;
+  assert.ok(Math.abs(price(ls, "pp")! - p) < 1e-9);
+  assert.ok(Math.abs(price(ls, "r1")! - (2 * p - 110)) < 1e-9);
+  assert.ok(Math.abs(price(ls, "s1")! - (2 * p - 114)) < 1e-9);
+  assert.deepEqual([price(ls, "pwh"), price(ls, "pwl"), price(ls, "pwc")], [112, 100, 109]);
+  assert.equal(price(ls, "wo"), 109.5);
+  assert.deepEqual([price(ls, "pmh"), price(ls, "pml"), price(ls, "pmc")], [111, 95, 104]);
+  assert.equal(price(ls, "mo"), 104);
+  assert.equal(calendarLevels(daily, "2026-11-11", { pivots: false }).some((l) => l.group === "pivot"), false);
+});
+
+test("after the close the board is for the next session, so today's bar becomes the prior day", () => {
+  const ls = calendarLevels(daily, "2026-11-12");
+  assert.deepEqual([price(ls, "pdh"), price(ls, "pdl"), price(ls, "pdc")], [115, 111, 114]);
+  // Monday's board: the week just ended is the prior week.
+  const mon = calendarLevels(daily, "2026-11-16");
+  assert.deepEqual([price(mon, "pwh"), price(mon, "pwl"), price(mon, "pwc")], [115, 108, 114]);
+  assert.equal(price(mon, "wo"), undefined, "no bar of the new week yet");
+  assert.deepEqual(calendarLevels([], "2026-11-11"), []);
+  assert.deepEqual(calendarLevels([bar("2026-11-10", 0, 1, 1, 1)], "2026-11-11"), [], "a bar with a zero price is not a bar");
+});
+
+test("board session: today until the close, then the next trading day", () => {
+  assert.deepEqual(boardSession(Date.UTC(2026, 10, 11, 13, 0)), { forSession: "2026-11-11", sessionOpen: false, today: "2026-11-11" }); // 08:00 ET
+  assert.deepEqual(boardSession(Date.UTC(2026, 10, 11, 16, 0)), { forSession: "2026-11-11", sessionOpen: true, today: "2026-11-11" });  // 11:00 ET
+  assert.deepEqual(boardSession(Date.UTC(2026, 10, 11, 22, 0)), { forSession: "2026-11-12", sessionOpen: false, today: "2026-11-11" }); // 17:00 ET
+  assert.equal(boardSession(Date.UTC(2026, 10, 14, 16, 0)).forSession, "2026-11-16"); // Saturday
+});
+
+test("session levels: the open at once, the opening range only after 10:00 ET", () => {
+  const at = (h: number, m: number) => Date.UTC(2026, 10, 11, h + 5, m); // ET = UTC-5 in November
+  const bars = [
+    { t: at(9, 25), open: 1, high: 1, low: 1, close: 1 },           // pre-market: ignored
+    { t: at(9, 30), open: 111.5, high: 112, low: 111, close: 111.8 },
+    { t: at(9, 55), open: 111.8, high: 113, low: 111.6, close: 112.5 },
+    { t: at(10, 0), open: 112.5, high: 114, low: 112, close: 113.5 }, // after the range
+    { t: Date.UTC(2026, 10, 10, 15, 0), open: 50, high: 60, low: 40, close: 55 }, // yesterday: ignored
+  ];
+  const early = sessionLevels(bars, "2026-11-11", at(9, 58));
+  assert.deepEqual(early.map((l) => [l.key, l.price]), [["open", 111.5]]);
+  const later = sessionLevels(bars, "2026-11-11", at(10, 5));
+  assert.deepEqual(later.map((l) => [l.key, l.price]), [["open", 111.5], ["orh", 113], ["orl", 111]]);
+  assert.deepEqual(sessionLevels(bars, "2026-11-12", at(10, 5)), []);
+});
+
+test("nearest levels, merging and the cases", () => {
+  const ls: BoardLevel[] = [
+    { key: "a", label: "prior-day high", price: 7350, group: "prior day" },
+    { key: "b", label: "pivot R1", price: 7351, group: "pivot" },          // within 0.05% of 7350: one line
+    { key: "c", label: "wall above", price: 7400, group: "options" },
+    { key: "d", label: "prior-week high", price: 7450, group: "week" },
+    { key: "e", label: "gamma flip", price: 7300, group: "options" },
+    { key: "f", label: "prior-day low", price: 7250, group: "prior day" },
+    { key: "g", label: "pin", price: 7325, group: "options" },             // within 0.1% of the price: "at"
+  ];
+  const m = mergeLevels(ls, 7324);
+  assert.equal(m.length, 6);
+  assert.equal(m.find((l) => l.price === 7351)!.label, "pivot R1 + prior-day high");
+  const n = nearestLevels(ls, 7324);
+  assert.deepEqual(n.at.map((l) => l.label), ["pin"]);
+  assert.equal(n.above[0].price, 7351);
+  assert.equal(n.below[0].price, 7300);
+  const bull = deskCase(ls, 7324, "bull");
+  assert.equal(bull.text, "Bull case: above 7,351 (pivot R1 + prior-day high) the next levels up are 7,400 (wall above) and 7,450 (prior-week high). The case is off back under 7,300 (gamma flip).");
+  const bear = deskCase(ls, 7324, "bear");
+  assert.equal(bear.text, "Bear case: below 7,300 (gamma flip) the next level down is 7,250 (prior-day low). The case is off back over 7,351 (pivot R1 + prior-day high).");
+  assert.equal(deskCase(ls, 7500, "bull").text, "Bull case: no mapped level above the price.");
+  assert.equal(deskCase(ls, null, "bear").text, "Bear case: no price read.");
+  assert.equal(deskCase([ls[0]], 7324, "bull").text, "Bull case: above 7,350 (prior-day high) no further mapped level above.");
+  for (const t of [bull.text, bear.text]) assert.doesNotMatch(t, /will|should|expect|likely|target|buy|sell|%/i);
+});
+
+test("tech and VIX reads state the numbers they come from", () => {
+  assert.deepEqual([techRead(0.8, 0.2).state, techRead(-0.5, 0.1).state, techRead(0.3, 0.2).state, techRead(null, 0.2).state], ["leading", "lagging", "in line", "unknown"]);
+  assert.equal(techRead(0.8, 0.2).text, "QQQ +0.80% against SPY +0.20%: tech is leading by 0.60 points.");
+  assert.equal(techRead(0.3, 0.2).text, "QQQ +0.30% against SPY +0.20%: tech is in line.");
+  assert.deepEqual([vixRead(3).state, vixRead(-2).state, vixRead(0.4).state, vixRead(undefined).state], ["firm", "soft", "flat", "unknown"]);
+  assert.equal(vixRead(-3.53).text, "VIX -3.53% on the day: soft.");
+});
+
+test("the board's one-line answer", () => {
+  const up: BoardLevel = { key: "u", label: "wall above", price: 7400, group: "options" };
+  const dn: BoardLevel = { key: "d", label: "gamma flip", price: 7300, group: "options" };
+  assert.equal(boardAnswer("SPX", 7324, { at: [], above: up, below: dn }), "SPX 7,324 sits between 7,300 (gamma flip) below and 7,400 (wall above) above.");
+  assert.equal(boardAnswer("SPX", 7300, { at: [dn], above: up, below: null }), "SPX 7,300 is at 7,300 (gamma flip).");
+  assert.equal(boardAnswer("SPX", null, { at: [], above: null, below: null }), "SPX: no price read, so no levels are placed.");
+  assert.equal(boardAnswer("VIX", 23.9, { at: [], above: null, below: { key: "x", label: "prior-day low", price: 23.1, group: "prior day" } }), "VIX 23.90 is over every mapped level; the nearest is 23.10 (prior-day low).");
+});
+
+test("wiring: the board is served and sits at the top of the Trade Desk", () => {
+  const routes = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
+  assert.match(routes, /app\.get\("\/api\/desk\/board"/);
+  const desk = readFileSync(new URL("../../client/src/components/TradeDesk.tsx", import.meta.url), "utf8");
+  assert.ok(desk.indexOf("<DeskBoard />") > 0 && desk.indexOf("<DeskBoard />") < desk.indexOf("<OdteMapCard />"));
+  const srv = readFileSync(new URL("../../server/deskBoard.ts", import.meta.url), "utf8");
+  assert.match(srv, /Schwab returned no quote for \$\{t\.symbol\}/);
+  assert.match(srv, /"\/ES"/);
+});

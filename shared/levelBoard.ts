@@ -8,7 +8,7 @@
 // Nothing here is a forecast or an instruction. A case lists levels in the order price would meet them and
 // the level beyond which that listing no longer applies. No odds are attached because none are measured.
 
-import { etClock, REGULAR_OPEN_MIN } from "./exchangeCalendar";
+import { etClock, REGULAR_OPEN_MIN, nextTradingDay, sessionCloseMinutes, isTradingDay } from "./exchangeCalendar";
 
 export interface DayBar { date: string; open: number; high: number; low: number; close: number }
 export interface IntraBar { t: number; open: number; high: number; low: number; close: number }
@@ -182,4 +182,22 @@ export function vixRead(vixPct: number | null | undefined): VixRead {
   if (typeof vixPct !== "number" || !Number.isFinite(vixPct)) return { state: "unknown", text: "VIX on the day: not read." };
   const state = vixPct >= VIX_FIRM_PCT ? "firm" : vixPct <= -VIX_FIRM_PCT ? "soft" : "flat";
   return { state, text: `VIX ${vixPct >= 0 ? "+" : ""}${vixPct.toFixed(2)}% on the day: ${state}.` };
+}
+
+/** One sentence for the top of the board: where the index sits between its nearest levels. */
+export function boardAnswer(label: string, price: number | null | undefined, n: { at: BoardLevel[]; above: BoardLevel | null; below: BoardLevel | null }): string {
+  if (!ok(price)) return `${label}: no price read, so no levels are placed.`;
+  if (n.at.length) return `${label} ${fmt(price)} is at ${named(n.at[0])}.`;
+  if (n.above && n.below) return `${label} ${fmt(price)} sits between ${named(n.below)} below and ${named(n.above)} above.`;
+  if (n.above) return `${label} ${fmt(price)} is under every mapped level; the nearest is ${named(n.above)}.`;
+  if (n.below) return `${label} ${fmt(price)} is over every mapped level; the nearest is ${named(n.below)}.`;
+  return `${label} ${fmt(price)}: no levels were read.`;
+}
+
+/** The session the board is for: today until its close, else the next trading day. */
+export function boardSession(nowMs: number): { forSession: string; sessionOpen: boolean; today: string } {
+  const c = etClock(nowMs);
+  const close = sessionCloseMinutes(c.date);
+  const todayLive = isTradingDay(c.date) && close != null && c.minutes < close;
+  return { forSession: todayLive ? c.date : nextTradingDay(c.date), sessionOpen: todayLive && c.minutes >= REGULAR_OPEN_MIN, today: c.date };
 }
