@@ -240,3 +240,13 @@ test("build: a refused read is not asked for again inside five minutes, an empty
   await buildDeskBoard(NOON + 90_000, d2);
   assert.equal(calls2.filter((c) => c === "$SPX:month").length, 2);
 });
+
+test("build: a missing quote carries the source's own stated reason when it gave one", async () => {
+  _resetDeskBoardCache();
+  const d = deps();
+  d.quoteRefusal = async (s) => (s === "/NQ" ? "Schwab answered that /NQ is not a symbol it recognises" : null);
+  const b = await buildDeskBoard(NOON, d);
+  const nq = b.tickers.find((x) => x.symbol === "/NQ")!;
+  assert.deepEqual([nq.quoteState, nq.quoteReason], ["unavailable", "Schwab answered that /NQ is not a symbol it recognises"]);
+  assert.equal(b.tickers.find((x) => x.symbol === "/ES")!.quoteReason, null);
+});

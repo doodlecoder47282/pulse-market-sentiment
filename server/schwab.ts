@@ -6,6 +6,7 @@
  */
 
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import { futuresQuoteEntry, invalidSymbolsOf, isFutureRoot } from "./schwabFutures";
 import { regularFields } from "./schwabQuoteFields";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { applyOiHold, type ChainOiState } from "./oiHold";
@@ -857,6 +858,12 @@ function _streamedQuote(wireSym: string, origSym: string, nowMs: number): Normal
 }
 
 /** Get quotes for multiple symbols via Schwab. Returns empty array if not authenticated. */
+/** Why the last quotes answer carried nothing for a symbol, in Schwab's own terms; cleared when a quote arrives. */
+const _quoteRefusals = new Map<string, string>();
+export function quoteRefusalReason(symbol: string): string | null {
+  return _quoteRefusals.get(symbol) ?? null;
+}
+
 export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   if (!symbols.length) return [];
   // Normalize legacy .X suffix on cash indexes; preserve original-→-wire mapping
@@ -894,10 +901,19 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
     const data = meta.data;
     if (data && typeof data === "object") {
       const results: NormalizedQuote[] = [];
+      const invalid = invalidSymbolsOf(data);
       for (const wireSym of restSymbols) {
-        const q = data[wireSym];
-        if (!q) continue;
         const origSym = wireToOriginal.get(wireSym) ?? wireSym;
+        // A root future (/ES) may come back keyed by the contract Schwab resolved it to (server/schwabFutures.ts).
+        const fut = !data[wireSym] && isFutureRoot(wireSym) ? futuresQuoteEntry(data, wireSym) : null;
+        const q = data[wireSym] ?? fut?.entry;
+        if (!q) {
+          _quoteRefusals.set(origSym, invalid.includes(wireSym)
+            ? `Schwab answered that ${wireSym} is not a symbol it recognises`
+            : `Schwab's answer had no entry for ${wireSym}`);
+          continue;
+        }
+        _quoteRefusals.delete(origSym);
         // Schwab returns either "quote" (regular) or "reference" depending on type
         const qd = q.quote ?? q.fundamental ?? {};
         const last = qd.lastPrice ?? qd.mark ?? null;
