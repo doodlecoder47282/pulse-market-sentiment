@@ -2845,3 +2845,11 @@ sessions before 2026-11-01 skipped because CPI/PCE are not loaded earlier). Rout
 GET /api/desk/protocols/replay. Tests: tests/quant/protocol-replay.test.ts (5).
 Next in this line: one scoreboard of everything the desk flags, then deeper levels below the price and
 collapsing repeat level crossings.
+**Board depth and joined crossings (2026-11-19).** Seen live on a day SPX fell 1.5%: the price was under every
+prior-day, week and month level, so the bear case read "no further mapped level below" and SPY and QQQ showed
+"below: none mapped"; VIX crossed one level three times in five minutes and each crossing was its own line.
+Now: the board adds the 20-session high and low and the high and low of every daily bar read (labelled with
+the real count, about 63 sessions) as a "range" group (shared/levelBoard.ts rangeLevels), and crossings of one
+level by one ticker within 10 minutes of each other are shown as one line with the count, first time and last
+direction (shared/protocols.ts joinHits); every crossing is still stored and counted.
+Tests: tests/quant/board-depth.test.ts (5).
