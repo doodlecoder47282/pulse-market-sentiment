@@ -11,7 +11,7 @@ Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
   every threshold hand-set and untested. Rejection at the wall above (at the wall, VIX firm, tech lagging; expected
   20 points down in 90 minutes; cancelled 10 points above the wall). Sweep and reclaim (2 to 10 points under a
   support level inside 15 minutes, close back above; expected 15 points up in 90 minutes; cancelled under the sweep
-  low). Stand aside into news (tier-1 release within 30 minutes ahead or 15 behind; not graded; blocks the others).
+  low). News window (tier-1 release within 30 minutes ahead or 15 behind; not graded; blocks the others).
 - `server/protocolEngine.ts`: each session minute reads the board, logs levels each ticker crossed (`level_hits`,
   last 500) and logs a protocol when every condition is met (`protocol_events`); grades on 1-minute SPX bars every
   five minutes. An unread input is never "met". A stale or age-unknown SPX quote cannot arm anything. Demo stores

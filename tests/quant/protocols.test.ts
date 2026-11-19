@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  PROTOCOL_BOOK_VERSION, PROTOCOL_RULES, protocolBook, evalWallRejection, evalSweepReclaim, evalStandAside, evalProtocols, findSweep,
+  PROTOCOL_BOOK_VERSION, PROTOCOL_RULES, protocolBook, evalWallRejection, evalSweepReclaim, evalNewsWindow, evalProtocols, findSweep,
   gradeProtocol, protocolRecord, levelHits, protocolsWatching, type ProtocolCtx,
 } from "../../shared/protocols";
 import type { BoardLevel, IntraBar } from "../../shared/levelBoard";
@@ -23,7 +23,7 @@ const bar = (minAgo: number, o: number, h: number, l: number, c: number): IntraB
 test("the book states its thresholds and is versioned", () => {
   const b = protocolBook();
   assert.equal(PROTOCOL_BOOK_VERSION, "2026.11.18-1");
-  assert.deepEqual(b.map((p) => p.id), ["wall_rejection", "sweep_reclaim", "stand_aside_news"]);
+  assert.deepEqual(b.map((p) => p.id), ["wall_rejection", "sweep_reclaim", "news_window"]);
   assert.match(b[0].expected, /20 points below the armed price within 90 minutes/);
   assert.match(b[0].cancel, /10 points above the wall first/);
   assert.match(b[1].trigger, /2 to 10 points under a support level/);
@@ -68,12 +68,12 @@ test("sweep and reclaim: under a support level by 2 to 10 points, then back abov
   assert.equal(evalSweepReclaim(ctx({ bars, minutesToTier1: 10 })).armed, false);
 });
 
-test("stand aside arms inside the news window, and the others cannot arm with it", () => {
-  assert.equal(evalStandAside(ctx({ minutesToTier1: 25 })).armed, true);
-  assert.equal(evalStandAside(ctx({ minutesSinceTier1: 10 })).armed, true);
-  assert.equal(evalStandAside(ctx()).armed, false);
-  assert.equal(evalStandAside(ctx({ calendarKnown: false })).armed, false);
-  assert.equal(evalStandAside(ctx({ calendarKnown: false })).conditions[0].met, null);
+test("the news window arms near a release, and the others cannot arm with it", () => {
+  assert.equal(evalNewsWindow(ctx({ minutesToTier1: 25 })).armed, true);
+  assert.equal(evalNewsWindow(ctx({ minutesSinceTier1: 10 })).armed, true);
+  assert.equal(evalNewsWindow(ctx()).armed, false);
+  assert.equal(evalNewsWindow(ctx({ calendarKnown: false })).armed, false);
+  assert.equal(evalNewsWindow(ctx({ calendarKnown: false })).conditions[0].met, null);
   const all = evalProtocols(ctx({ minutesToTier1: 25 }));
   assert.deepEqual(all.map((e) => e.armed), [false, false, true]);
   assert.equal(PROTOCOL_RULES.newsBeforeMin, 30);

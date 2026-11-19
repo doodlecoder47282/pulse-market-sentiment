@@ -38,7 +38,7 @@ export const PROTOCOL_RULES: ProtocolRules = {
   sweepReclaim: { minSweepPts: 2, maxSweepPts: 10, lookbackMin: 15, expectPts: 15, horizonMin: 90 },
 };
 
-export type ProtocolId = "wall_rejection" | "sweep_reclaim" | "stand_aside_news";
+export type ProtocolId = "wall_rejection" | "sweep_reclaim" | "news_window";
 
 export interface ProtocolDef {
   id: ProtocolId;
@@ -81,12 +81,12 @@ export function protocolBook(r: ProtocolRules = PROTOCOL_RULES): ProtocolDef[] {
       watches: SWEEP_LEVEL_KEYS,
     },
     {
-      id: "stand_aside_news",
-      name: "Stand aside into news",
+      id: "news_window",
+      name: "News window",
       trigger: `A tier-1 release (CPI, NFP, PCE, FOMC) is within ${r.newsBeforeMin} minutes ahead or ${r.newsAfterMin} minutes behind.`,
       expected: "Nothing is expected of price. While this is armed the other protocols do not arm.",
       cancel: `${r.newsAfterMin} minutes after the release.`,
-      structure: "no new position",
+      structure: "none: this rule only holds the other two",
       graded: false,
       watches: [],
     },
@@ -203,14 +203,14 @@ export function evalSweepReclaim(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RUL
   };
 }
 
-export function evalStandAside(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RULES): ProtocolEval {
+export function evalNewsWindow(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RULES): ProtocolEval {
   const news = newsCondition(c, r);
   const conditions: Condition[] = [{ name: "tier-1 release near", met: news.inWindow, detail: news.detail }];
-  return { ...blank("stand_aside_news", conditions), armed: news.inWindow === true };
+  return { ...blank("news_window", conditions), armed: news.inWindow === true };
 }
 
 export function evalProtocols(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RULES): ProtocolEval[] {
-  return [evalWallRejection(c, r), evalSweepReclaim(c, r), evalStandAside(c, r)];
+  return [evalWallRejection(c, r), evalSweepReclaim(c, r), evalNewsWindow(c, r)];
 }
 
 export type ProtocolOutcome = "expected" | "cancelled" | "neither" | "open" | "ungraded";
