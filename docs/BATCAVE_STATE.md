@@ -2734,6 +2734,7 @@ inside the live view, where its description is true. Also taken: baseline rows n
 for the server, flow alerts distinguish status loading, chain unread and last-session chain, held open
 interest is marked on the short answer, "likely new positions", "buying each flagged whale contract".
 
+
 2026-11-18 (evening): Today block (feat/today-block, stacked on the answer-first reads). Understood as: one
 block at the very top with the plain read, the few levels that matter, and the projected path. The existing
 Today card (spot, wall above, gamma flip, largest level below, from the 0DTE map) now opens with one plain
@@ -2750,6 +2751,7 @@ last read ... from the last price"; the read is scoped to the nearest expiry; th
 of the options gap and labels a held chain "the last read"; loading, unavailable and drawn share one height;
 the card polls only while its tab shows; the position bar is left off phones; the explanation sits behind a
 tap; the chart geometry is a pure function with tests for degenerate inputs.
+
 
 2026-11-18 (night): One set of odds and a scope line for levels (feat/one-set-of-levels, stacked on the Today
 block). Understood as: the same level or the same three words must not show two different numbers without
