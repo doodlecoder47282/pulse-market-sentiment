@@ -170,7 +170,8 @@ test("build: quotes are keyed as asked, a future falls back to its previous clos
   assert.equal(t("$SPX").price, 113);
   assert.equal(t("/ES").changePct, 13);
   assert.deepEqual([t("/NQ").quoteState, t("/NQ").quoteReason], ["unavailable", "Schwab returned no quote for /NQ"]);
-  assert.ok(!calls.includes("/NQ:month"), "no bars are asked for a future with no quote");
+  assert.ok(!calls.includes("/NQ:month") && !calls.includes("/ES:month"), "no bars are asked for a future, priced or not");
+  assert.match(t("/ES").levelsReason ?? "", /price only/);
   assert.ok(!calls.some((c) => c.startsWith("/ES:day")), "no intraday bars for futures");
   assert.equal(b.tech.state, "leading");
   assert.equal(b.vix.state, "soft");
@@ -239,4 +240,25 @@ test("build: a refused read is not asked for again inside five minutes, an empty
   assert.equal(calls2.filter((c) => c === "$SPX:month").length, 1);
   await buildDeskBoard(NOON + 90_000, d2);
   assert.equal(calls2.filter((c) => c === "$SPX:month").length, 2);
+});
+
+test("build: a missing quote carries the source's own stated reason when it gave one", async () => {
+  _resetDeskBoardCache();
+  const d = deps();
+  d.quoteRefusal = async (s) => (s === "/NQ" ? "invalid_symbol" : null);
+  const b = await buildDeskBoard(NOON, d);
+  const nq = b.tickers.find((x) => x.symbol === "/NQ")!;
+  assert.deepEqual([nq.quoteState, nq.quoteReason], ["unavailable", "Schwab answered that /NQ is not a symbol it recognises"]);
+  assert.equal(b.tickers.find((x) => x.symbol === "/ES")!.quoteReason, null);
+  for (const [code, re] of [["no_entry", /answered, with no entry for \/NQ/], ["no_price", /entry for \/NQ with no price/], ["not_connected", /not connected/], ["no_answer", /did not answer/]] as const) {
+    _resetDeskBoardCache();
+    const dd = deps(); dd.quoteRefusal = async () => code;
+    assert.match((await buildDeskBoard(NOON, dd)).tickers.find((x) => x.symbol === "/NQ")!.quoteReason ?? "", re);
+  }
+  _resetDeskBoardCache();
+  const demo = deps({ edition: "demo" }); demo.quoteRefusal = async () => "no_entry";
+  assert.equal((await buildDeskBoard(NOON, demo)).tickers.find((x) => x.symbol === "/NQ")!.quoteReason, "the sample feed answered, with no entry for /NQ");
+  _resetDeskBoardCache();
+  const none = deps(); none.quoteRefusal = async () => null;
+  assert.equal((await buildDeskBoard(NOON, none)).tickers.find((x) => x.symbol === "/NQ")!.quoteReason, "Schwab returned no quote for /NQ");
 });

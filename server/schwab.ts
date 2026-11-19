@@ -6,6 +6,7 @@
  */
 
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import { futuresQuoteEntry, invalidSymbolsOf, isFutureRoot } from "./schwabFutures";
 import { regularFields } from "./schwabQuoteFields";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { applyOiHold, type ChainOiState } from "./oiHold";
@@ -856,9 +857,25 @@ function _streamedQuote(wireSym: string, origSym: string, nowMs: number): Normal
   };
 }
 
+/**
+ * Why the most recent getQuotes call that asked for a root future (/ES) produced no price for it. Kept for
+ * future roots only (a small fixed set), and rewritten by every call that asks for one: cleared first, then set
+ * from that call's own outcome, so a reason never outlives the read it came from. Codes, not wording: the
+ * caller names the source (Schwab, or the sample feed).
+ */
+export type QuoteRefusalCode = "invalid_symbol" | "no_entry" | "no_price" | "not_connected" | "no_answer";
+const _quoteRefusals = new Map<string, QuoteRefusalCode>();
+export function quoteRefusalReason(symbol: string): QuoteRefusalCode | null {
+  return _quoteRefusals.get(symbol) ?? null;
+}
+let _futureKeysLogged = false;
+
 /** Get quotes for multiple symbols via Schwab. Returns empty array if not authenticated. */
 export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   if (!symbols.length) return [];
+  const futureRoots = symbols.filter(isFutureRoot);
+  for (const f of futureRoots) _quoteRefusals.delete(f);
+  const refuseAll = (code: QuoteRefusalCode) => { for (const f of futureRoots) _quoteRefusals.set(f, code); };
   // Normalize legacy .X suffix on cash indexes; preserve original-→-wire mapping
   // so callers that filter by their original symbol still find the quote.
   const wireSymbols = symbols.map(_normalizeIndexSymbol);
@@ -887,6 +904,7 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   const token = await getAccessToken();
   if (!token) {
     console.warn("[schwab] not authenticated, returning empty quotes");
+    refuseAll("not_connected");
     return ordered([]);
   }
   try {
@@ -894,13 +912,27 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
     const data = meta.data;
     if (data && typeof data === "object") {
       const results: NormalizedQuote[] = [];
+      const invalid = invalidSymbolsOf(data);
       for (const wireSym of restSymbols) {
-        const q = data[wireSym];
-        if (!q) continue;
         const origSym = wireToOriginal.get(wireSym) ?? wireSym;
+        // A root future (/ES) may come back keyed by the contract Schwab resolved it to (server/schwabFutures.ts).
+        const fut = !data[wireSym] && isFutureRoot(wireSym) ? futuresQuoteEntry(data, wireSym) : null;
+        const q = data[wireSym] ?? fut?.entry;
+        if (!q) {
+          if (isFutureRoot(wireSym)) {
+            _quoteRefusals.set(origSym, invalid.includes(wireSym) ? "invalid_symbol" : "no_entry");
+            // Once per process: which keys came back when a future root was missing (symbols only, no values).
+            if (!_futureKeysLogged) {
+              _futureKeysLogged = true;
+              console.warn(`[schwab] no quote entry for ${wireSym}; answer keys: ${Object.keys(data).slice(0, 20).join(",")}; invalidSymbols: ${invalid.join(",") || "none"}`);
+            }
+          }
+          continue;
+        }
         // Schwab returns either "quote" (regular) or "reference" depending on type
         const qd = q.quote ?? q.fundamental ?? {};
         const last = qd.lastPrice ?? qd.mark ?? null;
+        if (isFutureRoot(wireSym) && !(typeof last === "number" && Number.isFinite(last) && last > 0)) _quoteRefusals.set(origSym, "no_price");
         const quoteTimeMs: number | null = typeof qd.quoteTime === "number" ? qd.quoteTime
           : typeof qd.tradeTime === "number" ? qd.tradeTime : null;
         const fresh = quoteFreshness(quoteTimeMs);
@@ -937,8 +969,10 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
       }
       return ordered(results);
     }
+    refuseAll("no_answer");
   } catch (e: any) {
     console.warn("[schwab] getQuotes error:", e?.message);
+    refuseAll("no_answer");
   }
   return ordered([]);
 }

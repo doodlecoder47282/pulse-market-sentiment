@@ -70,6 +70,8 @@ const negTtl = (reason: string) => (/\bHTTP 4\d\d\b|\b40[13]\b/.test(reason) ? R
 /** What the board reads from; replaced in tests. */
 export interface DeskBoardDeps {
   getQuotes(symbols: string[]): Promise<NormalizedQuote[]>;
+  /** Why this read's quotes call produced no price for a future, as a code (server/schwab.ts QuoteRefusalCode). */
+  quoteRefusal?(symbol: string): Promise<string | null>;
   getPriceHistory(symbol: string, periodType: "day" | "month", period: number, frequencyType: "minute" | "daily", frequency: number, ext?: boolean): Promise<PriceHistoryResponse>;
   optionLevels(nowMs: number): Promise<OptionLevels>;
   edition(): string;
@@ -158,6 +160,7 @@ function liveDeps(): DeskBoardDeps {
   if (_live) return _live;
   _live = {
     getQuotes: async (symbols) => (await import("./schwab")).getQuotes(symbols),
+    quoteRefusal: async (symbol) => (await import("./schwab")).quoteRefusalReason(symbol),
     getPriceHistory: async (symbol, periodType, period, frequencyType, frequency, ext) => (await import("./schwab")).getPriceHistory(symbol, periodType, period, frequencyType, frequency, ext ?? false),
     optionLevels: liveOptionLevels,
     edition: () => editionFromEnv(),
@@ -184,11 +187,28 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
   } catch (e: any) { quoteError = String(e?.message ?? e).slice(0, 100); }
 
   const priced = (sym: string) => { const q = quotes.get(sym); return q?.last != null && Number.isFinite(q.last) && q.last > 0; };
-  // A future with no quote is not asked for bars either: an endpoint that refuses futures would cool down for every caller.
-  const wantsBars = (t: (typeof BOARD_TICKERS)[number]) => t.kind !== "future" || priced(t.symbol);
+  // The source's own account of a future it gave no price for, worded with the source's name.
+  const refusals = new Map<string, string>();
+  if (deps.quoteRefusal && quoteError == null) {
+    await Promise.all(BOARD_TICKERS.filter((t) => t.kind === "future" && !priced(t.symbol)).map(async (t) => {
+      try {
+        const code = await deps.quoteRefusal!(t.symbol);
+        const who = src(deps);
+        const text = code === "invalid_symbol" ? `${who} answered that ${t.symbol} is not a symbol it recognises`
+          : code === "no_entry" ? `${who} answered, with no entry for ${t.symbol}`
+          : code === "no_price" ? `${who} sent an entry for ${t.symbol} with no price in it`
+          : code === "not_connected" ? `${who} is not connected, so no quote was asked for`
+          : code === "no_answer" ? `${who} did not answer the quotes request` : null;
+        if (text) refusals.set(t.symbol, text);
+      } catch { /* the plain wording below stands */ }
+    }));
+  }
+  // Futures are price-only for now: the price-history endpoint is not known to serve a root future, and a
+  // refusal there cools the endpoint down for every caller (SPX charts included). No futures bars are asked for.
+  const wantsBars = (t: (typeof BOARD_TICKERS)[number]) => t.kind !== "future";
   const [opt, dailies, intras] = await Promise.all([
     deps.optionLevels(nowMs),
-    Promise.all(BOARD_TICKERS.map((t) => wantsBars(t) ? dailyBars(deps, t.symbol, forSession, nowMs) : Promise.resolve<DailyRead>({ bars: [], asOfMs: null, reason: `no bars asked for: no ${t.symbol} quote` }))),
+    Promise.all(BOARD_TICKERS.map((t) => wantsBars(t) ? dailyBars(deps, t.symbol, forSession, nowMs) : Promise.resolve<DailyRead>({ bars: [], asOfMs: null, reason: "price only: no futures bars are asked for, so no levels are computed" }))),
     Promise.all(BOARD_TICKERS.map((t) => sessionOpen && t.kind !== "future" ? intraBars(t.symbol, nowMs, deps) : Promise.resolve(null))),
   ]);
 
@@ -200,7 +220,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       : price != null && q?.prevClose != null && q.prevClose > 0 ? ((price - q.prevClose) / q.prevClose) * 100 : null;
     // In session an unknown age is not live; closed, the last price is the last price.
     const quoteState: BoardTicker["quoteState"] = price == null ? "unavailable" : q?.stale === true ? "stale" : sessionOpen && q?.stale == null ? "age_unknown" : "ok";
-    const quoteReason = price == null ? (quoteError ?? `${src(deps)} returned no quote for ${t.symbol}`)
+    const quoteReason = price == null ? (quoteError ?? refusals.get(t.symbol) ?? `${src(deps)} returned no quote for ${t.symbol}`)
       : quoteState === "stale" ? "the quote is older than two minutes in session, or was re-served after a failed refresh"
       : quoteState === "age_unknown" ? "the quote carries no timestamp, so its age is unknown" : null;
 
