@@ -296,12 +296,14 @@ export function readEdgeWhale(w: { graded: number; pending: number; hit30Rate: n
 }
 
 /** Flow alerts strip: how many, how many high, and what they are. */
-export function readFlowAlerts(a: { total: number; high: number; connected: boolean | null; chainRead?: boolean; lastSession?: boolean }): PlainRead {
+export function readFlowAlerts(a: { total: number; high: number; connected: boolean | null; chainRead?: boolean; lastSession?: boolean; stale?: boolean }): PlainRead {
   const detail = "An alert is a fixed rule being met on the options chain: volume far above open interest, very heavy volume on one strike, a jump in the put/call ratio, or a very large open position at one strike (a wall). The thresholds are set by hand. An alert says something large is there; it does not say who traded or which way.";
   if (a.connected == null) return { answer: "Checking whether the chain feed is connected.", detail };
   if (!a.connected) return { answer: "Flow alerts are not updating: the chain feed is not connected.", detail };
-  if (a.chainRead === false) return { answer: "The options chain has not been read yet, so there is nothing to judge.", detail };
-  const from = a.lastSession ? " from the last session's chain" : "";
+  // Alerts already on screen when the latest read fails are from an earlier read, not "nothing to judge".
+  if (a.chainRead === false) return { answer: a.total > 0 ? `${a.total} flow alert${a.total === 1 ? "" : "s"} from an earlier read; the latest chain read failed.` : "The options chain has not been read yet, so there is nothing to judge.", detail };
+  // "stale" is the last good chain served in-session after a failed fetch: older, not the last session's.
+  const from = a.lastSession ? " from the last session's chain" : a.stale ? " from an older copy of the chain" : "";
   if (a.total === 0) return { answer: `No flow alert is showing${from || " right now"}.`, detail };
   return { answer: `${a.total} flow alert${a.total === 1 ? "" : "s"} showing${from}${a.high ? `, ${a.high} marked high` : ""}. Each flags size on the options chain, not direction.`, detail };
 }
