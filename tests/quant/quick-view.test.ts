@@ -27,7 +27,7 @@ test("the answer stays outside the collapsed detail on Signals, Models and Crypt
   // The Today card is the first thing on the opening tab: above the stock search and everything in the tab body.
   const today = d.indexOf("<TodayCard");
   assert.ok(today > 0 && today < d.indexOf('data-testid="stock-research-workspace"') && today < d.indexOf('<TabsContent value="signals"'), "Today comes first");
-  assert.match(d, /<div hidden=\{activeTab !== "signals"\} data-testid="today-block">/);
+  assert.match(d, /<div hidden=\{activeTab !== "signals"\} className="mb-4" data-testid="today-block">/);
   const models = d.slice(d.indexOf('<TabsContent value="models"'), d.indexOf("</TabsContent>", d.indexOf('<TabsContent value="models"')));
   assert.ok(models.indexOf("<ModelsPanel") < models.indexOf('<QuickDetails id="models-detail"'));
   const c = src("client/src/components/CryptoPanel.tsx");

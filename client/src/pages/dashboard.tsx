@@ -570,8 +570,8 @@ export default function Dashboard() {
             </TabsList>
           </div>
           {/* Today, first thing on the opening tab: the plain read, the levels that matter and the projected path, before search or flow */}
-          <div hidden={activeTab !== "signals"} data-testid="today-block">
-            <ErrorBoundary label="Today"><TodayCard onOpenDesk={() => setActiveTab("tradedesk")} onOpenMap={() => setActiveTab("heatseeker")} /></ErrorBoundary>
+          <div hidden={activeTab !== "signals"} className="mb-4" data-testid="today-block">
+            <ErrorBoundary label="Today"><TodayCard active={activeTab === "signals"} onOpenDesk={() => setActiveTab("tradedesk")} onOpenMap={() => setActiveTab("heatseeker")} /></ErrorBoundary>
           </div>
           {/* Stock research (Trade Brief): kept mounted, shown on the Signals tab. */}
           <div hidden={activeTab !== "signals"} data-testid="stock-research-workspace">

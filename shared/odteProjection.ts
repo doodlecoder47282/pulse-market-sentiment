@@ -74,3 +74,42 @@ export function projectedClose(i: ProjectionInputs): Projection | null {
   else dealer = { end: r1(i.dealerEnd), gap: r1(i.dealerEnd - i.spot) };
   return { spot: i.spot, walk: i.walkMedian, implied, impliedWhy, dealer, dealerWhy };
 }
+
+// ─── Small path chart (Today card) ───────────────────────────────────────────────────────────────
+
+export interface PathBand { minute: number; q: { p10: number; p25: number; p50: number; p75: number; p90: number } }
+export interface PathView {
+  /** Polygon / polyline point strings in a 300 x 100 box (x: start to close, y: price, high at the top). */
+  outer: string; inner: string; walk: string;
+  implied: { x1: number; y1: number; x2: number; y2: number } | null;
+  dealer: string | null;
+  lo: number; hi: number;
+}
+
+/**
+ * Geometry for the small projected-path chart. Bands and the dealer path share one time frame (minutes from
+ * the projection start). Returns null when there is nothing honest to draw: fewer than two bands, a band
+ * that is not a finite number, or no spot.
+ */
+export function pathView(bands: PathBand[], spot: number | null, impliedEnd: number | null, dealerPath: Array<{ minute: number; median: number }> | null): PathView | null {
+  if (!fin(spot) || bands.length < 2) return null;
+  const nums = bands.flatMap((b) => [b.minute, b.q.p10, b.q.p25, b.q.p50, b.q.p75, b.q.p90]);
+  if (!nums.every(fin)) return null;
+  const dealer = dealerPath && dealerPath.length > 1 && dealerPath.every((p) => fin(p.minute) && fin(p.median)) ? dealerPath : null;
+  const last = bands[bands.length - 1];
+  const ys = [...bands.flatMap((b) => [b.q.p10, b.q.p90]), spot, ...(fin(impliedEnd) ? [impliedEnd] : []), ...(dealer ? dealer.map((p) => p.median) : [])];
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+  const t0 = bands[0].minute, span = last.minute - t0;
+  if (!(span > 0)) return null;
+  const X = (minute: number) => Math.max(0, Math.min(300, ((minute - t0) / span) * 300));
+  const Y = (px: number) => 100 - ((px - lo) / (hi - lo)) * 100;
+  const pt = (minute: number, px: number) => `${X(minute).toFixed(1)},${Y(px).toFixed(1)}`;
+  const poly = (up: keyof PathBand["q"], dn: keyof PathBand["q"]) => [...bands.map((b) => pt(b.minute, b.q[up])), ...[...bands].reverse().map((b) => pt(b.minute, b.q[dn]))].join(" ");
+  return {
+    outer: poly("p90", "p10"), inner: poly("p75", "p25"), walk: bands.map((b) => pt(b.minute, b.q.p50)).join(" "),
+    implied: fin(impliedEnd) ? { x1: 0, y1: Number(Y(spot).toFixed(1)), x2: 300, y2: Number(Y(impliedEnd).toFixed(1)) } : null,
+    dealer: dealer ? dealer.map((p) => pt(p.minute, p.median)).join(" ") : null,
+    lo, hi,
+  };
+}

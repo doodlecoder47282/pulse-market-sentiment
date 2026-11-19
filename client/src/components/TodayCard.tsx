@@ -32,11 +32,12 @@ const LEVEL_TILE = "flex items-center justify-between gap-3 rounded-md border bg
 const lvl = (n: number | null | undefined) => (n == null ? "n/a" : Math.round(n).toLocaleString("en-US"));
 const pct = (a: number | null | undefined, spot: number) => (a == null ? "" : `${a >= spot ? "+" : ""}${(((a - spot) / spot) * 100).toFixed(2)}%`);
 
-export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap }: { symbol?: string; onOpenDesk?: () => void; onOpenMap?: () => void }) {
+export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, active = true }: { symbol?: string; onOpenDesk?: () => void; onOpenMap?: () => void; active?: boolean }) {
   const q = useQuery<MapResp>({
     queryKey: ["/api/odte/map", symbol],
     queryFn: async () => (await apiRequest("GET", `/api/odte/map?symbol=${encodeURIComponent(symbol)}`)).json(),
-    refetchInterval: 60_000,
+    // Polls only while the opening tab is showing (the card stays mounted above the tabs).
+    refetchInterval: active ? 60_000 : false,
     staleTime: 30_000,
     retry: false,
   });
@@ -103,7 +104,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap }: { 
         <PlainRead testId="today-plain" read={readToday({
           spot, sessionState: m.session.state, dataState: m.dataState, atSpot: m.band.atSpot,
           straddle: m.range.straddle, low: m.range.low, high: m.range.high,
-          wallAbove: m.landmarks.wallAbove, magnetBelow: m.landmarks.magnetBelow, flip,
+          above, below, aboveIsPin, belowIsPin, flip,
         })} />
 
         {!priced ? (
@@ -139,7 +140,8 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap }: { 
               </div>
             </div>
 
-            <div className="space-y-1">
+            {/* the position bar repeats the tiles: from 640 px only, so the phone gets to the path sooner */}
+            <div className="hidden space-y-1 sm:block">
               <div className="relative h-2.5 rounded-full bg-gradient-to-r from-emerald-500/30 via-muted/40 to-rose-500/30">
                 {pos(flip) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-amber-400" style={{ left: pos(flip)! }} title={`flip ${lvl(flip)}`} />}
                 {pos(spot) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-foreground" style={{ left: pos(spot)! }} title={`spot ${lvl(spot)}`} />}
@@ -161,7 +163,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap }: { 
         )}
 
         {/* the projected path to the close: the Wiener map's three centres, small (index only) */}
-        {symbol === "$SPX" && <TodayPath onOpenMap={onOpenMap} />}
+        {symbol === "$SPX" && <TodayPath onOpenMap={onOpenMap} active={active} />}
       </CardContent>
     </Card>
   );
