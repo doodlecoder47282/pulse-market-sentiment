@@ -82,7 +82,7 @@ async function dailyBars(symbol: string, nowMs: number): Promise<{ bars: DayBar[
   return out;
 }
 
-async function intraBars(symbol: string, nowMs: number): Promise<{ bars: IntraBar[]; reason: string | null }> {
+export async function intraBars(symbol: string, nowMs: number): Promise<{ bars: IntraBar[]; reason: string | null }> {
   const hit = intraCache.get(symbol);
   if (hit && nowMs - hit.at < INTRA_TTL_MS) return hit;
   let out: { bars: IntraBar[]; reason: string | null };

@@ -3744,6 +3744,16 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.status(500).json({ error: "desk_board_failed", message: e?.message ?? String(e) });
     }
   });
+  // PROTOCOL LOG (server/protocolEngine.ts): the if-then book for the index, which conditions are met now, the counts-only record, and the level-hit log.
+  app.get("/api/desk/protocols", async (_req, res) => {
+    try {
+      const { getProtocolLog } = await import("./protocolEngine");
+      res.json(await getProtocolLog());
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "protocols_failed", message: e?.message ?? String(e) });
+    }
+  });
   app.get("/api/setups", (_req, res) => {
     try { res.json(getSetupLog()); }
     catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }
@@ -5240,6 +5250,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   try { startPcrRecorder(); } catch (e: any) { console.warn(`[flow] P/C recorder failed to start: ${e?.message ?? e}`); }
   try { startCommunityEngine(); } catch (e: any) { console.warn(`[community] failed to start: ${e?.message ?? e}`); }
   try { startSetupEngine(); } catch (e: any) { console.warn(`[setups] failed to start: ${e?.message ?? e}`); }
+  try { const { startProtocolEngine } = await import("./protocolEngine"); startProtocolEngine(); } catch (e: any) { console.warn(`[protocols] failed to start: ${e?.message ?? e}`); }
   try { startResearchStore(); } catch (e: any) { console.warn(`[research] failed to start: ${e?.message ?? e}`); }
   try { import("./odteMapLedger").then((m) => m.startOdteMapLedger()).catch((e: any) => console.warn(`[odte-map] failed to start: ${e?.message ?? e}`)); } catch (e: any) { console.warn(`[odte-map] failed to start: ${e?.message ?? e}`); }
 
