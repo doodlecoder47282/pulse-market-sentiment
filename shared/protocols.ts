@@ -1,7 +1,7 @@
 // shared/protocols.ts
 //
-// THE PROTOCOL BOOK: if-then rules for the index, each with a trigger a machine can check, the behaviour
-// the rule's author expects after it, the price that cancels it, and a structure TYPE. Versioned: changing a
+// THE PROTOCOL BOOK: if-then rules for the index, each with a trigger a machine can check, the outcome
+// the rule's author states for it, the price that cancels it, and a structure TYPE. Versioned: changing a
 // threshold bumps PROTOCOL_BOOK_VERSION so the record of one version never mixes with another's.
 //
 // The starter book below is the owner's own description of how he reads the tape (2026-11-18), turned into
@@ -23,7 +23,7 @@ export interface ProtocolRules {
   /** No protocol arms inside this many minutes before a tier-1 release, or this many after. */
   newsBeforeMin: number;
   newsAfterMin: number;
-  /** No protocol arms in the first / last minutes of the session. */
+  /** No protocol arms in the first / last minutes of the session. notAfterMin is at least the longest horizon, so every horizon ends inside the session. */
   notBeforeMin: number;
   notAfterMin: number;
   wallRejection: { expectPts: number; cancelPts: number; horizonMin: number };
@@ -33,9 +33,9 @@ export interface ProtocolRules {
 export const PROTOCOL_RULES: ProtocolRules = {
   atLevelPct: 0.001,
   newsBeforeMin: 30, newsAfterMin: 15,
-  notBeforeMin: 15, notAfterMin: 45,
+  notBeforeMin: 15, notAfterMin: 90,
   wallRejection: { expectPts: 20, cancelPts: 10, horizonMin: 90 },
-  sweepReclaim: { minSweepPts: 2, maxSweepPts: 10, lookbackMin: 15, expectPts: 15, horizonMin: 90 },
+  sweepReclaim: { minSweepPts: 2, maxSweepPts: 10, lookbackMin: 20, expectPts: 15, horizonMin: 90 },
 };
 
 export type ProtocolId = "wall_rejection" | "sweep_reclaim" | "news_window";
@@ -62,21 +62,21 @@ export function protocolBook(r: ProtocolRules = PROTOCOL_RULES): ProtocolDef[] {
   return [
     {
       id: "wall_rejection",
-      name: "Rejection at the wall above",
+      name: "At the wall above, VIX firm, tech lagging",
       trigger: `SPX within ${(r.atLevelPct * 100).toFixed(1)}% of the wall above, with VIX firm on the day and tech lagging the market.`,
-      expected: `SPX trades ${r.wallRejection.expectPts} points below the armed price within ${r.wallRejection.horizonMin} minutes.`,
+      expected: `The rule's author looks for SPX to trade ${r.wallRejection.expectPts} points below the armed price within ${r.wallRejection.horizonMin} minutes. Untested.`,
       cancel: `SPX trades ${r.wallRejection.cancelPts} points above the wall first.`,
-      structure: "bearish, defined risk (a put debit spread is one such type)",
+      structure: "bearish, defined risk",
       graded: true,
       watches: ["wallAbove"],
     },
     {
       id: "sweep_reclaim",
       name: "Sweep under a level and reclaim",
-      trigger: `Within the last ${r.sweepReclaim.lookbackMin} minutes SPX traded ${r.sweepReclaim.minSweepPts} to ${r.sweepReclaim.maxSweepPts} points under a support level and the latest bar closed back above it.`,
-      expected: `SPX trades ${r.sweepReclaim.expectPts} points above the armed price within ${r.sweepReclaim.horizonMin} minutes.`,
-      cancel: "SPX trades below the low of the sweep first.",
-      structure: "bullish, defined risk (a call debit spread is one such type)",
+      trigger: `Within the last ${r.sweepReclaim.lookbackMin} minutes of completed bars SPX traded ${r.sweepReclaim.minSweepPts} to ${r.sweepReclaim.maxSweepPts} points under a support level and the latest completed bar closed back above it.`,
+      expected: `The rule's author looks for SPX to trade ${r.sweepReclaim.expectPts} points above the armed price within ${r.sweepReclaim.horizonMin} minutes. Untested.`,
+      cancel: "SPX trades at or below the low of the sweep first.",
+      structure: "bullish, defined risk",
       graded: true,
       watches: SWEEP_LEVEL_KEYS,
     },
@@ -84,7 +84,7 @@ export function protocolBook(r: ProtocolRules = PROTOCOL_RULES): ProtocolDef[] {
       id: "news_window",
       name: "News window",
       trigger: `A tier-1 release (CPI, NFP, PCE, FOMC) is within ${r.newsBeforeMin} minutes ahead or ${r.newsAfterMin} minutes behind.`,
-      expected: "Nothing is expected of price. While this is armed the other protocols do not arm.",
+      expected: "No price behaviour is stated. While this is armed the other protocols do not arm.",
       cancel: `${r.newsAfterMin} minutes after the release.`,
       structure: "none: this rule only holds the other two",
       graded: false,
@@ -108,6 +108,8 @@ export interface ProtocolCtx {
   minutesSinceTier1: number | null;
   /** Today's index bars, oldest first (1 or 5 minute). */
   bars: IntraBar[];
+  /** State of the option map the wall comes from; anything but "ok" leaves the wall unread. */
+  optionsState?: "ok" | "stale" | "unavailable";
 }
 
 /** met: true / false, or null when the input was not read (never treated as met). */
@@ -151,11 +153,11 @@ function blank(id: ProtocolId, conditions: Condition[]): ProtocolEval {
 const allMet = (cs: Condition[]) => cs.every((x) => x.met === true);
 
 export function evalWallRejection(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RULES): ProtocolEval {
-  const wall = c.levels.find((l) => hasKey(l, "wallAbove")) ?? null;
+  const wall = c.optionsState && c.optionsState !== "ok" ? null : c.levels.find((l) => hasKey(l, "wallAbove")) ?? null;
   const news = newsCondition(c, r);
   const at = fin(c.spx) && wall ? Math.abs(c.spx - wall.price) <= c.spx * r.atLevelPct : null;
   const conditions: Condition[] = [
-    { name: "SPX at the wall above", met: !fin(c.spx) || !wall ? null : at, detail: !fin(c.spx) ? "no SPX price read" : !wall ? "no wall above on the option map" : `SPX ${k(c.spx)}, wall ${k(wall.price)} (${Math.abs(c.spx - wall.price).toFixed(1)} points away)` },
+    { name: "SPX at the wall above", met: !fin(c.spx) || !wall ? null : at, detail: !fin(c.spx) ? "no SPX price read" : c.optionsState && c.optionsState !== "ok" ? `option map ${c.optionsState}: wall not read` : !wall ? "no wall above on the option map" : `SPX ${k(c.spx)}, wall ${k(wall.price)} (${Math.abs(c.spx - wall.price).toFixed(1)} points away)` },
     { name: "VIX firm", met: c.vix === "unknown" ? null : c.vix === "firm", detail: `VIX is ${c.vix === "unknown" ? "not read" : c.vix} on the day` },
     { name: "tech lagging", met: c.tech === "unknown" ? null : c.tech === "lagging", detail: `tech is ${c.tech === "unknown" ? "not read" : c.tech}` },
     { name: "no tier-1 release near", met: news.inWindow == null ? null : !news.inWindow, detail: news.detail },
@@ -168,10 +170,24 @@ export function evalWallRejection(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RU
   };
 }
 
-/** The deepest qualifying sweep in the lookback: a support level, the low under it, and the reclaim close. */
-export function findSweep(c: Pick<ProtocolCtx, "bars" | "levels" | "nowMs">, r: ProtocolRules = PROTOCOL_RULES): { level: BoardLevel; low: number; close: number } | null {
+/** Bar length in ms inferred from the spacing of the bars (default five minutes). */
+function barMsOf(bars: IntraBar[]): number {
+  let best = Infinity;
+  const sorted = bars.slice().sort((a, b) => a.t - b.t);
+  for (let i = 1; i < sorted.length; i++) { const d = sorted[i].t - sorted[i - 1].t; if (d > 0 && d < best) best = d; }
+  return Number.isFinite(best) ? best : 5 * 60_000;
+}
+
+/** Completed bars inside the lookback, oldest first. A bar still forming at nowMs is left out: its close is a live print. */
+export function completedRecent(c: Pick<ProtocolCtx, "bars" | "nowMs">, r: ProtocolRules = PROTOCOL_RULES): IntraBar[] {
+  const ms = barMsOf(c.bars);
   const from = c.nowMs - r.sweepReclaim.lookbackMin * 60_000;
-  const recent = c.bars.filter((b) => b.t >= from && b.t <= c.nowMs).sort((a, b) => a.t - b.t);
+  return c.bars.filter((b) => b.t >= from && b.t + ms <= c.nowMs).sort((a, b) => a.t - b.t);
+}
+
+/** The highest qualifying sweep in the lookback: a support level, the low under it, and the reclaim close. */
+export function findSweep(c: Pick<ProtocolCtx, "bars" | "levels" | "nowMs">, r: ProtocolRules = PROTOCOL_RULES): { level: BoardLevel; low: number; close: number } | null {
+  const recent = completedRecent(c, r);
   if (recent.length < 2) return null;
   const last = recent[recent.length - 1];
   const low = Math.min(...recent.map((b) => b.low));
@@ -190,9 +206,10 @@ export function findSweep(c: Pick<ProtocolCtx, "bars" | "levels" | "nowMs">, r: 
 
 export function evalSweepReclaim(c: ProtocolCtx, r: ProtocolRules = PROTOCOL_RULES): ProtocolEval {
   const news = newsCondition(c, r);
-  const sweep = c.bars.length ? findSweep(c, r) : null;
+  const current = completedRecent(c, r).length >= 2;
+  const sweep = current ? findSweep(c, r) : null;
   const conditions: Condition[] = [
-    { name: "sweep under a support level and reclaim", met: !c.bars.length ? null : !!sweep, detail: !c.bars.length ? "no index bars read today" : sweep ? `traded to ${k(sweep.low)}, ${(sweep.level.price - sweep.low).toFixed(1)} points under ${k(sweep.level.price)} (${sweep.level.label}), last close ${k(sweep.close)}` : `no sweep of ${r.sweepReclaim.minSweepPts} to ${r.sweepReclaim.maxSweepPts} points under a support level in the last ${r.sweepReclaim.lookbackMin} minutes` },
+    { name: "sweep under a support level and reclaim", met: !current ? null : !!sweep, detail: !c.bars.length ? "no index bars read today" : !current ? `fewer than two completed bars in the last ${r.sweepReclaim.lookbackMin} minutes: bars not current` : sweep ? `traded to ${k(sweep.low)}, ${(sweep.level.price - sweep.low).toFixed(1)} points under ${k(sweep.level.price)} (${sweep.level.label}), last completed close ${k(sweep.close)}` : `no sweep of ${r.sweepReclaim.minSweepPts} to ${r.sweepReclaim.maxSweepPts} points under a support level in the last ${r.sweepReclaim.lookbackMin} minutes` },
     { name: "no tier-1 release near", met: news.inWindow == null ? null : !news.inWindow, detail: news.detail },
     sessionCondition(c, r),
   ];
@@ -217,14 +234,15 @@ export type ProtocolOutcome = "expected" | "cancelled" | "neither" | "open" | "u
 export interface ProtocolGrade { status: ProtocolOutcome; at: number | null; reason: string | null; barsUsed: number }
 
 /**
- * Replay bars after the protocol armed. "expected": the expected price traded before the cancel price.
- * "cancelled": the cancel price traded first, or both inside one bar (the order inside a bar is unknown, so
- * it is counted against the protocol). "neither": the horizon ended with neither. Bars at or before the arm
- * time and after the horizon are ignored.
+ * Replay 1-minute bars after the protocol armed. "expected": the rule's outcome price traded before the
+ * cancel price. "cancelled": the cancel price traded first, or both inside one bar (the order inside a bar
+ * is unknown, so it is counted against the protocol). "neither": the bars run to the end of the horizon with
+ * neither. Bars at or before the arm time, and bars that open at or after the horizon's end, are ignored.
+ * Bars that stop short of the horizon leave it "open": a feed that is behind is not evidence of "neither".
  */
 export function gradeProtocol(e: { direction: "up" | "down"; expectPrice: number; cancelPrice: number; armedAt: number; horizonMin: number }, bars: IntraBar[], nowMs: number): ProtocolGrade {
   const end = e.armedAt + e.horizonMin * 60_000;
-  const seq = bars.filter((b) => b.t > e.armedAt && b.t <= end).sort((a, b) => a.t - b.t);
+  const seq = bars.filter((b) => b.t > e.armedAt && b.t < end).sort((a, b) => a.t - b.t);
   if (!seq.length) return { status: nowMs < end ? "open" : "ungraded", at: null, reason: nowMs < end ? "horizon still open" : "no bars after the arm time", barsUsed: 0 };
   for (const b of seq) {
     const hitExpect = e.direction === "down" ? b.low <= e.expectPrice : b.high >= e.expectPrice;
@@ -233,7 +251,7 @@ export function gradeProtocol(e: { direction: "up" | "down"; expectPrice: number
     if (hitExpect) return { status: "expected", at: b.t, reason: null, barsUsed: seq.length };
   }
   const last = seq[seq.length - 1];
-  if (nowMs < end && last.t < end - 60_000) return { status: "open", at: null, reason: "horizon still open", barsUsed: seq.length };
+  if (last.t < end - 2 * 60_000) return { status: "open", at: null, reason: nowMs < end ? "horizon still open" : "bars do not reach the end of the horizon yet", barsUsed: seq.length };
   return { status: "neither", at: last.t, reason: "neither price traded inside the horizon", barsUsed: seq.length };
 }
 
@@ -244,19 +262,27 @@ export function protocolRecord(statuses: string[], graded: boolean): ProtocolRec
   const expected = n("expected"), cancelled = n("cancelled"), neither = n("neither"), open = n("open"), ungraded = n("ungraded");
   const g = expected + cancelled + neither;
   const armed = statuses.length;
-  const text = !graded ? `armed ${armed} time${armed === 1 ? "" : "s"}; not graded (nothing is expected of price)`
-    : g === 0 ? `untested: 0 graded${armed ? `, ${open} open${ungraded ? `, ${ungraded} could not be graded` : ""}` : ""}`
-    : `${g} graded: ${expected} did what was expected, ${cancelled} cancelled, ${neither} neither${open ? `; ${open} open` : ""}${g < PROTOCOL_MIN_GRADED ? `. Too few to judge (under ${PROTOCOL_MIN_GRADED}).` : "."}`;
+  const tail = `${open ? `; ${open} open` : ""}${ungraded ? `; ${ungraded} could not be graded` : ""}`;
+  const text = !graded ? `armed ${armed} time${armed === 1 ? "" : "s"}; not graded (no price behaviour is stated)`
+    : g === 0 ? `untested: 0 graded${tail}`
+    : `${g} graded: ${expected} reached the rule's outcome price, ${cancelled} cancelled, ${neither} neither${tail}${g < PROTOCOL_MIN_GRADED ? `. Too few to judge (under ${PROTOCOL_MIN_GRADED}).` : "."}`;
   return { armed, expected, cancelled, neither, open, ungraded, graded: g, tested: graded && g >= PROTOCOL_MIN_GRADED, text };
 }
 
 export interface LevelHit { key: string; label: string; price: number; direction: "up" | "down" }
-/** Levels the price crossed between two reads (prev on one side, cur on or past the other). */
-export function levelHits(prev: number | null | undefined, cur: number | null | undefined, levels: BoardLevel[]): LevelHit[] {
+/**
+ * Levels the price crossed between two reads (prev on one side, cur on or past the other). Only a level that
+ * sat at the same price at BOTH reads counts: an option landmark or a joined line that moved between reads
+ * would otherwise log a cross through a price where nothing sat a minute earlier.
+ */
+export function levelHits(prev: number | null | undefined, cur: number | null | undefined, levels: BoardLevel[], prevLevels: BoardLevel[] = levels): LevelHit[] {
   if (!fin(prev) || !fin(cur) || prev === cur) return [];
+  const before = new Map(prevLevels.map((l) => [l.key, l.price] as const));
   const out: LevelHit[] = [];
   for (const l of levels) {
     if (!fin(l.price)) continue;
+    const was = before.get(l.key);
+    if (!fin(was) || Math.abs(was - l.price) > 1e-6) continue;
     if (prev < l.price && cur >= l.price) out.push({ key: l.key, label: l.label, price: l.price, direction: "up" });
     else if (prev > l.price && cur <= l.price) out.push({ key: l.key, label: l.label, price: l.price, direction: "down" });
   }

@@ -15,10 +15,10 @@ import { isRegularSessionOpen, sessionCloseMinutes, REGULAR_OPEN_MIN, etClock } 
 import { etWallToUtcMs } from "./validationMath";
 import { minutesToNextTier1 } from "../shared/macroCalendar";
 import {
-  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, protocolsWatching,
+  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, protocolsWatching,
   type ProtocolCtx, type ProtocolEval, type ProtocolRecord, type ProtocolDef,
 } from "../shared/protocols";
-import type { IntraBar } from "../shared/levelBoard";
+import type { IntraBar, BoardLevel } from "../shared/levelBoard";
 
 const TICK_MS = 60_000;
 const GRADE_MS = 5 * 60_000;
@@ -62,11 +62,12 @@ let ticking = false;
 let lastTickAt = 0;
 let lastTickError: string | null = null;
 let lastEval: { at: number; evals: ProtocolEval[] } | null = null;
-const lastPrice = new Map<string, { price: number; date: string }>();
+const lastRead = new Map<string, { price: number; date: string; levels: BoardLevel[] }>();
 
 async function contextNow(nowMs: number): Promise<ProtocolCtx> {
   const board = await buildDeskBoard(nowMs);
   const spx = board.tickers.find((t) => t.symbol === "$SPX");
+  const okQ = (s: string) => board.tickers.find((t) => t.symbol === s)?.quoteState === "ok";
   const c = etClock(nowMs);
   const close = sessionCloseMinutes(c.date);
   const open = isRegularSessionOpen(nowMs);
@@ -77,10 +78,13 @@ async function contextNow(nowMs: number): Promise<ProtocolCtx> {
     nowMs, sessionOpen: open,
     minutesSinceOpen: open ? c.minutes - REGULAR_OPEN_MIN : null,
     minutesToClose: open && close != null ? close - c.minutes : null,
-    // A stale index quote is not a price to arm on.
+    // A stale or age-unknown quote is not a read: the price, the tech read and the VIX read each need live quotes,
+    // and option landmarks count only from a current option map.
     spx: spx && spx.quoteState === "ok" ? spx.price : null,
-    levels: spx?.levels ?? [],
-    tech: board.tech.state, vix: board.vix.state,
+    levels: (spx?.levels ?? []).filter((l) => l.group !== "options" || board.cases.optionsState === "ok"),
+    optionsState: board.cases.optionsState,
+    tech: okQ("QQQ") && okQ("SPY") ? board.tech.state : "unknown",
+    vix: okQ("$VIX") ? board.vix.state : "unknown",
     calendarKnown: cal.known, minutesToTier1: cal.minutes, minutesSinceTier1: cal.minutesSinceLast,
     bars,
   };
@@ -102,12 +106,13 @@ async function tick(): Promise<void> {
     // Level hits: every ticker with a live quote, against its own levels, since the last read of the same day.
     const ins = sqlite.prepare(`INSERT INTO level_hits (at, symbol, level_key, level_label, level_price, direction, price) VALUES (?, ?, ?, ?, ?, ?, ?)`);
     for (const t of board.tickers) {
-      if (t.quoteState !== "ok" || t.price == null) continue;
-      const prev = lastPrice.get(t.symbol);
+      // A read that is not live breaks the chain: the next live read starts fresh instead of logging a cross that spans the gap.
+      if (t.quoteState !== "ok" || t.price == null) { lastRead.delete(t.symbol); continue; }
+      const prev = lastRead.get(t.symbol);
       if (prev && prev.date === today) {
-        for (const h of levelHits(prev.price, t.price, t.levels)) ins.run(now, t.symbol, h.key, h.label, h.price, h.direction, t.price);
+        for (const h of levelHits(prev.price, t.price, t.levels, prev.levels)) ins.run(now, t.symbol, h.key, h.label, h.price, h.direction, t.price);
       }
-      lastPrice.set(t.symbol, { price: t.price, date: today });
+      lastRead.set(t.symbol, { price: t.price, date: today, levels: t.levels });
     }
     sqlite.prepare(`DELETE FROM level_hits WHERE id <= (SELECT MAX(id) FROM level_hits) - ?`).run(HIT_KEEP);
 
@@ -116,7 +121,8 @@ async function tick(): Promise<void> {
     lastEval = { at: now, evals };
     for (const e of evals) {
       if (!e.armed) continue;
-      if (hasOpenOrRecent(e.id, e.horizonMin ?? 30, now)) continue;
+      // An ungraded rule (the news window) has no horizon: one release is one row, so the quiet period covers the whole window.
+      if (hasOpenOrRecent(e.id, e.horizonMin ?? (PROTOCOL_RULES.newsBeforeMin + PROTOCOL_RULES.newsAfterMin + 5), now)) continue;
       const graded = e.direction != null && e.expectPrice != null && e.cancelPrice != null;
       sqlite.prepare(`INSERT INTO protocol_events (book_version, protocol, armed_at, direction, entry, level_label, level_price, expect_price, cancel_price, horizon_min, conditions_json, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(PROTOCOL_BOOK_VERSION, e.id, now, e.direction, e.entry, e.level?.label ?? null, e.level?.price ?? null, e.expectPrice, e.cancelPrice, e.horizonMin, JSON.stringify(e.conditions), graded ? "open" : "not_graded");
@@ -149,9 +155,9 @@ async function gradeTick(): Promise<void> {
         continue;
       }
       const g = gradeProtocol({ direction: r.direction, expectPrice: r.expect_price, cancelPrice: r.cancel_price, armedAt: r.armed_at, horizonMin: r.horizon_min }, bars, now);
-      if (g.status === "open") continue;
-      if (g.status === "ungraded" && !giveUp) continue;
-      sqlite.prepare(`UPDATE protocol_events SET status = ?, grade_reason = ?, resolved_at = ? WHERE id = ?`).run(g.status, g.reason, g.at ?? now, r.id);
+      if ((g.status === "open" || g.status === "ungraded") && !giveUp) continue;
+      const final = g.status === "open" ? "ungraded" : g.status;
+      sqlite.prepare(`UPDATE protocol_events SET status = ?, grade_reason = ?, resolved_at = ? WHERE id = ?`).run(final, g.reason, g.at ?? now, r.id);
     }
   } catch (e: any) {
     console.warn(`[protocols] grade failed: ${e?.message ?? e}`);
@@ -184,7 +190,7 @@ export interface ProtocolLog {
   evaluatedAt: number | null;
   lastTickError: string | null;
   protocols: ProtocolView[];
-  recent: Array<{ id: number; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
+  recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
   hits: Array<{ at: number; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
@@ -204,7 +210,7 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
     };
   });
   const recent = (sqlite.prepare(`SELECT * FROM protocol_events ORDER BY armed_at DESC LIMIT 20`).all() as any[]).map((r) => ({
-    id: r.id, protocol: r.protocol, armedAt: r.armed_at, entry: r.entry, levelLabel: r.level_label, levelPrice: r.level_price,
+    id: r.id, bookVersion: r.book_version, protocol: r.protocol, armedAt: r.armed_at, entry: r.entry, levelLabel: r.level_label, levelPrice: r.level_price,
     expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
   }));
   const hits = (sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT 30`).all() as any[]).map((r) => ({
@@ -215,6 +221,6 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
     bookVersion: PROTOCOL_BOOK_VERSION, minGraded: PROTOCOL_MIN_GRADED, edition: editionFromEnv(),
     running: timer != null, sessionOpen: isRegularSessionOpen(nowMs), evaluatedAt, lastTickError,
     protocols, recent, hits,
-    note: "Each protocol is a hand-set rule taken from the desk owner's description of his own read. None has been tested: the record starts at zero and shows counts only. A protocol arming is a condition being met, not a forecast. The desk places no orders.",
+    note: `Each protocol is a hand-set rule taken from the desk owner's description of his own read. ${protocols.some((p) => p.record.tested) ? "A rule counts as tested" : "None has been tested: a rule counts as tested"} only after ${PROTOCOL_MIN_GRADED} graded events, and the record shows counts only. A protocol arming is a condition being met, not a forecast. A protocol can arm again once its horizon has passed; events on the same day are not independent. The desk places no orders.`,
   };
 }

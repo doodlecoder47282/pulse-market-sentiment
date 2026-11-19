@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   PROTOCOL_BOOK_VERSION, PROTOCOL_RULES, protocolBook, evalWallRejection, evalSweepReclaim, evalNewsWindow, evalProtocols, findSweep,
-  gradeProtocol, protocolRecord, levelHits, protocolsWatching, type ProtocolCtx,
+  gradeProtocol, protocolRecord, levelHits, completedRecent, protocolsWatching, type ProtocolCtx,
 } from "../../shared/protocols";
 import type { BoardLevel, IntraBar } from "../../shared/levelBoard";
 
@@ -24,7 +24,9 @@ test("the book states its thresholds and is versioned", () => {
   const b = protocolBook();
   assert.equal(PROTOCOL_BOOK_VERSION, "2026.11.18-1");
   assert.deepEqual(b.map((p) => p.id), ["wall_rejection", "sweep_reclaim", "news_window"]);
-  assert.match(b[0].expected, /20 points below the armed price within 90 minutes/);
+  assert.match(b[0].expected, /^The rule's author looks for SPX to trade 20 points below the armed price within 90 minutes\. Untested\.$/);
+  assert.ok(PROTOCOL_RULES.notAfterMin >= Math.max(PROTOCOL_RULES.wallRejection.horizonMin, PROTOCOL_RULES.sweepReclaim.horizonMin), "every horizon ends inside the session");
+  for (const p of b) assert.doesNotMatch(p.expected + p.structure, /\bexpect|spread/i);
   assert.match(b[0].cancel, /10 points above the wall first/);
   assert.match(b[1].trigger, /2 to 10 points under a support level/);
   assert.equal(b[2].graded, false);
@@ -44,7 +46,9 @@ test("wall rejection arms only with every condition met, and an unread input is 
   assert.equal(evalWallRejection(ctx({ spx: null })).conditions[0].met, null);
   assert.equal(evalWallRejection(ctx({ levels: levels.slice(1) })).conditions[0].detail, "no wall above on the option map");
   assert.equal(evalWallRejection(ctx({ minutesSinceOpen: 5 })).armed, false);
-  assert.equal(evalWallRejection(ctx({ minutesToClose: 30 })).armed, false);
+  assert.equal(evalWallRejection(ctx({ minutesToClose: 80 })).armed, false);
+  const staleMap = evalWallRejection(ctx({ optionsState: "stale" }));
+  assert.deepEqual([staleMap.armed, staleMap.conditions[0].met, staleMap.conditions[0].detail], [false, null, "option map stale: wall not read"]);
   assert.equal(evalWallRejection(ctx({ sessionOpen: false })).armed, false);
   assert.equal(evalWallRejection(ctx({ minutesToTier1: 20 })).armed, false);
   assert.equal(evalWallRejection(ctx({ calendarKnown: false })).armed, false, "an unknown calendar is not quiet");
@@ -65,6 +69,14 @@ test("sweep and reclaim: under a support level by 2 to 10 points, then back abov
   // Bars older than the lookback do not count.
   assert.equal(findSweep({ bars: [bar(40, 7304, 7305, 7295, 7297), bar(5, 7301, 7303, 7300.5, 7302)], levels, nowMs: T0 }), null);
   assert.equal(evalSweepReclaim(ctx({ bars: [] })).conditions[0].met, null);
+  // The bar still forming is not used: its close is a live print.
+  const forming = [bar(10, 7306, 7308, 7303, 7304), bar(5, 7304, 7305, 7295, 7297), bar(0, 7297, 7303, 7296, 7302)];
+  assert.equal(findSweep({ bars: forming, levels, nowMs: T0 }), null);
+  assert.equal(completedRecent({ bars: forming, nowMs: T0 }).length, 2);
+  // Bars that are not current are "not read", not "no sweep".
+  const old = evalSweepReclaim(ctx({ bars: [bar(60, 7306, 7308, 7303, 7304), bar(55, 7304, 7305, 7295, 7297)] }));
+  assert.equal(old.conditions[0].met, null);
+  assert.match(old.conditions[0].detail, /bars not current/);
   assert.equal(evalSweepReclaim(ctx({ bars, minutesToTier1: 10 })).armed, false);
 });
 
@@ -87,12 +99,15 @@ test("grading: expected first, cancel first, both in one bar, neither, open, no 
   assert.equal(gradeProtocol(e, [after(5, 7411, 7395), after(10, 7392, 7370)], late).status, "cancelled");
   const both = gradeProtocol(e, [after(5, 7412, 7375)], late);
   assert.deepEqual([both.status, both.reason], ["cancelled", "both prices inside one bar: counted as cancelled"]);
-  assert.equal(gradeProtocol(e, [after(5, 7400, 7390), after(90, 7399, 7385)], late).status, "neither");
+  assert.equal(gradeProtocol(e, [after(5, 7400, 7390), after(89, 7399, 7385)], late).status, "neither");
+  // Bars that stop short of the horizon are not evidence of "neither", however late it is.
+  const short = gradeProtocol(e, [after(5, 7400, 7390), after(60, 7399, 7385)], late);
+  assert.deepEqual([short.status, short.reason], ["open", "bars do not reach the end of the horizon yet"]);
   assert.equal(gradeProtocol(e, [after(5, 7400, 7390)], T0 + 6 * 60_000).status, "open");
   assert.equal(gradeProtocol(e, [], late).status, "ungraded");
   assert.equal(gradeProtocol(e, [], T0 + 60_000).status, "open");
   // Bars at or before the arm time and after the horizon are ignored.
-  assert.equal(gradeProtocol(e, [after(0, 7400, 7300), after(91, 7400, 7300), after(50, 7400, 7390)], late).status, "neither");
+  assert.equal(gradeProtocol(e, [after(0, 7400, 7300), after(90, 7400, 7300), after(91, 7400, 7300), after(89, 7400, 7390)], late).status, "neither");
   const up = { direction: "up" as const, expectPrice: 7317, cancelPrice: 7295, armedAt: T0, horizonMin: 90 };
   assert.equal(gradeProtocol(up, [after(5, 7318, 7300)], late).status, "expected");
   assert.equal(gradeProtocol(up, [after(5, 7310, 7294)], late).status, "cancelled");
@@ -100,15 +115,15 @@ test("grading: expected first, cancel first, both in one bar, neither, open, no 
 
 test("the record is counts only and says untested until enough are graded", () => {
   assert.equal(protocolRecord([], true).text, "untested: 0 graded");
-  assert.equal(protocolRecord(["open", "open"], true).text, "untested: 0 graded, 2 open");
+  assert.equal(protocolRecord(["open", "open"], true).text, "untested: 0 graded; 2 open");
   const r = protocolRecord(["expected", "expected", "cancelled", "neither", "open"], true);
-  assert.equal(r.text, "4 graded: 2 did what was expected, 1 cancelled, 1 neither; 1 open. Too few to judge (under 30).");
+  assert.equal(r.text, "4 graded: 2 reached the rule's outcome price, 1 cancelled, 1 neither; 1 open. Too few to judge (under 30).");
   assert.equal(r.tested, false);
   assert.doesNotMatch(r.text, /%|rate|win/);
   const many = protocolRecord(Array(20).fill("expected").concat(Array(12).fill("cancelled")), true);
   assert.equal(many.tested, true);
-  assert.equal(many.text, "32 graded: 20 did what was expected, 12 cancelled, 0 neither.");
-  assert.equal(protocolRecord(["not_graded", "not_graded"], false).text, "armed 2 times; not graded (nothing is expected of price)");
+  assert.equal(many.text, "32 graded: 20 reached the rule's outcome price, 12 cancelled, 0 neither.");
+  assert.equal(protocolRecord(["not_graded", "not_graded"], false).text, "armed 2 times; not graded (no price behaviour is stated)");
 });
 
 test("level hits: a cross between two reads, with the protocols that watch the level", () => {
@@ -118,7 +133,11 @@ test("level hits: a cross between two reads, with the protocols that watch the l
   assert.deepEqual(levelHits(7400, 7401, levels), [], "starting on the level is not a new cross");
   assert.deepEqual(levelHits(null, 7401, levels), []);
   assert.deepEqual(levelHits(7395, 7395, levels), []);
-  assert.deepEqual(protocolsWatching("wallAbove"), ["Rejection at the wall above"]);
+  assert.deepEqual(protocolsWatching("wallAbove"), ["At the wall above, VIX firm, tech lagging"]);
+  // A level that moved between the two reads is not a cross.
+  const moved = levels.map((l) => (l.key === "wallAbove" ? { ...l, price: 7398 } : l));
+  assert.deepEqual(levelHits(7395, 7401, levels, moved), []);
+  assert.deepEqual(levelHits(7395, 7401, levels, levels.filter((l) => l.key !== "wallAbove")), [], "a level that was not there at the last read");
   assert.deepEqual(protocolsWatching("pdl+s1"), ["Sweep under a level and reclaim"]);
   assert.deepEqual(protocolsWatching("pdh"), []);
 });
@@ -134,5 +153,13 @@ test("wiring: engine starts with the server, stores nothing in the demo, and the
   const desk = readFileSync(new URL("../../client/src/components/TradeDesk.tsx", import.meta.url), "utf8");
   assert.ok(desk.indexOf("<DeskBoard />") < desk.indexOf("<DeskProtocols />") && desk.indexOf("<DeskProtocols />") < desk.indexOf("<OdteMapCard />"));
   const card = readFileSync(new URL("../../client/src/components/DeskProtocols.tsx", import.meta.url), "utf8");
-  assert.match(card, /A type only: no contract, size or order\./);
+  assert.match(card, /A category only: not a suggestion to trade; no contract, size or order\./);
+  assert.match(card, /Rule author's stated outcome \(untested\):/);
+  assert.doesNotMatch(card, />Expected:|did what was expected/);
+  // Stale inputs are not reads; one release is one row.
+  assert.match(eng, /tech: okQ\("QQQ"\) && okQ\("SPY"\) \? board\.tech\.state : "unknown"/);
+  assert.match(eng, /vix: okQ\("\$VIX"\) \? board\.vix\.state : "unknown"/);
+  assert.match(eng, /l\.group !== "options" \|\| board\.cases\.optionsState === "ok"/);
+  assert.match(eng, /PROTOCOL_RULES\.newsBeforeMin \+ PROTOCOL_RULES\.newsAfterMin \+ 5/);
+  assert.match(eng, /lastRead\.delete\(t\.symbol\)/);
 });

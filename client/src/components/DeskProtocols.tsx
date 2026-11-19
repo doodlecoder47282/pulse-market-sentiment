@@ -20,15 +20,15 @@ interface Proto {
 interface Log {
   bookVersion: string; minGraded: number; running: boolean; sessionOpen: boolean; evaluatedAt: number | null; lastTickError: string | null;
   protocols: Proto[];
-  recent: Array<{ id: number; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
+  recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
   hits: Array<{ at: number; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
 
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
-const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
+const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-const STATUS: Record<string, string> = { expected: "did what was expected", cancelled: "cancelled", neither: "neither", open: "open", ungraded: "could not be graded", not_graded: "not graded" };
+const STATUS: Record<string, string> = { expected: "reached the rule's outcome price", cancelled: "cancelled", neither: "neither", open: "open", ungraded: "could not be graded", not_graded: "not graded" };
 
 function answer(l: Log): string {
   const armed = l.protocols.filter((p) => p.armedNow).map((p) => p.name);
@@ -56,7 +56,7 @@ export default function DeskProtocols() {
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm font-semibold">
           <ListChecks className="h-4 w-4 text-violet-400" />
           Protocols
-          <span className="text-[11px] font-normal text-muted-foreground">book {l.bookVersion} · hand-set, untested until graded</span>
+          <span className="text-[11px] font-normal text-muted-foreground" data-testid="desk-protocols-asof">book {l.bookVersion} · hand-set rules{l.evaluatedAt != null ? ` · conditions as of ${hhmm(l.evaluatedAt)} ET` : ""}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -77,14 +77,14 @@ export default function DeskProtocols() {
                   <span className="shrink-0 text-[11px] text-muted-foreground">{open === p.id ? "less" : "rule"}</span>
                 </button>
                 {p.armedNow && p.entry != null && (
-                  <p className="mt-1 break-words font-mono text-[12px] text-amber-200">armed at {px(p.entry)} · expected {px(p.expectPrice)} · cancels at {px(p.cancelPrice)}</p>
+                  <p className="mt-1 break-words font-mono text-[12px] text-amber-200">armed at {px(p.entry)} · rule's outcome price {px(p.expectPrice)} · cancel price {px(p.cancelPrice)}</p>
                 )}
                 {open === p.id && (
                   <div className="mt-2 space-y-1.5 border-t border-border/40 pt-2 text-[12px] leading-snug">
                     <p className="break-words"><span className="text-muted-foreground">If:</span> {p.trigger}</p>
-                    <p className="break-words"><span className="text-muted-foreground">Expected:</span> {p.expected}</p>
+                    <p className="break-words"><span className="text-muted-foreground">Rule author's stated outcome (untested):</span> {p.expected}</p>
                     <p className="break-words"><span className="text-muted-foreground">Cancelled when:</span> {p.cancel}</p>
-                    <p className="break-words"><span className="text-muted-foreground">Structure type:</span> {p.structure}. A type only: no contract, size or order.</p>
+                    <p className="break-words"><span className="text-muted-foreground">Structure type named by the rule's author:</span> {p.structure}. A category only: not a suggestion to trade; no contract, size or order.</p>
                     <ul className="space-y-0.5">
                       {p.conditions.map((c) => (
                         <li key={c.name} className="flex gap-2 break-words">
@@ -107,7 +107,7 @@ export default function DeskProtocols() {
                 <li key={r.id} className="break-words">
                   <span className="font-mono text-muted-foreground">{day(r.armedAt)} {hhmm(r.armedAt)}</span> {nameOf(r.protocol)}
                   {r.entry != null ? <> at <span className="font-mono">{px(r.entry)}</span></> : null}
-                  {" · "}<span className="text-foreground">{STATUS[r.status] ?? r.status}</span>{r.reason ? <span className="text-muted-foreground"> ({r.reason})</span> : null}
+                  {" · "}<span className="text-foreground">{STATUS[r.status] ?? r.status}</span>{r.reason ? <span className="text-muted-foreground"> ({r.reason})</span> : null}{r.bookVersion !== l.bookVersion ? <span className="text-muted-foreground"> · book {r.bookVersion}</span> : null}
                 </li>
               ))}
             </ul>
