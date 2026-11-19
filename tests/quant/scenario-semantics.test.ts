@@ -63,5 +63,7 @@ test("models and card: regions sent and shown; the magnet path is named, not cal
   const c = readFileSync(new URL("../../client/src/components/ModelsPanel.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(c, /const bullRange = `\$\{fmtK\(bullTgt \* 0\.998\)\}/, "no +-0.2% band presented as the region");
   assert.match(c, /touch not stated: \$\{p\.touchWithheld\}/);
-  assert.match(c, /MIDDLE" : "BASE"\} region/);
+  // The middle range is named by position (shared/scenarioRegions.ts); the magnet path is still called out.
+  assert.match(c, /<RailRow label=\{ro\.base\.label\} value=\{ro\.base\.rangeText\}/);
+  assert.match(c, /magnet path to \$\{fmtK\(baseTgt\)\} sits outside the bull\/bear range/);
 });

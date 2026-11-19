@@ -20,7 +20,9 @@
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
 import PlainRead from "@/components/PlainRead";
+import LevelScopeNote from "@/components/LevelScopeNote";
 import { READ_MM_MATRIX, readModel, readVixTerm } from "@shared/plainReads";
+import { HOLDS_PRICE_TAG, TWO_ODDS_NOTE, rangeOdds } from "@shared/scenarioRegions";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -499,16 +501,11 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
   const bullTgt  = horizon.paths.find(p => p.kind === "bull")?.target ?? spot;
   const bearTgt  = horizon.paths.find(p => p.kind === "bear")?.target ?? spot;
   const baseTgt  = horizon.paths.find(p => p.kind === "base")?.target ?? spot;
-  // The region each probability refers to, from the server when the odds are implied; the
-  // old +-0.2% band around each target is shown only as "near target" for heuristic odds.
-  const regionText = (kind: "bull" | "base" | "bear", tgt: number) => {
-    const r = horizon.paths.find((p) => p.kind === kind)?.region;
-    if (r) return r.lo == null ? `below ${fmtK(r.hi!)}` : r.hi == null ? `above ${fmtK(r.lo)}` : `${fmtK(r.lo)}-${fmtK(r.hi)}`;
-    return `near ${fmtK(tgt)}`;
+  const ro = {
+    bull: rangeOdds(horizon.paths, "bull", spot, probs.bull),
+    base: rangeOdds(horizon.paths, "base", spot, probs.base),
+    bear: rangeOdds(horizon.paths, "bear", spot, probs.bear),
   };
-  const bullRange = regionText("bull", bullTgt);
-  const bearRange = regionText("bear", bearTgt);
-  const baseRange = regionText("base", baseTgt);
   const magnetOutside = horizon.paths.find((p) => p.kind === "base")?.name === "MAGNET";
 
   // Charm pocket (between zero-charm and charm target)
@@ -543,9 +540,10 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       <RailDivider label={a.scenarioProbSource === "risk-neutral-implied" ? "scenarios (risk-neutral)" : "scenarios (heuristic)"} />
       {/* Region odds (close inside the region around each path target), plus
           the target-specific odds: P(close at or beyond) and P(touch). */}
-      <RailRow label={`BULL region ${pathPct(horizon, "bull", probs.bull)}%`} value={bullRange} sub={targetOddsText(horizon, "bull")} color={COLORS.bull} />
-      <RailRow label={`${magnetOutside ? "MIDDLE" : "BASE"} region ${pathPct(horizon, "base", probs.base)}%`} value={baseRange} sub={magnetOutside ? `magnet path to ${fmtK(baseTgt)} sits outside the bull/bear range` : undefined} color={COLORS.base} />
-      <RailRow label={`BEAR region ${pathPct(horizon, "bear", probs.bear)}%`} value={bearRange} sub={targetOddsText(horizon, "bear")} color={COLORS.bear} />
+      {/* Range odds are named by where the range is, not by a direction: the lowest or highest range can hold the current price (shared/scenarioRegions.ts). */}
+      <RailRow label={ro.bull.label} value={ro.bull.rangeText} sub={[ro.bull.holdsPrice ? HOLDS_PRICE_TAG : null, targetOddsText(horizon, "bull")].filter(Boolean).join(" · ") || undefined} color={COLORS.bull} />
+      <RailRow label={ro.base.label} value={ro.base.rangeText} sub={[ro.base.holdsPrice ? HOLDS_PRICE_TAG : null, magnetOutside ? `magnet path to ${fmtK(baseTgt)} sits outside the bull/bear range` : null].filter(Boolean).join(" · ") || undefined} color={COLORS.base} />
+      <RailRow label={ro.bear.label} value={ro.bear.rangeText} sub={[ro.bear.holdsPrice ? HOLDS_PRICE_TAG : null, targetOddsText(horizon, "bear")].filter(Boolean).join(" · ") || undefined} color={COLORS.bear} />
 
       {/* Downside */}
       <RailDivider label="support" />
@@ -805,6 +803,11 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
   const cw = horizon.levels.find(l => l.kind === "callWall")?.price;
   const pw = horizon.levels.find(l => l.kind === "putWall")?.price;
   const charmZ = a.charmZero;
+  const lg = {
+    bull: rangeOdds(horizon.paths, "bull", spot, probs.bull),
+    base: rangeOdds(horizon.paths, "base", spot, probs.base),
+    bear: rangeOdds(horizon.paths, "bear", spot, probs.bear),
+  };
 
   return (
     <div className="space-y-0.5 border-t border-border/40 pt-2 font-mono text-[11px]">
@@ -813,7 +816,7 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
       </div>
       {bullPath && (
         <div className="text-green-400">
-          BULL region {pathPct(horizon, "bull", probs.bull)}%{targetOddsText(horizon, "bull") ? ` (${targetOddsText(horizon, "bull")})` : ""} → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
+          BULL path · {lg.bull.label}{lg.bull.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""}{targetOddsText(horizon, "bull") ? ` (${targetOddsText(horizon, "bull")})` : ""} → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
           {charmZ ? ` + ${fmtK(charmZ)} Charm Zero` : ""}
           {cw ? ` → ${fmtK(cw)} Call Wall` : ""}
           {" → CLOSE "}
@@ -823,18 +826,22 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
       {basePath && (
         <div className="text-cyan-400">
           {basePath.name === "MAGNET"
-            ? <>MIDDLE region {pathPct(horizon, "base", probs.base)}% (close {basePath.region ? `${fmtK(basePath.region.lo ?? spot)}-${fmtK(basePath.region.hi ?? spot)}` : "around spot"}) · MAGNET path to <span className="text-cyan-300">{fmtK(basePath.target)}</span>, outside the bull/bear range (no probability of its own)</>
-            : <>BASE region {pathPct(horizon, "base", probs.base)}% → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
+            ? <>{lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} (close {basePath.region ? `${fmtK(basePath.region.lo ?? spot)}-${fmtK(basePath.region.hi ?? spot)}` : "around spot"}) · MAGNET path to <span className="text-cyan-300">{fmtK(basePath.target)}</span>, outside the bull/bear range (no probability of its own)</>
+            : <>BASE path · {lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
               {" → CLOSE "}
               <span className="text-cyan-300">{fmtK(basePath.target * 0.999)}-{fmtK(basePath.target * 1.001)}</span></>}
         </div>
       )}
       {bearPath && (
         <div className="text-red-400">
-          BEAR region {pathPct(horizon, "bear", probs.bear)}%{targetOddsText(horizon, "bear") ? ` (${targetOddsText(horizon, "bear")})` : ""} → Break {pw ? `${fmtK(pw)} Put Wall` : "support"} → Vol expansion
+          BEAR path · {lg.bear.label}{lg.bear.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""}{targetOddsText(horizon, "bear") ? ` (${targetOddsText(horizon, "bear")})` : ""} → Break {pw ? `${fmtK(pw)} Put Wall` : "support"} → Vol expansion
           {" → CLOSE "}
           <span className="text-red-300">{fmtK(bearPath.target * 0.999)}-{fmtK(bearPath.target * 1.001)}</span>
         </div>
+      )}
+      {/* the same three words would otherwise carry two different sets of numbers on this tab */}
+      {lg.bull.position && (
+        <div className="pt-1 font-sans text-[11px] normal-case leading-snug tracking-normal text-muted-foreground" data-testid="models-two-odds-note">{TWO_ODDS_NOTE}</div>
       )}
     </div>
   );
@@ -1221,7 +1228,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   dot={{ r: 4, fill: stroke, strokeWidth: 0 }}
                   activeDot={{ r: 6, fill: stroke, strokeWidth: 2, stroke: "#fff" }}
                   isAnimationActive={false}
-                  name={p.name === "MAGNET" ? "MAGNET path (no probability of its own)" : `${p.name} region ${prob}%`}
+                  name={p.name === "MAGNET" ? "MAGNET path (no probability of its own)" : `${p.name} path · ${rangeOdds(horizon.paths, p.kind, horizon.spot, prob).label}`}
                 >
                   {showPrints && (
                     <LabelList
@@ -1420,6 +1427,11 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
 
 function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   const spot = horizon.spot;
+  // The percentage beside a close target is the odds of its price RANGE, named by position (shared/scenarioRegions.ts).
+  const chipOdds = (kind: "bull" | "base" | "bear", fallback: number) => {
+    const r = rangeOdds(horizon.paths, kind, spot, fallback);
+    return r.position ? `${r.position} range ${r.pct}%${r.holdsPrice ? " · price is here" : ""}` : `${r.pct}%`;
+  };
   const a = horizon.audit;
   const levels = horizon.levels;
 
@@ -1552,14 +1564,14 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
       )}
 
       {a.closeTargets && (
-        <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-border/20 pt-1">
+        <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-border/20 pt-1" title={TWO_ODDS_NOTE}>
           <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground w-16">Close</span>
           {a.closeTargets.bull && (
             <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px]" style={{ borderColor: `${COLORS.bull}55`, background: `${COLORS.bull}10` }}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.bull }} />
               <span className="uppercase tracking-wide" style={{ color: COLORS.bull }}>Bull</span>
               <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.bull.price)}</span>
-              <span className="text-muted-foreground">{a.closeTargets.bull.prob}%</span>
+              <span className="text-muted-foreground" data-testid="close-chip-odds-bull">{chipOdds("bull", a.closeTargets.bull.prob)}</span>
             </div>
           )}
           {a.closeTargets.base && (
@@ -1567,7 +1579,7 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.base }} />
               <span className="uppercase tracking-wide" style={{ color: COLORS.base }}>Base</span>
               <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.base.price)}</span>
-              <span className="text-muted-foreground">{a.closeTargets.base.prob}%</span>
+              <span className="text-muted-foreground" data-testid="close-chip-odds-base">{chipOdds("base", a.closeTargets.base.prob)}</span>
             </div>
           )}
           {a.closeTargets.bear && (
@@ -1575,7 +1587,7 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.bear }} />
               <span className="uppercase tracking-wide" style={{ color: COLORS.bear }}>Bear</span>
               <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.bear.price)}</span>
-              <span className="text-muted-foreground">{a.closeTargets.bear.prob}%</span>
+              <span className="text-muted-foreground" data-testid="close-chip-odds-bear">{chipOdds("bear", a.closeTargets.bear.prob)}</span>
             </div>
           )}
         </div>
@@ -2146,6 +2158,7 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           putWall: horizon.levels.find((l) => l.kind === "putWall")?.price,
         })} />
         <PlainRead testId="models-vix-plain" read={readVixTerm(horizon.vol.vix, horizon.vol.termRatio)} />
+        <LevelScopeNote panel="models" horizon={horizon.horizon} className="px-1" />
       </div>
 
       {/* ── VIX + confidence strip ── */}
@@ -2165,7 +2178,7 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           horizon.confidence === "MODERATE" ? "text-amber-400" : "text-red-400"
         }>{horizon.confidence === "HIGH" ? "large" : horizon.confidence === "MODERATE" ? "medium" : "small"}</span></span>
         <span>·</span>
-        <span>BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}% {probSourceTag(a.scenarioProbSource)}</span>
+        <span title={TWO_ODDS_NOTE} data-testid="models-headline-odds">BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}% {probSourceTag(a.scenarioProbSource)}{a.scenarioTargets ? " · one expected move either way" : ""}</span>
       </div>
 
       {/* Batcave #3 + #4 — recal tracking + DoD term structure strip */}

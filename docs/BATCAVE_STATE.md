@@ -2751,3 +2751,17 @@ of the options gap and labels a held chain "the last read"; loading, unavailable
 the card polls only while its tab shows; the position bar is left off phones; the explanation sits behind a
 tap; the chart geometry is a pure function with tests for degenerate inputs.
 
+2026-11-18 (night): One set of odds and a scope line for levels (feat/one-set-of-levels, stacked on the Today
+block). Understood as: the same level or the same three words must not show two different numbers without
+saying why. Found by reading the code: the Models tab carried two sets of odds under the same names. The
+header's BULL / BASE / BEAR (28 / 42 / 30 on 2026-11-18) are a close one expected move above, in between, or
+one below the current price. The "BULL / BASE / BEAR region" numbers (0 / 27 / 73) are three price ranges
+split halfway between the path targets; with the base path's target 248 points above the price, the "BEAR
+region" was everything under 7,384, which held the current price, so an unchanged close counted as bear. Range
+odds are now named by position (UPPER / MIDDLE / LOWER range), the range holding the price is marked, the
+headline says "one expected move either way", and one note under the legend tells the two apart
+(shared/scenarioRegions.ts). Levels: each panel now states which expiries it adds up (shared/levelScope.ts,
+LevelScopeNote) on the Today card, the Trade Desk map, Models, the chain audit ladder and the pivot projection,
+naming the Today card as the one for today's trading. No level, odds or model value changed: labels only.
+Tests: tests/quant/one-set-of-levels.test.ts (6).
+

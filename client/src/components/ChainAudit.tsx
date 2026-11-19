@@ -25,6 +25,7 @@ import { apiRequest } from "@/lib/queryClient";
 // ─── Types (mirror server/chainAudit.ts) ─────────────────────────────────────
 
 import PlainRead from "@/components/PlainRead";
+import LevelScopeNote from "@/components/LevelScopeNote";
 import { readDex, readGexLadder, readKeyLevels, readPinning, readUnusualVolume, readVolSurface, readVrp, type PlainRead as PlainReadT } from "@shared/plainReads";
 
 interface DEXResult {
@@ -512,6 +513,7 @@ export default function ChainAudit() {
 
           {/* Row 2: GEX Decay Ladder */}
           <Section title="GEX Decay Ladder — by DTE Bucket" testId="section-gex-decay" plain={readGexLadder(audit.gexDecay, data.spot, audit.oiState)}>
+            <LevelScopeNote panel="chainAudit" />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <GEXBucketCard label="0DTE" bucket={audit.gexDecay.zerodte} testId="gex-bucket-0dte" />
               <GEXBucketCard label="1–2 DTE" bucket={audit.gexDecay.short} testId="gex-bucket-short" />
