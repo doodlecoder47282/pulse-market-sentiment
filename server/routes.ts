@@ -3734,6 +3734,26 @@ Describe the above in the JSON schema specified in the system prompt: what the n
     try { res.json(await getEventReplay(String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX")); }
     catch (e: any) { res.status(/must be 1-10/.test(String(e?.message)) ? 400 : 500).json({ error: "event_replay_failed", message: e?.message ?? String(e) }); }
   });
+  // LEVEL BOARD (server/deskBoard.ts): SPX, SPY, QQQ, VIX and index futures with hand-marked chart levels, the index's option landmarks, and two descriptive cases. No forecast, no odds.
+  app.get("/api/desk/board", async (_req, res) => {
+    try {
+      const { buildDeskBoard } = await import("./deskBoard");
+      res.json(await buildDeskBoard());
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "desk_board_failed", message: e?.message ?? String(e) });
+    }
+  });
+  // PROTOCOL LOG (server/protocolEngine.ts): the if-then book for the index, which conditions are met now, the counts-only record, and the level-hit log.
+  app.get("/api/desk/protocols", async (_req, res) => {
+    try {
+      const { getProtocolLog } = await import("./protocolEngine");
+      res.json(await getProtocolLog());
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "protocols_failed", message: e?.message ?? String(e) });
+    }
+  });
   app.get("/api/setups", (_req, res) => {
     try { res.json(getSetupLog()); }
     catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }
@@ -4035,8 +4055,10 @@ Describe the above in the JSON schema specified in the system prompt: what the n
 
       // DTE window: enough days to include the requested expiry. Schwab's toDate
       // can be exclusive in practice, so we add a 7-day buffer past the target.
-      // Default 2-day for 0DTE/weekly to keep the payload small.
-      let chainDteWindow = 2;
+      // Default 5 days: after the close today's key has settled and the next expiry can be
+      // four calendar days out (Friday evening before a Monday holiday; Thursday evening
+      // before Good Friday). Two days left the chain holding only the settled key.
+      let chainDteWindow = 5;
       if (targetExpiry) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -5228,6 +5250,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   try { startPcrRecorder(); } catch (e: any) { console.warn(`[flow] P/C recorder failed to start: ${e?.message ?? e}`); }
   try { startCommunityEngine(); } catch (e: any) { console.warn(`[community] failed to start: ${e?.message ?? e}`); }
   try { startSetupEngine(); } catch (e: any) { console.warn(`[setups] failed to start: ${e?.message ?? e}`); }
+  try { const { startProtocolEngine } = await import("./protocolEngine"); startProtocolEngine(); } catch (e: any) { console.warn(`[protocols] failed to start: ${e?.message ?? e}`); }
   try { startResearchStore(); } catch (e: any) { console.warn(`[research] failed to start: ${e?.message ?? e}`); }
   try { import("./odteMapLedger").then((m) => m.startOdteMapLedger()).catch((e: any) => console.warn(`[odte-map] failed to start: ${e?.message ?? e}`)); } catch (e: any) { console.warn(`[odte-map] failed to start: ${e?.message ?? e}`); }
 
@@ -6242,12 +6265,14 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       let candles: any[] = [];
       let spot: number | null = null;
       let prevClose: number | null = null;
+      let tapeReason: string | null = null;
       try {
         const ohlc = await fetchOHLC("SPY", "1D", "5m");
         candles = (ohlc?.candles ?? []).map((c: any) => ({ ...c, synthetic: false }));
         spot = ohlc?.price ?? null;
         prevClose = ohlc?.prevClose ?? null;
-      } catch { /* empty */ }
+        tapeReason = ohlc?.dataReason ?? null;
+      } catch (e: any) { tapeReason = e?.message ? String(e.message).slice(0, 160) : "the SPY price history request failed"; }
 
       // Snapshot fallback for spot/prevClose only (no candles are generated).
       try {
@@ -6272,7 +6297,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         { scale: ratio.ratio, scaleReason: ratio.reason, display: "SPY", targets });
 
       const synthetic = false;
-      const tape = intradayTapeState(candles.length);
+      const tape = intradayTapeState(candles.length, Date.now(), tapeReason);
       const fp = sp.morning?.fingerprint ?? null;
       const morningComp = served.components.find((c) => c.name === "morning_anchor") ?? null;
       const prov = getLastMlFeatureProvenance();

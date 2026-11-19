@@ -12,6 +12,8 @@ import EdgeStatsPanel from "@/components/EdgeStatsPanel";
 import { PositionSizer } from "@/components/PositionSizer";
 import OfiHistogram from "@/components/OfiHistogram";
 import { RegimeChip } from "@/components/RegimeChip";
+import DeskBoard from "@/components/DeskBoard";
+import DeskProtocols from "@/components/DeskProtocols";
 import OdteMapCard from "@/components/OdteMapCard";
 import ChartLevelsCard from "@/components/ChartLevelsCard";
 import SetupLogCard from "@/components/SetupLogCard";
@@ -192,6 +194,12 @@ export default function TradeDesk() {
       <div className="flex items-center gap-2">
         <RegimeChip origin="tradedesk" />
       </div>
+
+      {/* Level board: the bull and bear case for the index and the nearest levels across tickers (server/deskBoard.ts) */}
+      <DeskBoard />
+
+      {/* Protocol book: if-then rules for the index, the conditions met now, a counts-only record, and the level-hit log (server/protocolEngine.ts) */}
+      <DeskProtocols />
 
       {/* Regime now: the current read and how the drivers score each regime (not a forecast) */}
       {/* 0DTE map: the day's dealer-gamma plan (shared/odteMap.ts); zones only in the personal edition */}

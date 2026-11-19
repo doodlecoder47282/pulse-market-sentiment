@@ -2,6 +2,61 @@
 
 Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
+
+
+
+## 2026-11-18: protocol book and level-hit log (item 5, part 2)
+
+- `shared/protocols.ts`, book `2026.11.18-1`: three if-then rules for SPX taken from the owner's own description,
+  every threshold hand-set and untested. (1) At the wall above, VIX firm, tech lagging: the rule's outcome is 20
+  points down in 90 minutes; cancelled 10 points above the wall. (2) Sweep and reclaim: 2 to 10 points under a
+  support level inside 20 minutes of completed bars, latest completed close back above; outcome 15 points up in 90
+  minutes; cancelled at or under the sweep low. (3) News window: tier-1 release within 30 minutes ahead or 15
+  behind; not graded; the other two cannot arm with it. Nothing arms in the first 15 or last 90 minutes, so every
+  horizon ends inside the session.
+- `server/protocolEngine.ts`: each session minute reads the board, logs levels each ticker crossed (`level_hits`,
+  last 500; only a level at the same price on both reads counts) and logs a protocol when every condition is met
+  (`protocol_events`); grades on 1-minute SPX bars every five minutes. An unread input is never "met": a stale or
+  age-unknown quote leaves the price, the tech read or the VIX read unread, and a stale option map leaves the wall
+  unread. Demo stores nothing. No message or order is sent.
+- Record is counts only ("untested: 0 graded" until graded; "too few to judge" under 30). No rate is formed. A rule
+  can arm again after its horizon; same-day events are not independent (stated on the card).
+- Copy: the outcome is attributed to the rule's author, never stated as the desk's forecast; structure is a
+  category ("bearish, defined risk"), no instrument named.
+- `GET /api/desk/protocols`; `DeskProtocols.tsx` under the level board.
+- Open for the owner: his own rules to replace or extend the starter three; the sample floor (30 here, 50 in the
+  crypto brief); whether level hits should also go to Discord (nothing is sent today).
+- Tests: `tests/quant/protocols.test.ts`.
+
+## 2026-11-18: level board on the Trade Desk (item 5, part 1)
+
+- `GET /api/desk/board` (`server/deskBoard.ts`, pure parts in `shared/levelBoard.ts`): SPX, SPY, QQQ, VIX, /ES, /NQ.
+  Per ticker: quote, prior-day high/low/close, prior-week and prior-month high/low/close, week and month open,
+  classic pivot P/R1/S1 (not for VIX), today's open and 30-minute opening range (once over); SPX also carries the
+  nearest-expiry map's pin, wall above, magnet below, flip and straddle range.
+- After the close the board is for the next trading day, so the session just ended is the "prior day".
+- Bull case / bear case for SPX: the levels above (below) the price in order and the first level on the other
+  side. Descriptive, no odds. Tech read = QQQ day change minus SPY (0.25 points, hand-set); VIX firm/soft at 1%.
+- Each ticker states what was not read. Whether Schwab serves /ES and /NQ quotes is known only from its answer.
+- `client/src/components/DeskBoard.tsx` sits at the top of the Trade Desk. Tests: `tests/quant/desk-board.test.ts`.
+- Next (part 2): level-hit log and the protocol engine on top of this board.
+
+## 2026-11-18: the defects the owner named on the live site
+
+- Heatseeker "$SPX UNAVAILABLE: no strikes with data inside the display window" every evening: with no expiry asked,
+  the builder picked today's expiry after it had settled and then dropped every contract in it. It now picks the
+  nearest key with an unsettled contract; a settled expiry asked for by date says so. The default chain window is 5
+  days (was 2) so the next expiry is in the read over a weekend or holiday.
+- "SPY - Projected Path" on Models: on Railway the Python sidecar is not installed, so no band has ever been drawn
+  there. With no band the panel is titled "intraday tape (no projected path drawn)" (or "no projected path drawn" with no bars), gives the reason in neutral
+  text and says where a projected path for $SPX is when one is available (Today block on Signals). An empty tape now carries the feed's
+  own reason instead of "feed failed or empty".
+- Models path chart, numbers unreadable on the left: a level within 6% of the chart range of the price had its
+  label painted over by the path start. Those labels sit on the right edge (`shared/chartLabels.ts`).
+- "Levels default to QQQ": no panel defaults to QQQ (Heatseeker defaults to $SPX, pivot projection to SPY). QQQ is
+  only shown when its button is tapped; the likely cause was Heatseeker $SPX being unavailable (first item).
+- Tests: `tests/quant/named-defects.test.ts`.
+
 ## 2026-10-08: quant-fixes branch (PR to main)
 
 Completed objective: apply the 37 fixes from the quant code review (Claude Doc
@@ -2734,7 +2789,6 @@ inside the live view, where its description is true. Also taken: baseline rows n
 for the server, flow alerts distinguish status loading, chain unread and last-session chain, held open
 interest is marked on the short answer, "likely new positions", "buying each flagged whale contract".
 
-
 2026-11-18 (evening): Today block (feat/today-block, stacked on the answer-first reads). Understood as: one
 block at the very top with the plain read, the few levels that matter, and the projected path. The existing
 Today card (spot, wall above, gamma flip, largest level below, from the 0DTE map) now opens with one plain
@@ -2751,4 +2805,18 @@ last read ... from the last price"; the read is scoped to the nearest expiry; th
 of the options gap and labels a held chain "the last read"; loading, unavailable and drawn share one height;
 the card polls only while its tab shows; the position bar is left off phones; the explanation sits behind a
 tap; the chart geometry is a pure function with tests for degenerate inputs.
+
+2026-11-18 (night): One set of odds and a scope line for levels (feat/one-set-of-levels, stacked on the Today
+block). Understood as: the same level or the same three words must not show two different numbers without
+saying why. Found by reading the code: the Models tab carried two sets of odds under the same names. The
+header's BULL / BASE / BEAR (28 / 42 / 30 on 2026-11-18) are a close one expected move above, in between, or
+one below the current price. The "BULL / BASE / BEAR region" numbers (0 / 27 / 73) are three price ranges
+split halfway between the path targets; with the base path's target 248 points above the price, the "BEAR
+region" was everything under 7,384, which held the current price, so an unchanged close counted as bear. Range
+odds are now named by position (UPPER / MIDDLE / LOWER range), the range holding the price is marked, the
+headline says "one expected move either way", and one note under the legend tells the two apart
+(shared/scenarioRegions.ts). Levels: each panel now states which expiries it adds up (shared/levelScope.ts,
+LevelScopeNote) on the Today card, the Trade Desk map, Models, the chain audit ladder and the pivot projection,
+naming the Today card as the one for today's trading. No level, odds or model value changed: labels only.
+Tests: tests/quant/one-set-of-levels.test.ts (6).
 

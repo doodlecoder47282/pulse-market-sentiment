@@ -279,12 +279,14 @@ export function isRegularSessionOpen(ms: number = Date.now()): boolean {
  *   no_data  no session today, pre-market, or the session is (or was) open
  *            and the feed returned no bars (failed or empty collection).
  */
-export function intradayTapeState(barCount: number, ms: number = Date.now()): { dataState: "ok" | "no_data"; reason: string | null } {
+export function intradayTapeState(barCount: number, ms: number = Date.now(), feedReason?: string | null): { dataState: "ok" | "no_data"; reason: string | null } {
   if (barCount > 0) return { dataState: "ok", reason: null };
   const c = etClock(ms);
   if (sessionCloseMinutes(c.date) == null) return { dataState: "no_data", reason: "no session today (weekend or exchange holiday)" };
   if (c.minutes < REGULAR_OPEN_MIN) return { dataState: "no_data", reason: "pre-market: no regular-session bars yet" };
-  return { dataState: "no_data", reason: "intraday tape returned no bars (feed failed or empty)" };
+  // The feed's own reason when it gave one: "feed failed or empty" told nobody which.
+  const why = typeof feedReason === "string" && feedReason.trim() ? feedReason.trim() : null;
+  return { dataState: "no_data", reason: why ? `the price feed returned no bars: ${why}` : "intraday tape returned no bars (feed failed or empty)" };
 }
 
 /** ET calendar date of the newest candle (epoch-ms `datetime`), or null. */

@@ -18,6 +18,7 @@
 // historical reactions it has triggered in the last 90 days.
 
 import PlainRead from "@/components/PlainRead";
+import LevelScopeNote from "@/components/LevelScopeNote";
 import { READ_PIVOT_PROJECTION } from "@shared/plainReads";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo } from "react";
@@ -198,7 +199,8 @@ export default function PivotProjection({
   return (
     <Card className="border-amber-500/20 bg-gradient-to-b from-amber-950/5 to-card">
       <CardContent className="p-4">
-        <PlainRead read={READ_PIVOT_PROJECTION} testId="pivot-plain" className="mb-3" />
+        <PlainRead read={READ_PIVOT_PROJECTION} testId="pivot-plain" className="mb-2" />
+        {(symbol === "SPY" || symbol === "^GSPC") && <LevelScopeNote panel="pivotProjection" className="mb-3" />}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Activity className="h-4 w-4 text-amber-400" />
           <div>
