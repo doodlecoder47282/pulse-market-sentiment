@@ -83,8 +83,9 @@ async function contextNow(nowMs: number): Promise<ProtocolCtx> {
     spx: spx && spx.quoteState === "ok" ? spx.price : null,
     levels: boardLevelsForRules(spx?.levels ?? [], board.cases.levelsWithoutOptions, board.cases.optionsState),
     optionsState: board.cases.optionsState,
-    tech: okQ("QQQ") && okQ("SPY") ? board.tech.state : "unknown",
-    vix: okQ("$VIX") ? board.vix.state : "unknown",
+    // Out of session the day changes are not "on the day" (the feed may have started a new day): the reads are not taken.
+    tech: open && okQ("QQQ") && okQ("SPY") ? board.tech.state : "unknown",
+    vix: open && okQ("$VIX") ? board.vix.state : "unknown",
     calendarKnown: cal.known, minutesToTier1: cal.minutes, minutesSinceTier1: cal.minutesSinceLast,
     bars,
   };

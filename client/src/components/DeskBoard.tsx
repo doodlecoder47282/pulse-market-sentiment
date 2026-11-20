@@ -13,7 +13,7 @@ import { Layers } from "lucide-react";
 import { boardAnswer, type BoardLevel, type DeskCase, type RelRead, type VixRead } from "@shared/levelBoard";
 
 interface Ticker {
-  symbol: string; label: string; kind: string; price: number | null; changePct: number | null;
+  symbol: string; label: string; kind: string; price: number | null; changePct: number | null; changeBasis?: "session" | "last_session" | "since_close" | "unknown";
   quoteState: "ok" | "stale" | "age_unknown" | "unavailable"; quoteReason: string | null;
   levels: BoardLevel[]; levelsState: "ok" | "partial" | "unavailable"; levelsReason: string | null; priorSession: string | null;
   at: BoardLevel[]; above: BoardLevel | null; below: BoardLevel | null;
@@ -51,6 +51,8 @@ export default function DeskBoard() {
   if (q.isError || !q.data) return <UnavailablePanel title="Level board" error={q.error} testId="desk-board-unavailable" />;
   const b = q.data;
   const spx = b.tickers.find((t) => t.symbol === b.cases.symbol);
+  // The tech and VIX sentences say themselves what their change is a change of; this only marks the session as closed.
+  const prefix = b.sessionOpen ? "" : "Market closed. ";
   return (
     <Card className="border-cyan-500/20" data-testid="desk-board">
       <CardHeader className="pb-2">
@@ -61,7 +63,7 @@ export default function DeskBoard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${b.sessionOpen ? "" : "Market closed, last prices: "}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
+        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${prefix}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
         <div className="grid gap-2 md:grid-cols-2">
           <CaseBox c={b.cases.bull} tone="bull" />
           <CaseBox c={b.cases.bear} tone="bear" />
@@ -74,8 +76,8 @@ export default function DeskBoard() {
           </p>
         )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-          <span data-testid="desk-board-tech">{b.sessionOpen ? "" : "Market closed, last prices: "}{b.tech.text}</span>
-          <span data-testid="desk-board-vix">{b.sessionOpen ? "" : "Market closed, last prices: "}{b.vix.text}</span>
+          <span data-testid="desk-board-tech">{prefix}{b.tech.text}</span>
+          <span data-testid="desk-board-vix">{prefix}{b.vix.text}</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {b.tickers.map((t) => (
@@ -86,6 +88,9 @@ export default function DeskBoard() {
                   <span className="font-mono text-sm font-semibold text-foreground">{t.label}</span>{" "}
                   <span className="font-mono text-sm">{px(t.price)}</span>{" "}
                   <span className={`font-mono text-[12px] ${t.changePct == null ? "" : t.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{pct(t.changePct)}</span>
+                  {t.changePct != null && t.changeBasis && t.changeBasis !== "session" && (
+                    <span className="ml-1 text-[11px] text-muted-foreground">{t.changeBasis === "last_session" ? "last session" : t.changeBasis === "since_close" ? "since the last close" : "day basis unclear"}</span>
+                  )}
                   {t.quoteState !== "ok" && <span className="ml-1 text-[11px] text-amber-400">{t.quoteState === "age_unknown" ? "age unknown" : t.quoteState}</span>}
                 </span>
                 <span className="shrink-0 text-[11px] text-muted-foreground">{open === t.symbol ? "less" : "all levels"}</span>
