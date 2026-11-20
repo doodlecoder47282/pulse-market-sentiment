@@ -173,7 +173,11 @@ test("build: quotes are keyed as asked, a future falls back to its previous clos
   assert.equal(t("/ES").changePct, 13);
   assert.deepEqual([t("/NQ").quoteState, t("/NQ").quoteReason], ["unavailable", "Schwab returned no quote for /NQ"]);
   assert.ok(!calls.includes("/NQ:month") && !calls.includes("/ES:month"), "no bars are asked for a future, priced or not");
-  assert.match(t("/ES").levelsReason ?? "", /price only/);
+  assert.match(t("/ES").levelsReason ?? "", /from the quote only/);
+  assert.deepEqual(t("/ES").levels.map((l) => [l.label, l.price]), [["previous close (quote)", 100]], "the default quote carries a previous close and no day fields");
+  assert.equal(t("/ES").levelsState, "partial");
+  assert.match(t("/ES").levelsReason ?? "", /not in the quote: day high and low, day open/);
+  assert.deepEqual([t("/NQ").levels.length, t("/NQ").levelsState, t("/NQ").levelsReason], [0, "unavailable", "no quote, so no levels"]);
   assert.ok(!calls.some((c) => c.startsWith("/ES:day")), "no intraday bars for futures");
   assert.equal(b.tech.state, "leading");
   assert.equal(b.vix.state, "soft");
@@ -432,4 +436,40 @@ test("build: each ticker carries its change basis; tech is read only when both s
   assert.equal(basis(b3, "QQQ"), "unknown", "no regular-session print: the basis is not claimed");
   assert.equal(b3.tech.state, "unknown");
   assert.match(b3.tech.text, /^Tech against the market: not compared\. QQQ .* is by the feed's day change/);
+});
+
+test("futures: levels are the quote's own day fields, with no bars asked for; fields that do not fit one day are left out", async () => {
+  const { quoteDayLevels } = await import("../../shared/levelBoard");
+  const full = quoteDayLevels({ last: 7010, prevClose: 7000, dayOpen: 7002, dayHigh: 7020, dayLow: 6990 });
+  assert.deepEqual(full.levels.map((l) => [l.key, l.price, l.group]), [["qpc", 7000, "prior day"], ["qhi", 7020, "today"], ["qlo", 6990, "today"], ["qop", 7002, "today"]]);
+  assert.deepEqual(full.missing, []);
+  // The last price outside the quote's high and low: the fields are not from one day.
+  const off = quoteDayLevels({ last: 7030, prevClose: 7000, dayOpen: 7002, dayHigh: 7020, dayLow: 6990 });
+  assert.deepEqual(off.levels.map((l) => l.key), ["qpc"]);
+  assert.match(off.missing.join(), /do not contain/);
+  assert.deepEqual(quoteDayLevels({ last: 7010, prevClose: 7000, dayHigh: 6990, dayLow: 7020 }).levels.map((l) => l.key), ["qpc"], "high under low");
+  assert.deepEqual(quoteDayLevels({ last: 7010, prevClose: null, dayOpen: 0, dayHigh: null, dayLow: 6990 }), { levels: [], missing: ["previous close", "day high and low", "day open"] });
+  assert.deepEqual(quoteDayLevels(null), { levels: [], missing: ["no quote"] });
+
+  _resetDeskBoardCache();
+  const calls: string[] = [];
+  const quotes = [
+    { symbol: "$SPX", last: 113, changePercent: 0.5, stale: false },
+    { symbol: "/ES", last: 7010, changePercent: 0.1, prevClose: 7000, dayOpen: 7006, dayHigh: 7020, dayLow: 6990, stale: false },
+    { symbol: "/NQ", last: 25000, changePercent: 0.1, prevClose: 24900, dayOpen: 24950, dayHigh: 25050, dayLow: 24890, stale: true },
+  ];
+  const b = await buildDeskBoard(NOON, deps({ calls, quotes }));
+  const es = b.tickers.find((x) => x.symbol === "/ES")!;
+  assert.deepEqual(es.levels.map((l) => l.price).sort((a, c) => a - c), [6990, 7000, 7006, 7020]);
+  assert.equal(es.levelsState, "partial", "never 'ok': there are no bar-based levels behind it");
+  assert.match(es.levelsReason ?? "", /no prior-day high and low, pivots/);
+  assert.ok(es.levels.every((l) => !/so far/.test(l.label)), "the fields are named as the quote's, not as a running high: out of hours they describe a finished day");
+  assert.match(es.levelsReason ?? "", /neither checked here/);
+  assert.match(b.note, /ES and NQ/);
+  assert.equal(es.above?.price, 7020);
+  assert.equal(es.below?.price, 7000);
+  assert.deepEqual(es.at.map((l) => l.price), [7006], "within a tenth of a percent of the price");
+  const nq = b.tickers.find((x) => x.symbol === "/NQ")!;
+  assert.match(nq.levelsReason ?? "", /the quote is not current/);
+  assert.ok(!calls.some((c) => c.startsWith("/ES") || c.startsWith("/NQ")), "no price history is asked for a future");
 });

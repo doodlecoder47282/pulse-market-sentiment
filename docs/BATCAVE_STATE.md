@@ -2982,6 +2982,36 @@ server/playbook.ts is rewritten:
 - Key levels keep the walls' own names; the news playbook is given the walls it names.
 Tests: tests/quant/playbook-day-levels.test.ts (8).
 
+**Level record: one yardstick both ways (2026-11-20, version 2026.11.20-2).** Why: version -1 counted
+"traded back" on a 10-point wick and "closed through" on a 5-point close, two different distances and two
+different measures, so the 6 to 27 split it showed could not be read as held against broke. Now both outcomes
+are a 1-minute close 10 points from the level (back on the side the index came from, or beyond it), whichever
+comes first, the touch bar's own close included either way; a wick alone counts for neither. The record is
+recomputed from the stored minute bars under the new version, so nothing from version -1 is mixed in. Card
+column and sentence now say "closed back". Files: shared/levelRecord.ts, server/levelRecord.ts (limits),
+LevelRecordCard.tsx. Tests: tests/quant/level-record.test.ts.
+**An old 0DTE read is no longer shown as today's (2026-11-20).** Why: the owner pasted a map reading "exp
+2026-11-19, chain 1 d ago" under a "today" heading with a countdown. A browser tab in the background stops
+polling and a device that slept wakes with the read it last held; nothing compared the read's own time with
+the clock. shared/odteFreshness.ts (forwardFreshness): a read is out of date when it arrived more than 5
+minutes ago (five missed 60 s polls; measured from the receipt time on the device's own clock, so a device
+clock that runs fast cannot make a new read look old) or carries no time. A recent read on an expired chain,
+or a rest-of-today read on another day's expiry, is a separate state ("not this session's chain"). OdteForward.tsx then shows "0DTE Wiener map · out of date" with the reason and
+draws no ranges, odds or countdown; TodayPath.tsx draws nothing and gives the reason. Both read again when the
+tab comes back into view (refetchOnWindowFocus, staleTime 30 s) and the map re-reads once per 15 s clock check
+while its read is old. Server: today's-expiry check in server/odteForward.ts now compares the expiry date with
+today's ET date instead of the days-to-expiry number the chain carried when fetched (a cached chain keeps the
+old number); tested with a chain whose numbers are a day behind. Tests: tests/quant/odte-freshness.test.ts (11).
+**ES and NQ levels from the quote's own day fields (2026-11-20).** Why: the futures showed a price and "price
+only". Futures bars are still not asked for (the price-history endpoint is not known to serve a root future,
+and a refusal cools it down for SPX too). Instead the board shows what the futures quote itself carries, with
+no extra request and nothing derived: previous close, and the open, high and low of the trading day the feed
+is counting (shared/levelBoard.ts quoteDayLevels; NormalizedQuote gains dayOpen/dayHigh/dayLow from Schwab's
+openPrice/highPrice/lowPrice, REST path). A high and low that do not contain the quote's own last price or
+open are left out. The labels do not say "so far": out of hours the same fields describe a finished day. The futures' level state is never "ok": it is "partial" with the reason that there are no
+prior-day high and low, pivots, week, month or range levels, or "unavailable" when the quote carries none of
+the fields. Unverified until seen live: which of these fields Schwab's futures quote actually fills.
+Tests: tests/quant/desk-board.test.ts.
 **Whale record: how it is spread over days, shown above the new alerts (2026-11-20).** Why: the whale win
 count swings with single days (positions flagged together move together), and the figure gave no way to see
 that. shared/whaleDays.ts (daySpread, daySpreadAnswer) counts the scored whale positions by the ET day each was
