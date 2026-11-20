@@ -159,8 +159,8 @@ test("wiring: engine starts with the server, stores nothing in the demo, and the
   assert.match(card, /Rule author's stated outcome \(untested\):/);
   assert.doesNotMatch(card, />Expected:|did what was expected/);
   // Stale inputs are not reads; one release is one row.
-  assert.match(eng, /tech: okQ\("QQQ"\) && okQ\("SPY"\) \? board\.tech\.state : "unknown"/);
-  assert.match(eng, /vix: okQ\("\$VIX"\) \? board\.vix\.state : "unknown"/);
+  assert.match(eng, /tech: open && okQ\("QQQ"\) && okQ\("SPY"\) \? board\.tech\.state : "unknown"/);
+  assert.match(eng, /vix: open && okQ\("\$VIX"\) \? board\.vix\.state : "unknown"/);
   assert.match(eng, /l\.group !== "options" \|\| board\.cases\.optionsState === "ok"/);
   assert.match(eng, /PROTOCOL_RULES\.newsBeforeMin \+ PROTOCOL_RULES\.newsAfterMin \+ 5/);
   assert.match(eng, /lastRead\.delete\(t\.symbol\)/);
