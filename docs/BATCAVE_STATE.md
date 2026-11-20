@@ -2881,6 +2881,47 @@ levels reason with the copy's time and why the fresh read failed; the existing p
 read-before-close checks run on the copy as on any read. Not kept in the demo edition. The startup burst itself
 is not reduced by this; that is still open. Also: scoreboard setup rows word the kind as the setup log does
 ("breakout below the put wall", not "breakout_below"). Tests: two added to tests/quant/desk-board.test.ts.
+**Daily price history survives a restart (2026-11-19).** Measured live in the minute after a deploy: 100 of
+100 Schwab requests used, all by the first page load (whale flow 20, macro 14 daily histories, regime 10 daily
+histories, 36 not itemised); the in-memory cache is empty after a restart, so whatever loads last reads
+"unavailable" (the level board, at one point the quotes). Two changes in the transport: (1) daily
+price-history payloads are also written to SQLite (schwab_daily_cache, server/schwabCacheStore.ts) and put
+back into the cache once after a restart with their real fetch time and original expiry, so the cache rules
+treat them as if the process had not restarted (only copies read after the session settled are written; the
+restored expiry is capped at the longest daily TTL); (2) with the market closed, a daily copy read after the
+settle is served as the last-session copy, with no request, when at least half the per-minute limit is in use,
+but only in the first ten minutes after a restart or while the copy is under two hours old, so sustained load
+cannot hold one copy all night (schwabDataPolicy.serveSettledDailyUnderPressure; a forced refresh is never
+short-circuited; it is served as an ordinary cache hit, not recorded as a degraded read). Whether Schwab's
+daily bar is final at the settle is not verified, which is why the rule is bounded. Only daily bars are kept. Not addressed: the option-chain share of the startup load;
+a restart during the session still refetches daily bars (today's bar moves). Diagnostics report how many
+payloads were restored and how many reads the rule served. Tests: tests/quant/daily-bars-restart.test.ts (6).
+
+**Level board: prior-day bar built from intraday when the daily feed lags (2026-11-19).** Seen live at 23:47
+ET: every ticker read "the newest completed daily bar is 2026-11-18, not 2026-11-19", so the evening board for
+the next session showed the day-before-yesterday's high, low and pivots. Schwab's daily history had not posted
+the finished session. When the session before the board's has closed and its daily bar is missing, the board
+now builds that bar from the session's own intraday bars (shared/levelBoard.ts dayBarFromIntraday: a whole
+regular session only, first bar at 09:30, last bar ending at the close), once per ticker and session, and says
+so in the levels reason, including that the last intraday close can differ slightly from the official close
+(state partial). With no whole intraday session the older prior day stays with its existing reason. Also seen
+live: the range levels are on the board ("20-session low", "66-session low"); on 2026-11-19 SPX closed under
+its 66-session low, so "no further mapped level below" was a true statement, not a gap.
+Tests: three added to tests/quant/desk-board.test.ts.
+
+**Level record (2026-11-20).** Third step of the "no improvement" line: the board names levels but nothing
+said what price has done at them. shared/levelRecord.ts counts, per level kind (prior-day high/low/close,
+pivot, R1, S1, opening-range high/low, prior-week and prior-month high/low/close), what the index did at the
+first touch in each stored past session: a 1-minute high or low 10 points back away before any 1-minute close
+5 points through ("traded back"), that close first, the touch bar included ("closed through"), neither within
+30 minutes, or not graded (a minute missing anywhere before the outcome, or too near the close). Levels at
+one price are one touch with several names (once in the totals, once per row); a price that starts within 10
+points of the index is not read as a touch and is counted apart. Hand-set numbers, versioned (LEVEL_RECORD_VERSION 2026.11.20-1). Uses only
+bars before the session for the levels (the session's own daily bar cannot leak; week and month open are
+left out). Shown on the Trade Desk under Protocols as one sentence with the by-level table, recent touches and
+limits on tap; counts only, with the statement that a few neighbouring sessions are too few to read a tendency
+from. Reads the stored 1-minute index bars the replay keeps. Route: GET /api/desk/level-record.
+Tests: tests/quant/level-record.test.ts (8).
 
 **Context log for option-level rules (2026-11-20).** The price-only rule can be replayed from stored bars; the
 wall rule reads the option wall, tech against the market and VIX as they were, and none of that was stored,
@@ -2894,6 +2935,7 @@ same context object the evaluator received (shared/protocols.ts contextRow), wri
 in its own try, so a failed write cannot stop a rule. Nothing is replayed from it yet; the Protocols card
 says how many checks and sessions exist and at how many a wall was on the board.
 Tests: two added to tests/quant/protocols.test.ts.
+
 
 **Old option-map landmarks cannot reach a rule through a merged line (2026-11-20).** Found by two reviews:
 the engine kept landmarks from a non-current option map out of the rules by dropping lines whose group is

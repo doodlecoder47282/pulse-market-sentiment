@@ -3744,6 +3744,16 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.status(500).json({ error: "desk_board_failed", message: e?.message ?? String(e) });
     }
   });
+  // LEVEL RECORD (server/levelRecord.ts): what the index did at the first touch of each level kind over stored past sessions, counts only.
+  app.get("/api/desk/level-record", async (_req, res) => {
+    try {
+      const { getLevelRecord } = await import("./levelRecord");
+      res.json(await getLevelRecord());
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "level_record_failed", message: e?.message ?? String(e) });
+    }
+  });
   // SCOREBOARD (server/scoreboard.ts): every graded record the desk keeps, side by side, counts only.
   app.get("/api/scoreboard", async (_req, res) => {
     try {

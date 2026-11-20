@@ -14,7 +14,7 @@ import { etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
 import { editionFromEnv } from "../shared/edition";
 import {
-  boardSession, calendarLevels, rangeLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
+  boardSession, calendarLevels, rangeLevels, sessionLevels, dayBarFromIntraday, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
   type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead,
 } from "../shared/levelBoard";
 
@@ -91,6 +91,11 @@ interface DailyRead { bars: DayBar[]; reason: string | null; asOfMs: number | nu
 const dailyCache = new Map<string, { at: number; forSession: string; read: DailyRead }>();
 const intraCache = new Map<string, { at: number; bars: IntraBar[]; reason: string | null }>();
 const negative = new Map<string, { at: number; reason: string }>();
+/** A finished session's bar built from its intraday bars (shared/levelBoard.ts dayBarFromIntraday): it does not change, so it is built once. */
+const builtDay = new Map<string, DayBar>();
+/** When a build was last tried and gave no whole session, per ticker and session: not tried again for this long. */
+const builtMiss = new Map<string, number>();
+const BUILT_RETRY_MS = 15 * 60_000;
 let boardCache: { at: number; board: DeskBoard } | null = null;
 let inFlight: Promise<DeskBoard> | null = null;
 
@@ -262,6 +267,25 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
 
   let spxRaw: BoardLevel[] = [];
   let spxNoOptions: BoardLevel[] = [];
+  // The daily feed can lag the close by hours. When the session before the board's has finished and its daily bar is
+  // missing, that bar is built from the session's own intraday bars, once, and named as such.
+  const priorClosed = (() => { const c = expectedPrior ? sessionCloseMs(expectedPrior) : null; return c != null && nowMs >= c; })();
+  const builtBars: Array<DayBar | null> = await Promise.all(BOARD_TICKERS.map(async (t, idx) => {
+    const d = dailies[idx];
+    if (!expectedPrior || !priorClosed || !d.bars.length) return null;
+    const newest = d.bars.map((b) => b.date).filter((x) => x < forSession).sort().pop();
+    if (!newest || newest >= expectedPrior) return null;
+    const key = `${t.symbol}|${expectedPrior}`;
+    const hit = builtDay.get(key);
+    if (hit) return hit;
+    // No whole session came back last time: asking again every board build would spend a request a minute per ticker all evening.
+    const missed = builtMiss.get(key);
+    if (missed != null && nowMs - missed < BUILT_RETRY_MS) return null;
+    const bar = dayBarFromIntraday((await intraBars(t.symbol, nowMs, deps)).bars, expectedPrior);
+    if (bar) { builtDay.set(key, bar); builtMiss.delete(key); } else builtMiss.set(key, nowMs);
+    return bar;
+  }));
+
   const tickers: BoardTicker[] = BOARD_TICKERS.map((t, idx) => {
     const q = quotes.get(t.symbol) ?? null;
     const price = priced(t.symbol) ? (q!.last as number) : null;
@@ -273,7 +297,9 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       : quoteState === "stale" ? "the quote is older than two minutes in session, or was re-served after a failed refresh"
       : quoteState === "age_unknown" ? "the quote carries no timestamp, so its age is unknown" : null;
 
-    const d = dailies[idx];
+    let d = dailies[idx];
+    const built = builtBars[idx];
+    if (built) d = { ...d, bars: [...d.bars.filter((b) => b.date !== built.date), built] };
     let levels: BoardLevel[] = calendarLevels(d.bars, forSession, { pivots: t.kind !== "vol" });
     // Only alongside the calendar levels: a board with no prior day stays "unavailable" rather than showing ranges alone.
     if (levels.length) levels = [...levels, ...rangeLevels(d.bars, forSession)];
@@ -283,6 +309,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     const reasons: string[] = [];
     if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
     else if (priorSession !== expectedPrior) reasons.push(`the newest completed daily bar is ${priorSession}, not ${expectedPrior}: "prior-day" levels are from ${priorSession}, and the range levels end there`);
+    else if (built) reasons.push(`${src(deps)}'s daily bar for ${built.date} is not posted yet: prior-day levels and pivots use that session's intraday bars (every 5-minute bar from 09:30 to the regular close: its high and low, and the last intraday close, which can differ from the official close${t.kind === "vol" ? "; VIX is calculated until 16:15 ET and those last minutes are not in this bar" : ""})`);
     else if (readBeforeClose(d, forSession)) reasons.push(`the daily bar for ${priorSession} was read before that session closed, so levels that use it (prior day, pivots, ranges) may be short of its final high or low`);
     // Kept copy in use: say so and why, whatever else is true of it. The prior-session checks above already ran on it.
     if (levels.length && d.storedBecause) reasons.push(`daily bars are the copy kept from ${d.asOfMs != null ? `${etDate(d.asOfMs)} ${hhmmEt(d.asOfMs)} ET` : "an earlier read"}; the fresh read failed (${d.storedBecause})`);
@@ -323,4 +350,4 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
 }
 
 /** Test hook. */
-export function _resetDeskBoardCache(): void { boardCache = null; inFlight = null; dailyCache.clear(); intraCache.clear(); negative.clear(); }
+export function _resetDeskBoardCache(): void { boardCache = null; inFlight = null; dailyCache.clear(); intraCache.clear(); negative.clear(); builtDay.clear(); builtMiss.clear(); }
