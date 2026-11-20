@@ -310,6 +310,11 @@ test("dayBarFromIntraday: a whole session gives its bar; a short or headless one
   assert.equal(dayBarFromIntraday(rows.slice(0, 60), "2026-11-11"), null, "the last bar does not reach the close");
   assert.equal(dayBarFromIntraday(rows.slice(1), "2026-11-11"), null, "no bar at 09:30");
   assert.equal(dayBarFromIntraday(rows, "2026-11-10"), null, "bars of another day");
+  const holed = rows.filter((_, i) => i !== 40);
+  assert.equal(dayBarFromIntraday(holed, "2026-11-11"), null, "a missing middle bar could hold the low: no bar is built");
+  assert.equal(dayBarFromIntraday(rows.filter((_, i) => i !== 1 && i !== 77), "2026-11-11"), null, "a missing second bar must not loosen the check on the last one");
+  const half = fiveMin("2026-11-27", 110, {}, 42).map((c) => ({ t: c.datetime, open: c.open, high: c.high, low: c.low, close: c.close }));
+  assert.ok(dayBarFromIntraday(half, "2026-11-27"), "a whole half-day session is a whole session");
 });
 
 test("build: after the close, a prior-day bar the daily feed has not posted is built from that session's intraday bars and named", async () => {
@@ -340,4 +345,24 @@ test("build: with no whole intraday session the older prior day stays, with the 
   const spx = (await buildDeskBoard(EVENING, d)).tickers.find((x) => x.symbol === "$SPX")!;
   assert.equal(spx.priorSession, "2026-11-10");
   assert.match(spx.levelsReason ?? "", /newest completed daily bar is 2026-11-10, not 2026-11-11/);
+});
+
+test("build: a session that will not build is not asked for again every board build", async () => {
+  _resetDeskBoardCache();
+  const EVENING = Date.UTC(2026, 10, 12, 1, 0);
+  const calls: string[] = [];
+  const d = deps({ calls, daily: (sym) => ({ symbol: sym, candles: candles(daily.filter((x) => x.date < "2026-11-11")), source: "schwab", dataState: "ok", asOfMs: EVENING }) as any, intra: (sym) => ({ symbol: sym, candles: fiveMin("2026-11-11", 110, {}, 77), source: "schwab", dataState: "ok", asOfMs: EVENING }) });
+  for (let m = 0; m < 10; m++) await buildDeskBoard(EVENING + m * 61_000, d);
+  assert.equal(calls.filter((c) => c === "$SPX:day").length, 1, "one try in ten minutes");
+  await buildDeskBoard(EVENING + 16 * 60_000, d);
+  assert.equal(calls.filter((c) => c === "$SPX:day").length, 2, "tried again after the wait");
+});
+
+test("build: the VIX reason says its built bar stops at the regular close", async () => {
+  _resetDeskBoardCache();
+  const EVENING = Date.UTC(2026, 10, 12, 1, 0);
+  const d = deps({ daily: (sym) => ({ symbol: sym, candles: candles(daily.filter((x) => x.date < "2026-11-11")), source: "schwab", dataState: "ok", asOfMs: EVENING }) as any, intra: (sym) => ({ symbol: sym, candles: fiveMin("2026-11-11", 20), source: "schwab", dataState: "ok", asOfMs: EVENING }) });
+  const b = await buildDeskBoard(EVENING, d);
+  assert.match(b.tickers.find((x) => x.symbol === "$VIX")!.levelsReason ?? "", /VIX is calculated until 16:15 ET/);
+  assert.doesNotMatch(b.tickers.find((x) => x.symbol === "$SPX")!.levelsReason ?? "", /16:15/);
 });
