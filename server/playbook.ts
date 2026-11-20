@@ -476,30 +476,35 @@ export function playbookBiasPoints(inp: Pick<PlaybookInputs, "marketScore" | "ga
   return { bullPts, bearPts, marketScore, v, vChg, termRatio, unavailable };
 }
 
-/** A scenario level may sit at most this many 1-sigma day ranges from the price; beyond it the level is not a level of today. */
+/** A scenario level may sit at most this many VIX-implied one-sigma daily moves from the price; beyond it the level is not a level of today. */
 export const DAY_REACH_SIGMAS = 1.5;
-export interface DayBound { price: number; label: string; far: boolean }
+export interface DayBound { price: number; label: string; /** true: an all-expiry wall kept only because nothing nearer could be formed. */ far: boolean }
 /**
  * The upper and lower level the day's scenarios are built on. The "call wall" and "put wall" are the strikes
- * with the most dealer gamma over every expiry in the chain window; on an index ETF those are usually big
- * round strikes many percent away (seen live: 700 and 775 with the price at 709), and scenarios built on them
- * describe moves that are not day moves. A wall is used only when it lies within DAY_REACH_SIGMAS day ranges
- * (VIX / sqrt(252)) of the price; otherwise the nearest of Camarilla H4 / classic R1 (above) or L4 / S1
- * (below) inside that reach, else the edge of one day range. With no VIX the wall is kept and marked far.
+ * with the most estimated dealer gamma over every expiry in the chain window; on an index ETF those are
+ * usually big round strikes many percent away (seen live: 700 and 775 with the price at 709), and scenarios
+ * built on them describe moves that are not day moves. sigma is the VIX-implied one-sigma daily move
+ * (spot x VIX / 100 / sqrt(252)): an implied figure, not a forecast.
+ *   - With VIX: a wall on its own side of the price and within DAY_REACH_SIGMAS sigma is used; otherwise the
+ *     nearest of Camarilla H4 / classic R1 (above) or L4 / S1 (below) inside that reach; otherwise one sigma.
+ *   - Without VIX: the nearest of those pivots on its side of the price; with no pivot either, the wall is
+ *     kept and marked far (the day's reach is not known).
  */
 export function playbookDayBounds(
   spot: number, callWall: number, putWall: number, vix: number | null,
-  piv: { h4: number; l4: number; r1: number; s1: number } | null,
+  piv: { h4: number; l4: number; r1: number; s1: number } | null, tk: number = 0,
 ): { upper: DayBound; lower: DayBound; sigma: number | null } {
   const sigma = vix != null && Number.isFinite(vix) && vix > 0 ? spot * (vix / 100) / Math.sqrt(252) : null;
-  if (sigma == null) return { sigma, upper: { price: callWall, label: "call wall, all expiries", far: true }, lower: { price: putWall, label: "put wall, all expiries", far: true } };
-  const reach = DAY_REACH_SIGMAS * sigma;
+  const reach = sigma != null ? DAY_REACH_SIGMAS * sigma : null;
+  const snap = (x: number) => (tk > 0 ? Math.round(x / tk) * tk : x);
   const pick = (wall: number, wallLabel: string, cands: Array<[number | undefined, string]>, dir: 1 | -1): DayBound => {
-    const inReach = (x: number | undefined): x is number => typeof x === "number" && Number.isFinite(x) && (x - spot) * dir > 0 && Math.abs(x - spot) <= reach;
-    if (inReach(wall)) return { price: wall, label: wallLabel, far: false };
+    const onSide = (x: number | undefined): x is number => typeof x === "number" && Number.isFinite(x) && (x - spot) * dir > 0;
+    const inReach = (x: number | undefined): x is number => onSide(x) && (reach == null || Math.abs(x - spot) <= reach);
+    if (reach != null && inReach(wall)) return { price: wall, label: wallLabel, far: false };
     const near = cands.filter((c): c is [number, string] => inReach(c[0])).sort((a, b) => Math.abs(a[0] - spot) - Math.abs(b[0] - spot))[0];
     if (near) return { price: near[0], label: near[1], far: false };
-    return { price: spot + dir * sigma, label: `${dir > 0 ? "upper" : "lower"} edge of one day range from VIX`, far: false };
+    if (sigma != null) return { price: snap(spot + dir * sigma), label: `one-sigma daily move ${dir > 0 ? "up" : "down"}, from VIX`, far: false };
+    return { price: wall, label: `${wallLabel}, all expiries`, far: true };
   };
   return {
     sigma,
@@ -523,132 +528,69 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   else if (Math.abs(squeeze.score) > 50 || (v != null && v > 30)) { bias = "volatile"; conviction = "moderate"; }
   else { bias = "neutral"; conviction = "low"; }
 
-  // Build scenarios
+  // Build scenarios: one description per place the price can be relative to the day's two levels. Conditions
+  // and what the levels beyond are; no entries, no verbs of action.
   const scenarios: DailyPlaybook["scenarios"] = [];
-  // Scenarios are built on levels inside the day's reach (playbookDayBounds); the all-expiry walls are named apart.
-  const day = playbookDayBounds(spot, gamma.callWall, gamma.putWall, v, pivots ? { h4: pivots.camarilla.h4, l4: pivots.camarilla.l4, r1: pivots.classic.r1, s1: pivots.classic.s1 } : null);
+  const tk = tick(spot);
+  const day = playbookDayBounds(spot, gamma.callWall, gamma.putWall, v, pivots ? { h4: pivots.camarilla.h4, l4: pivots.camarilla.l4, r1: pivots.classic.r1, s1: pivots.classic.s1 } : null, tk);
   const cw = day.upper.price, pw = day.lower.price;
   const upL = day.upper.label, loL = day.lower.label;
-  // The gamma flip is a level of the day only inside the same reach.
-  const zg = gamma.zeroGamma != null && day.sigma != null && Math.abs(gamma.zeroGamma - spot) > DAY_REACH_SIGMAS * day.sigma ? null : gamma.zeroGamma;
+  const U = `${fmtPrice(cw, tk)} (${upL})`, L = `${fmtPrice(pw, tk)} (${loL})`;
+  const reach = day.sigma != null ? DAY_REACH_SIGMAS * day.sigma : null;
+  // The gamma flip is a level of the day inside the same reach (or, with no VIX, between the two levels).
+  const zgRaw = gamma.zeroGamma;
+  const zg = zgRaw != null && (reach != null ? Math.abs(zgRaw - spot) <= reach : zgRaw > pw && zgRaw < cw) ? zgRaw : null;
+  const step = day.sigma ?? (cw - pw);
 
-  const tk = tick(spot);
-  const range = cw - pw;
-  const mid = (cw + pw) / 2;
-
-  if (gamma.regime === "positive") {
-    // Pin & fade: short the call wall touch, long the put wall touch
-    scenarios.push({
-      name: "Base Case — Pin & Fade",
-      trigger: `If price opens between ${fmtPrice(pw, tk)} and ${fmtPrice(cw, tk)} and accepts above ${fmtPrice(mid, tk)}`,
-      target: `${gamma.maxPain != null ? `Max pain ${fmtPrice(gamma.maxPain, tk)}; ` : ""}fade ${fmtPrice(cw, tk)} top, fade ${fmtPrice(pw, tk)} bottom`,
-      invalidation: `15-min close above ${fmtPrice(cw, tk)} or below ${fmtPrice(pw, tk)}`,
-      odds: "primary",
-      levels: buildLevels(
-        "either",
-        roundToTick(cw - tk, tk),                     // SELL near call wall touch
-        roundToTick(cw + 2 * tk, tk),                 // stop just over call wall
-        roundToTick(mid, tk),                         // T1 = mid
-        roundToTick(pw + range * 0.2, tk),            // T2 = upper-put-wall area
-        spot,
-      ),
-    });
-    scenarios.push({
-      name: "Upside Break — Call Wall Roll",
-      trigger: `If 15-min closes above ${fmtPrice(cw, tk)} on rising volume`,
-      target: `Roll to next call-wall strike; expect ${fmtPrice(roundToTick(cw + range * 0.4, tk), tk)} then ${fmtPrice(roundToTick(cw + range * 0.8, tk), tk)}`,
-      invalidation: `Reclaim below ${fmtPrice(cw, tk)} within 30 min of break`,
-      odds: "secondary",
-      levels: buildLevels(
-        "long",
-        roundToTick(cw + tk, tk),
-        roundToTick(cw - 2 * tk, tk),
-        roundToTick(cw + range * 0.4, tk),
-        roundToTick(cw + range * 0.8, tk),
-        spot,
-      ),
-    });
-    scenarios.push({
-      name: "Downside Break — Put Wall Fail",
-      trigger: `If 15-min closes below ${fmtPrice(pw, tk)} (${loL})`,
-      // The flip is named only when it lies below the entry (it usually sits above the put wall, where it is not a level of this scenario).
-      target: zg != null && zg < pw - tk ? `Test zero-gamma ${fmtPrice(zg, tk)} then ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}` : `Extend ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}`,
-      invalidation: `Reclaim above ${fmtPrice(pw, tk)}`,
-      odds: "tail",
-      levels: buildLevels(
-        "short",
-        roundToTick(pw - tk, tk),
-        roundToTick(pw + 2 * tk, tk),
-        zg != null ? roundToTick(zg, tk) : roundToTick(pw - range * 0.3, tk),
-        roundToTick(pw - range * 0.5, tk),
-        spot,
-      ),
-    });
-  } else if (gamma.regime === "negative") {
-    scenarios.push({
-      name: "Base Case — Trend Day",
-      trigger: `After the first 30 minutes, a 15-min close above ${fmtPrice(cw, tk)} (${upL}) or below ${fmtPrice(pw, tk)} (${loL})`,
-      target: `Continuation on the side that breaks${day.sigma != null ? `; one day range from VIX is about ${fmtPrice(roundToTick(day.sigma, tk), tk)} either way` : ""}`,
-      invalidation: `Mid-session reversal of 50%+ of morning range`,
-      odds: "primary",
-      levels: buildLevels(
-        "either",
-        null,
-        null,
-        roundToTick(spot + range * 0.5 * Math.sign(spot - mid || 1), tk),
-        roundToTick(spot + range * Math.sign(spot - mid || 1), tk),
-        spot,
-      ),
-    });
-    scenarios.push({
-      name: "Short-Gamma Cascade Down",
-      trigger: `Rejection at ${fmtPrice(zg ?? cw, tk)} AND 15-min close below ${fmtPrice(pw, tk)}`,
-      target: pivots ? `${fmtPrice(pivots.classic.s2, tk)} then ${fmtPrice(pivots.camarilla.l5, tk)}` : `${fmtPrice(roundToTick(pw - range, tk), tk)} extension`,
-      invalidation: `Reclaim of ${fmtPrice(pw, tk)} (${loL})`,
-      odds: "secondary",
-      levels: buildLevels(
-        "short",
-        roundToTick(pw - tk, tk),
-        roundToTick(pw + 3 * tk, tk),
-        pivots ? roundToTick(pivots.classic.s2, tk) : roundToTick(pw - range * 0.5, tk),
-        pivots ? roundToTick(pivots.camarilla.l5, tk) : roundToTick(pw - range, tk),
-        spot,
-      ),
-    });
-    scenarios.push({
-      name: "Reflex Short Squeeze",
-      trigger: `Reclaim of ${zg != null ? `zero-gamma ${fmtPrice(zg, tk)}` : `the midpoint ${fmtPrice(mid, tk)}`} with VIX down more than 5%`,
-      target: `Move back toward ${fmtPrice(cw, tk)} (${upL})`,
-      invalidation: `Fails ${fmtPrice(zg ?? mid, tk)} on retest within 30 min`,
-      odds: "tail",
-      levels: buildLevels(
-        "long",
-        zg != null ? roundToTick(zg + tk, tk) : roundToTick(mid + tk, tk),
-        zg != null ? roundToTick(zg - 2 * tk, tk) : roundToTick(mid - 2 * tk, tk),
-        roundToTick(mid + range * 0.3, tk),
-        roundToTick(cw, tk),
-        spot,
-      ),
-    });
-  } else {
-    // Near gamma flip — unstable regime
-    const flip = zg ?? mid;
-    scenarios.push({
-      name: "Unstable Regime — Trade the Flip",
-      trigger: `First 30-min close decides: above ${fmtPrice(flip, tk)} = long-gamma pin day; below = short-gamma trend day`,
-      target: `Long: drift to ${fmtPrice(cw, tk)}. Short: cascade to ${fmtPrice(pw, tk)} then ${fmtPrice(roundToTick(pw - range * 0.4, tk), tk)}`,
-      invalidation: `Chop back through ${fmtPrice(flip, tk)} — the read no longer holds`,
-      odds: "primary",
-      levels: buildLevels(
-        "either",
-        null,
-        null,
-        roundToTick(spot > flip ? cw : pw, tk),
-        roundToTick(spot > flip ? cw + range * 0.3 : pw - range * 0.3, tk),
-        spot,
-      ),
-    });
+  // The two nearest named levels beyond a bound, else half and one step beyond it.
+  const named: Array<[number, string]> = [];
+  if (pivots) {
+    const c = pivots.classic, m = pivots.camarilla;
+    for (const [x, n] of [[c.r1, "classic R1"], [c.r2, "classic R2"], [c.r3, "classic R3"], [c.s1, "classic S1"], [c.s2, "classic S2"], [c.s3, "classic S3"], [m.h4, "Camarilla H4"], [m.h5, "Camarilla H5"], [m.l4, "Camarilla L4"], [m.l5, "Camarilla L5"]] as Array<[number, string]>) {
+      if (typeof x === "number" && Number.isFinite(x)) named.push([x, n]);
+    }
   }
+  if (zg != null) named.push([zg, "zero-gamma"]);
+  const unit = day.sigma != null ? "one-sigma daily move" : "range width";
+  const beyond = (bound: number, dir: 1 | -1): { t1: number; t2: number; text: string } => {
+    const outer = named.filter(([x]) => (x - bound) * dir >= tk && Math.abs(x - bound) <= 2 * step).sort((a, b) => Math.abs(a[0] - bound) - Math.abs(b[0] - bound)).slice(0, 2);
+    if (outer.length === 2) return { t1: outer[0][0], t2: outer[1][0], text: `The next levels ${dir > 0 ? "above" : "below"} are ${fmtPrice(outer[0][0], tk)} (${outer[0][1]}) and ${fmtPrice(outer[1][0], tk)} (${outer[1][1]})` };
+    const h = roundToTick(bound + dir * step * 0.5, tk), f = roundToTick(bound + dir * step, tk);
+    if (outer.length === 1) return { t1: outer[0][0], t2: f, text: `The next level ${dir > 0 ? "above" : "below"} is ${fmtPrice(outer[0][0], tk)} (${outer[0][1]}); a full ${unit} beyond is ${fmtPrice(f, tk)}` };
+    return { t1: h, t2: f, text: `No named level within reach ${dir > 0 ? "above" : "below"}; half a ${unit} and a full ${unit} beyond are ${fmtPrice(h, tk)} and ${fmtPrice(f, tk)}` };
+  };
+  const back = Math.max(2 * tk, roundToTick(step * 0.25, tk));
+  const up = beyond(cw, 1), dn = beyond(pw, -1);
+  const tendency = gamma.regime === "positive" ? "Estimated dealer gamma is positive: hedging flow tends to lean against moves toward either level (model)"
+    : gamma.regime === "negative" ? "Estimated dealer gamma is negative: hedging flow tends to add to moves, so a move toward either level can run on (model)"
+    : "Estimated dealer gamma is near zero: neither tendency is read";
+  const inside = {
+    name: `Inside — between ${fmtPrice(pw, tk)} and ${fmtPrice(cw, tk)}`,
+    trigger: `Price stays between ${L} and ${U}`,
+    target: tendency,
+    invalidation: `A 15-min close above ${fmtPrice(cw, tk)} or below ${fmtPrice(pw, tk)}`,
+    levels: noLevels("either"),
+  };
+  const above = {
+    name: `Above ${fmtPrice(cw, tk)}`,
+    trigger: `A 15-min close above ${U}`,
+    target: up.text,
+    invalidation: `A 15-min close back below ${fmtPrice(cw, tk)}`,
+    levels: buildLevels("long", roundToTick(cw + tk, tk), roundToTick(cw - back, tk), up.t1, up.t2, spot),
+  };
+  const below = {
+    name: `Below ${fmtPrice(pw, tk)}`,
+    trigger: `A 15-min close below ${L}`,
+    target: dn.text,
+    invalidation: `A 15-min close back above ${fmtPrice(pw, tk)}`,
+    levels: buildLevels("short", roundToTick(pw - tk, tk), roundToTick(pw + back, tk), dn.t1, dn.t2, spot),
+  };
+  // Order (the card's "largest / second / smallest weight"): hand-set from the gamma sign and the bias, not a probability.
+  const nearUp = cw - spot <= spot - pw;
+  const firstBreak = bias === "bullish" ? above : bias === "bearish" ? below : nearUp ? above : below;
+  const otherBreak = firstBreak === above ? below : above;
+  const ordered = gamma.regime === "positive" ? [inside, firstBreak, otherBreak] : [firstBreak, otherBreak, inside];
+  (["primary", "secondary", "tail"] as const).forEach((odds, k) => scenarios.push({ ...ordered[k], odds }));
 
   // Gameplan bullets
   const gameplan: string[] = [];
@@ -656,33 +598,45 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   // hedges) and no sizing advice. The gamma regime is a model estimate from
   // OI with an assumed dealer sign, not observed dealer positions.
   if (gamma.regime === "positive") {
-    gameplan.push(`Estimated dealer gamma is positive: hedging flow tends to lean against moves, so ${fmtPrice(pw, tk)} (${loL}) and ${fmtPrice(cw, tk)} (${upL}) are the levels to watch for reversion.`);
+    gameplan.push(`Estimated dealer gamma is positive: hedging flow tends to lean against moves (model). The day's two levels are ${L} and ${U}.`);
   } else if (gamma.regime === "negative") {
-    gameplan.push(`Estimated dealer gamma is negative: hedging flow tends to add to moves, so a break of ${fmtPrice(pw, tk)} (${loL}) or ${fmtPrice(cw, tk)} (${upL}) can extend further than in a positive-gamma tape.`);
+    gameplan.push(`Estimated dealer gamma is negative: hedging flow tends to add to moves (model), so a move through ${L} or ${U} can run on further than in a positive-gamma tape.`);
   } else {
-    gameplan.push(`Estimated dealer gamma is near zero: the first 30-minute close relative to zero-gamma ${zg?.toFixed(1) ?? "(unavailable)"} shows which regime the session is in.`);
+    gameplan.push(`Estimated dealer gamma is near zero. ${zgRaw == null ? "Zero-gamma is unavailable." : zg == null ? `Zero-gamma ${fmtPrice(zgRaw, tk)} lies beyond the day's reach.` : `Which side of zero-gamma ${fmtPrice(zg, tk)} the price holds after the first 30 minutes shows which tendency applies.`}`);
   }
-
-  // The all-expiry walls, when they are not levels of the day: named for what they are, with their distance.
-  const farPct = (x: number) => `${(Math.abs(x - spot) / spot * 100).toFixed(1)}%`;
-  const farUp = gamma.callWall !== cw, farDn = gamma.putWall !== pw;
-  if (farUp || farDn) {
-    const parts = [farDn ? `put wall ${fmtPrice(gamma.putWall, tk)} (${farPct(gamma.putWall)} below)` : null, farUp ? `call wall ${fmtPrice(gamma.callWall, tk)} (${farPct(gamma.callWall)} above)` : null].filter(Boolean);
-    gameplan.push(`Largest positions across all expiries: ${parts.join(" and ")}. ${parts.length > 1 ? "They are" : "It is"} more than ${DAY_REACH_SIGMAS} day ranges from the price, so the scenarios above use nearer levels instead.`);
+  if (day.sigma != null) {
+    gameplan.push(`VIX-implied one-sigma daily move (VIX / sqrt(252)): about ${fmtPrice(roundToTick(day.sigma, tk), tk)} either way. An implied figure, not a forecast; real days often move further.`);
+  }
+  if (day.upper.far || day.lower.far) {
+    gameplan.push(`No VIX read and no pivot on that side: the day's reach is not known, so ${[day.lower.far ? L : null, day.upper.far ? U : null].filter(Boolean).join(" and ")} ${day.upper.far && day.lower.far ? "are" : "is"} the all-expiry wall and may be far from the price.`);
+  }
+  // The gamma levels that are not scenario levels today, each with its side, distance and reason.
+  const farPct = (x: number) => `${(Math.abs(x - spot) / spot * 100).toFixed(1)}% ${x >= spot ? "above" : "below"}`;
+  const why = (x: number, wantDir: 1 | -1 | 0) =>
+    wantDir !== 0 && (x - spot) * wantDir <= 0 ? "on the other side of the price"
+      : reach != null && Math.abs(x - spot) > reach ? `beyond ${DAY_REACH_SIGMAS} one-sigma daily moves`
+      : "further than the nearest pivot on its side";
+  const unused: string[] = [];
+  if (gamma.putWall !== pw) unused.push(`put wall ${fmtPrice(gamma.putWall, tk)} (${farPct(gamma.putWall)}; ${why(gamma.putWall, -1)})`);
+  if (gamma.callWall !== cw) unused.push(`call wall ${fmtPrice(gamma.callWall, tk)} (${farPct(gamma.callWall)}; ${why(gamma.callWall, 1)})`);
+  if (zgRaw != null && zg == null) unused.push(`zero-gamma ${fmtPrice(zgRaw, tk)} (${farPct(zgRaw)}; ${reach != null ? `beyond ${DAY_REACH_SIGMAS} one-sigma daily moves` : "outside the day's two levels"})`);
+  if (unused.length) {
+    gameplan.push(`Gamma levels over all expiries that are not scenario levels today: ${unused.join("; ")}. The walls are the strikes with the largest estimated dealer gamma, not day levels.`);
   }
 
   if (pivots) {
     const prox = proximityAnalysis(spot, pivots);
     if (prox.nearest) {
-      gameplan.push(`Spot ${spot.toFixed(2)} sits ${Math.abs(prox.nearest.value - spot).toFixed(2)} from ${prox.nearest.name} (${prox.nearest.value.toFixed(2)}). First reaction there tells the day's tone.`);
+      // The pivot table's names carry a role in brackets ("L3 (fade)"); only the level's name is used here.
+      gameplan.push(`Spot ${spot.toFixed(2)} is ${Math.abs(prox.nearest.value - spot).toFixed(2)} from the nearest pivot level, ${prox.nearest.name.replace(/\s*\(.*\)\s*$/, "")} at ${prox.nearest.value.toFixed(2)}.`);
     }
-    gameplan.push(`Camarilla H3 ${pivots.camarilla.h3.toFixed(1)} / L3 ${pivots.camarilla.l3.toFixed(1)} = reversion fade zones. H4 ${pivots.camarilla.h4.toFixed(1)} / L4 ${pivots.camarilla.l4.toFixed(1)} = breakout triggers with stops beyond H5/L5.`);
+    gameplan.push(`Camarilla pivots around the price: H3 ${pivots.camarilla.h3.toFixed(1)} and L3 ${pivots.camarilla.l3.toFixed(1)} inside, H4 ${pivots.camarilla.h4.toFixed(1)} and L4 ${pivots.camarilla.l4.toFixed(1)} outside them.`);
   }
 
   if (squeeze.direction === "up" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze read skewed UP (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${gamma.callWall.toFixed(0)} call wall is the level it refers to.`);
+    gameplan.push(`Gamma-squeeze read skewed UP (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${gamma.callWall.toFixed(0)} call wall (all expiries) is the level it refers to.`);
   } else if (squeeze.direction === "down" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze read skewed DOWN (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${gamma.putWall.toFixed(0)} put wall is the level it refers to.`);
+    gameplan.push(`Gamma-squeeze read skewed DOWN (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${gamma.putWall.toFixed(0)} put wall (all expiries) is the level it refers to.`);
   }
 
   if (v != null && v > 25) {
@@ -693,7 +647,7 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   const summary = (() => {
     const parts: string[] = [];
     parts.push(`Dealer gamma is ${gamma.regime === "positive" ? "NET LONG" : gamma.regime === "negative" ? "NET SHORT" : "NEAR ZERO"} (${(gamma.totalGex / 1e9).toFixed(2)}B/1%).`);
-    parts.push(`${gamma.regime === "positive" ? "Expect mean-reversion and pinning." : gamma.regime === "negative" ? "Expect trend amplification and range expansion." : "Unstable regime; wait for the flip to resolve."}`);
+    parts.push(`${gamma.regime === "positive" ? "Hedging flow tends to lean against moves (model)." : gamma.regime === "negative" ? "Hedging flow tends to add to moves (model)." : "Near the flip: neither tendency is read."}`);
     parts.push(v != null
       ? `VIX at ${v.toFixed(2)}${vChg != null ? ` (${vChg > 0 ? "+" : ""}${vChg.toFixed(1)}% d/d)` : " (change unavailable)"}.`
       : "VIX unavailable from Schwab.");
@@ -720,16 +674,15 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   })();
 
   // Key levels for the header
-  const resistance: { level: number; label: string }[] = [
-    { level: cw, label: "Call Wall" },
-  ];
-  const support: { level: number; label: string }[] = [
-    { level: pw, label: "Put Wall" },
-  ];
-  if (zg != null) {
-    if (zg > spot) resistance.push({ level: zg, label: "Zero-Γ Flip" });
-    else support.push({ level: zg, label: "Zero-Γ Flip" });
-  }
+  // Gamma levels by their own names and side of the price; a one-sigma bound, when it is a scenario level, by its name.
+  const resistance: { level: number; label: string }[] = [];
+  const support: { level: number; label: string }[] = [];
+  const side = (level: number, label: string) => { if (Number.isFinite(level) && level !== spot) (level > spot ? resistance : support).push({ level, label }); };
+  side(gamma.callWall, "Call Wall");
+  side(gamma.putWall, "Put Wall");
+  if (zgRaw != null) side(zgRaw, "Zero-Γ Flip");
+  if (/one-sigma/.test(upL)) side(cw, "+1σ daily move (VIX)");
+  if (/one-sigma/.test(loL)) side(pw, "−1σ daily move (VIX)");
   if (pivots) {
     // By side of spot, not by name: with spot above H3/H4/R1 those levels are below price and were
     // still listed under Resistance.
@@ -748,7 +701,8 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   support.sort((a, b) => b.level - a.level);
 
   // News playbook: per-event reaction map for today's catalysts
-  const newsPlaybook = buildNewsPlaybook(inp.todaysEvents ?? [], spot, cw, pw);
+  // The news playbook describes the gamma walls themselves, so it is given the walls, not the day's levels.
+  const newsPlaybook = buildNewsPlaybook(inp.todaysEvents ?? [], spot, gamma.callWall, gamma.putWall);
 
   return {
     headline,
