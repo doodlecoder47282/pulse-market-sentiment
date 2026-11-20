@@ -200,6 +200,50 @@ export function staleServeDecision(
   };
 }
 
+/** Share of the per-minute request limit in use at which a settled daily copy is served instead of refreshed. */
+export const SETTLED_DAILY_PRESSURE = 0.5;
+/** The rule below applies for this long after the process starts (the cold-cache page load it exists for)... */
+export const SETTLED_DAILY_BOOT_WINDOW_MS = 10 * 60_000;
+/** ...and otherwise only to a copy younger than this (two evening TTLs), so sustained load cannot hold one copy all night. */
+export const SETTLED_DAILY_MAX_AGE_MS = 2 * 60 * 60_000;
+/**
+ * Market closed, and the cached daily bars were read after the last session settled: the last-session copy.
+ * When at least half the per-minute request limit is already in use, that copy is served and the refresh is
+ * not made, leaving the budget for data that moves. It is bounded: it applies in the first minutes after a
+ * restart, or to a copy at most two hours old; an older copy under sustained load is refreshed as usual.
+ * Whether a daily bar is final at the settle is not verified here (late volume can still be added), which is
+ * why the rule is bounded and why what it serves is labelled the last-session copy with its real age.
+ */
+export function serveSettledDailyUnderPressure(
+  kind: SchwabDataKind, fetchedAtMs: number | null | undefined, used: number, limit: number, sinceBootMs: number, nowMs: number = Date.now(),
+): boolean {
+  if (kind !== "daily_bars" || fetchedAtMs == null || !Number.isFinite(fetchedAtMs) || !(limit > 0)) return false;
+  if (used < limit * SETTLED_DAILY_PRESSURE) return false;
+  if (!(sinceBootMs >= 0 && sinceBootMs < SETTLED_DAILY_BOOT_WINDOW_MS) && nowMs - fetchedAtMs >= SETTLED_DAILY_MAX_AGE_MS) return false;
+  return isLastSessionCopy(kind, fetchedAtMs, nowMs);
+}
+
+/** Rows of kept daily payloads at most, newest fetch first. */
+export const RESTORE_MAX_ROWS = 300;
+/**
+ * Which kept daily payloads go back into the cache after a restart, and with what expiry. A row is kept only
+ * while the cache rules could still serve it and its fetch time is not in the future; its expiry is never
+ * later than the longest fresh TTL a daily payload can have, so a damaged row cannot read as fresh for long.
+ * Rows are taken newest fetch first up to RESTORE_MAX_ROWS; the rest are returned to be deleted.
+ */
+export function planDailyRestore<T extends { cache_key: string; fetched_at: number; expires_at: number }>(rows: T[], nowMs: number): { keep: Array<T & { expires_at: number }>; drop: string[] } {
+  const maxTtl = Math.max(FRESH_TTL_MS.daily_bars, NON_TRADING_DAY_TTL_MS.daily_bars, SETTLED_EVENING_TTL_MS.daily_bars);
+  const keep: Array<T & { expires_at: number }> = [];
+  const drop: string[] = [];
+  for (const r of rows.slice().sort((a, b) => b.fetched_at - a.fetched_at)) {
+    const ok = Number.isFinite(r.fetched_at) && r.fetched_at <= nowMs && !cacheEntryUnservable("daily_bars", r.fetched_at, nowMs);
+    if (!ok || keep.length >= RESTORE_MAX_ROWS) { drop.push(r.cache_key); continue; }
+    const exp = Number.isFinite(r.expires_at) ? Math.min(r.expires_at, r.fetched_at + maxTtl) : r.fetched_at;
+    keep.push({ ...r, expires_at: exp });
+  }
+  return { keep, drop };
+}
+
 /**
  * A cached payload that can never be served again: older than the longest
  * serve age of its kind (the closed-market cap is the larger) AND older than
