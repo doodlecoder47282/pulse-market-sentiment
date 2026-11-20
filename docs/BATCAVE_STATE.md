@@ -2982,6 +2982,14 @@ server/playbook.ts is rewritten:
 - Key levels keep the walls' own names; the news playbook is given the walls it names.
 Tests: tests/quant/playbook-day-levels.test.ts (8).
 
+**Level record: one yardstick both ways (2026-11-20, version 2026.11.20-2).** Why: version -1 counted
+"traded back" on a 10-point wick and "closed through" on a 5-point close, two different distances and two
+different measures, so the 6 to 27 split it showed could not be read as held against broke. Now both outcomes
+are a 1-minute close 10 points from the level (back on the side the index came from, or beyond it), whichever
+comes first, the touch bar's own close included either way; a wick alone counts for neither. The record is
+recomputed from the stored minute bars under the new version, so nothing from version -1 is mixed in. Card
+column and sentence now say "closed back". Files: shared/levelRecord.ts, server/levelRecord.ts (limits),
+LevelRecordCard.tsx. Tests: tests/quant/level-record.test.ts.
 **An old 0DTE read is no longer shown as today's (2026-11-20).** Why: the owner pasted a map reading "exp
 2026-11-19, chain 1 d ago" under a "today" heading with a countdown. A browser tab in the background stops
 polling and a device that slept wakes with the read it last held; nothing compared the read's own time with
