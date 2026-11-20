@@ -476,6 +476,38 @@ export function playbookBiasPoints(inp: Pick<PlaybookInputs, "marketScore" | "ga
   return { bullPts, bearPts, marketScore, v, vChg, termRatio, unavailable };
 }
 
+/** A scenario level may sit at most this many 1-sigma day ranges from the price; beyond it the level is not a level of today. */
+export const DAY_REACH_SIGMAS = 1.5;
+export interface DayBound { price: number; label: string; far: boolean }
+/**
+ * The upper and lower level the day's scenarios are built on. The "call wall" and "put wall" are the strikes
+ * with the most dealer gamma over every expiry in the chain window; on an index ETF those are usually big
+ * round strikes many percent away (seen live: 700 and 775 with the price at 709), and scenarios built on them
+ * describe moves that are not day moves. A wall is used only when it lies within DAY_REACH_SIGMAS day ranges
+ * (VIX / sqrt(252)) of the price; otherwise the nearest of Camarilla H4 / classic R1 (above) or L4 / S1
+ * (below) inside that reach, else the edge of one day range. With no VIX the wall is kept and marked far.
+ */
+export function playbookDayBounds(
+  spot: number, callWall: number, putWall: number, vix: number | null,
+  piv: { h4: number; l4: number; r1: number; s1: number } | null,
+): { upper: DayBound; lower: DayBound; sigma: number | null } {
+  const sigma = vix != null && Number.isFinite(vix) && vix > 0 ? spot * (vix / 100) / Math.sqrt(252) : null;
+  if (sigma == null) return { sigma, upper: { price: callWall, label: "call wall, all expiries", far: true }, lower: { price: putWall, label: "put wall, all expiries", far: true } };
+  const reach = DAY_REACH_SIGMAS * sigma;
+  const pick = (wall: number, wallLabel: string, cands: Array<[number | undefined, string]>, dir: 1 | -1): DayBound => {
+    const inReach = (x: number | undefined): x is number => typeof x === "number" && Number.isFinite(x) && (x - spot) * dir > 0 && Math.abs(x - spot) <= reach;
+    if (inReach(wall)) return { price: wall, label: wallLabel, far: false };
+    const near = cands.filter((c): c is [number, string] => inReach(c[0])).sort((a, b) => Math.abs(a[0] - spot) - Math.abs(b[0] - spot))[0];
+    if (near) return { price: near[0], label: near[1], far: false };
+    return { price: spot + dir * sigma, label: `${dir > 0 ? "upper" : "lower"} edge of one day range from VIX`, far: false };
+  };
+  return {
+    sigma,
+    upper: pick(callWall, "call wall", [[piv?.h4, "Camarilla H4"], [piv?.r1, "classic R1"]], 1),
+    lower: pick(putWall, "put wall", [[piv?.l4, "Camarilla L4"], [piv?.s1, "classic S1"]], -1),
+  };
+}
+
 export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   const { spot, gamma, pivots, squeeze } = inp;
   const { bullPts, bearPts, marketScore, v, vChg, termRatio, unavailable } = playbookBiasPoints(inp);
@@ -493,7 +525,12 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
 
   // Build scenarios
   const scenarios: DailyPlaybook["scenarios"] = [];
-  const cw = gamma.callWall, pw = gamma.putWall, zg = gamma.zeroGamma;
+  // Scenarios are built on levels inside the day's reach (playbookDayBounds); the all-expiry walls are named apart.
+  const day = playbookDayBounds(spot, gamma.callWall, gamma.putWall, v, pivots ? { h4: pivots.camarilla.h4, l4: pivots.camarilla.l4, r1: pivots.classic.r1, s1: pivots.classic.s1 } : null);
+  const cw = day.upper.price, pw = day.lower.price;
+  const upL = day.upper.label, loL = day.lower.label;
+  // The gamma flip is a level of the day only inside the same reach.
+  const zg = gamma.zeroGamma != null && day.sigma != null && Math.abs(gamma.zeroGamma - spot) > DAY_REACH_SIGMAS * day.sigma ? null : gamma.zeroGamma;
 
   const tk = tick(spot);
   const range = cw - pw;
@@ -533,7 +570,7 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     });
     scenarios.push({
       name: "Downside Break — Put Wall Fail",
-      trigger: `If 15-min closes below ${fmtPrice(pw, tk)} (failed put wall)`,
+      trigger: `If 15-min closes below ${fmtPrice(pw, tk)} (${loL})`,
       // The flip is named only when it lies below the entry (it usually sits above the put wall, where it is not a level of this scenario).
       target: zg != null && zg < pw - tk ? `Test zero-gamma ${fmtPrice(zg, tk)} then ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}` : `Extend ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}`,
       invalidation: `Reclaim above ${fmtPrice(pw, tk)}`,
@@ -550,8 +587,8 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   } else if (gamma.regime === "negative") {
     scenarios.push({
       name: "Base Case — Trend Day",
-      trigger: `Take direction of first 30-min range extension; chase the break of ${fmtPrice(cw, tk)} (long) or ${fmtPrice(pw, tk)} (short)`,
-      target: `Fast trip to the opposite wall — ${fmtPrice(cw, tk)} from below or ${fmtPrice(pw, tk)} from above`,
+      trigger: `After the first 30 minutes, a 15-min close above ${fmtPrice(cw, tk)} (${upL}) or below ${fmtPrice(pw, tk)} (${loL})`,
+      target: `Continuation on the side that breaks${day.sigma != null ? `; one day range from VIX is about ${fmtPrice(roundToTick(day.sigma, tk), tk)} either way` : ""}`,
       invalidation: `Mid-session reversal of 50%+ of morning range`,
       odds: "primary",
       levels: buildLevels(
@@ -567,7 +604,7 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
       name: "Short-Gamma Cascade Down",
       trigger: `Rejection at ${fmtPrice(zg ?? cw, tk)} AND 15-min close below ${fmtPrice(pw, tk)}`,
       target: pivots ? `${fmtPrice(pivots.classic.s2, tk)} then ${fmtPrice(pivots.camarilla.l5, tk)}` : `${fmtPrice(roundToTick(pw - range, tk), tk)} extension`,
-      invalidation: `Reclaim put wall ${fmtPrice(pw, tk)}`,
+      invalidation: `Reclaim of ${fmtPrice(pw, tk)} (${loL})`,
       odds: "secondary",
       levels: buildLevels(
         "short",
@@ -580,8 +617,8 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     });
     scenarios.push({
       name: "Reflex Short Squeeze",
-      trigger: `Reclaim zero-gamma ${fmtPrice(zg ?? mid, tk)} with VIX crushing > 5%`,
-      target: `Mean-revert to ${fmtPrice(cw, tk)} as dealers flip to long gamma`,
+      trigger: `Reclaim of ${zg != null ? `zero-gamma ${fmtPrice(zg, tk)}` : `the midpoint ${fmtPrice(mid, tk)}`} with VIX down more than 5%`,
+      target: `Move back toward ${fmtPrice(cw, tk)} (${upL})`,
       invalidation: `Fails ${fmtPrice(zg ?? mid, tk)} on retest within 30 min`,
       odds: "tail",
       levels: buildLevels(
@@ -619,11 +656,19 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   // hedges) and no sizing advice. The gamma regime is a model estimate from
   // OI with an assumed dealer sign, not observed dealer positions.
   if (gamma.regime === "positive") {
-    gameplan.push(`Estimated dealer gamma is positive: hedging flow tends to lean against moves, so the ${pw.toFixed(0)} put wall and ${cw.toFixed(0)} call wall are the levels to watch for reversion.`);
+    gameplan.push(`Estimated dealer gamma is positive: hedging flow tends to lean against moves, so ${fmtPrice(pw, tk)} (${loL}) and ${fmtPrice(cw, tk)} (${upL}) are the levels to watch for reversion.`);
   } else if (gamma.regime === "negative") {
-    gameplan.push(`Estimated dealer gamma is negative: hedging flow tends to add to moves, so a break of ${pw.toFixed(0)} or ${cw.toFixed(0)} can extend further than in a positive-gamma tape.`);
+    gameplan.push(`Estimated dealer gamma is negative: hedging flow tends to add to moves, so a break of ${fmtPrice(pw, tk)} (${loL}) or ${fmtPrice(cw, tk)} (${upL}) can extend further than in a positive-gamma tape.`);
   } else {
     gameplan.push(`Estimated dealer gamma is near zero: the first 30-minute close relative to zero-gamma ${zg?.toFixed(1) ?? "(unavailable)"} shows which regime the session is in.`);
+  }
+
+  // The all-expiry walls, when they are not levels of the day: named for what they are, with their distance.
+  const farPct = (x: number) => `${(Math.abs(x - spot) / spot * 100).toFixed(1)}%`;
+  const farUp = gamma.callWall !== cw, farDn = gamma.putWall !== pw;
+  if (farUp || farDn) {
+    const parts = [farDn ? `put wall ${fmtPrice(gamma.putWall, tk)} (${farPct(gamma.putWall)} below)` : null, farUp ? `call wall ${fmtPrice(gamma.callWall, tk)} (${farPct(gamma.callWall)} above)` : null].filter(Boolean);
+    gameplan.push(`Largest positions across all expiries: ${parts.join(" and ")}. ${parts.length > 1 ? "They are" : "It is"} more than ${DAY_REACH_SIGMAS} day ranges from the price, so the scenarios above use nearer levels instead.`);
   }
 
   if (pivots) {
@@ -635,9 +680,9 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   }
 
   if (squeeze.direction === "up" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze read skewed UP (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${cw.toFixed(0)} call wall is the level it refers to.`);
+    gameplan.push(`Gamma-squeeze read skewed UP (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${gamma.callWall.toFixed(0)} call wall is the level it refers to.`);
   } else if (squeeze.direction === "down" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze read skewed DOWN (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${pw.toFixed(0)} put wall is the level it refers to.`);
+    gameplan.push(`Gamma-squeeze read skewed DOWN (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${gamma.putWall.toFixed(0)} put wall is the level it refers to.`);
   }
 
   if (v != null && v > 25) {

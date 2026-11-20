@@ -2961,3 +2961,14 @@ minutes after the change-basis work deployed: QQQ still carried the last session
 feed had started a new day (-0.11% since the last close), and the board read "tech lagging by 2.08 percentage
 points" from the two. techRead now takes each side's basis and compares only when both are the same known
 basis; otherwise the read is "not compared", naming what each figure is, with state unknown.
+
+**Daily playbook scenarios use levels inside the day's reach (2026-11-20).** Owner report, with SPY at 709:
+the scenarios named a break of 775 or 700, a target of 775 and a reward/risk of 14.67, and one line read
+"chase the break". Cause: the playbook's walls are the strikes with the most dealer gamma over every expiry in
+the chain window, which on an index ETF are big round strikes many percent away. Now
+server/playbook.ts playbookDayBounds: a wall is a scenario level only within 1.5 one-sigma day ranges
+(VIX / sqrt(252)) of the price; otherwise the nearest of Camarilla H4 / classic R1 (above) or L4 / S1 (below)
+inside that reach, else the edge of one day range; the gamma flip is a scenario level only inside the same
+reach. Each scenario level carries its name. The far walls are named in a gameplan line with their distance.
+The short-gamma base case no longer instructs ("Take direction", "chase", "Fast trip"); it states the
+condition and what follows. With no VIX the walls are kept. Tests: tests/quant/playbook-day-levels.test.ts (3).
