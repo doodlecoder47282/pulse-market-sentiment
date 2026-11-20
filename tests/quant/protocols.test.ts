@@ -161,7 +161,59 @@ test("wiring: engine starts with the server, stores nothing in the demo, and the
   // Stale inputs are not reads; one release is one row.
   assert.match(eng, /tech: open && okQ\("QQQ"\) && okQ\("SPY"\) \? board\.tech\.state : "unknown"/);
   assert.match(eng, /vix: open && okQ\("\$VIX"\) \? board\.vix\.state : "unknown"/);
-  assert.match(eng, /l\.group !== "options" \|\| board\.cases\.optionsState === "ok"/);
+  assert.match(eng, /boardLevelsForRules\(/); // old option-map landmarks are kept from the rules (see the boardLevelsForRules tests)
   assert.match(eng, /PROTOCOL_RULES\.newsBeforeMin \+ PROTOCOL_RULES\.newsAfterMin \+ 5/);
   assert.match(eng, /lastRead\.delete\(t\.symbol\)/);
+});
+
+test("context row: taken from the rule's own context, so it carries the gated reads and the merged lines the rule saw", async () => {
+  const { contextRow } = await import("../../shared/protocols");
+  const raw = { qqqPct: -1.2, spyPct: -0.5, vixPct: 4, quotes: { SPX: "ok", QQQ: "stale", SPY: "ok", VIX: "ok" }, optionsAsOfMs: 900 };
+  const ctx: any = {
+    nowMs: 1_000, sessionOpen: true, minutesSinceOpen: 45, minutesToClose: 345, spx: 7200,
+    levels: [
+      { key: "wallAbove+pdh", label: "wall above 7,250 + prior-day high 7,253", price: 7253, group: "prior day" },
+      { key: "pdl", label: "prior-day low", price: 7100, group: "prior day" },
+      { key: "flip", label: "gamma flip", price: 7300, group: "options" },
+    ],
+    optionsState: "ok", tech: "unknown", vix: "firm", calendarKnown: true, minutesToTier1: 600, minutesSinceTier1: null, bars: [],
+  };
+  const row = contextRow(ctx, "2026-11-20", raw);
+  assert.deepEqual(row.optionLines, [{ key: "wallAbove+pdh", price: 7253 }, { key: "flip", price: 7300 }], "the merged line and price the rule compared against, not the raw landmark");
+  assert.equal(row.tech, "unknown", "a stale QQQ quote: the rule saw no tech read, and that is what is written");
+  assert.deepEqual([row.vix, row.spx, row.calendarKnown, row.minutesToTier1, row.minutesSinceOpen, row.session], ["firm", 7200, true, 600, 45, "2026-11-20"]);
+  assert.deepEqual(row.raw, raw, "what sat behind the gated reads is kept beside them");
+  const unread = contextRow({ ...ctx, spx: null, levels: [], optionsState: "stale" }, "2026-11-20", raw);
+  assert.deepEqual([unread.spx, unread.optionLines.length, unread.optionsState], [null, 0, "stale"]);
+});
+
+test("wiring: the context write comes after the rules run and cannot stop them", () => {
+  const src = readFileSync(new URL("../../server/protocolEngine.ts", import.meta.url), "utf8");
+  const evalAt = src.indexOf("const evals = evalProtocols(ctx);");
+  const writeAt = src.indexOf("INSERT OR REPLACE INTO desk_rule_context");
+  assert.ok(evalAt > 0 && writeAt > evalAt, "written after evaluation");
+  const block = src.slice(src.lastIndexOf("try {", writeAt), src.indexOf("lastContextError = String", writeAt));
+  assert.match(block, /contextRow\(ctx, today,/);
+  assert.match(block, /\} catch \(e: any\) \{/, "its own try: a failed write is recorded, not thrown into the tick");
+});
+
+test("an old option map's landmarks reach no rule, even inside a merged line named for its other member", async () => {
+  const { boardLevelsForRules, evalSweepReclaim } = await import("../../shared/protocols");
+  const all = [{ key: "pdl+magnetBelow", price: 7100, label: "prior-day low 7,100 + magnet below 7,098", group: "prior day" }, { key: "flip", price: 7300, label: "gamma flip", group: "options" }, { key: "pp", price: 7200, label: "pivot", group: "pivot" }];
+  const noOpt = [{ key: "pdl", price: 7100, label: "prior-day low", group: "prior day" }, { key: "pp", price: 7200, label: "pivot", group: "pivot" }];
+  assert.deepEqual(boardLevelsForRules(all, noOpt, "ok"), all);
+  assert.deepEqual(boardLevelsForRules(all, noOpt, "stale"), noOpt, "the calendar level stays, at its own price");
+  assert.deepEqual(boardLevelsForRules(all, noOpt, "unavailable"), noOpt);
+  assert.deepEqual(boardLevelsForRules(all, undefined, "stale").map((l) => l.key), ["pp"], "without the option-free list, every line holding a landmark goes");
+  // The sweep rule with a stale map: a magnet-below line it would have watched is not in what it is given.
+  const lone = [{ key: "magnetBelow", price: 7150, label: "magnet below", group: "options" }];
+  assert.equal(boardLevelsForRules(lone, [], "stale").length, 0);
+  assert.ok(typeof evalSweepReclaim === "function");
+});
+
+test("wiring: the engine reads index levels through boardLevelsForRules, for the rules and for the crossings log", () => {
+  const src = readFileSync(new URL("../../server/protocolEngine.ts", import.meta.url), "utf8");
+  assert.match(src, /levels: boardLevelsForRules\(spx\?\.levels \?\? \[\], board\.cases\.levelsWithoutOptions, board\.cases\.optionsState\)/);
+  assert.match(src, /t\.symbol === "\$SPX" \? boardLevelsForRules\(t\.levels, board\.cases\.levelsWithoutOptions, board\.cases\.optionsState\) : t\.levels/);
+  assert.doesNotMatch(src, /l\.group !== "options" \|\|/, "the group filter that a merged line slipped through is gone");
 });

@@ -2923,6 +2923,28 @@ limits on tap; counts only, with the statement that a few neighbouring sessions 
 from. Reads the stored 1-minute index bars the replay keeps. Route: GET /api/desk/level-record.
 Tests: tests/quant/level-record.test.ts (8).
 
+**Context log for option-level rules (2026-11-20).** The price-only rule can be replayed from stored bars; the
+wall rule reads the option wall, tech against the market and VIX as they were, and none of that was stored,
+so it could only ever gain one live session a day. At every evaluation in session (each minute) the protocol
+engine now writes down what the rules were given (table desk_rule_context): the index price as the rules saw
+it (null when its quote was not live), the option map's state, the board lines that hold an option landmark
+with their merged key and price (the price the wall rule compares against, not the raw landmark), the gated
+tech and VIX reads ("unknown" when a quote behind them was not live), the release-calendar fields and the
+session clock, plus the raw day changes and quote states behind the gated reads. The row is built from the
+same context object the evaluator received (shared/protocols.ts contextRow), written after the rules run and
+in its own try, so a failed write cannot stop a rule. Nothing is replayed from it yet; the Protocols card
+says how many checks and sessions exist and at how many a wall was on the board.
+Tests: two added to tests/quant/protocols.test.ts.
+
+
+**Old option-map landmarks cannot reach a rule through a merged line (2026-11-20).** Found by two reviews:
+the engine kept landmarks from a non-current option map out of the rules by dropping lines whose group is
+"options", but a merged line takes the group of its highest member, so "prior-day low + magnet below" passed
+the filter (a stale magnet could feed the sweep rule and the crossings log), and "wall above + prior-day
+high" with the wall on top was dropped whole (the prior-day high went unwatched). The board now also carries
+the index lines merged without option landmarks (cases.levelsWithoutOptions), and the engine reads levels
+through shared/protocols.ts boardLevelsForRules: every line with a current map, the option-free list
+otherwise. Tests: two added to protocols.test.ts, one to desk-board.test.ts.
 **Level board: what a day change is a change of (2026-11-20).** Seen live twice after midnight ET: "Market
 closed, last prices: VIX +0.00% on the day: flat" though VIX had closed up nearly 16%. The quote feed starts a
 new day at some point overnight (when is not known), after which the figure is the move since the last close,

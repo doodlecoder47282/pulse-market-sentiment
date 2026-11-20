@@ -292,6 +292,53 @@ export function levelHits(prev: number | null | undefined, cur: number | null | 
   return out;
 }
 
+/**
+ * The index's level lines a rule or the crossings log may read. With a current option map: every line. With
+ * any other map state: the lines merged without option landmarks, so no landmark from an old map reaches a
+ * rule, not even inside a merged line named for its other member, and a calendar level that shared a line
+ * with a landmark is still there at its own price.
+ */
+export function boardLevelsForRules<T extends { key: string }>(all: T[], withoutOptions: T[] | undefined, optionsState: string | undefined): T[] {
+  if (optionsState === "ok") return all;
+  if (withoutOptions) return withoutOptions;
+  // No option-free list was given: drop every line that holds a landmark (a calendar level merged into one goes with it).
+  return all.filter((l) => !l.key.split("+").some((k) => (OPTION_LEVEL_KEYS as readonly string[]).includes(k)));
+}
+
+/** Option landmark keys: a board line whose key holds one of these is an option line. */
+export const OPTION_LEVEL_KEYS = ["pin", "wallAbove", "magnetBelow", "flip", "straddleHigh", "straddleLow"] as const;
+export interface ContextRow {
+  at: number; session: string;
+  /** The index price the rules saw: null when its quote was not live. */
+  spx: number | null;
+  optionsState: string;
+  /** The board lines that hold an option landmark, exactly as the rules saw them: merged key and merged price. */
+  optionLines: Array<{ key: string; price: number }>;
+  /** Tech and VIX as the rules saw them: "unknown" when a quote behind them was not live. */
+  tech: string; vix: string;
+  calendarKnown: boolean; minutesToTier1: number | null; minutesSinceTier1: number | null;
+  minutesSinceOpen: number | null; minutesToClose: number | null;
+  /** What sat behind the gated reads, for a later replay at other thresholds: day changes and quote states. */
+  raw: { qqqPct: number | null; spyPct: number | null; vixPct: number | null; quotes: Record<string, string>; optionsAsOfMs: number | null };
+}
+/**
+ * One row of the context log: what the rules were given at one evaluation, taken from the same ProtocolCtx
+ * the evaluator received (the gated tech and VIX reads, the merged level lines, the calendar fields), so a
+ * later replay of a rule that reads option levels starts from what the live rule saw and not from a
+ * reconstruction. The price-only inputs (calendar levels, bars) are not repeated: they are rebuilt from
+ * stored bars. Written at every evaluation, in session.
+ */
+export function contextRow(ctx: ProtocolCtx, session: string, raw: ContextRow["raw"]): ContextRow {
+  const isOption = (key: string) => key.split("+").some((k) => (OPTION_LEVEL_KEYS as readonly string[]).includes(k));
+  return {
+    at: ctx.nowMs, session, spx: ctx.spx, optionsState: ctx.optionsState ?? "unavailable",
+    optionLines: ctx.levels.filter((l) => isOption(l.key) && Number.isFinite(l.price)).map((l) => ({ key: l.key, price: l.price })),
+    tech: ctx.tech, vix: ctx.vix,
+    calendarKnown: ctx.calendarKnown, minutesToTier1: ctx.minutesToTier1, minutesSinceTier1: ctx.minutesSinceTier1,
+    minutesSinceOpen: ctx.minutesSinceOpen, minutesToClose: ctx.minutesToClose, raw,
+  };
+}
+
 /** Crossings of one level by one ticker this close together are shown as one line. */
 export const HIT_JOIN_MIN = 10;
 export interface HitRow { id?: number; at: number; symbol: string; levelKey: string; label: string; levelPrice: number; direction: string; price: number }
