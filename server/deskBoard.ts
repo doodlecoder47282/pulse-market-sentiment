@@ -15,8 +15,7 @@ import { dailyBarEtDate } from "../shared/macroCalendar";
 import { editionFromEnv } from "../shared/edition";
 import {
   boardSession, quoteChangeBasis, type ChangeBasis, calendarLevels, rangeLevels, sessionLevels, dayBarFromIntraday, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
-  type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead,
-} from "../shared/levelBoard";
+  type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead, quoteDayLevels } from "../shared/levelBoard";
 
 export const BOARD_TICKERS: ReadonlyArray<{ symbol: string; label: string; kind: "index" | "etf" | "vol" | "future" }> = [
   { symbol: "$SPX", label: "SPX", kind: "index" },
@@ -258,12 +257,13 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       } catch { /* the plain wording below stands */ }
     }));
   }
-  // Futures are price-only for now: the price-history endpoint is not known to serve a root future, and a
-  // refusal there cools the endpoint down for every caller (SPX charts included). No futures bars are asked for.
+  // No futures bars are asked for: the price-history endpoint is not known to serve a root future, and a
+  // refusal there cools the endpoint down for every caller (SPX charts included). A future's levels are the
+  // day fields of its own quote (shared/levelBoard.ts quoteDayLevels): no extra request, nothing derived.
   const wantsBars = (t: (typeof BOARD_TICKERS)[number]) => t.kind !== "future";
   const [opt, dailies, intras] = await Promise.all([
     deps.optionLevels(nowMs),
-    Promise.all(BOARD_TICKERS.map((t) => wantsBars(t) ? dailyBars(deps, t.symbol, forSession, nowMs) : Promise.resolve<DailyRead>({ bars: [], asOfMs: null, reason: "price only: no futures bars are asked for, so no levels are computed" }))),
+    Promise.all(BOARD_TICKERS.map((t) => wantsBars(t) ? dailyBars(deps, t.symbol, forSession, nowMs) : Promise.resolve<DailyRead>({ bars: [], asOfMs: null, reason: "no futures bars are asked for" }))),
     Promise.all(BOARD_TICKERS.map((t) => sessionOpen && t.kind !== "future" ? intraBars(t.symbol, nowMs, deps) : Promise.resolve(null))),
   ]);
 
@@ -320,7 +320,16 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     }
     let levelsState: BoardTicker["levelsState"] = levels.length ? "ok" : "unavailable";
     const reasons: string[] = [];
-    if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
+    if (t.kind === "future") {
+      // From the quote alone, and only from a quote that produced a price on this read.
+      const ql = price != null ? quoteDayLevels(q) : { levels: [], missing: [] as string[] };
+      levels = ql.levels;
+      levelsState = levels.length ? "partial" : "unavailable";
+      if (price == null) reasons.push("no quote, so no levels");
+      else if (!levels.length) reasons.push(`${src(deps)}'s quote for ${t.symbol} carries no previous close, open, high or low; no futures bars are asked for, so no levels are shown`);
+      else reasons.push(`from the quote only (its own previous close, and the open, high and low of the trading day as the feed counts it; for a future that day usually starts the evening before, and the previous close is usually the last settlement, neither checked here)${ql.missing.length ? `; not in the quote: ${ql.missing.join(", ")}` : ""}; no futures bars are asked for, so there are no prior-day high and low, pivots, week, month or range levels`);
+      if (levels.length && quoteState !== "ok") reasons.push("the quote is not current, so its high and low may be behind");
+    } else if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
     else if (priorSession !== expectedPrior) reasons.push(`the newest completed daily bar is ${priorSession}, not ${expectedPrior}: "prior-day" levels are from ${priorSession}, and the range levels end there`);
     else if (built) reasons.push(`${src(deps)}'s daily bar for ${built.date} is not posted yet: prior-day levels and pivots use that session's intraday bars (every 5-minute bar from 09:30 to the regular close: its high and low, and the last intraday close, which can differ from the official close${t.kind === "vol" ? "; VIX is calculated until 16:15 ET and those last minutes are not in this bar" : ""})`);
     else if (readBeforeClose(d, forSession)) reasons.push(`the daily bar for ${priorSession} was read before that session closed, so levels that use it (prior day, pivots, ranges) may be short of its final high or low`);
@@ -359,7 +368,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       bear: deskCase(spxRaw, spx.price, "bear"),
       optionsState: opt.state, optionsReason: opt.reason, optionsAsOfMs: opt.asOfMs, levelsWithoutOptions: spxNoOptions,
     },
-    note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars, as do the 20-session high and low and the high and low of every daily bar read (about three months; the label carries the count); the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",
+    note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars, as do the 20-session high and low and the high and low of every daily bar read (about three months; the label carries the count); the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. ES and NQ have no bars read: their levels are the previous close and the day's open, high and low carried by the futures quote itself. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",
   };
 }
 

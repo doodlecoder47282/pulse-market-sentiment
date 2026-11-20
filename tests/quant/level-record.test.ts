@@ -25,27 +25,34 @@ const dip = (over: Record<number, Partial<IntraBar>> = {}, n = 390) => path(7015
 const poke = (over: Record<number, Partial<IntraBar>> = {}) => path(7045, 30, { high: 7060.5 }, 7057, over);
 const touch = (r: ReturnType<typeof sessionTouches>, key: string) => r.touches!.find((t) => t.keys.includes(key));
 
-test("a test from above that trades back first is held; a close through first is broke", () => {
-  const held = touch(sessionTouches(D, dip({ 70: { high: 7010 } }), daily, AFTER), "pdl")!;
+test("a test from above that closes back first is held; a close through first is broke; same distance, same measure", () => {
+  const held = touch(sessionTouches(D, dip({ 70: { high: 7010, close: 7010 } }), daily, AFTER), "pdl")!;
   assert.deepEqual([held.side, held.outcome, held.touchedAt], ["below", "held", open + 60 * 60_000]);
-  assert.equal(touch(sessionTouches(D, dip({ 65: { low: 6993, close: 6995 } }), daily, AFTER), "pdl")!.outcome, "broke");
-  assert.equal(touch(sessionTouches(D, dip({ 65: { high: 7011, low: 6993, close: 6995 } }), daily, AFTER), "pdl")!.outcome, "broke", "one bar doing both counts as broke");
+  assert.equal(touch(sessionTouches(D, dip({ 65: { low: 6988, close: 6990 } }), daily, AFTER), "pdl")!.outcome, "broke");
+  assert.equal(touch(sessionTouches(D, dip({ 65: { low: 6993, close: 6995 } }), daily, AFTER), "pdl")!.outcome, "neither", "a 5-point close through is short of the distance");
+  assert.equal(touch(sessionTouches(D, dip({ 65: { high: 7012 } }), daily, AFTER), "pdl")!.outcome, "neither", "a wick back without the close counts for neither");
+  assert.equal(touch(sessionTouches(D, dip({ 65: { low: 6985 } }), daily, AFTER), "pdl")!.outcome, "neither", "a wick through without the close counts for neither");
+  assert.equal(touch(sessionTouches(D, dip({ 65: { high: 7012, low: 6985, close: 7010 } }), daily, AFTER), "pdl")!.outcome, "held", "the close decides, not the wicks");
+  assert.equal(touch(sessionTouches(D, dip({ 65: { close: 7009.9 } }), daily, AFTER), "pdl")!.outcome, "neither");
+  assert.equal(touch(sessionTouches(D, dip({ 65: { close: 6990.1 } }), daily, AFTER), "pdl")!.outcome, "neither");
   assert.equal(touch(sessionTouches(D, dip(), daily, AFTER), "pdl")!.outcome, "neither");
 });
 
 test("a level above the open is a test from below, mirrored", () => {
-  const t = touch(sessionTouches(D, poke({ 40: { low: 7050 } }), daily, AFTER), "pdh")!;
+  const t = touch(sessionTouches(D, poke({ 40: { low: 7050, close: 7050 } }), daily, AFTER), "pdh")!;
   assert.deepEqual([t.side, t.outcome], ["above", "held"]);
-  assert.equal(touch(sessionTouches(D, poke({ 40: { high: 7068, close: 7065 } }), daily, AFTER), "pdh")!.outcome, "broke");
+  assert.equal(touch(sessionTouches(D, poke({ 40: { high: 7072, close: 7070 } }), daily, AFTER), "pdh")!.outcome, "broke");
 });
 
-test("the touch bar's own close through the level is a break, whatever follows", () => {
-  const bars = path(7045, 30, { high: 7070, close: 7068 }, 7057, { 31: { low: 7049 } });
+test("the touch bar's own close counts either way, whatever follows", () => {
+  const bars = path(7045, 30, { high: 7072, close: 7070 }, 7057, { 31: { low: 7049, close: 7049 } });
   assert.equal(touch(sessionTouches(D, bars, daily, AFTER), "pdh")!.outcome, "broke");
+  const back = path(7045, 30, { high: 7060.5, close: 7050 }, 7057, { 31: { high: 7072, close: 7071 } });
+  assert.equal(touch(sessionTouches(D, back, daily, AFTER), "pdh")!.outcome, "held");
 });
 
 test("levels at the same price are one touch with every name, counted once in the totals and once on each row", () => {
-  const r = sessionTouches(D, dip({ 70: { high: 7010 } }), daily, AFTER);
+  const r = sessionTouches(D, dip({ 70: { high: 7010, close: 7010 } }), daily, AFTER);
   const t = touch(r, "pdl")!;
   assert.deepEqual(t.keys.slice().sort(), ["pdl", "s1"]);
   assert.equal(r.touches!.filter((x) => x.price === 7000).length, 1);
@@ -57,7 +64,7 @@ test("levels at the same price are one touch with every name, counted once in th
   const MON = "2026-11-16";
   const mOpen = etWallToEpochMs(MON, 9 * 60 + 30);
   const wk: DayBar[] = ["2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"].map((date) => ({ date, open: 7020, high: 7060, low: 7000, close: 7040 }));
-  const bars = path(7055, 20, { low: 7039.5 }, 7043, { 30: { high: 7051 } }).map((b, i) => ({ ...b, t: mOpen + i * 60_000 }));
+  const bars = path(7055, 20, { low: 7039.5 }, 7043, { 30: { high: 7051, close: 7050 } }).map((b, i) => ({ ...b, t: mOpen + i * 60_000 }));
   const mon = sessionTouches(MON, bars, wk, etWallToEpochMs("2026-11-17", 18 * 60));
   const close = mon.touches!.find((x) => x.keys.includes("pdc"))!;
   assert.ok(close.keys.includes("pwc"), "one price, two names");
@@ -65,7 +72,7 @@ test("levels at the same price are one touch with every name, counted once in th
 });
 
 test("only the first touch of a price in a session counts, and a low after the horizon changes nothing", () => {
-  const r = sessionTouches(D, dip({ 70: { high: 7010 }, 200: { low: 6980, close: 6981 } }), daily, AFTER);
+  const r = sessionTouches(D, dip({ 70: { high: 7010, close: 7010 }, 200: { low: 6980, close: 6981 } }), daily, AFTER);
   assert.equal(r.touches!.filter((t) => t.keys.includes("pdl")).length, 1);
   assert.equal(touch(r, "pdl")!.outcome, "held");
 });
@@ -78,7 +85,7 @@ test("a price that starts within the away distance is not read as a touch; it is
 });
 
 test("no look-ahead: the session's own high, low and close in the daily feed do not change the levels or outcomes", () => {
-  const bars = dip({ 70: { high: 7010 } });
+  const bars = dip({ 70: { high: 7010, close: 7010 } });
   const a = sessionTouches(D, bars, daily, AFTER);
   assert.deepEqual(sessionTouches(D, bars, [...daily, { date: D, open: 7015, high: 9999, low: 1, close: 5000 }], AFTER), a);
   assert.ok(!a.touches!.some((t) => t.keys.includes("wo") || t.keys.includes("mo")), "the session's own open is not a level reached later");
@@ -89,7 +96,7 @@ test("the opening range is only a level after 10:00, from the side price sat on 
   for (let i = 20; i < 45; i++) over[i] = flat(7006);
   over[45] = { ...flat(7016), high: 7018.2 };
   for (let i = 46; i < 390; i++) over[i] = flat(7015);
-  over[50] = { ...flat(7015), low: 7007 };
+  over[50] = { ...flat(7015), low: 7007, close: 7008 };
   const r = sessionTouches(D, path(7012, 0, {}, 7012, over), daily, AFTER);
   const t = touch(r, "orh")!;
   assert.deepEqual([t.side, t.outcome, t.touchedAt], ["above", "held", open + 45 * 60_000]);
@@ -107,9 +114,9 @@ test("the opening range: a missing minute at 10:00 leaves its touch ungraded, an
 });
 
 test("a missing minute before or after the touch, or a touch too near the close, is not graded", () => {
-  const after = dip({ 70: { high: 7010 } }).filter((_, i) => i < 62 || i > 66);
+  const after = dip({ 70: { high: 7010, close: 7010 } }).filter((_, i) => i < 62 || i > 66);
   assert.equal(touch(sessionTouches(D, after, daily, AFTER), "pdl")!.outcome, "ungraded");
-  const before = dip({ 70: { high: 7010 } }).filter((_, i) => i < 40 || i > 45);
+  const before = dip({ 70: { high: 7010, close: 7010 } }).filter((_, i) => i < 40 || i > 45);
   assert.equal(touch(sessionTouches(D, before, daily, AFTER), "pdl")!.outcome, "ungraded", "the first touch may have been inside the gap");
   const late = sessionTouches(D, path(7015, 380, { low: 6999.5 }, 7003), daily, AFTER);
   assert.equal(touch(late, "pdl")!.outcome, "ungraded");
@@ -119,9 +126,9 @@ test("sessions that cannot be read whole are skipped with a reason, and the sent
   assert.match(sessionTouches(D, dip({}, 200), daily, AFTER).skipped!, /200 of 390/);
   assert.match(sessionTouches(D, dip(), daily.slice(0, 1), AFTER).skipped!, /newest daily bar before this session is 2026-11-10, not 2026-11-11/);
   assert.match(sessionTouches(D, dip(), daily, open + 3_600_000).skipped!, /in progress/);
-  const rec = combineLevelRecord([sessionTouches(D, dip({ 70: { high: 7010 } }), daily, AFTER), { date: "2026-11-09", skipped: "x", touches: null }]);
-  assert.match(levelRecordAnswer(rec), /^Over 1 past session \(1 more not read\) the index reached a mapped price \d+ times? \(first touch per price per session\): \d+ traded 10 points back first, \d+ closed 5 points through first, \d+ did neither in 30 minutes/);
+  const rec = combineLevelRecord([sessionTouches(D, dip({ 70: { high: 7010, close: 7010 } }), daily, AFTER), { date: "2026-11-09", skipped: "x", touches: null }]);
+  assert.match(levelRecordAnswer(rec), /^Over 1 past session \(1 more not read\) the index reached a mapped price \d+ times? \(first touch per price per session\): \d+ closed 10 points back first, \d+ closed 10 points through first, \d+ did neither in 30 minutes/);
   assert.equal(levelRecordAnswer(combineLevelRecord([])), "No past session could be read yet.");
   assert.equal(rec.fromAbove.touches + rec.fromBelow.touches, rec.total.touches);
-  assert.deepEqual(LEVEL_RECORD_RULES, { awayPts: 10, throughPts: 5, horizonMin: 30, minCoverage: 0.95 });
+  assert.deepEqual(LEVEL_RECORD_RULES, { awayPts: 10, throughPts: 10, horizonMin: 30, minCoverage: 0.95 });
 });
