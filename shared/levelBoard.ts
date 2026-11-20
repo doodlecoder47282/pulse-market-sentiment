@@ -86,6 +86,25 @@ export function calendarLevels(daily: DayBar[], todayEt: string, opts: { pivots?
   return out;
 }
 
+/**
+ * One finished session's daily bar built from its intraday bars, for when the daily feed has not posted that
+ * session yet (seen live: at 23:47 ET the newest daily bar was still the day before). Only from a whole
+ * regular session: a first bar at 09:30 and a last bar that ends at the close, both on `date`. The high and
+ * low are the session's; the close is the last intraday bar's close, which can differ from the official
+ * closing print by a small amount. Null when the session is not whole.
+ */
+export function dayBarFromIntraday(intra: IntraBar[], date: string): DayBar | null {
+  const closeMin = sessionCloseMinutes(date);
+  if (closeMin == null) return null;
+  const rows = intra.filter(barOk).map((b) => ({ b, c: etClock(b.t) }))
+    .filter((x) => x.c.date === date && x.c.minutes >= REGULAR_OPEN_MIN && x.c.minutes < closeMin).sort((a, b) => a.b.t - b.b.t);
+  if (rows.length < 2 || rows[0].c.minutes !== REGULAR_OPEN_MIN) return null;
+  const step = rows[1].c.minutes - rows[0].c.minutes;
+  const last = rows[rows.length - 1];
+  if (!(step > 0) || last.c.minutes + step < closeMin) return null;
+  return { date, open: rows[0].b.open, high: Math.max(...rows.map((x) => x.b.high)), low: Math.min(...rows.map((x) => x.b.low)), close: last.b.close };
+}
+
 /** Sessions in the short range; and the least number of completed bars the long range is formed from. */
 export const RANGE_SHORT = 20;
 export const RANGE_LONG_MIN = 40;

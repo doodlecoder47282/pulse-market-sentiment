@@ -2881,3 +2881,15 @@ levels reason with the copy's time and why the fresh read failed; the existing p
 read-before-close checks run on the copy as on any read. Not kept in the demo edition. The startup burst itself
 is not reduced by this; that is still open. Also: scoreboard setup rows word the kind as the setup log does
 ("breakout below the put wall", not "breakout_below"). Tests: two added to tests/quant/desk-board.test.ts.
+
+**Level board: prior-day bar built from intraday when the daily feed lags (2026-11-19).** Seen live at 23:47
+ET: every ticker read "the newest completed daily bar is 2026-11-18, not 2026-11-19", so the evening board for
+the next session showed the day-before-yesterday's high, low and pivots. Schwab's daily history had not posted
+the finished session. When the session before the board's has closed and its daily bar is missing, the board
+now builds that bar from the session's own intraday bars (shared/levelBoard.ts dayBarFromIntraday: a whole
+regular session only, first bar at 09:30, last bar ending at the close), once per ticker and session, and says
+so in the levels reason, including that the last intraday close can differ slightly from the official close
+(state partial). With no whole intraday session the older prior day stays with its existing reason. Also seen
+live: the range levels are on the board ("20-session low", "66-session low"); on 2026-11-19 SPX closed under
+its 66-session low, so "no further mapped level below" was a true statement, not a gap.
+Tests: three added to tests/quant/desk-board.test.ts.

@@ -3,6 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildDeskBoard, _resetDeskBoardCache, type DeskBoardDeps } from "../../server/deskBoard";
+import { dayBarFromIntraday } from "../../shared/levelBoard";
+import { etWallToEpochMs } from "../../shared/exchangeCalendar";
 import {
   calendarLevels, sessionLevels, mergeLevels, nearestLevels, deskCase, techRead, vixRead, boardAnswer, boardSession, weekStart, priorMonth,
   type DayBar, type BoardLevel,
@@ -294,4 +296,48 @@ test("build: with no kept copy a refused read stays unavailable with the source'
   const spx = (await buildDeskBoard(NOON, refused)).tickers.find((x) => x.symbol === "$SPX")!;
   assert.equal(spx.levelsState, "unavailable");
   assert.match(spx.levelsReason ?? "", /self-throttle/);
+});
+
+// A whole 5-minute regular session on `date` (78 bars from 09:30), flat at `base` except the given bars.
+function fiveMin(date: string, base: number, over: Record<number, { high?: number; low?: number; close?: number }> = {}, n = 78) {
+  const open = etWallToEpochMs(date, 9 * 60 + 30);
+  return Array.from({ length: n }, (_, i) => ({ datetime: open + i * 300_000, open: base, high: base + 0.5, low: base - 0.5, close: base, volume: 1, ...(over[i] ?? {}) }));
+}
+
+test("dayBarFromIntraday: a whole session gives its bar; a short or headless one gives none", () => {
+  const rows = fiveMin("2026-11-11", 110, { 10: { high: 119 }, 40: { low: 104 }, 77: { close: 112 } }).map((c) => ({ t: c.datetime, open: c.open, high: c.high, low: c.low, close: c.close }));
+  assert.deepEqual(dayBarFromIntraday(rows, "2026-11-11"), { date: "2026-11-11", open: 110, high: 119, low: 104, close: 112 });
+  assert.equal(dayBarFromIntraday(rows.slice(0, 60), "2026-11-11"), null, "the last bar does not reach the close");
+  assert.equal(dayBarFromIntraday(rows.slice(1), "2026-11-11"), null, "no bar at 09:30");
+  assert.equal(dayBarFromIntraday(rows, "2026-11-10"), null, "bars of another day");
+});
+
+test("build: after the close, a prior-day bar the daily feed has not posted is built from that session's intraday bars and named", async () => {
+  _resetDeskBoardCache();
+  const EVENING = Date.UTC(2026, 10, 12, 1, 0); // Wed 20:00 ET: the board is for Thu 11-12, the prior session is Wed 11-11
+  const calls: string[] = [];
+  const noToday = (sym: string) => ({ symbol: sym, candles: candles(daily.filter((x) => x.date < "2026-11-11")), source: "schwab", dataState: "ok", asOfMs: EVENING }) as any;
+  const d = deps({ calls, daily: noToday, intra: (sym) => ({ symbol: sym, candles: fiveMin("2026-11-11", 110, { 10: { high: 119 }, 40: { low: 104 }, 77: { close: 112 } }), source: "schwab", dataState: "ok", asOfMs: EVENING }) });
+  const b = await buildDeskBoard(EVENING, d);
+  const spx = b.tickers.find((x) => x.symbol === "$SPX")!;
+  assert.equal(spx.priorSession, "2026-11-11");
+  const price = (k: string) => spx.levels.find((l) => l.key.split("+").includes(k))?.price;
+  assert.ok(Math.abs(price("pdh")! - 119) < 0.5 && Math.abs(price("pdl")! - 104) < 0.5, "prior-day high and low are that session's");
+  assert.equal(spx.levelsState, "partial");
+  assert.match(spx.levelsReason ?? "", /daily bar for 2026-11-11 is not posted yet: prior-day levels and pivots use that session's intraday bars/);
+  assert.doesNotMatch(spx.levelsReason ?? "", /newest completed daily bar is/);
+  // Built once: a later board does not ask for the intraday bars again.
+  const n = calls.filter((c) => c === "$SPX:day").length;
+  await buildDeskBoard(EVENING + 10 * 60_000, d);
+  assert.equal(calls.filter((c) => c === "$SPX:day").length, n);
+  assert.ok(!calls.includes("/ES:day"), "futures are not asked");
+});
+
+test("build: with no whole intraday session the older prior day stays, with the reason that says so", async () => {
+  _resetDeskBoardCache();
+  const EVENING = Date.UTC(2026, 10, 12, 1, 0);
+  const d = deps({ daily: (sym) => ({ symbol: sym, candles: candles(daily.filter((x) => x.date < "2026-11-11")), source: "schwab", dataState: "ok", asOfMs: EVENING }) as any, intra: (sym) => ({ symbol: sym, candles: fiveMin("2026-11-11", 110, {}, 40), source: "schwab", dataState: "ok", asOfMs: EVENING }) });
+  const spx = (await buildDeskBoard(EVENING, d)).tickers.find((x) => x.symbol === "$SPX")!;
+  assert.equal(spx.priorSession, "2026-11-10");
+  assert.match(spx.levelsReason ?? "", /newest completed daily bar is 2026-11-10, not 2026-11-11/);
 });
