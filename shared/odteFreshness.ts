@@ -10,11 +10,20 @@ export const FORWARD_MAX_AGE_MS = 5 * 60_000;
 
 export type ForwardFreshness =
   | { state: "current"; ageMs: number }
-  | { state: "out_of_date"; ageMs: number | null; reason: string };
+  /** The read stopped refreshing: it is old. */
+  | { state: "out_of_date"; ageMs: number | null; reason: string }
+  /** The read is recent, but it is not built on this session's chain. A different fault from being old. */
+  | { state: "wrong_expiry"; ageMs: number; reason: string };
 
 export interface ForwardStamp {
-  /** ISO time the server computed the read. */
+  /** ISO time the server computed the read. Used for the age only when no receipt time is given. */
   asOf?: string | null;
+  /**
+   * When this device received the read, on this device's own clock (react-query dataUpdatedAt). Preferred for
+   * the age: the server builds the read on each request, so receipt time is its age, and comparing two times
+   * from one clock means a device clock that runs fast or slow cannot make a new read look old.
+   */
+  receivedAtMs?: number | null;
   /** Expiry date of the chain it was computed from (YYYY-MM-DD). */
   expiry?: string | null;
   horizon?: "rest_of_today" | "next_session" | null;
@@ -32,7 +41,8 @@ export function ageText(ms: number): string {
 }
 
 export function forwardFreshness(stamp: ForwardStamp | null | undefined, nowMs: number): ForwardFreshness {
-  const at = stamp?.asOf ? Date.parse(stamp.asOf) : NaN;
+  const got = stamp?.receivedAtMs;
+  const at = typeof got === "number" && Number.isFinite(got) && got > 0 ? got : stamp?.asOf ? Date.parse(stamp.asOf) : NaN;
   if (!Number.isFinite(at)) return { state: "out_of_date", ageMs: null, reason: "the read carries no time, so its age is not known" };
   const ageMs = Math.max(0, nowMs - at);
   const today = etDate(nowMs);
@@ -43,8 +53,8 @@ export function forwardFreshness(stamp: ForwardStamp | null | undefined, nowMs: 
   }
   const exp = stamp?.expiry ?? null;
   if (exp && /^\d{4}-\d{2}-\d{2}$/.test(exp)) {
-    if (exp < today) return { state: "out_of_date", ageMs, reason: `its chain expired ${exp}, before today (${today})` };
-    if (stamp?.horizon === "rest_of_today" && exp !== today) return { state: "out_of_date", ageMs, reason: `its chain expires ${exp}, not today (${today})` };
+    if (exp < today) return { state: "wrong_expiry", ageMs, reason: `its chain expired ${exp}, before today (${today})` };
+    if (stamp?.horizon === "rest_of_today" && exp !== today) return { state: "wrong_expiry", ageMs, reason: `its chain expires ${exp}, not today (${today})` };
   }
   return { state: "current", ageMs };
 }

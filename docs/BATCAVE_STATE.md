@@ -2985,11 +2985,12 @@ Tests: tests/quant/playbook-day-levels.test.ts (8).
 **An old 0DTE read is no longer shown as today's (2026-11-20).** Why: the owner pasted a map reading "exp
 2026-11-19, chain 1 d ago" under a "today" heading with a countdown. A browser tab in the background stops
 polling and a device that slept wakes with the read it last held; nothing compared the read's own time with
-the clock. shared/odteFreshness.ts (forwardFreshness): a read is out of date when its computed time is more
-than 5 minutes old (five missed 60 s polls), carries no time, sits on an expired chain, or is a rest-of-today
-read on another day's expiry. OdteForward.tsx then shows "0DTE Wiener map · out of date" with the reason and
+the clock. shared/odteFreshness.ts (forwardFreshness): a read is out of date when it arrived more than 5
+minutes ago (five missed 60 s polls; measured from the receipt time on the device's own clock, so a device
+clock that runs fast cannot make a new read look old) or carries no time. A recent read on an expired chain,
+or a rest-of-today read on another day's expiry, is a separate state ("not this session's chain"). OdteForward.tsx then shows "0DTE Wiener map · out of date" with the reason and
 draws no ranges, odds or countdown; TodayPath.tsx draws nothing and gives the reason. Both read again when the
 tab comes back into view (refetchOnWindowFocus, staleTime 30 s) and the map re-reads once per 15 s clock check
 while its read is old. Server: today's-expiry check in server/odteForward.ts now compares the expiry date with
 today's ET date instead of the days-to-expiry number the chain carried when fetched (a cached chain keeps the
-old number). Tests: tests/quant/odte-freshness.test.ts (9).
+old number); tested with a chain whose numbers are a day behind. Tests: tests/quant/odte-freshness.test.ts (11).

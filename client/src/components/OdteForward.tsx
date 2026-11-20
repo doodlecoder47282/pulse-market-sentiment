@@ -85,7 +85,7 @@ export default function OdteForward() {
   const [showLevels, setShowLevels] = useState(true);
   const [showGuide, setShowGuide] = useState(false);
 
-  const { data, isLoading, isError, isFetching, refetch } = useQuery<OdteResponse>({
+  const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useQuery<OdteResponse>({
     queryKey: ["/api/odte/forward"],
     queryFn: async () => (await apiRequest("GET", "/api/odte/forward?symbol=%24SPX")).json(),
     // A tab in the background stops polling. Coming back to it reads again at once instead of waiting
@@ -101,7 +101,7 @@ export default function OdteForward() {
     document.addEventListener("visibilitychange", onShow);
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", onShow); };
   }, []);
-  const fresh = useMemo(() => forwardFreshness(data ? { asOf: data.asOf, expiry: data.expiry, horizon: data.wiener?.horizon ?? null } : null, nowMs), [data, nowMs]);
+  const fresh = useMemo(() => forwardFreshness(data ? { asOf: data.asOf, receivedAtMs: dataUpdatedAt, expiry: data.expiry, horizon: data.wiener?.horizon ?? null } : null, nowMs), [data, dataUpdatedAt, nowMs]);
   const outOfDate = !!data && fresh.state === "out_of_date";
   // One read per check of the clock while out of date; a failed read shows the request-failed state.
   useEffect(() => {
@@ -346,6 +346,16 @@ export default function OdteForward() {
         <div className="mb-1 text-[11px] font-mono font-bold uppercase tracking-widest text-amber-300">0DTE Wiener map · out of date</div>
         <div className="text-xs leading-relaxed text-muted-foreground">
           Not shown: {fresh.reason}. A map that old does not describe the price now, so no ranges, odds or countdown are drawn from it. {isFetching ? "Reading again now." : "It is read again automatically."}
+        </div>
+      </div>
+    );
+  }
+  if (fresh.state === "wrong_expiry") {
+    return (
+      <div className="rounded border border-amber-500/40 bg-card/40 p-3" data-testid="odte-forward-wrong-expiry">
+        <div className="mb-1 text-[11px] font-mono font-bold uppercase tracking-widest text-amber-300">0DTE Wiener map · not this session's chain</div>
+        <div className="text-xs leading-relaxed text-muted-foreground">
+          Not shown: the read is recent, but {fresh.reason}. Ranges, odds and a countdown from another session's chain would not describe this one. It is read again every minute.
         </div>
       </div>
     );

@@ -39,10 +39,13 @@ export default function TodayPath({ onOpenMap, active = true }: { onOpenMap?: ()
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 15_000);
-    return () => clearInterval(id);
+    // Coming back to the tab checks the clock at once, so an old path is not drawn while the new read is on its way.
+    const onShow = () => { if (document.visibilityState === "visible") setNowMs(Date.now()); };
+    document.addEventListener("visibilitychange", onShow);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onShow); };
   }, []);
-  const fresh = useMemo(() => forwardFreshness(d ? { asOf: d.asOf, expiry: d.expiry, horizon: w?.horizon ?? null } : null, nowMs), [d, w, nowMs]);
-  const outOfDate = !!d && fresh.state === "out_of_date";
+  const fresh = useMemo(() => forwardFreshness(d ? { asOf: d.asOf, receivedAtMs: q.dataUpdatedAt, expiry: d.expiry, horizon: w?.horizon ?? null } : null, nowMs), [d, w, q.dataUpdatedAt, nowMs]);
+  const outOfDate = !!d && fresh.state !== "current";
   const ok = !!d && !outOfDate && w?.state === "ok" && w.bands.length > 1;
 
   const view = useMemo(() => {
@@ -65,7 +68,7 @@ export default function TodayPath({ onOpenMap, active = true }: { onOpenMap?: ()
   if (q.isError || !d || !ok || !view) {
     return (
       <div className={`${BOX} border-dashed border-border/50 text-[11px] text-muted-foreground`} data-testid="today-path-unavailable">
-        Projected path to the close: not available{outOfDate && fresh.state === "out_of_date" ? ` (${fresh.reason})` : w?.reason ? ` (${w.reason})` : q.isError ? " (the read failed)" : ""}. Nothing is drawn in its place.
+        Projected path to the close: not available{outOfDate && fresh.state !== "current" ? ` (${fresh.reason})` : w?.reason ? ` (${w.reason})` : q.isError ? " (the read failed)" : ""}. Nothing is drawn in its place.
       </div>
     );
   }
