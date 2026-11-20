@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import UnavailablePanel from "@/components/UnavailablePanel";
 import PlainRead from "@/components/PlainRead";
 import { Layers } from "lucide-react";
-import { boardAnswer, type BoardLevel, type DeskCase, type RelRead, type VixRead } from "@shared/levelBoard";
+import { boardAnswer, CHANGE_PREFIX, type ChangeBasis, type BoardLevel, type DeskCase, type RelRead, type VixRead } from "@shared/levelBoard";
 
 interface Ticker {
   symbol: string; label: string; kind: string; price: number | null; changePct: number | null;
@@ -19,7 +19,7 @@ interface Ticker {
   at: BoardLevel[]; above: BoardLevel | null; below: BoardLevel | null;
 }
 interface Board {
-  asOf: number; forSession: string; sessionOpen: boolean; tickers: Ticker[]; tech: RelRead; vix: VixRead;
+  asOf: number; forSession: string; sessionOpen: boolean; changeBasis?: ChangeBasis; tickers: Ticker[]; tech: RelRead; vix: VixRead;
   cases: { symbol: string; price: number | null; bull: DeskCase; bear: DeskCase; optionsState: "ok" | "stale" | "unavailable"; optionsReason: string | null; optionsAsOfMs: number | null };
   note: string;
 }
@@ -51,6 +51,8 @@ export default function DeskBoard() {
   if (q.isError || !q.data) return <UnavailablePanel title="Level board" error={q.error} testId="desk-board-unavailable" />;
   const b = q.data;
   const spx = b.tickers.find((t) => t.symbol === b.cases.symbol);
+  // An older server sends no basis: fall back to the plain closed-market words.
+  const prefix = b.changeBasis ? CHANGE_PREFIX[b.changeBasis] : b.sessionOpen ? "" : "Market closed, last prices: ";
   return (
     <Card className="border-cyan-500/20" data-testid="desk-board">
       <CardHeader className="pb-2">
@@ -61,7 +63,7 @@ export default function DeskBoard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${b.sessionOpen ? "" : "Market closed, last prices: "}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
+        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${prefix}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
         <div className="grid gap-2 md:grid-cols-2">
           <CaseBox c={b.cases.bull} tone="bull" />
           <CaseBox c={b.cases.bear} tone="bear" />
@@ -74,8 +76,8 @@ export default function DeskBoard() {
           </p>
         )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-          <span data-testid="desk-board-tech">{b.sessionOpen ? "" : "Market closed, last prices: "}{b.tech.text}</span>
-          <span data-testid="desk-board-vix">{b.sessionOpen ? "" : "Market closed, last prices: "}{b.vix.text}</span>
+          <span data-testid="desk-board-tech">{prefix}{b.tech.text}</span>
+          <span data-testid="desk-board-vix">{prefix}{b.vix.text}</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {b.tickers.map((t) => (

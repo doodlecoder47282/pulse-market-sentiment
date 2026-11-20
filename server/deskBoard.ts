@@ -14,7 +14,7 @@ import { etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
 import { editionFromEnv } from "../shared/edition";
 import {
-  boardSession, calendarLevels, rangeLevels, sessionLevels, dayBarFromIntraday, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
+  boardSession, changeBasis, type ChangeBasis, calendarLevels, rangeLevels, sessionLevels, dayBarFromIntraday, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
   type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead,
 } from "../shared/levelBoard";
 
@@ -52,6 +52,8 @@ export interface DeskBoard {
   /** The session these levels are for: today while it is open or still to come, else the next one. */
   forSession: string;
   sessionOpen: boolean;
+  /** What the day changes on this board are changes of (shared/levelBoard.ts changeBasis). */
+  changeBasis: ChangeBasis;
   tickers: BoardTicker[];
   tech: RelRead;
   vix: VixRead;
@@ -328,7 +330,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
   return {
     asOf: nowMs,
     edition: deps.edition(),
-    forSession, sessionOpen,
+    forSession, sessionOpen, changeBasis: changeBasis(nowMs),
     tickers,
     tech: techRead(by("QQQ").changePct, by("SPY").changePct),
     vix: vixRead(by("$VIX").changePct),

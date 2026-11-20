@@ -2922,3 +2922,12 @@ left out). Shown on the Trade Desk under Protocols as one sentence with the by-l
 limits on tap; counts only, with the statement that a few neighbouring sessions are too few to read a tendency
 from. Reads the stored 1-minute index bars the replay keeps. Route: GET /api/desk/level-record.
 Tests: tests/quant/level-record.test.ts (8).
+
+**Level board: what a day change is a change of (2026-11-20).** Seen live twice after midnight ET: "Market
+closed, last prices: VIX +0.00% on the day: flat" though VIX had closed up nearly 16%. The quote feed starts a
+new day overnight, so before the open the figure is the move since the last close, not the last session's
+move. The board now carries a change basis by the clock (shared/levelBoard.ts changeBasis: session, last
+session, or before the open) and the tech and VIX lines are prefixed accordingly: "Market closed, the last
+session's change:" or "Before the open, change since the last close (not the last session's move; an index
+has usually not moved yet):". Weekend behaviour of the feed is not verified (treated as last session).
+Test: one added to tests/quant/desk-board.test.ts.

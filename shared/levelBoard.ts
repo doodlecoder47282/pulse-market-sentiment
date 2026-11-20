@@ -259,6 +259,25 @@ export function boardAnswer(label: string, price: number | null | undefined, n: 
 }
 
 /** The session the board is for: today until its close, else the next trading day. */
+/**
+ * What a ticker's day change is a change OF, by the clock. In session it is the session's move. After the
+ * close it is still that finished session's move. Before the open on a session day the quote feed has
+ * started a new day (seen live: after midnight ET the index and VIX read +0.00% though VIX had closed up
+ * nearly 16%), so the figure is the move since the last close: overnight and pre-market trading for ETFs
+ * and futures, and usually nothing yet for an index. Reading it as "on the day" would be false.
+ */
+export type ChangeBasis = "session" | "last_session" | "pre_open";
+export function changeBasis(nowMs: number): ChangeBasis {
+  const s = boardSession(nowMs);
+  return s.sessionOpen ? "session" : s.today === s.forSession ? "pre_open" : "last_session";
+}
+/** The words put in front of a tech or VIX read for each basis. */
+export const CHANGE_PREFIX: Record<ChangeBasis, string> = {
+  session: "",
+  last_session: "Market closed, the last session's change: ",
+  pre_open: "Before the open, change since the last close (not the last session's move; an index has usually not moved yet): ",
+};
+
 export function boardSession(nowMs: number): { forSession: string; sessionOpen: boolean; today: string } {
   const c = etClock(nowMs);
   const close = sessionCloseMinutes(c.date);

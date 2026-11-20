@@ -366,3 +366,17 @@ test("build: the VIX reason says its built bar stops at the regular close", asyn
   assert.match(b.tickers.find((x) => x.symbol === "$VIX")!.levelsReason ?? "", /VIX is calculated until 16:15 ET/);
   assert.doesNotMatch(b.tickers.find((x) => x.symbol === "$SPX")!.levelsReason ?? "", /16:15/);
 });
+
+test("change basis: session, last session, or before the open, by the clock", async () => {
+  const { changeBasis, CHANGE_PREFIX } = await import("../../shared/levelBoard");
+  assert.equal(changeBasis(Date.UTC(2026, 10, 19, 17, 0)), "session");      // Thu 12:00 ET
+  assert.equal(changeBasis(Date.UTC(2026, 10, 19, 23, 0)), "last_session"); // Thu 18:00 ET
+  assert.equal(changeBasis(Date.UTC(2026, 10, 20, 5, 45)), "pre_open");     // Fri 00:45 ET: the feed has started a new day
+  assert.equal(changeBasis(Date.UTC(2026, 10, 20, 14, 0)), "pre_open");     // Fri 09:00 ET
+  assert.equal(changeBasis(Date.UTC(2026, 10, 21, 15, 0)), "last_session"); // Saturday
+  assert.equal(CHANGE_PREFIX.session, "");
+  assert.match(CHANGE_PREFIX.pre_open, /Before the open, change since the last close/);
+  assert.match(CHANGE_PREFIX.last_session, /the last session's change/);
+  _resetDeskBoardCache();
+  assert.equal((await buildDeskBoard(Date.UTC(2026, 10, 12, 5, 45), deps())).changeBasis, "pre_open");
+});
