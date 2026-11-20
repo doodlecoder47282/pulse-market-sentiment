@@ -6,11 +6,25 @@ import { streamFeedLabel, isStreamNotEntitled, STREAM_NOT_ENTITLED_NOTE } from "
 const ERR = "userPreference error: Schwab 401 on trader/v1/userPreference: the Schwab app is not enabled for the Trader API (Accounts and Trading Production), so streaming is off; REST market data still works";
 
 test("a refused streaming sign-in reads as streaming off with the cause in full, not as an unverified feed", () => {
-  const f = streamFeedLabel(true, { mode: "down", lastError: ERR });
+  const f = streamFeedLabel(true, { state: "no_streamer_info", mode: "down", lastError: ERR });
   assert.equal(f.label, "Read by request, streaming off");
   assert.equal(f.note, STREAM_NOT_ENTITLED_NOTE);
   assert.match(f.note!, /Accounts and Trading Production/);
-  assert.match(f.note!, /Only the app's owner can add it/);
+  assert.match(f.note!, /The usual cause is/, "a 401 does not say why: the cause is given as the usual one");
+  assert.match(f.note!, /expired .* gives the same 401/);
+  assert.match(f.note!, /Off without the stream: /);
+  assert.doesNotMatch(f.note!, /[Nn]othing .* is broken/);
+});
+
+test("an old refusal is not the reason a signed-in stream is quiet", () => {
+  // Signed in later (the error text is kept by the server), data older than a minute after the close.
+  const quiet = streamFeedLabel(true, { state: "live", mode: "live", lastMessageAgeMs: 5000, lastError: ERR, perService: { LEVELONE_EQUITIES: { lastDataAgeMs: 10 * 60_000, keys: 3 } } });
+  assert.equal(quiet.label, "Feed not verified");
+  assert.equal(quiet.note, undefined);
+  // Reconnecting after the refusal state has passed.
+  assert.equal(streamFeedLabel(true, { state: "connecting", mode: "connecting", lastError: ERR }).note, undefined);
+  // No state reported: not assumed.
+  assert.equal(streamFeedLabel(true, { mode: "down", lastError: ERR }).note, undefined);
 });
 
 test("the wording the server throws is the wording the label recognises", () => {
