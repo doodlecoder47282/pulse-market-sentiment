@@ -37,7 +37,7 @@ const LIMITS = [
   "A record of what happened, in counts. It does not say a level will hold or break next time.",
   "Sessions next to each other in time are not independent events, and one unusual week moves every row.",
   "Only the first touch of each price in a session is counted. Levels at the same price are one touch with several names (counted once in the totals, once on each of its rows, so the rows do not add up to the total). Prices near each other but not equal are read separately, so one move can count once for each.",
-  "The two outcomes are measured differently: 'traded back' is a 1-minute high or low 10 points away from the level; 'closed through' is a 1-minute close 5 points beyond it, the touch bar included.",
+  "Both outcomes are measured the same way: a 1-minute close 10 points from the level, back on the side price came from or beyond it, whichever comes first, the touch bar included. A wick that far with a close nearer the level counts as neither.",
   "A price that starts a session within 10 points of where the index is trading is not read as a touch (the index is already at it); those are counted apart. A session that opens beyond a level meets it from the far side.",
   "The points are hand-set for the index at its current level and are the same for every level kind; a change of any number starts a new version of the record.",
   "Option levels (walls, gamma flip, straddle range) are not included: past option chains are not stored minute by minute.",

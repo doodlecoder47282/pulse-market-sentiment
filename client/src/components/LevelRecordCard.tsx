@@ -13,7 +13,7 @@ const dayEt = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZon
 
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const px = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
-const OUT: Record<string, string> = { held: "traded back first", broke: "closed through first", neither: "neither", ungraded: "not graded" };
+const OUT: Record<string, string> = { held: "closed back first", broke: "closed through first", neither: "neither", ungraded: "not graded" };
 
 export default function LevelRecordCard() {
   const [open, setOpen] = useState(false);
@@ -47,7 +47,7 @@ export default function LevelRecordCard() {
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[420px] text-left font-mono text-[11px]">
                     <thead className="text-muted-foreground">
-                      <tr><th className="py-0.5 pr-2 font-normal">level</th><th className="pr-2 font-normal">touches</th><th className="pr-2 font-normal">traded back</th><th className="pr-2 font-normal">closed through</th><th className="pr-2 font-normal">neither</th><th className="font-normal">not graded</th></tr>
+                      <tr><th className="py-0.5 pr-2 font-normal">level</th><th className="pr-2 font-normal">touches</th><th className="pr-2 font-normal">closed back</th><th className="pr-2 font-normal">closed through</th><th className="pr-2 font-normal">neither</th><th className="font-normal">not graded</th></tr>
                     </thead>
                     <tbody>
                       {r.byLevel.map((l) => (
@@ -59,7 +59,7 @@ export default function LevelRecordCard() {
                   </table>
                 </div>
                 <p className="break-words text-[11px] text-muted-foreground">
-                  Traded back: a 1-minute high or low {r.rules.awayPts} points away from the level, before any 1-minute close {r.rules.throughPts} points through it. Closed through: that close came first (the touch bar's own close counts). The two are measured differently: a wick is enough for the first, the second needs a close. Window: {r.rules.horizonMin} minutes after the first touch. A price with two names shows on both rows, so the rows add up to more than the totals. {r.startedNear} price{r.startedNear === 1 ? "" : "s"} began a session within {r.rules.awayPts} points of the index and {r.startedNear === 1 ? "was" : "were"} not read as a touch.
+                  Closed back: a 1-minute close {r.rules.awayPts} points back on the side the index came from. Closed through: a 1-minute close {r.rules.throughPts} points beyond the level. Whichever comes first is counted, and the touch bar's own close counts. Both use the same distance and the same measure; a wick alone counts for neither. Window: {r.rules.horizonMin} minutes after the first touch. A price with two names shows on both rows, so the rows add up to more than the totals. {r.startedNear} price{r.startedNear === 1 ? "" : "s"} began a session within {r.rules.awayPts} points of the index and {r.startedNear === 1 ? "was" : "were"} not read as a touch.
                 </p>
                 {v.recent.length > 0 && (
                   <ul className="space-y-0.5">
