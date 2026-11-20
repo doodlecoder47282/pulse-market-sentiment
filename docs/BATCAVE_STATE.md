@@ -2988,7 +2988,7 @@ and a refusal cools it down for SPX too). Instead the board shows what the futur
 no extra request and nothing derived: previous close, and the open, high and low of the trading day the feed
 is counting (shared/levelBoard.ts quoteDayLevels; NormalizedQuote gains dayOpen/dayHigh/dayLow from Schwab's
 openPrice/highPrice/lowPrice, REST path). A high and low that do not contain the quote's own last price or
-open are left out. The futures' level state is never "ok": it is "partial" with the reason that there are no
+open are left out. The labels do not say "so far": out of hours the same fields describe a finished day. The futures' level state is never "ok": it is "partial" with the reason that there are no
 prior-day high and low, pivots, week, month or range levels, or "unavailable" when the quote carries none of
 the fields. Unverified until seen live: which of these fields Schwab's futures quote actually fills.
 Tests: tests/quant/desk-board.test.ts.

@@ -327,7 +327,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       levelsState = levels.length ? "partial" : "unavailable";
       if (price == null) reasons.push("no quote, so no levels");
       else if (!levels.length) reasons.push(`${src(deps)}'s quote for ${t.symbol} carries no previous close, open, high or low; no futures bars are asked for, so no levels are shown`);
-      else reasons.push(`from the quote only (its own previous close, and the open, high and low of the trading day the feed is counting, which for a future begins the evening before)${ql.missing.length ? `; not in the quote: ${ql.missing.join(", ")}` : ""}; no futures bars are asked for, so there are no prior-day high and low, pivots, week, month or range levels`);
+      else reasons.push(`from the quote only (its own previous close, and the open, high and low of the trading day as the feed counts it; for a future that day usually starts the evening before, and the previous close is usually the last settlement, neither checked here)${ql.missing.length ? `; not in the quote: ${ql.missing.join(", ")}` : ""}; no futures bars are asked for, so there are no prior-day high and low, pivots, week, month or range levels`);
       if (levels.length && quoteState !== "ok") reasons.push("the quote is not current, so its high and low may be behind");
     } else if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
     else if (priorSession !== expectedPrior) reasons.push(`the newest completed daily bar is ${priorSession}, not ${expectedPrior}: "prior-day" levels are from ${priorSession}, and the range levels end there`);
@@ -368,7 +368,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       bear: deskCase(spxRaw, spx.price, "bear"),
       optionsState: opt.state, optionsReason: opt.reason, optionsAsOfMs: opt.asOfMs, levelsWithoutOptions: spxNoOptions,
     },
-    note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars, as do the 20-session high and low and the high and low of every daily bar read (about three months; the label carries the count); the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",
+    note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars, as do the 20-session high and low and the high and low of every daily bar read (about three months; the label carries the count); the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. ES and NQ have no bars read: their levels are the previous close and the day's open, high and low carried by the futures quote itself. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",
   };
 }
 

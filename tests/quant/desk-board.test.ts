@@ -463,6 +463,9 @@ test("futures: levels are the quote's own day fields, with no bars asked for; fi
   assert.deepEqual(es.levels.map((l) => l.price).sort((a, c) => a - c), [6990, 7000, 7006, 7020]);
   assert.equal(es.levelsState, "partial", "never 'ok': there are no bar-based levels behind it");
   assert.match(es.levelsReason ?? "", /no prior-day high and low, pivots/);
+  assert.ok(es.levels.every((l) => !/so far/.test(l.label)), "the fields are named as the quote's, not as a running high: out of hours they describe a finished day");
+  assert.match(es.levelsReason ?? "", /neither checked here/);
+  assert.match(b.note, /ES and NQ/);
   assert.equal(es.above?.price, 7020);
   assert.equal(es.below?.price, 7000);
   assert.deepEqual(es.at.map((l) => l.price), [7006], "within a tenth of a percent of the price");
