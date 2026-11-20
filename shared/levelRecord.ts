@@ -2,7 +2,7 @@
 //
 // WHAT PRICE DID AT EACH KIND OF LEVEL. The level board names levels (prior-day high and low, pivots, prior
 // week, prior month, the opening range). This counts, over past sessions, what the index did the first time
-// it reached each one: moved back away from it, closed through it, or neither. It is a record of what
+// it reached each one: closed back away from it, closed through it, or neither. It is a record of what
 // happened, by level kind, in counts. It makes no claim that a level will hold next time, and the sessions
 // it draws on are neighbours in time, so the counts are not independent events.
 //
@@ -15,11 +15,13 @@
 //   - A level that starts within `awayPts` of that price is not read as a touch: price is already at it, and
 //     the outcome would be noise. Such levels are counted apart ("started at the level").
 //   - The TOUCH is the first 1-minute bar whose range reaches the level from that side.
-//   - BROKE ("closed through"): a 1-minute bar, the touch bar included, CLOSES through the level by at least
-//     `throughPts`, before the next line happens.
-//   - HELD ("moved back"): after the touch bar, a 1-minute HIGH or LOW gets at least `awayPts` back away from
-//     the level first. The two are measured differently on purpose (a wick away, a close through) and the
-//     card says so. If one bar does both, it counts as broke.
+//   - ONE YARDSTICK BOTH WAYS (version 2026.11.20-2): the same distance (`awayPts` equals `throughPts`) and
+//     the same measure, a 1-minute CLOSE, the touch bar's own close included. Version -1 asked for a 10-point
+//     wick back against a 5-point close through: two distances and two measures, so its counts (6 back, 27
+//     through over ten sessions) could not be compared with each other.
+//   - BROKE ("closed through"): a 1-minute bar closes beyond the level by at least `throughPts` first.
+//   - HELD ("closed back"): a 1-minute bar closes at least `awayPts` back on the side price came from first.
+//     One close cannot be both.
 //   - NEITHER: the horizon ends with neither. NOT GRADED: a minute is missing anywhere from the start of the
 //     scan to the outcome (the first touch may have been in the gap), or the session ends inside the horizon.
 //   - One touch per price per session: the first.
@@ -29,9 +31,9 @@
 import { calendarLevels, sessionLevels, OPENING_RANGE_MIN, type DayBar, type IntraBar, type BoardLevel } from "./levelBoard";
 import { etWallToEpochMs, sessionCloseMinutes, prevTradingDay, REGULAR_OPEN_MIN } from "./exchangeCalendar";
 
-export const LEVEL_RECORD_VERSION = "2026.11.20-1";
+export const LEVEL_RECORD_VERSION = "2026.11.20-2";
 export interface LevelRecordRules { awayPts: number; throughPts: number; horizonMin: number; minCoverage: number }
-export const LEVEL_RECORD_RULES: LevelRecordRules = { awayPts: 10, throughPts: 5, horizonMin: 30, minCoverage: 0.95 };
+export const LEVEL_RECORD_RULES: LevelRecordRules = { awayPts: 10, throughPts: 10, horizonMin: 30, minCoverage: 0.95 };
 
 export type TouchOutcome = "held" | "broke" | "neither" | "ungraded";
 export interface LevelTouch {
@@ -103,12 +105,14 @@ export function sessionTouches(date: string, bars: IntraBar[], daily: DayBar[], 
     const t0 = bars[ti].t;
     const end = t0 + rules.horizonMin * 60_000;
     const through = (b: IntraBar) => (side === "above" ? b.close >= price + rules.throughPts : b.close <= price - rules.throughPts);
-    const away = (b: IntraBar) => (side === "above" ? b.low <= price - rules.awayPts : b.high >= price + rules.awayPts);
+    const away = (b: IntraBar) => (side === "above" ? b.close <= price - rules.awayPts : b.close >= price + rules.awayPts);
     let outcome: TouchOutcome = "neither";
     let last = t0;
     let gap = gapBefore;
     let resolved = false;
-    if (!gap && through(bars[ti])) { outcome = "broke"; resolved = true; } // the touch bar's own close counts
+    // The touch bar's own close counts, either way.
+    if (!gap && through(bars[ti])) { outcome = "broke"; resolved = true; }
+    else if (!gap && away(bars[ti])) { outcome = "held"; resolved = true; }
     for (let i = ti + 1; !gap && !resolved && i < bars.length && bars[i].t <= end; i++) {
       if (bars[i].t - last > 60_000) { gap = true; break; }
       last = bars[i].t;
@@ -173,5 +177,5 @@ export function levelRecordAnswer(r: LevelRecord): string {
   const t = r.total;
   if (!t.touches) return `Over ${n} the index reached none of the mapped levels.`;
   const ug = t.ungraded ? `, ${t.ungraded} could not be graded` : "";
-  return `Over ${n} the index reached a mapped price ${t.touches} time${t.touches === 1 ? "" : "s"} (first touch per price per session): ${t.held} traded ${r.rules.awayPts} points back first, ${t.broke} closed ${r.rules.throughPts} points through first, ${t.neither} did neither in ${r.rules.horizonMin} minutes${ug}.`;
+  return `Over ${n} the index reached a mapped price ${t.touches} time${t.touches === 1 ? "" : "s"} (first touch per price per session): ${t.held} closed ${r.rules.awayPts} points back first, ${t.broke} closed ${r.rules.throughPts} points through first, ${t.neither} did neither in ${r.rules.horizonMin} minutes${ug}.`;
 }
