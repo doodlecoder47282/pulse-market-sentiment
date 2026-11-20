@@ -295,3 +295,12 @@ test("build: with no kept copy a refused read stays unavailable with the source'
   assert.equal(spx.levelsState, "unavailable");
   assert.match(spx.levelsReason ?? "", /self-throttle/);
 });
+
+test("build: the board carries the index lines merged without option landmarks", async () => {
+  _resetDeskBoardCache();
+  const b = await buildDeskBoard(NOON, deps());
+  const keys = b.cases.levelsWithoutOptions.flatMap((l) => l.key.split("+"));
+  assert.ok(keys.includes("pdl") && keys.includes("pdh"));
+  assert.ok(!keys.includes("wallAbove"), "no landmark in the option-free list");
+  assert.ok(b.tickers.find((t) => t.symbol === "$SPX")!.levels.flatMap((l) => l.key.split("+")).includes("wallAbove"), "the shown list still has it");
+});

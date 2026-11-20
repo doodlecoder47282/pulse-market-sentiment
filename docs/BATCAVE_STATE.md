@@ -2894,3 +2894,12 @@ same context object the evaluator received (shared/protocols.ts contextRow), wri
 in its own try, so a failed write cannot stop a rule. Nothing is replayed from it yet; the Protocols card
 says how many checks and sessions exist and at how many a wall was on the board.
 Tests: two added to tests/quant/protocols.test.ts.
+
+**Old option-map landmarks cannot reach a rule through a merged line (2026-11-20).** Found by two reviews:
+the engine kept landmarks from a non-current option map out of the rules by dropping lines whose group is
+"options", but a merged line takes the group of its highest member, so "prior-day low + magnet below" passed
+the filter (a stale magnet could feed the sweep rule and the crossings log), and "wall above + prior-day
+high" with the wall on top was dropped whole (the prior-day high went unwatched). The board now also carries
+the index lines merged without option landmarks (cases.levelsWithoutOptions), and the engine reads levels
+through shared/protocols.ts boardLevelsForRules: every line with a current map, the option-free list
+otherwise. Tests: two added to protocols.test.ts, one to desk-board.test.ts.

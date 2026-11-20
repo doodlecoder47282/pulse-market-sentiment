@@ -15,7 +15,7 @@ import { isRegularSessionOpen, sessionCloseMinutes, REGULAR_OPEN_MIN, etClock } 
 import { etWallToUtcMs } from "./validationMath";
 import { minutesToNextTier1 } from "../shared/macroCalendar";
 import {
-  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching, contextRow,
+  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching, contextRow, boardLevelsForRules,
   type ProtocolCtx, type ProtocolEval, type ProtocolRecord, type ProtocolDef,
 } from "../shared/protocols";
 import type { IntraBar, BoardLevel } from "../shared/levelBoard";
@@ -81,7 +81,7 @@ async function contextNow(nowMs: number): Promise<ProtocolCtx> {
     // A stale or age-unknown quote is not a read: the price, the tech read and the VIX read each need live quotes,
     // and option landmarks count only from a current option map.
     spx: spx && spx.quoteState === "ok" ? spx.price : null,
-    levels: (spx?.levels ?? []).filter((l) => l.group !== "options" || board.cases.optionsState === "ok"),
+    levels: boardLevelsForRules(spx?.levels ?? [], board.cases.levelsWithoutOptions, board.cases.optionsState),
     optionsState: board.cases.optionsState,
     tech: okQ("QQQ") && okQ("SPY") ? board.tech.state : "unknown",
     vix: okQ("$VIX") ? board.vix.state : "unknown",
@@ -120,7 +120,7 @@ async function tick(): Promise<void> {
       if (t.quoteState !== "ok" || t.price == null) { lastRead.delete(t.symbol); continue; }
       const prev = lastRead.get(t.symbol);
       // Landmarks from an option map that is not current are not levels to log a cross of.
-      const lv = t.levels.filter((l) => l.group !== "options" || board.cases.optionsState === "ok");
+      const lv = t.symbol === "$SPX" ? boardLevelsForRules(t.levels, board.cases.levelsWithoutOptions, board.cases.optionsState) : t.levels;
       if (prev && prev.date === today) {
         for (const h of levelHits(prev.price, t.price, lv, prev.levels)) ins.run(now, t.symbol, h.key, h.label, h.price, h.direction, t.price);
       }

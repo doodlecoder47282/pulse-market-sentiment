@@ -292,6 +292,19 @@ export function levelHits(prev: number | null | undefined, cur: number | null | 
   return out;
 }
 
+/**
+ * The index's level lines a rule or the crossings log may read. With a current option map: every line. With
+ * any other map state: the lines merged without option landmarks, so no landmark from an old map reaches a
+ * rule, not even inside a merged line named for its other member, and a calendar level that shared a line
+ * with a landmark is still there at its own price.
+ */
+export function boardLevelsForRules<T extends { key: string }>(all: T[], withoutOptions: T[] | undefined, optionsState: string | undefined): T[] {
+  if (optionsState === "ok") return all;
+  if (withoutOptions) return withoutOptions;
+  // No option-free list was given: drop every line that holds a landmark (a calendar level merged into one goes with it).
+  return all.filter((l) => !l.key.split("+").some((k) => (OPTION_LEVEL_KEYS as readonly string[]).includes(k)));
+}
+
 /** Option landmark keys: a board line whose key holds one of these is an option line. */
 export const OPTION_LEVEL_KEYS = ["pin", "wallAbove", "magnetBelow", "flip", "straddleHigh", "straddleLow"] as const;
 export interface ContextRow {
