@@ -2961,3 +2961,23 @@ minutes after the change-basis work deployed: QQQ still carried the last session
 feed had started a new day (-0.11% since the last close), and the board read "tech lagging by 2.08 percentage
 points" from the two. techRead now takes each side's basis and compares only when both are the same known
 basis; otherwise the read is "not compared", naming what each figure is, with state unknown.
+
+**Daily playbook describes the day on levels inside its reach (2026-11-20).** Owner report, with SPY at 709:
+the scenarios named a break of 775 or 700, a target of 775, a reward/risk of 14.67, and "chase the break".
+Cause: the playbook's walls are the strikes with the largest estimated dealer gamma over every expiry in the
+chain window, which on an index ETF are big round strikes many percent away. The scenario section of
+server/playbook.ts is rewritten:
+- playbookDayBounds: with VIX, a wall on its own side and within 1.5 VIX-implied one-sigma daily moves
+  (spot x VIX / 100 / sqrt(252)) is used; otherwise the nearest of Camarilla H4 / classic R1 (above) or L4 / S1
+  (below) inside that reach; otherwise one sigma. Without VIX: the nearest of those pivots; with no pivot the
+  wall is kept and marked far, and the card says the day's reach is not known.
+- Three scenarios in every gamma regime, each a condition and what lies beyond: inside the two levels, a
+  15-minute close above the upper, a 15-minute close below the lower. Every level carries its name. The
+  order is hand-set from the gamma sign and the bias, not a probability. No entries or verbs of action
+  ("chase", "fade", "expect", "roll to", "trade the", "wait for" are pinned out by a test over every regime).
+- The gamma levels that are not scenario levels are listed with side, distance and reason (beyond the reach,
+  on the other side of the price, or further than the nearest pivot); the gamma flip is included, and a far
+  flip is no longer called "unavailable".
+- The one-sigma daily move is stated as an implied figure, not a forecast.
+- Key levels keep the walls' own names; the news playbook is given the walls it names.
+Tests: tests/quant/playbook-day-levels.test.ts (8).
