@@ -41,7 +41,7 @@ const LIMITS = [
   "A price that starts a session within 10 points of where the index is trading is not read as a touch (the index is already at it); those are counted apart. A session that opens beyond a level meets it from the far side.",
   "The points are hand-set for the index at its current level and are the same for every level kind; a change of any number starts a new version of the record.",
   "Option levels (walls, gamma flip, straddle range) are not included: past option chains are not stored minute by minute.",
-  "A session is read only with at least 95% of its 1-minute bars and the daily bar of the session before it. A touch with a minute missing anywhere before its outcome, or too near the close, is not graded; a level only touched inside missing minutes is not seen at all.",
+  "A session is read only with at least 95% of its 1-minute bars and the daily bar of the session before it. The opening range is a level only when all 30 of its minutes are present. A touch with a minute missing anywhere before its outcome, or too near the close, is not graded; a level only touched inside missing minutes is not seen at all.",
 ];
 
 const memo = new Map<string, { sig: string; out: SessionTouches }>();
@@ -56,7 +56,7 @@ async function compute(nowMs: number): Promise<LevelRecordView> {
   try { dataNote = (await getProtocolReplay(nowMs)).refreshNote; } catch (e: any) { dataNote = `the stored bars could not be refreshed (${String(e?.message ?? e).slice(0, 80)})`; }
   const minute: IntraBar[] = (sqlite.prepare(`SELECT t, o, h, l, c FROM index_minute_bars WHERE symbol = ? ORDER BY t ASC`).all(SYMBOL) as any[])
     .map((r) => ({ t: r.t, open: r.o, high: r.h, low: r.l, close: r.c }));
-  if (!minute.length) return { ...base, state: "unavailable", reason: "no 1-minute index bars stored yet", answer: "No past session could be read yet.", record: null };
+  if (!minute.length) return { ...base, state: "unavailable", reason: `no 1-minute index bars stored yet${dataNote ? `: ${dataNote}` : ""}`, answer: "No past session could be read yet.", record: null };
   const dh = await getPriceHistory(SYMBOL, "year", 2, "daily", 1);
   const daily: DayBar[] = (dh.candles ?? []).map((c) => ({ date: dailyBarEtDate(c.datetime, etDate), open: c.open, high: c.high, low: c.low, close: c.close }));
   if (!daily.length) return { ...base, state: "unavailable", reason: `no daily index bars for the levels${dh.reason ? `: ${dh.reason}` : ""}`, answer: "No past session could be read: the daily bars the levels come from were not read.", record: null };

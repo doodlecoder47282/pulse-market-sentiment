@@ -69,7 +69,9 @@ export function sessionTouches(date: string, bars: IntraBar[], daily: DayBar[], 
     .map((lv) => ({ lv, from: 0 }));
   const orEndMs = openMs + OPENING_RANGE_MIN * 60_000;
   const orIdx = bars.findIndex((b) => b.t >= orEndMs);
-  if (orIdx >= 0) {
+  // The opening range is a level only when all of its minutes are there: a missing one could hold the real high or low.
+  const orWhole = orIdx === OPENING_RANGE_MIN && bars.slice(0, orIdx).every((b, i) => b.t === openMs + i * 60_000);
+  if (orIdx >= 0 && orWhole) {
     for (const lv of sessionLevels(bars.slice(0, orIdx + 1), date, bars[orIdx].t + 60_000)) {
       if (lv.key === "orh" || lv.key === "orl") levels.push({ lv, from: orIdx });
     }
@@ -94,7 +96,7 @@ export function sessionTouches(date: string, bars: IntraBar[], daily: DayBar[], 
     let ti = -1;
     let gapBefore = false;
     for (let i = from; i < bars.length; i++) {
-      if (i > 0 && bars[i].t - bars[i - 1].t > 60_000 && i > from) gapBefore = true;
+      if (i > 0 && bars[i].t - bars[i - 1].t > 60_000) gapBefore = true; // the first scanned bar is checked against the one before it too
       if (side === "above" ? bars[i].high >= price : bars[i].low <= price) { ti = i; break; }
     }
     if (ti < 0) continue;

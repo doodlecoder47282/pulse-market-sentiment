@@ -95,6 +95,17 @@ test("the opening range is only a level after 10:00, from the side price sat on 
   assert.deepEqual([t.side, t.outcome, t.touchedAt], ["above", "held", open + 45 * 60_000]);
 });
 
+test("the opening range: a missing minute at 10:00 leaves its touch ungraded, and a missing minute inside the range forms no level", () => {
+  const over: Record<number, Partial<IntraBar>> = { 5: { high: 7018 }, 10: { low: 7004 } };
+  for (let i = 20; i < 45; i++) over[i] = flat(7006);
+  over[45] = { ...flat(7016), high: 7018.2 };
+  for (let i = 46; i < 390; i++) over[i] = flat(7015);
+  const whole = path(7012, 0, {}, 7012, over);
+  assert.equal(touch(sessionTouches(D, whole.filter((_, i) => i < 30 || i > 35), daily, AFTER), "orh")!.outcome, "ungraded", "10:00 to 10:05 missing");
+  assert.equal(touch(sessionTouches(D, whole.filter((_, i) => i < 13 || i > 17), daily, AFTER), "orh"), undefined, "09:43 to 09:47 missing: no opening-range level");
+  assert.ok(touch(sessionTouches(D, whole, daily, AFTER), "orh"), "the whole session still forms it");
+});
+
 test("a missing minute before or after the touch, or a touch too near the close, is not graded", () => {
   const after = dip({ 70: { high: 7010 } }).filter((_, i) => i < 62 || i > 66);
   assert.equal(touch(sessionTouches(D, after, daily, AFTER), "pdl")!.outcome, "ungraded");
