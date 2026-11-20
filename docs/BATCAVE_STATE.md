@@ -2925,9 +2925,11 @@ Tests: tests/quant/level-record.test.ts (8).
 
 **Level board: what a day change is a change of (2026-11-20).** Seen live twice after midnight ET: "Market
 closed, last prices: VIX +0.00% on the day: flat" though VIX had closed up nearly 16%. The quote feed starts a
-new day overnight, so before the open the figure is the move since the last close, not the last session's
-move. The board now carries a change basis by the clock (shared/levelBoard.ts changeBasis: session, last
-session, or before the open) and the tech and VIX lines are prefixed accordingly: "Market closed, the last
-session's change:" or "Before the open, change since the last close (not the last session's move; an index
-has usually not moved yet):". Weekend behaviour of the feed is not verified (treated as last session).
-Test: one added to tests/quant/desk-board.test.ts.
+new day at some point overnight (when is not known), after which the figure is the move since the last close,
+not the last session's move. The clock cannot tell which, but the quote can: its previous close is the close
+the change is measured from. shared/levelBoard.ts quoteChangeBasis compares it with the close of the last
+finished session and the one before: session / last_session / since_close / unknown (neither close matches,
+or one was not read). Each ticker carries its basis; the tech and VIX sentences name it ("in the last
+session", "since the last close", or, when unknown, both possibilities); tech is compared only when QQQ and
+SPY measure the same thing. Out of session the protocol conditions show tech and VIX as not read.
+Tests: two in tests/quant/desk-board.test.ts.

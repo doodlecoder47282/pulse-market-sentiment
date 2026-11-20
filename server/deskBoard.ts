@@ -14,7 +14,7 @@ import { etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
 import { editionFromEnv } from "../shared/edition";
 import {
-  boardSession, changeBasis, type ChangeBasis, calendarLevels, rangeLevels, sessionLevels, dayBarFromIntraday, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
+  boardSession, quoteChangeBasis, type ChangeBasis, calendarLevels, rangeLevels, sessionLevels, dayBarFromIntraday, mergeLevels, nearestLevels, deskCase, techRead, vixRead,
   type BoardLevel, type DayBar, type IntraBar, type DeskCase, type RelRead, type VixRead,
 } from "../shared/levelBoard";
 
@@ -33,6 +33,8 @@ export interface BoardTicker {
   kind: "index" | "etf" | "vol" | "future";
   price: number | null;
   changePct: number | null;
+  /** What changePct is a change of, read from the quote's own previous close (shared/levelBoard.ts quoteChangeBasis). */
+  changeBasis: ChangeBasis;
   /** "ok" live or last-session quote; "stale" old in session or re-served; "age_unknown" no timestamp in session; "unavailable" none. */
   quoteState: "ok" | "stale" | "age_unknown" | "unavailable";
   quoteReason: string | null;
@@ -52,8 +54,6 @@ export interface DeskBoard {
   /** The session these levels are for: today while it is open or still to come, else the next one. */
   forSession: string;
   sessionOpen: boolean;
-  /** What the day changes on this board are changes of (shared/levelBoard.ts changeBasis). */
-  changeBasis: ChangeBasis;
   tickers: BoardTicker[];
   tech: RelRead;
   vix: VixRead;
@@ -300,6 +300,10 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     if (levels.length) levels = [...levels, ...rangeLevels(d.bars, forSession)];
     const done = d.bars.filter((b) => b.date < forSession).map((b) => b.date).sort();
     const priorSession = done[done.length - 1] ?? null;
+    // The close the quote's change is measured from tells what the change is a change of.
+    const closeOf = (date: string | undefined) => (date ? d.bars.find((b) => b.date === date)?.close ?? null : null);
+    const hasPrior = priorSession != null && priorSession === expectedPrior;
+    const changeBasis = quoteChangeBasis(sessionOpen, q?.prevClose ?? null, hasPrior ? closeOf(priorSession!) : null, closeOf(hasPrior ? done[done.length - 2] : done[done.length - 1]));
     let levelsState: BoardTicker["levelsState"] = levels.length ? "ok" : "unavailable";
     const reasons: string[] = [];
     if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
@@ -319,7 +323,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     const merged = mergeLevels(levels, price);
     const n = nearestLevels(levels, price);
     return {
-      symbol: t.symbol, label: t.label, kind: t.kind, price, changePct, quoteState, quoteReason,
+      symbol: t.symbol, label: t.label, kind: t.kind, price, changePct, changeBasis, quoteState, quoteReason,
       levels: merged, levelsState, levelsReason: reasons.length ? reasons.join("; ") : null, priorSession,
       at: n.at, above: n.above[0] ?? null, below: n.below[0] ?? null,
     };
@@ -330,10 +334,11 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
   return {
     asOf: nowMs,
     edition: deps.edition(),
-    forSession, sessionOpen, changeBasis: changeBasis(nowMs),
+    forSession, sessionOpen,
     tickers,
-    tech: techRead(by("QQQ").changePct, by("SPY").changePct),
-    vix: vixRead(by("$VIX").changePct),
+    // Two changes are only compared when they are changes of the same thing.
+    tech: techRead(by("QQQ").changePct, by("SPY").changePct, by("QQQ").changeBasis === by("SPY").changeBasis ? by("QQQ").changeBasis : "unknown"),
+    vix: vixRead(by("$VIX").changePct, by("$VIX").changeBasis),
     cases: {
       symbol: "$SPX", price: spx.price,
       bull: deskCase(spxRaw, spx.price, "bull"),

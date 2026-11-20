@@ -367,16 +367,44 @@ test("build: the VIX reason says its built bar stops at the regular close", asyn
   assert.doesNotMatch(b.tickers.find((x) => x.symbol === "$SPX")!.levelsReason ?? "", /16:15/);
 });
 
-test("change basis: session, last session, or before the open, by the clock", async () => {
-  const { changeBasis, CHANGE_PREFIX } = await import("../../shared/levelBoard");
-  assert.equal(changeBasis(Date.UTC(2026, 10, 19, 17, 0)), "session");      // Thu 12:00 ET
-  assert.equal(changeBasis(Date.UTC(2026, 10, 19, 23, 0)), "last_session"); // Thu 18:00 ET
-  assert.equal(changeBasis(Date.UTC(2026, 10, 20, 5, 45)), "pre_open");     // Fri 00:45 ET: the feed has started a new day
-  assert.equal(changeBasis(Date.UTC(2026, 10, 20, 14, 0)), "pre_open");     // Fri 09:00 ET
-  assert.equal(changeBasis(Date.UTC(2026, 10, 21, 15, 0)), "last_session"); // Saturday
-  assert.equal(CHANGE_PREFIX.session, "");
-  assert.match(CHANGE_PREFIX.pre_open, /Before the open, change since the last close/);
-  assert.match(CHANGE_PREFIX.last_session, /the last session's change/);
+test("change basis is read from the quote's own previous close, not from the clock", async () => {
+  const { quoteChangeBasis, techRead, vixRead } = await import("../../shared/levelBoard");
+  assert.equal(quoteChangeBasis(true, 100, 100, 99), "session");
+  assert.equal(quoteChangeBasis(false, 100, 100, 99), "since_close", "measured from the last finished session's close: the feed has started a new day");
+  assert.equal(quoteChangeBasis(false, 99, 100, 99), "last_session", "still measured from the close before it");
+  assert.equal(quoteChangeBasis(false, 100.02, 100, 99), "since_close", "a hair apart is the same close");
+  assert.equal(quoteChangeBasis(false, 97, 100, 99), "unknown");
+  assert.equal(quoteChangeBasis(false, null, 100, 99), "unknown");
+  assert.equal(quoteChangeBasis(false, 100, 100, 100), "unknown", "both closes equal: cannot tell");
+  assert.equal(quoteChangeBasis(false, 99, null, 99), "last_session", "the last close not read, the one before matches");
+  assert.equal(vixRead(0, "since_close").text, "VIX +0.00% since the last close: flat (hand-set line: 1%).");
+  assert.equal(vixRead(15.8, "last_session").text, "VIX +15.80% in the last session: firm (hand-set line: 1%).");
+  assert.match(vixRead(0, "unknown").text, /by the feed's day change \(the last session's move until the feed starts a new day/);
+  assert.doesNotMatch(vixRead(0, "since_close").text, /on the day/);
+  assert.match(techRead(-2.64, -2.07, "last_session").text, /^QQQ -2\.64% against SPY -2\.07% in the last session: tech lagging/);
+  assert.equal(vixRead(-3.53).text, "VIX -3.53% on the day: soft (hand-set line: 1%).", "in session the words are unchanged");
+});
+
+test("build: each ticker carries its change basis; tech is read only when both sides measure the same thing", async () => {
   _resetDeskBoardCache();
-  assert.equal((await buildDeskBoard(Date.UTC(2026, 10, 12, 5, 45), deps())).changeBasis, "pre_open");
+  const EVENING = Date.UTC(2026, 10, 12, 1, 0); // Wed 20:00 ET; the daily fixture ends with Wed 11-11
+  const closes = new Map(daily.map((x) => [x.date, x.close]));
+  const lastClose = closes.get("2026-11-11")!, before = closes.get("2026-11-10")!;
+  const quotes = (spyPrev: number) => async () => [
+    { symbol: "$SPX", last: 113, changePercent: 0, prevClose: lastClose, stale: false },
+    { symbol: "SPY", last: 113, changePercent: 0.2, prevClose: spyPrev, stale: false },
+    { symbol: "QQQ", last: 113, changePercent: 0.8, prevClose: before, stale: false },
+    { symbol: "$VIX", last: 20, changePercent: 0, prevClose: lastClose, stale: false },
+  ] as any;
+  const d1 = deps(); d1.getQuotes = quotes(before);
+  const b1 = await buildDeskBoard(EVENING, d1);
+  const basis = (b: any, s: string) => b.tickers.find((t: any) => t.symbol === s).changeBasis;
+  assert.deepEqual([basis(b1, "$SPX"), basis(b1, "QQQ"), basis(b1, "$VIX")], ["since_close", "last_session", "since_close"]);
+  assert.match(b1.vix.text, /since the last close/);
+  assert.match(b1.tech.text, /in the last session/);
+  _resetDeskBoardCache();
+  const d2 = deps(); d2.getQuotes = quotes(lastClose); // SPY has started a new day, QQQ has not
+  assert.match((await buildDeskBoard(EVENING, d2)).tech.text, /by the feed's day change/);
+  _resetDeskBoardCache();
+  assert.equal(basis(await buildDeskBoard(NOON, deps()), "$SPX"), "session");
 });

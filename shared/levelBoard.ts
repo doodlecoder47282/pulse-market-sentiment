@@ -230,22 +230,23 @@ export function deskCase(levels: BoardLevel[], price: number | null | undefined,
 
 export interface RelRead { state: "leading" | "lagging" | "in line" | "unknown"; diffPts: number | null; text: string }
 /** Tech against the broad market: QQQ's day change minus SPY's. */
-export function techRead(qqqPct: number | null | undefined, spyPct: number | null | undefined): RelRead {
+export function techRead(qqqPct: number | null | undefined, spyPct: number | null | undefined, basis: ChangeBasis = "session"): RelRead {
   if (typeof qqqPct !== "number" || typeof spyPct !== "number" || !Number.isFinite(qqqPct) || !Number.isFinite(spyPct)) {
     return { state: "unknown", diffPts: null, text: "Tech against the market: not read (a QQQ or SPY day change is missing)." };
   }
   const d = qqqPct - spyPct;
   const state = d >= TECH_LEAD_PTS ? "leading" : d <= -TECH_LEAD_PTS ? "lagging" : "in line";
   const s = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
-  return { state, diffPts: d, text: `QQQ ${s(qqqPct)} against SPY ${s(spyPct)}: tech ${state === "in line" ? "in line" : `${state} by ${Math.abs(d).toFixed(2)} percentage points`} (hand-set line: ${TECH_LEAD_PTS.toFixed(2)}).` };
+  const when = basis === "session" ? "" : ` ${CHANGE_WORDS[basis]}`;
+  return { state, diffPts: d, text: `QQQ ${s(qqqPct)} against SPY ${s(spyPct)}${when}: tech ${state === "in line" ? "in line" : `${state} by ${Math.abs(d).toFixed(2)} percentage points`} (hand-set line: ${TECH_LEAD_PTS.toFixed(2)}).` };
 }
 
 export interface VixRead { state: "firm" | "soft" | "flat" | "unknown"; text: string }
 /** VIX on the day: firm when up at least VIX_FIRM_PCT percent, soft when down at least that. */
-export function vixRead(vixPct: number | null | undefined): VixRead {
-  if (typeof vixPct !== "number" || !Number.isFinite(vixPct)) return { state: "unknown", text: "VIX on the day: not read." };
+export function vixRead(vixPct: number | null | undefined, basis: ChangeBasis = "session"): VixRead {
+  if (typeof vixPct !== "number" || !Number.isFinite(vixPct)) return { state: "unknown", text: `VIX ${CHANGE_WORDS[basis]}: not read.` };
   const state = vixPct >= VIX_FIRM_PCT ? "firm" : vixPct <= -VIX_FIRM_PCT ? "soft" : "flat";
-  return { state, text: `VIX ${vixPct >= 0 ? "+" : ""}${vixPct.toFixed(2)}% on the day: ${state} (hand-set line: ${VIX_FIRM_PCT}%).` };
+  return { state, text: `VIX ${vixPct >= 0 ? "+" : ""}${vixPct.toFixed(2)}% ${CHANGE_WORDS[basis]}: ${state} (hand-set line: ${VIX_FIRM_PCT}%).` };
 }
 
 /** One sentence for the top of the board: where the index sits between its nearest levels. */
@@ -258,26 +259,35 @@ export function boardAnswer(label: string, price: number | null | undefined, n: 
   return `${label} ${fmt(price)}: no levels were read.`;
 }
 
-/** The session the board is for: today until its close, else the next trading day. */
 /**
- * What a ticker's day change is a change OF, by the clock. In session it is the session's move. After the
- * close it is still that finished session's move. Before the open on a session day the quote feed has
- * started a new day (seen live: after midnight ET the index and VIX read +0.00% though VIX had closed up
- * nearly 16%), so the figure is the move since the last close: overnight and pre-market trading for ETFs
- * and futures, and usually nothing yet for an index. Reading it as "on the day" would be false.
+ * What a ticker's day change is a change OF. In session it is the session's move. Out of session it depends
+ * on whether the quote feed has started a new day, which the clock does not tell (seen live: after midnight
+ * ET VIX read +0.00% though it had closed up nearly 16%). The quote says so itself: its previous close is the
+ * close the change is measured from. Equal to the close of the last finished session: the feed has started a
+ * new day and the figure is the move since that close. Equal to the close of the session before: the figure
+ * is still the last finished session's move. Neither, or a close not read: unknown, and the words say both.
  */
-export type ChangeBasis = "session" | "last_session" | "pre_open";
-export function changeBasis(nowMs: number): ChangeBasis {
-  const s = boardSession(nowMs);
-  return s.sessionOpen ? "session" : s.today === s.forSession ? "pre_open" : "last_session";
+export type ChangeBasis = "session" | "last_session" | "since_close" | "unknown";
+/** Two closes this close in relative terms are the same close (a built bar's last print can differ from the official close by a hair). */
+export const SAME_CLOSE_PCT = 0.0005;
+export function quoteChangeBasis(sessionOpen: boolean, prevClose: number | null | undefined, lastClose: number | null | undefined, closeBefore: number | null | undefined): ChangeBasis {
+  if (sessionOpen) return "session";
+  if (!ok(prevClose)) return "unknown";
+  const same = (a: number | null | undefined) => ok(a) && Math.abs(prevClose - a) <= a * SAME_CLOSE_PCT;
+  const isLast = same(lastClose), isBefore = same(closeBefore);
+  if (isLast && !isBefore) return "since_close";
+  if (isBefore && !isLast) return "last_session";
+  return "unknown";
 }
-/** The words put in front of a tech or VIX read for each basis. */
-export const CHANGE_PREFIX: Record<ChangeBasis, string> = {
-  session: "",
-  last_session: "Market closed, the last session's change: ",
-  pre_open: "Before the open, change since the last close (not the last session's move; an index has usually not moved yet): ",
+/** How each basis is named inside a sentence. */
+export const CHANGE_WORDS: Record<ChangeBasis, string> = {
+  session: "on the day",
+  last_session: "in the last session",
+  since_close: "since the last close",
+  unknown: "by the feed's day change (the last session's move until the feed starts a new day, the move since the last close after that)",
 };
 
+/** The session the board is for: today until its close, else the next trading day. */
 export function boardSession(nowMs: number): { forSession: string; sessionOpen: boolean; today: string } {
   const c = etClock(nowMs);
   const close = sessionCloseMinutes(c.date);
