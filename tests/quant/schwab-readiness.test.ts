@@ -117,7 +117,9 @@ test("auth link checks storage before issuing state; Settings uses bounded JSON 
   const settings = readFileSync(new URL("../../client/src/components/SchwabSettings.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(settings, /apiRequest\(/);
   assert.doesNotMatch(settings, /isConnected \? "SCHWAB LIVE"/);
-  assert.match(settings, /lastMessageAgeMs <= 60_000/);
+  // The live-feed rule moved with the label to shared/streamFeed.ts; Settings must still use it.
+  assert.match(settings, /import \{ streamFeedLabel \} from "@shared\/streamFeed"/);
+  assert.match(readFileSync(new URL("../../shared/streamFeed.ts", import.meta.url), "utf8"), /lastMessageAgeMs <= 60_000/);
   assert.match(settings, /return \{ source: "unverified"/);
 });
 test("alternate hazard backfill cannot label demo candles as Schwab calibration data", () => {

@@ -3023,3 +3023,15 @@ no day. getPerformanceSnapshot returns it (daySpread) over exactly the scored se
 per-day counts. The Performance section now sits above Fresh Whales; a failed performance read now shows as
 failed instead of as "no closed positions"; switching 7d/30d keeps the last figures until the new ones arrive.
 Nothing is reweighted or removed. Tests: tests/quant/whale-days.test.ts (6).
+**"Feed not verified: Schwab 401" explained in settings (2026-11-20).** What the code shows: the stream
+sign-in needs GET trader/v1/userPreference, and Schwab answers 401. The code takes that to mean the developer
+app lacks the "Accounts and Trading Production" product (server/schwab.ts getStreamerInfo); Schwab's own
+response body has not been inspected, and an expired sign-in gives the same 401. REST market data is
+unaffected; the stream retries every 30 minutes. Off without the stream: trade-level buy/sell side
+(leeReadyOfi), streamed option flow (flow.ts), block prints (tickerScan), streamed option marks (odteAuditDb).
+If the product is the cause, only the app's owner can add it at developer.schwab.com (Schwab reviews it). The settings line cut the reason off at 220px and read as
+a fault. It now reads "Quotes: Read by request, streaming off" with the cause and who can change it in full
+underneath (shared/streamFeed.ts, moved out of SchwabSettings.tsx so the wording is tested). Other stream
+failures keep "Feed not verified" with their own reason, and the note shows only while the stream is in the
+refused state now (the server keeps the last error text after a later sign-in). Tests:
+tests/quant/stream-feed-label.test.ts (5).

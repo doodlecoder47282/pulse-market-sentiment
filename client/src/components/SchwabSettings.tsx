@@ -4,6 +4,7 @@
  * Opened via the gear icon in the header.
  */
 
+import { streamFeedLabel } from "@shared/streamFeed";
 import BackgroundPicker from "@/components/BackgroundPicker";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -86,19 +87,6 @@ interface StreamStatus {
   delayedSymbols?: string[];
 }
 
-/** Feed mode for quotes: Schwab Streamer live, Schwab REST snapshots, or nothing. */
-export function streamFeedLabel(connected: boolean, stream: StreamStatus | undefined): { label: string; color: string; detail: string } {
-  if (!connected) return { label: "Unavailable", color: "#f87171", detail: "Schwab not connected: no quotes" };
-  if (stream?.mode === "live" && stream.lastMessageAgeMs != null && stream.lastMessageAgeMs >= 0 && stream.lastMessageAgeMs <= 60_000
-      && (stream.perService?.LEVELONE_EQUITIES?.lastDataAgeMs ?? Infinity) >= 0
-      && (stream.perService?.LEVELONE_EQUITIES?.lastDataAgeMs ?? Infinity) <= 60_000) {
-    const age = stream.lastMessageAgeMs != null ? `${Math.round(stream.lastMessageAgeMs / 1000)}s since last frame` : "";
-    return { label: "Streaming live", color: "#34d399", detail: age };
-  }
-  const why = stream?.lastError ?? stream?.reason ?? (stream?.mode === "connecting" ? "stream connecting" : "stream down");
-  return { label: "Feed not verified", color: "#fbbf24", detail: why };
-}
-
 function StreamFeedRow({ connected, stream }: { connected: boolean; stream: StreamStatus | undefined }) {
   const f = streamFeedLabel(connected, stream);
   const svc = stream?.perService ?? {};
@@ -113,6 +101,7 @@ function StreamFeedRow({ connected, stream }: { connected: boolean; stream: Stre
         <span className="font-medium">Quotes: {f.label}</span>
         {f.detail && <span className="text-muted-foreground truncate max-w-[220px]">· {f.detail}</span>}
       </div>
+      {f.note && <div className="text-muted-foreground leading-relaxed" data-testid="schwab-stream-note">{f.note}</div>}
       {connected && stream?.mode && stream.mode !== "down" && (
         <div className="text-muted-foreground font-mono">
           L1 eq {svcAge("LEVELONE_EQUITIES")} · chart {svcAge("CHART_EQUITY")} · options {svc.LEVELONE_OPTIONS?.keys ?? "?"} keys
