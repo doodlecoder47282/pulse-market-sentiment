@@ -7,6 +7,7 @@
  * sample gate. The Method disclosure lists every rule with its value and
  * meaning, so what the reader sees is what the engine ran.
  */
+import { SETUP_KIND_TEXT } from "@shared/scoreboard";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,9 +34,7 @@ const MARGIN_TEXT: Record<string, string> = {
   premium: "premium vs floor", volOi: "vol/OI vs floor", wallShare: "wall share vs floor", costMultiple: "target/cost vs rule", rMultiple: "R vs rule", calendarQuiet: "calendar quiet vs rule", impliedMoveRoom: "implied-move room",
 };
 
-const KIND_TEXT: Record<string, string> = {
-  fade_call_wall: "fade at the call wall", fade_put_wall: "fade at the put wall", breakout_above: "breakout above the call wall", breakout_below: "breakout below the put wall",
-};
+const KIND_TEXT: Record<string, string> = SETUP_KIND_TEXT;
 const STATUS_CLS: Record<string, string> = {
   open: "text-sky-300", hit: "text-emerald-300", invalidated: "text-rose-300", expired: "text-muted-foreground", ungraded: "text-amber-300",
 };
