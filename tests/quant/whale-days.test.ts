@@ -48,7 +48,8 @@ test("one day, one position, none, and a result without a day each read as what 
 
 test("wiring: keyed on the day flagged, over the scored set; the route passes it on; a failed read is not an empty record; the record sits above the new alerts", () => {
   const srv = readFileSync("server/whaleFollowThrough.ts", "utf8");
-  assert.match(srv, /if \(s\) \{ scored\.push\(s\); days\.push\(\{ day: etDate\(p\.entry\.detectedAt\), win: s\.trade\.win \}\); \}/);
+  assert.match(srv, /if \(s\) \{ scored\.push\(s\); days\.push\(\{ day: flagDay\(p\), win: s\.trade\.win \}\); \}/);
+  assert.match(srv, /Number\.isFinite\(t\) && t > 0 \? etDate\(t\) : ""/);
   assert.match(srv, /daySpread: daySpread\(days\)/);
   assert.match(readFileSync("server/routes.ts", "utf8"), /daySpread: whaleSnap\.daySpread/);
   const ui = readFileSync("client/src/components/WhaleFlowPanel.tsx", "utf8");

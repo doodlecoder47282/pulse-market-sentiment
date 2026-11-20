@@ -597,6 +597,12 @@ function entryQuote(p: FollowPosition): { bid: number | null; ask: number | null
   } catch { return { bid: null, ask: null }; }
 }
 
+/** ET day a position was flagged; "" when the stored time is unusable (then it is left out of the day counts, not put on a made-up day). */
+function flagDay(p: FollowPosition): string {
+  const t = p.entry?.detectedAt;
+  return typeof t === "number" && Number.isFinite(t) && t > 0 ? etDate(t) : "";
+}
+
 /** Score one terminal position at ask in / bid out, net of fees; null when a quote or the fee (index root) is missing. */
 export function scoreFollowPosition(p: FollowPosition, feePerContract: number | null = feeForProduct(p.occ).fee): { trade: ScoredTrade; peakNetReturn: number | null } | null {
   const e = entryQuote(p);
@@ -629,7 +635,7 @@ export function getPerformanceSnapshot(opts?: { windowDays?: number }): Performa
     const fee = feeForProduct(p.occ).fee;
     if (fee == null) { excludedNoFee++; continue; }
     const s = scoreFollowPosition(p, fee);
-    if (s) { scored.push(s); days.push({ day: etDate(p.entry.detectedAt), win: s.trade.win }); } else excluded++;
+    if (s) { scored.push(s); days.push({ day: flagDay(p), win: s.trade.win }); } else excluded++;
   }
   // whaleFollowThrough only tracks whale-source positions
   const row = buildScoreboardRow("whale", scored, excluded, undefined, excludedNoFee);
