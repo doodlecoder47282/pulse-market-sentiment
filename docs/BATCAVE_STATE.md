@@ -2881,3 +2881,18 @@ levels reason with the copy's time and why the fresh read failed; the existing p
 read-before-close checks run on the copy as on any read. Not kept in the demo edition. The startup burst itself
 is not reduced by this; that is still open. Also: scoreboard setup rows word the kind as the setup log does
 ("breakout below the put wall", not "breakout_below"). Tests: two added to tests/quant/desk-board.test.ts.
+**Daily price history survives a restart (2026-11-19).** Measured live in the minute after a deploy: 100 of
+100 Schwab requests used, all by the first page load (whale flow 20, macro 14 daily histories, regime 10 daily
+histories, 36 not itemised); the in-memory cache is empty after a restart, so whatever loads last reads
+"unavailable" (the level board, at one point the quotes). Two changes in the transport: (1) daily
+price-history payloads are also written to SQLite (schwab_daily_cache, server/schwabCacheStore.ts) and put
+back into the cache once after a restart with their real fetch time and original expiry, so the cache rules
+treat them as if the process had not restarted (only copies read after the session settled are written; the
+restored expiry is capped at the longest daily TTL); (2) with the market closed, a daily copy read after the
+settle is served as the last-session copy, with no request, when at least half the per-minute limit is in use,
+but only in the first ten minutes after a restart or while the copy is under two hours old, so sustained load
+cannot hold one copy all night (schwabDataPolicy.serveSettledDailyUnderPressure; a forced refresh is never
+short-circuited; it is served as an ordinary cache hit, not recorded as a degraded read). Whether Schwab's
+daily bar is final at the settle is not verified, which is why the rule is bounded. Only daily bars are kept. Not addressed: the option-chain share of the startup load;
+a restart during the session still refetches daily bars (today's bar moves). Diagnostics report how many
+payloads were restored and how many reads the rule served. Tests: tests/quant/daily-bars-restart.test.ts (6).
