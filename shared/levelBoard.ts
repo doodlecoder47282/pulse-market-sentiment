@@ -300,3 +300,33 @@ export function boardSession(nowMs: number): { forSession: string; sessionOpen: 
   const todayLive = isTradingDay(c.date) && close != null && c.minutes < close;
   return { forSession: todayLive ? c.date : nextTradingDay(c.date), sessionOpen: todayLive && c.minutes >= REGULAR_OPEN_MIN, today: c.date };
 }
+
+/**
+ * Levels read from a quote's own day fields, for a ticker with no bars (the index futures): the previous
+ * close the quote carries and the open, high and low of the trading day the feed is counting. Nothing is
+ * derived: each price is a field of the quote, named as such. A field that is missing, or a high and low
+ * that do not contain the last price and the open (the fields are then not from one day), is left out and
+ * named in `missing`. Pure.
+ */
+export function quoteDayLevels(q: { last?: number | null; prevClose?: number | null; dayOpen?: number | null; dayHigh?: number | null; dayLow?: number | null } | null | undefined): { levels: BoardLevel[]; missing: string[] } {
+  const levels: BoardLevel[] = [];
+  const missing: string[] = [];
+  if (!q) return { levels, missing: ["no quote"] };
+  if (ok(q.prevClose)) levels.push({ key: "qpc", label: "previous close (quote)", price: q.prevClose, group: "prior day" });
+  else missing.push("previous close");
+  const { dayHigh: h, dayLow: l, dayOpen: o, last } = q;
+  if (ok(h) && ok(l)) {
+    const inside = (x: number | null | undefined) => !ok(x) || (x >= l && x <= h);
+    if (h >= l && inside(last) && inside(o)) {
+      levels.push({ key: "qhi", label: "day high so far (quote)", price: h, group: "today" });
+      levels.push({ key: "qlo", label: "day low so far (quote)", price: l, group: "today" });
+      if (ok(o)) levels.push({ key: "qop", label: "day open (quote)", price: o, group: "today" });
+      else missing.push("day open");
+    } else missing.push("day high and low (the quote's high and low do not contain its own last price or open)");
+  } else {
+    missing.push("day high and low");
+    if (ok(o)) levels.push({ key: "qop", label: "day open (quote)", price: o, group: "today" });
+    else missing.push("day open");
+  }
+  return { levels, missing };
+}
