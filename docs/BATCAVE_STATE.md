@@ -2922,3 +2922,16 @@ left out). Shown on the Trade Desk under Protocols as one sentence with the by-l
 limits on tap; counts only, with the statement that a few neighbouring sessions are too few to read a tendency
 from. Reads the stored 1-minute index bars the replay keeps. Route: GET /api/desk/level-record.
 Tests: tests/quant/level-record.test.ts (8).
+
+**Context log for option-level rules (2026-11-20).** The price-only rule can be replayed from stored bars; the
+wall rule reads the option wall, tech against the market and VIX as they were, and none of that was stored,
+so it could only ever gain one live session a day. At every evaluation in session (each minute) the protocol
+engine now writes down what the rules were given (table desk_rule_context): the index price as the rules saw
+it (null when its quote was not live), the option map's state, the board lines that hold an option landmark
+with their merged key and price (the price the wall rule compares against, not the raw landmark), the gated
+tech and VIX reads ("unknown" when a quote behind them was not live), the release-calendar fields and the
+session clock, plus the raw day changes and quote states behind the gated reads. The row is built from the
+same context object the evaluator received (shared/protocols.ts contextRow), written after the rules run and
+in its own try, so a failed write cannot stop a rule. Nothing is replayed from it yet; the Protocols card
+says how many checks and sessions exist and at how many a wall was on the board.
+Tests: two added to tests/quant/protocols.test.ts.

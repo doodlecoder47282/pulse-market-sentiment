@@ -15,7 +15,7 @@ import { isRegularSessionOpen, sessionCloseMinutes, REGULAR_OPEN_MIN, etClock } 
 import { etWallToUtcMs } from "./validationMath";
 import { minutesToNextTier1 } from "../shared/macroCalendar";
 import {
-  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching,
+  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching, contextRow,
   type ProtocolCtx, type ProtocolEval, type ProtocolRecord, type ProtocolDef,
 } from "../shared/protocols";
 import type { IntraBar, BoardLevel } from "../shared/levelBoard";
@@ -95,6 +95,16 @@ function hasOpenOrRecent(protocol: string, horizonMin: number, nowMs: number): b
   return !!sqlite.prepare(`SELECT 1 FROM protocol_events WHERE protocol = ? AND (status = 'open' OR armed_at >= ?) LIMIT 1`).get(protocol, since);
 }
 
+let lastContextPrune = 0;
+let lastContextError: string | null = null;
+const CONTEXT_KEEP_MS = 250 * 86_400_000;
+// One row per evaluation: the rule's own context (shared/protocols.ts contextRow) as JSON, with the few columns the counts need.
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS desk_rule_context (
+    at INTEGER PRIMARY KEY, session TEXT NOT NULL, spx REAL, options_state TEXT NOT NULL, has_wall INTEGER NOT NULL, row_json TEXT NOT NULL
+  );
+`);
+
 async function tick(): Promise<void> {
   if (ticking) return;
   const now = Date.now();
@@ -132,6 +142,21 @@ async function tick(): Promise<void> {
     }
     lastTickAt = now;
     lastTickError = null;
+    // Context log, after the rules have run and in its own try: writing it down can never stop a rule from arming.
+    try {
+      const q = (sym: string) => board.tickers.find((t) => t.symbol === sym);
+      const row = contextRow(ctx, today, {
+        qqqPct: q("QQQ")?.changePct ?? null, spyPct: q("SPY")?.changePct ?? null, vixPct: q("$VIX")?.changePct ?? null,
+        quotes: { SPX: q("$SPX")?.quoteState ?? "unavailable", QQQ: q("QQQ")?.quoteState ?? "unavailable", SPY: q("SPY")?.quoteState ?? "unavailable", VIX: q("$VIX")?.quoteState ?? "unavailable" },
+        optionsAsOfMs: board.cases.optionsAsOfMs,
+      });
+      sqlite.prepare(`INSERT OR REPLACE INTO desk_rule_context (at, session, spx, options_state, has_wall, row_json) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(row.at, row.session, row.spx, row.optionsState, row.optionLines.some((l) => l.key.split("+").includes("wallAbove")) ? 1 : 0, JSON.stringify(row));
+      if (now - lastContextPrune > 3_600_000) { sqlite.prepare(`DELETE FROM desk_rule_context WHERE at < ?`).run(now - CONTEXT_KEEP_MS); lastContextPrune = now; }
+      lastContextError = null;
+    } catch (e: any) {
+      lastContextError = String(e?.message ?? e).slice(0, 120);
+    }
   } catch (e: any) {
     lastTickError = String(e?.message ?? e).slice(0, 120);
   } finally {
@@ -193,6 +218,8 @@ export interface ProtocolLog {
   lastTickError: string | null;
   protocols: ProtocolView[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
+  /** The context log a rule that reads option levels will be replayed from: how much of it exists. */
+  contextLog: { rows: number; sessions: number; mapCurrent: number; withWall: number; firstSession: string | null; error: string | null };
   hits: Array<{ at: number; firstAt: number; count: number; fromBefore: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
@@ -225,6 +252,8 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
     expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
   }));
   // Repeat crossings of one level are joined into one line (shared/protocols.ts joinHits); the newest 30 lines are shown.
+  const cl = sqlite.prepare(`SELECT COUNT(*) AS n, COUNT(DISTINCT session) AS sessions, SUM(CASE WHEN options_state = 'ok' THEN 1 ELSE 0 END) AS ok, SUM(has_wall) AS wall, MIN(session) AS first FROM desk_rule_context`).get() as any;
+  const contextLog = { rows: cl?.n ?? 0, sessions: cl?.sessions ?? 0, mapCurrent: cl?.ok ?? 0, withWall: cl?.wall ?? 0, firstSession: cl?.first ?? null, error: lastContextError };
   const HIT_READ = 300;
   const hitRows = sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT ?`).all(HIT_READ + 1) as any[];
   // More rows exist than were read (or the table has been pruned at its cap): the oldest run may start earlier than the rows show.
@@ -239,7 +268,7 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
   return {
     bookVersion: PROTOCOL_BOOK_VERSION, minGraded: PROTOCOL_MIN_GRADED, edition: editionFromEnv(),
     running: timer != null, sessionOpen: isRegularSessionOpen(nowMs), evaluatedAt, lastTickError,
-    protocols, recent, hits,
+    protocols, recent, hits, contextLog,
     note: `Each protocol is a hand-set rule taken from the desk owner's description of his own read. ${protocols.some((p) => p.record.tested) ? "A rule counts as tested" : "None has been tested: a rule counts as tested"} only after ${PROTOCOL_MIN_GRADED} graded events, and the record shows counts only. A protocol arming is a condition being met, not a forecast. A protocol can arm again once its horizon has passed; events on the same day are not independent. The desk places no orders.`,
   };
 }

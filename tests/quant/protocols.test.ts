@@ -165,3 +165,34 @@ test("wiring: engine starts with the server, stores nothing in the demo, and the
   assert.match(eng, /PROTOCOL_RULES\.newsBeforeMin \+ PROTOCOL_RULES\.newsAfterMin \+ 5/);
   assert.match(eng, /lastRead\.delete\(t\.symbol\)/);
 });
+
+test("context row: taken from the rule's own context, so it carries the gated reads and the merged lines the rule saw", async () => {
+  const { contextRow } = await import("../../shared/protocols");
+  const raw = { qqqPct: -1.2, spyPct: -0.5, vixPct: 4, quotes: { SPX: "ok", QQQ: "stale", SPY: "ok", VIX: "ok" }, optionsAsOfMs: 900 };
+  const ctx: any = {
+    nowMs: 1_000, sessionOpen: true, minutesSinceOpen: 45, minutesToClose: 345, spx: 7200,
+    levels: [
+      { key: "wallAbove+pdh", label: "wall above 7,250 + prior-day high 7,253", price: 7253, group: "prior day" },
+      { key: "pdl", label: "prior-day low", price: 7100, group: "prior day" },
+      { key: "flip", label: "gamma flip", price: 7300, group: "options" },
+    ],
+    optionsState: "ok", tech: "unknown", vix: "firm", calendarKnown: true, minutesToTier1: 600, minutesSinceTier1: null, bars: [],
+  };
+  const row = contextRow(ctx, "2026-11-20", raw);
+  assert.deepEqual(row.optionLines, [{ key: "wallAbove+pdh", price: 7253 }, { key: "flip", price: 7300 }], "the merged line and price the rule compared against, not the raw landmark");
+  assert.equal(row.tech, "unknown", "a stale QQQ quote: the rule saw no tech read, and that is what is written");
+  assert.deepEqual([row.vix, row.spx, row.calendarKnown, row.minutesToTier1, row.minutesSinceOpen, row.session], ["firm", 7200, true, 600, 45, "2026-11-20"]);
+  assert.deepEqual(row.raw, raw, "what sat behind the gated reads is kept beside them");
+  const unread = contextRow({ ...ctx, spx: null, levels: [], optionsState: "stale" }, "2026-11-20", raw);
+  assert.deepEqual([unread.spx, unread.optionLines.length, unread.optionsState], [null, 0, "stale"]);
+});
+
+test("wiring: the context write comes after the rules run and cannot stop them", () => {
+  const src = readFileSync(new URL("../../server/protocolEngine.ts", import.meta.url), "utf8");
+  const evalAt = src.indexOf("const evals = evalProtocols(ctx);");
+  const writeAt = src.indexOf("INSERT OR REPLACE INTO desk_rule_context");
+  assert.ok(evalAt > 0 && writeAt > evalAt, "written after evaluation");
+  const block = src.slice(src.lastIndexOf("try {", writeAt), src.indexOf("lastContextError = String", writeAt));
+  assert.match(block, /contextRow\(ctx, today,/);
+  assert.match(block, /\} catch \(e: any\) \{/, "its own try: a failed write is recorded, not thrown into the tick");
+});
