@@ -2981,3 +2981,12 @@ server/playbook.ts is rewritten:
 - The one-sigma daily move is stated as an implied figure, not a forecast.
 - Key levels keep the walls' own names; the news playbook is given the walls it names.
 Tests: tests/quant/playbook-day-levels.test.ts (8).
+
+**"Feed not verified: Schwab 401" explained in settings (2026-11-20).** Cause, confirmed in code: the stream
+sign-in needs GET trader/v1/userPreference, and Schwab answers 401 because the developer app lacks the
+"Accounts and Trading Production" product (server/schwab.ts getStreamerInfo). REST market data is unaffected;
+the stream retries every 30 minutes. Nothing in code can change this: only the app's owner can add the product
+at developer.schwab.com (Schwab reviews the change). The settings line cut the reason off at 220px and read as
+a fault. It now reads "Quotes: Read by request, streaming off" with the cause and who can change it in full
+underneath (shared/streamFeed.ts, moved out of SchwabSettings.tsx so the wording is tested). Other stream
+failures keep "Feed not verified" with their own reason. Tests: tests/quant/stream-feed-label.test.ts (4).
