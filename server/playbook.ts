@@ -478,7 +478,9 @@ export function playbookBiasPoints(inp: Pick<PlaybookInputs, "marketScore" | "ga
 
 /** A scenario level may sit at most this many VIX-implied one-sigma daily moves from the price; beyond it the level is not a level of today. */
 export const DAY_REACH_SIGMAS = 1.5;
-export interface DayBound { price: number; label: string; /** true: an all-expiry wall kept only because nothing nearer could be formed. */ far: boolean }
+/** Distance of the stand-in bound when there is no VIX and no level on that side of the price. Hand-set. */
+export const NO_READ_BOUND_PCT = 0.01;
+export interface DayBound { price: number; label: string; /** true: the day's reach was not known (no VIX) and this is an all-expiry wall or a hand-set stand-in. */ far: boolean }
 /**
  * The upper and lower level the day's scenarios are built on. The "call wall" and "put wall" are the strikes
  * with the most estimated dealer gamma over every expiry in the chain window; on an index ETF those are
@@ -501,10 +503,15 @@ export function playbookDayBounds(
     const onSide = (x: number | undefined): x is number => typeof x === "number" && Number.isFinite(x) && (x - spot) * dir > 0;
     const inReach = (x: number | undefined): x is number => onSide(x) && (reach == null || Math.abs(x - spot) <= reach);
     if (reach != null && inReach(wall)) return { price: wall, label: wallLabel, far: false };
-    const near = cands.filter((c): c is [number, string] => inReach(c[0])).sort((a, b) => Math.abs(a[0] - spot) - Math.abs(b[0] - spot))[0];
-    if (near) return { price: near[0], label: near[1], far: false };
+    // With VIX the wall was just ruled out (beyond the reach, or on the other side). Without VIX there is no reach
+    // to rule it out, so the wall stands beside the pivots and the nearest on its side is taken.
+    const pool: Array<[number | undefined, string]> = reach == null ? [[wall, wallLabel], ...cands] : cands;
+    const near = pool.filter((c): c is [number, string] => inReach(c[0])).sort((a, b) => Math.abs(a[0] - spot) - Math.abs(b[0] - spot))[0];
+    if (near) return { price: near[0], label: near[1], far: reach == null && near[1] === wallLabel };
     if (sigma != null) return { price: snap(spot + dir * sigma), label: `one-sigma daily move ${dir > 0 ? "up" : "down"}, from VIX`, far: false };
-    return { price: wall, label: `${wallLabel}, all expiries`, far: true };
+    // No VIX, and nothing on this side of the price (the wall itself is on the other side or at the price): a
+    // hand-set 1% from the price stands in, and says so.
+    return { price: snap(spot * (1 + dir * NO_READ_BOUND_PCT)), label: `${(NO_READ_BOUND_PCT * 100).toFixed(0)}% ${dir > 0 ? "above" : "below"} the price, hand-set (no VIX, no level on this side)`, far: true };
   };
   return {
     sigma,
@@ -556,8 +563,12 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     const outer = named.filter(([x]) => (x - bound) * dir >= tk && Math.abs(x - bound) <= 2 * step).sort((a, b) => Math.abs(a[0] - bound) - Math.abs(b[0] - bound)).slice(0, 2);
     if (outer.length === 2) return { t1: outer[0][0], t2: outer[1][0], text: `The next levels ${dir > 0 ? "above" : "below"} are ${fmtPrice(outer[0][0], tk)} (${outer[0][1]}) and ${fmtPrice(outer[1][0], tk)} (${outer[1][1]})` };
     const h = roundToTick(bound + dir * step * 0.5, tk), f = roundToTick(bound + dir * step, tk);
-    if (outer.length === 1) return { t1: outer[0][0], t2: f, text: `The next level ${dir > 0 ? "above" : "below"} is ${fmtPrice(outer[0][0], tk)} (${outer[0][1]}); a full ${unit} beyond is ${fmtPrice(f, tk)}` };
-    return { t1: h, t2: f, text: `No named level within reach ${dir > 0 ? "above" : "below"}; half a ${unit} and a full ${unit} beyond are ${fmtPrice(h, tk)} and ${fmtPrice(f, tk)}` };
+    if (outer.length === 1) {
+      // The second level is measured from the first, so it always lies past it.
+      const next = roundToTick(outer[0][0] + dir * Math.max(step * 0.5, tk), tk);
+      return { t1: outer[0][0], t2: next, text: `The next level ${dir > 0 ? "above" : "below"} is ${fmtPrice(outer[0][0], tk)} (${outer[0][1]}); half a ${unit} past it is ${fmtPrice(next, tk)}` };
+    }
+    return { t1: h, t2: f, text: `No named level ${dir > 0 ? "above" : "below"} within two ${unit}s; half a ${unit} and a full ${unit} past it are ${fmtPrice(h, tk)} and ${fmtPrice(f, tk)}` };
   };
   const back = Math.max(2 * tk, roundToTick(step * 0.25, tk));
   const up = beyond(cw, 1), dn = beyond(pw, -1);
@@ -569,7 +580,8 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     trigger: `Price stays between ${L} and ${U}`,
     target: tendency,
     invalidation: `A 15-min close above ${fmtPrice(cw, tk)} or below ${fmtPrice(pw, tk)}`,
-    levels: noLevels("either"),
+    // No level box for this one: it has no reference level, and an empty instruction keeps the card from drawing a box.
+    levels: { ...noLevels("either"), instruction: "" },
   };
   const above = {
     name: `Above ${fmtPrice(cw, tk)}`,
@@ -608,7 +620,7 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     gameplan.push(`VIX-implied one-sigma daily move (VIX / sqrt(252)): about ${fmtPrice(roundToTick(day.sigma, tk), tk)} either way. An implied figure, not a forecast; real days often move further.`);
   }
   if (day.upper.far || day.lower.far) {
-    gameplan.push(`No VIX read and no pivot on that side: the day's reach is not known, so ${[day.lower.far ? L : null, day.upper.far ? U : null].filter(Boolean).join(" and ")} ${day.upper.far && day.lower.far ? "are" : "is"} the all-expiry wall and may be far from the price.`);
+    gameplan.push(`No VIX read, so the day's reach is not known: ${[day.lower.far ? L : null, day.upper.far ? U : null].filter(Boolean).join(" and ")} ${day.upper.far && day.lower.far ? "are not sized to the day and may be" : "is not sized to the day and may be"} far from where the price trades today.`);
   }
   // The gamma levels that are not scenario levels today, each with its side, distance and reason.
   const farPct = (x: number) => `${(Math.abs(x - spot) / spot * 100).toFixed(1)}% ${x >= spot ? "above" : "below"}`;

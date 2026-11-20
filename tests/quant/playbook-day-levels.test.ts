@@ -42,6 +42,35 @@ test("bounds without VIX: the nearest pivot on each side; a wall only when there
   assert.deepEqual([a.upper.price, a.upper.label, a.upper.far, a.lower.price, a.lower.label], [721, "classic R1", false, 704, "classic S1"]);
   const none = playbookDayBounds(709.22, 775, 700, null, null, 0.5);
   assert.deepEqual([none.upper.price, none.upper.far, none.lower.price, none.lower.far, none.sigma], [775, true, 700, true, null]);
+  // Without VIX a wall nearer than the pivot is the nearest level on its side.
+  const nearWall = playbookDayBounds(709.22, 712, 690, null, piv, 0.5);
+  assert.deepEqual([nearWall.upper.price, nearWall.upper.label, nearWall.upper.far], [712, "call wall", true]);
+  assert.deepEqual([nearWall.lower.price, nearWall.lower.label], [704, "classic S1"]);
+});
+
+test("bounds without VIX or pivots, walls on the wrong side or at the price: a hand-set stand-in on the right side, never an inverted pair", () => {
+  for (const [c, p] of [[705, 712], [709.22, 709.22]]) {
+    const b = playbookDayBounds(709.22, c, p, null, null, 0.5);
+    assert.ok(b.upper.price > 709.22 && b.lower.price < 709.22, `${c}/${p}`);
+    assert.ok(b.upper.far && b.lower.far);
+    assert.match(b.upper.label, /^1% above the price, hand-set \(no VIX, no level on this side\)$/);
+  }
+  const pb = pbOf({ pivots: null, vix: { value: null, changePct: null }, gamma: { callWall: 705, putWall: 712 } });
+  for (const x of pb.scenarios) {
+    if (x.levels.entry == null) { assert.equal(x.levels.instruction, "", "the inside scenario draws no level box"); continue; }
+    if (x.levels.side === "long") assert.ok(x.levels.entry > 709.22);
+    if (x.levels.side === "short") assert.ok(x.levels.entry < 709.22);
+  }
+  assert.ok(pb.gameplan.some((g) => /No VIX read, so the day's reach is not known/.test(g)));
+});
+
+test("a second level beyond a single named one always lies past it", () => {
+  const pb = pbOf({ vix: { value: 12, changePct: 0 }, gamma: { regime: "positive", callWall: 775, putWall: 650, zeroGamma: 712 } });
+  for (const x of pb.scenarios) {
+    const lv = x.levels;
+    if (lv.target1 == null || lv.target2 == null) continue;
+    assert.ok(lv.side === "long" ? lv.target2 > lv.target1 : lv.target2 < lv.target1, `${x.name}: ${lv.target1} then ${lv.target2}`);
+  }
 });
 
 test("the owner's case: no scenario names 775 or 737.7, nothing instructs, and the far levels are named for what they are", () => {
@@ -65,15 +94,19 @@ test("the owner's case: no scenario names 775 or 737.7, nothing instructs, and t
 });
 
 test("every regime, with and without VIX and pivots: no instruction wording anywhere on the card, and levels on the right side", () => {
-  for (const regime of ["positive", "negative", "neutral"]) for (const vix of [28, 12, null]) for (const pv of [pivots, null]) for (const walls of [[775, 700], [715, 705], [705, 712], [775, 650]]) {
+  for (const regime of ["positive", "negative", "neutral"]) for (const vix of [28, 12, null]) for (const pv of [pivots, null]) for (const walls of [[775, 700], [715, 705], [705, 712], [775, 650], [709.22, 709.22], [712, 690]]) {
     const pb = pbOf({ pivots: pv, vix: { value: vix, changePct: 0 }, gamma: { regime, callWall: walls[0], putWall: walls[1] } });
     const text = [pb.summary, ...pb.gameplan, ...pb.scenarios.flatMap((x) => [x.name, x.trigger, x.target, x.invalidation])].join(" | ");
     const tag = `${regime}/${vix}/${pv ? "piv" : "nopiv"}/${walls}`;
     assert.doesNotMatch(text, BANNED, tag);
     assert.doesNotMatch(text, /\(unavailable\)/, tag);
+    const [inner] = pb.scenarios.filter((x) => /^Inside/.test(x.name));
+    const nums = inner.name.match(/[\d.]+/g)!.map(Number);
+    assert.ok(nums[0] < 709.22 && nums[1] > 709.22, `${tag}: ${inner.name}`);
     for (const x of pb.scenarios) {
       const lv = x.levels;
       if (lv.entry == null) continue;
+      if (lv.target1 != null && lv.target2 != null) assert.ok(lv.side === "long" ? lv.target2 > lv.target1 : lv.target2 < lv.target1, tag);
       if (lv.side === "long") assert.ok(lv.stop! < lv.entry && (lv.target1 == null || lv.target1 > lv.entry), tag);
       if (lv.side === "short") assert.ok(lv.stop! > lv.entry && (lv.target1 == null || lv.target1 < lv.entry), tag);
     }
