@@ -573,7 +573,7 @@ export interface PerformanceSnapshot {
   /** Aggregate across all sources */
   overall: PerformanceRow;
   priceBasisNote?: string;
-  /** The scored whale closes counted per ET day they closed on (shared/whaleDays.ts). */
+  /** The scored whale positions of the overall row, counted per ET day they were flagged on (shared/whaleDays.ts). */
   daySpread: DaySpread;
 }
 
@@ -629,7 +629,7 @@ export function getPerformanceSnapshot(opts?: { windowDays?: number }): Performa
     const fee = feeForProduct(p.occ).fee;
     if (fee == null) { excludedNoFee++; continue; }
     const s = scoreFollowPosition(p, fee);
-    if (s) { scored.push(s); days.push({ day: etDate(p.statusAt), win: s.trade.win }); } else excluded++;
+    if (s) { scored.push(s); days.push({ day: etDate(p.entry.detectedAt), win: s.trade.win }); } else excluded++;
   }
   // whaleFollowThrough only tracks whale-source positions
   const row = buildScoreboardRow("whale", scored, excluded, undefined, excludedNoFee);

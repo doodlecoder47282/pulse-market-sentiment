@@ -5657,7 +5657,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
           // Overall = whale positions only, on the ask-in / bid-out net-of-fee
           // basis; mid-to-mid tracked rows are not mixed into it.
           overall: whaleSnap.overall,
-          // Whale closes only, the same positions as the overall row.
+          // Whale positions only, the same ones as the overall row, by the day each was flagged.
           daySpread: whaleSnap.daySpread,
           overallBasis: "ask_in_bid_out_net_fees",
           priceBasisNote: whaleSnap.priceBasisNote,

@@ -2983,10 +2983,13 @@ server/playbook.ts is rewritten:
 Tests: tests/quant/playbook-day-levels.test.ts (8).
 
 **Whale record: how it is spread over days, shown above the new alerts (2026-11-20).** Why: the whale win
-count swings with single days (positions flagged together close together), and the figure gave no way to see
-that. shared/whaleDays.ts (daySpread, daySpreadAnswer) counts the scored whale closes per ET close day and
-says in one sentence how many days the figure rests on, which day holds the most closes and the most wins,
-and flags when one day holds half or more of either. getPerformanceSnapshot returns it (daySpread),
+count swings with single days (positions flagged together move together), and the figure gave no way to see
+that. shared/whaleDays.ts (daySpread, daySpreadAnswer) counts the scored whale positions by the ET day each was
+FLAGGED (entry.detectedAt; not the close day, which piles onto Fridays by the expiry calendar and whose stamp
+can be late after a restart) and says how many days the figure rests on. A day is named only when it alone
+holds more than half of the positions, or more than half of the wins with at least 3 wins; an even split names
+no day. getPerformanceSnapshot returns it (daySpread) over exactly the scored set of the overall row,
 /api/whales/performance passes it on, and the Whale Flow panel shows it under the performance sentence with
-the per-day counts. The Performance section now sits above Fresh Whales: the record of past alerts is read
-before the new ones. Nothing is reweighted or removed. Tests: tests/quant/whale-days.test.ts (5).
+per-day counts. The Performance section now sits above Fresh Whales; a failed performance read now shows as
+failed instead of as "no closed positions"; switching 7d/30d keeps the last figures until the new ones arrive.
+Nothing is reweighted or removed. Tests: tests/quant/whale-days.test.ts (6).

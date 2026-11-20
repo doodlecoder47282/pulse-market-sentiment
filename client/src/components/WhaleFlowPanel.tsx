@@ -7,7 +7,7 @@ import PlainRead from "@/components/PlainRead";
 import { readWhalePerformance } from "@shared/plainReads";
 import { daySpreadAnswer, type DaySpread } from "@shared/whaleDays";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -757,6 +757,8 @@ function PerformanceCard() {
     },
     refetchInterval: 60_000,
     staleTime: 30_000,
+    // Switching 7d / 30d keeps the last figures on screen until the new ones arrive, so the sections below do not jump.
+    placeholderData: keepPreviousData,
   });
 
   const snap = perfQuery.data;
@@ -795,15 +797,16 @@ function PerformanceCard() {
         </div>
       </div>
       {/* the answer first: closed whale positions that made money after costs, in this window */}
-      {snap && !perfQuery.isLoading && (
+      {snap && !perfQuery.isLoading && !perfQuery.isError && (
         <PlainRead read={readWhalePerformance(rows.find((r) => r.source === "whale") ?? snap.overall, snap.windowDays)} testId="performance-plain" className="mb-2" />
       )}
-      {/* how the figure is spread over days: one session can carry all of it */}
-      {snap && !perfQuery.isLoading && daySpreadAnswer(snap.daySpread) && (
-        <div className={`mb-2 rounded border px-2 py-1.5 text-xs leading-relaxed ${snap.daySpread?.oneDayCarries ? "border-amber-500/40 text-amber-200" : "border-border/40 text-muted-foreground"}`} data-testid="performance-day-spread">
+      {/* how the figure is spread over days: one session's alerts can carry all of it */}
+      {snap && !perfQuery.isLoading && !perfQuery.isError && daySpreadAnswer(snap.daySpread) && (
+        <div className={`mb-2 rounded border px-2 py-1.5 text-xs leading-relaxed ${snap.daySpread?.dayHoldsMostPositions || snap.daySpread?.dayHoldsMostWins ? "border-amber-500/40 text-amber-200" : "border-border/40 text-muted-foreground"}`} data-testid="performance-day-spread">
           <div>{daySpreadAnswer(snap.daySpread)}</div>
           {(snap.daySpread?.byDay.length ?? 0) > 1 && (
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
+              <span className="font-sans">made money, by day flagged:</span>
               {snap.daySpread!.byDay.slice(0, 10).map((d) => <span key={d.day}>{d.day.slice(5)}: {d.wins} of {d.n}</span>)}
               {snap.daySpread!.byDay.length > 10 && <span>and {snap.daySpread!.byDay.length - 10} earlier days</span>}
             </div>
@@ -814,6 +817,11 @@ function PerformanceCard() {
         <div className="space-y-1.5">
           <Skeleton className="h-7 w-full" />
           <Skeleton className="h-7 w-full" />
+        </div>
+      ) : perfQuery.isError ? (
+        // A failed read is not an empty record.
+        <div className="rounded-md border border-dashed border-amber-500/40 py-3 text-center text-xs text-amber-300" data-testid="performance-failed">
+          the performance record could not be read (the request failed); this is not a record of no closed positions
         </div>
       ) : showRows.length === 0 ? (
         <div className="rounded-md border border-dashed border-border/30 py-3 text-center text-xs text-muted-foreground" data-testid="performance-empty">
