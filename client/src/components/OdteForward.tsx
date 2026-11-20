@@ -20,6 +20,7 @@ import { apiRequest } from "@/lib/queryClient";
 
 import AsOfNote from "@/components/AsOfNote";
 import { projectedClose } from "@shared/odteProjection";
+import { forwardFreshness } from "@shared/odteFreshness";
 type BandKey = "p025" | "p10" | "p25" | "p50" | "p75" | "p90" | "p975";
 interface WienerBand { minute: number; et: string; q: Record<BandKey, number> }
 interface WienerLevel {
@@ -84,11 +85,30 @@ export default function OdteForward() {
   const [showLevels, setShowLevels] = useState(true);
   const [showGuide, setShowGuide] = useState(false);
 
-  const { data, isLoading, isError } = useQuery<OdteResponse>({
+  const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useQuery<OdteResponse>({
     queryKey: ["/api/odte/forward"],
     queryFn: async () => (await apiRequest("GET", "/api/odte/forward?symbol=%24SPX")).json(),
-    refetchInterval: 60_000,
+    // A tab in the background stops polling. Coming back to it reads again at once instead of waiting
+    // out the interval with the old read on screen.
+    refetchInterval: 60_000, staleTime: 30_000, refetchOnWindowFocus: true,
   });
+  // The clock the read is judged against: a read that stopped refreshing must stop being shown as current
+  // even if nothing else re-renders the panel.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 15_000);
+    const onShow = () => { if (document.visibilityState === "visible") setNowMs(Date.now()); };
+    document.addEventListener("visibilitychange", onShow);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onShow); };
+  }, []);
+  const fresh = useMemo(() => forwardFreshness(data ? { asOf: data.asOf, receivedAtMs: dataUpdatedAt, expiry: data.expiry, horizon: data.wiener?.horizon ?? null } : null, nowMs), [data, dataUpdatedAt, nowMs]);
+  const outOfDate = !!data && fresh.state === "out_of_date";
+  // One read per check of the clock while out of date; a failed read shows the request-failed state.
+  useEffect(() => {
+    // Only an old read is worth re-reading early; a fresh read on the wrong expiry would come back the same.
+    if (outOfDate && fresh.ageMs != null && fresh.ageMs > 60_000 && !isFetching && !isError) void refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outOfDate, nowMs]);
   const { data: ledger } = useQuery<LedgerResp>({
     queryKey: ["/api/odte/map/ledger", "$SPX"],
     queryFn: async () => (await apiRequest("GET", "/api/odte/map/ledger?symbol=%24SPX")).json(),
@@ -316,6 +336,27 @@ export default function OdteForward() {
     return (
       <div className="rounded border border-border bg-card/40 p-4 text-xs font-mono text-muted-foreground" data-testid="odte-forward-error">
         0DTE Wiener map unavailable: the 0DTE forward request failed (Schwab sign-in, no 0DTE expiry, or a server error)
+      </div>
+    );
+  }
+
+  if (fresh.state === "out_of_date") {
+    return (
+      <div className="rounded border border-amber-500/40 bg-card/40 p-3" data-testid="odte-forward-out-of-date">
+        <div className="mb-1 text-[11px] font-mono font-bold uppercase tracking-widest text-amber-300">0DTE Wiener map · out of date</div>
+        <div className="text-xs leading-relaxed text-muted-foreground">
+          Not shown: {fresh.reason}. A map that old does not describe the price now, so no ranges, odds or countdown are drawn from it. {isFetching ? "Reading again now." : "It is read again automatically."}
+        </div>
+      </div>
+    );
+  }
+  if (fresh.state === "wrong_expiry") {
+    return (
+      <div className="rounded border border-amber-500/40 bg-card/40 p-3" data-testid="odte-forward-wrong-expiry">
+        <div className="mb-1 text-[11px] font-mono font-bold uppercase tracking-widest text-amber-300">0DTE Wiener map · not this session's chain</div>
+        <div className="text-xs leading-relaxed text-muted-foreground">
+          Not shown: the read is recent, but {fresh.reason}. Ranges, odds and a countdown from another session's chain would not describe this one. It is read again every minute.
+        </div>
       </div>
     );
   }
