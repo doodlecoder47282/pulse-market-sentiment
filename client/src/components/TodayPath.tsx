@@ -68,7 +68,7 @@ export default function TodayPath({ onOpenMap, active = true }: { onOpenMap?: ()
   if (q.isError || !d || !ok || !view) {
     return (
       <div className={`${BOX} border-dashed border-border/50 text-[11px] text-muted-foreground`} data-testid="today-path-unavailable">
-        Projected path to the close: not available{outOfDate && fresh.state !== "current" ? ` (${fresh.reason})` : w?.reason ? ` (${w.reason})` : q.isError ? " (the read failed)" : ""}. Nothing is drawn in its place.
+        Projected path to the close: not available{d && fresh.state !== "current" ? ` (${fresh.reason})` : w?.reason ? ` (${w.reason})` : q.isError ? " (the read failed)" : ""}. Nothing is drawn in its place.
       </div>
     );
   }
