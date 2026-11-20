@@ -413,7 +413,9 @@ test("build: each ticker carries its change basis; tech is read only when both s
   assert.match(b1.tech.text, /in the last session/);
   _resetDeskBoardCache();
   const d2 = deps(); d2.getQuotes = quotes(lastClose); // SPY has started a new day, QQQ has not
-  assert.match((await buildDeskBoard(EVENING, d2)).tech.text, /by the feed's day change/);
+  const mixed = (await buildDeskBoard(EVENING, d2)).tech;
+  assert.deepEqual([mixed.state, mixed.diffPts], ["unknown", null], "a last-session move is not compared with a since-close move");
+  assert.match(mixed.text, /^Tech against the market: not compared\. QQQ [+-]\d+\.\d\d% is in the last session and SPY \+0\.20% is since the last close, so the two are not known to be changes of the same thing\.$/);
   _resetDeskBoardCache();
   assert.equal(basis(await buildDeskBoard(NOON, deps()), "$SPX"), "session");
   // After the close an ETF's feed change follows after-hours trading: the last session's move runs to the last regular trade.
@@ -428,5 +430,6 @@ test("build: each ticker carries its change basis; tech is read only when both s
   assert.equal(spy.changeBasis, "last_session");
   assert.ok(Math.abs(spy.changePct! - 0.4) < 1e-6, "the regular session's move, not the after-hours one");
   assert.equal(basis(b3, "QQQ"), "unknown", "no regular-session print: the basis is not claimed");
-  assert.match(b3.tech.text, /by the feed's day change/);
+  assert.equal(b3.tech.state, "unknown");
+  assert.match(b3.tech.text, /^Tech against the market: not compared\. QQQ .* is by the feed's day change/);
 });

@@ -2955,3 +2955,9 @@ or one was not read). Each ticker carries its basis; the tech and VIX sentences 
 session", "since the last close", or, when unknown, both possibilities); tech is compared only when QQQ and
 SPY measure the same thing. Out of session the protocol conditions show tech and VIX as not read.
 Tests: two in tests/quant/desk-board.test.ts.
+
+**Tech against the market is not compared across two different moves (2026-11-20).** Seen live at 01:58 ET,
+minutes after the change-basis work deployed: QQQ still carried the last session's move (-2.19%) while SPY's
+feed had started a new day (-0.11% since the last close), and the board read "tech lagging by 2.08 percentage
+points" from the two. techRead now takes each side's basis and compares only when both are the same known
+basis; otherwise the read is "not compared", naming what each figure is, with state unknown.

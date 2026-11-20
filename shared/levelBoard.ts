@@ -230,9 +230,15 @@ export function deskCase(levels: BoardLevel[], price: number | null | undefined,
 
 export interface RelRead { state: "leading" | "lagging" | "in line" | "unknown"; diffPts: number | null; text: string }
 /** Tech against the broad market: QQQ's day change minus SPY's. */
-export function techRead(qqqPct: number | null | undefined, spyPct: number | null | undefined, basis: ChangeBasis = "session"): RelRead {
+export function techRead(qqqPct: number | null | undefined, spyPct: number | null | undefined, basis: ChangeBasis = "session", spyBasis: ChangeBasis = basis): RelRead {
   if (typeof qqqPct !== "number" || typeof spyPct !== "number" || !Number.isFinite(qqqPct) || !Number.isFinite(spyPct)) {
     return { state: "unknown", diffPts: null, text: "Tech against the market: not read (a QQQ or SPY day change is missing)." };
+  }
+  // Two changes are compared only when both are known to be changes of the same thing (seen live: QQQ still on the
+  // last session's move while SPY had started a new day gave "tech lagging by 2.08 points" from two different moves).
+  if (basis !== spyBasis || basis === "unknown") {
+    const p = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+    return { state: "unknown", diffPts: null, text: `Tech against the market: not compared. QQQ ${p(qqqPct)} is ${CHANGE_WORDS[basis]} and SPY ${p(spyPct)} is ${CHANGE_WORDS[spyBasis]}, so the two are not known to be changes of the same thing.` };
   }
   const d = qqqPct - spyPct;
   const state = d >= TECH_LEAD_PTS ? "leading" : d <= -TECH_LEAD_PTS ? "lagging" : "in line";

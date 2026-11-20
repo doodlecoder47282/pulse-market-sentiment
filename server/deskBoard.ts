@@ -351,7 +351,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     forSession, sessionOpen,
     tickers,
     // Two changes are only compared when they are changes of the same thing.
-    tech: techRead(by("QQQ").changePct, by("SPY").changePct, by("QQQ").changeBasis === by("SPY").changeBasis ? by("QQQ").changeBasis : "unknown"),
+    tech: techRead(by("QQQ").changePct, by("SPY").changePct, by("QQQ").changeBasis, by("SPY").changeBasis),
     vix: vixRead(by("$VIX").changePct, by("$VIX").changeBasis),
     cases: {
       symbol: "$SPX", price: spx.price,
