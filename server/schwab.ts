@@ -353,6 +353,7 @@ export function sweepSchwabCache(nowMs: number = Date.now()): number {
 // After a restart: daily price-history payloads kept on disk go back into the cache once, with their real
 // fetch time and original expiry, so the first page load does not ask Schwab for every panel's history at once.
 // A restored entry carries no fingerprint: an evidence receipt for it stays unverified.
+let _settledServedUnderPressure = 0;
 let _dailyRestored = false;
 let _dailyRestoredCount = 0;
 function restoreDailyCacheOnce(): void {
@@ -557,8 +558,14 @@ async function schwabFetchMetaOnce(
   };
   _trimReqLog();
   // Settled daily bars under budget pressure: served as the last-session copy, no request (schwabDataPolicy).
-  if (!opts?.skipCache && serveSettledDailyUnderPressure(kind, _cache.get(cacheKey)?.fetchedAt, _reqLog.length, requestLimit)) {
-    return serveStale("request budget in use; daily bars cannot have changed since the session settled");
+  // Served exactly as a cache hit of a last-session copy (its real time and age, not stale): no refresh failed, so
+  // nothing is recorded as degraded.
+  if (!opts?.skipCache && ttl > 0) {
+    const settled = _cache.get(cacheKey);
+    if (settled && serveSettledDailyUnderPressure(kind, settled.fetchedAt, _reqLog.length, requestLimit, Date.now() - _bootAt)) {
+      _settledServedUnderPressure++;
+      return deliver({ data: settled.data, freshness: freshFreshness(settled.fetchedAt, kind, true), reason: null }, "cache_hit", settled.fetchedAt, settled.fingerprint);
+    }
   }
   if (_reqLog.length >= requestLimit) {
     const entry = _cache.get(cacheKey);
@@ -699,6 +706,7 @@ export function getSchwabDiagnostics() {
   return {
     cacheEntries: _cache.size,
     dailyRestoredAtStart: _dailyRestoredCount,
+    settledDailyServedUnderPressure: _settledServedUnderPressure,
     cacheEvictedTotal: _cacheEvicted,
     requestsLastMinute: _reqLog.length,
     requestsByCaller: Object.entries(_reqWho.reduce((m, r) => { m[r.k] = (m[r.k] ?? 0) + 1; return m; }, {} as Record<string, number>))

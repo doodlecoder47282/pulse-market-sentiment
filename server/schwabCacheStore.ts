@@ -3,19 +3,20 @@
 // DAILY BARS SURVIVE A RESTART. The Schwab response cache (server/schwab.ts) lives in memory, so every deploy
 // starts cold: the first page load asks for every panel's daily price history at once (about 25 requests seen
 // live on 2026-11-19), the per-minute request limit is reached, and whatever loads last reads "unavailable".
-// Completed daily bars do not change, so daily price-history payloads are also written here and read back
-// once after a restart. A restored entry keeps its real fetch time and its original expiry: the cache rules
-// (fresh TTL, stale age cap, last-session copy) then treat it exactly as if the process had not restarted.
-// Nothing else is kept: quotes, chains and minute bars move and are small wins against their size.
+// Price-history payloads that are not minute bars (daily, weekly, monthly) are also written here once the
+// session has settled, and read back once after a restart. A restored entry keeps its real fetch time; its
+// expiry is the original, capped (schwabDataPolicy.planDailyRestore). The cache rules (fresh TTL, stale age
+// cap, last-session copy) then treat it as if the process had not restarted. Copies read in the session are
+// not written: today's bar moves and such a copy is only servable for minutes. Quotes, chains and minute
+// bars are not kept.
 //
 // Best effort throughout: a failure to save or restore leaves the in-memory cache as it was.
 
 import { sqlite } from "./storage";
-import { cacheEntryUnservable } from "./schwabDataPolicy";
+import { isLastSessionCopy, planDailyRestore } from "./schwabDataPolicy";
 
-/** Rows kept at most; the oldest fetches go first. A year of daily bars is about 25 KB. */
-const MAX_ROWS = 300;
 let ready = false;
+let saveStmt: { run(...a: unknown[]): unknown } | null = null;
 
 function ensure(): void {
   if (ready) return;
@@ -25,32 +26,32 @@ function ensure(): void {
   ready = true;
 }
 
+/** Keep a payload, only when it is a last-session copy at its own fetch time (market closed, read after the settle). */
 export function saveDailyPayload(cacheKey: string, data: unknown, fetchedAt: number, expiresAt: number): void {
   try {
+    if (!isLastSessionCopy("daily_bars", fetchedAt, fetchedAt)) return;
     ensure();
-    sqlite.prepare(`INSERT OR REPLACE INTO schwab_daily_cache (cache_key, payload, fetched_at, expires_at) VALUES (?, ?, ?, ?)`).run(cacheKey, JSON.stringify(data), fetchedAt, expiresAt);
+    saveStmt ??= sqlite.prepare(`INSERT OR REPLACE INTO schwab_daily_cache (cache_key, payload, fetched_at, expires_at) VALUES (?, ?, ?, ?)`);
+    saveStmt.run(cacheKey, JSON.stringify(data), fetchedAt, expiresAt);
   } catch { /* the in-memory cache already holds it */ }
 }
 
 export interface RestoredEntry { cacheKey: string; data: any; fetchedAt: number; expiresAt: number }
 
-/** Every kept payload that the cache rules could still serve at `nowMs`; rows past that are deleted. */
+/** Every kept payload the cache rules could still serve at `nowMs`; rows past that, damaged rows and rows over the cap are deleted. */
 export function restoreDailyPayloads(nowMs: number = Date.now()): RestoredEntry[] {
   const out: RestoredEntry[] = [];
   try {
     ensure();
-    const rows = sqlite.prepare(`SELECT cache_key, payload, fetched_at, expires_at FROM schwab_daily_cache ORDER BY fetched_at DESC`).all() as Array<{ cache_key: string; payload: string; fetched_at: number; expires_at: number }>;
+    const meta = sqlite.prepare(`SELECT cache_key, fetched_at, expires_at FROM schwab_daily_cache`).all() as Array<{ cache_key: string; fetched_at: number; expires_at: number }>;
+    const plan = planDailyRestore(meta, nowMs);
     const drop = sqlite.prepare(`DELETE FROM schwab_daily_cache WHERE cache_key = ?`);
-    rows.forEach((r, i) => {
-      if (i >= MAX_ROWS || !keepRestored(r.fetched_at, nowMs)) { drop.run(r.cache_key); return; }
-      try { out.push({ cacheKey: r.cache_key, data: JSON.parse(r.payload), fetchedAt: r.fetched_at, expiresAt: r.expires_at }); }
+    for (const k of plan.drop) drop.run(k);
+    const get = sqlite.prepare(`SELECT payload FROM schwab_daily_cache WHERE cache_key = ?`);
+    for (const r of plan.keep) {
+      try { out.push({ cacheKey: r.cache_key, data: JSON.parse((get.get(r.cache_key) as { payload: string }).payload), fetchedAt: r.fetched_at, expiresAt: r.expires_at }); }
       catch { drop.run(r.cache_key); }
-    });
+    }
   } catch { /* nothing restored */ }
   return out;
-}
-
-/** A kept daily payload is worth restoring only while the cache could still serve it; a fetch time in the future is not trusted. */
-export function keepRestored(fetchedAt: number, nowMs: number): boolean {
-  return Number.isFinite(fetchedAt) && fetchedAt <= nowMs && !cacheEntryUnservable("daily_bars", fetchedAt, nowMs);
 }

@@ -2878,9 +2878,12 @@ histories, 36 not itemised); the in-memory cache is empty after a restart, so wh
 "unavailable" (the level board, at one point the quotes). Two changes in the transport: (1) daily
 price-history payloads are also written to SQLite (schwab_daily_cache, server/schwabCacheStore.ts) and put
 back into the cache once after a restart with their real fetch time and original expiry, so the cache rules
-treat them as if the process had not restarted; (2) with the market closed, daily bars read after the session
-settled cannot have changed, so when at least half the per-minute limit is in use they are served as the
-last-session copy without a request (schwabDataPolicy.serveSettledDailyUnderPressure; a forced refresh is
-never short-circuited). Only daily bars are kept. Not addressed: the option-chain share of the startup load;
+treat them as if the process had not restarted (only copies read after the session settled are written; the
+restored expiry is capped at the longest daily TTL); (2) with the market closed, a daily copy read after the
+settle is served as the last-session copy, with no request, when at least half the per-minute limit is in use,
+but only in the first ten minutes after a restart or while the copy is under two hours old, so sustained load
+cannot hold one copy all night (schwabDataPolicy.serveSettledDailyUnderPressure; a forced refresh is never
+short-circuited; it is served as an ordinary cache hit, not recorded as a degraded read). Whether Schwab's
+daily bar is final at the settle is not verified, which is why the rule is bounded. Only daily bars are kept. Not addressed: the option-chain share of the startup load;
 a restart during the session still refetches daily bars (today's bar moves). Diagnostics report how many
-payloads were restored. Tests: tests/quant/daily-bars-restart.test.ts (4).
+payloads were restored and how many reads the rule served. Tests: tests/quant/daily-bars-restart.test.ts (6).
