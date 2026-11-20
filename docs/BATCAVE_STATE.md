@@ -2881,3 +2881,15 @@ levels reason with the copy's time and why the fresh read failed; the existing p
 read-before-close checks run on the copy as on any read. Not kept in the demo edition. The startup burst itself
 is not reduced by this; that is still open. Also: scoreboard setup rows word the kind as the setup log does
 ("breakout below the put wall", not "breakout_below"). Tests: two added to tests/quant/desk-board.test.ts.
+
+**Level record (2026-11-20).** Third step of the "no improvement" line: the board names levels but nothing
+said what price has done at them. shared/levelRecord.ts counts, per level kind (prior-day high/low/close,
+pivot, R1, S1, opening-range high/low, prior-week and prior-month high/low/close), what the index did at the
+first touch in each stored past session: moved 10 points back before any 1-minute close 5 points through
+("moved back"), that close came first ("closed through"), neither within 30 minutes, or not graded (a minute
+missing, or too near the close). Hand-set numbers, versioned (LEVEL_RECORD_VERSION 2026.11.20-1). Uses only
+bars before the session for the levels (the session's own daily bar cannot leak; week and month open are
+left out). Shown on the Trade Desk under Protocols as one sentence with the by-level table, recent touches and
+limits on tap; counts only, with the statement that a few neighbouring sessions are too few to read a tendency
+from. Reads the stored 1-minute index bars the replay keeps. Route: GET /api/desk/level-record.
+Tests: tests/quant/level-record.test.ts (8).
