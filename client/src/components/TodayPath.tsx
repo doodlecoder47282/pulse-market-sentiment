@@ -3,15 +3,16 @@
 // the random walk's centre (flat: no drift), the options chain's own median settle (live session only, and
 // only when the chain stands behind it) and the dealer-rule path (a heuristic). The shaded bands are where
 // half and four fifths of random-walk outcomes fall. Each line ends at the middle of a range, not a forecast.
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { pathView, projectedClose } from "@shared/odteProjection";
+import { forwardFreshness } from "@shared/odteFreshness";
 import PlainRead from "@/components/PlainRead";
 
 type BandKey = "p10" | "p25" | "p50" | "p75" | "p90";
 interface Fwd {
-  spot: number;
+  spot: number; asOf?: string; expiry?: string;
   session: { state: "preopen" | "intraday" | "closed" };
   gexValid?: boolean; chainStale?: boolean;
   wiener?: { state: "ok" | "unavailable"; reason: string | null; horizon: "rest_of_today" | "next_session"; spot: number | null; minutesLeft: number; bands: Array<{ minute: number; q: Record<BandKey, number> }> };
@@ -30,11 +31,19 @@ export default function TodayPath({ onOpenMap, active = true }: { onOpenMap?: ()
     // Polls only while the opening tab is showing; the data stays for the other tabs without a timer.
     // `enabled` matters as much as the interval: turning it back on with data older than staleTime fetches
     // at once, so returning to the tab never shows an old read labelled "now".
-    enabled: active, refetchInterval: active ? 60_000 : false, staleTime: 30_000, retry: false,
+    enabled: active, refetchInterval: active ? 60_000 : false, staleTime: 30_000, retry: false, refetchOnWindowFocus: true,
   });
   const d = q.data;
   const w = d?.wiener;
-  const ok = !!d && w?.state === "ok" && w.bands.length > 1;
+  // A read that stopped refreshing (a tab left in the background, a device that slept) is not drawn as now.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+  const fresh = useMemo(() => forwardFreshness(d ? { asOf: d.asOf, expiry: d.expiry, horizon: w?.horizon ?? null } : null, nowMs), [d, w, nowMs]);
+  const outOfDate = !!d && fresh.state === "out_of_date";
+  const ok = !!d && !outOfDate && w?.state === "ok" && w.bands.length > 1;
 
   const view = useMemo(() => {
     if (!d || !w || !ok) return null;
@@ -56,7 +65,7 @@ export default function TodayPath({ onOpenMap, active = true }: { onOpenMap?: ()
   if (q.isError || !d || !ok || !view) {
     return (
       <div className={`${BOX} border-dashed border-border/50 text-[11px] text-muted-foreground`} data-testid="today-path-unavailable">
-        Projected path to the close: not available{w?.reason ? ` (${w.reason})` : q.isError ? " (the read failed)" : ""}. Nothing is drawn in its place.
+        Projected path to the close: not available{outOfDate && fresh.state === "out_of_date" ? ` (${fresh.reason})` : w?.reason ? ` (${w.reason})` : q.isError ? " (the read failed)" : ""}. Nothing is drawn in its place.
       </div>
     );
   }
