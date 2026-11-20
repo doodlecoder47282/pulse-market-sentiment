@@ -7,17 +7,24 @@
 // it draws on are neighbours in time, so the counts are not independent events.
 //
 // How a touch is read (hand-set, versioned in LEVEL_RECORD_RULES; a change of any number is a new version):
+//   - Levels at the same price are ONE price with several names (a Friday close is both the prior-day and the
+//     prior-week close on Monday): one touch, counted once in the totals and once on each of its rows.
 //   - A level is "above" or "below" the price as of the first minute it could be acted on: the session open
-//     for calendar levels, 10:00 for the opening range (which does not exist before then).
+//     for calendar levels, the last close inside the range for the opening range (which exists from 10:00).
+//     A session that opens beyond a level (a gap through it) meets that level from the far side.
+//   - A level that starts within `awayPts` of that price is not read as a touch: price is already at it, and
+//     the outcome would be noise. Such levels are counted apart ("started at the level").
 //   - The TOUCH is the first 1-minute bar whose range reaches the level from that side.
-//   - HELD: within the horizon, price moves back away from the level by at least `awayPts` before any
-//     1-minute bar closes through the level by at least `throughPts`.
-//   - BROKE: such a close through the level comes first. If one bar does both, it counts as broke.
-//   - NEITHER: the horizon ends with neither. NOT GRADED: bars are missing between the touch and its outcome,
-//     or the session ends before the horizon does.
-//   - One touch per level per session: the first.
-// Levels close to each other are read separately; a move that holds one and breaks the next counts once for
-// each. Pure, no I/O.
+//   - BROKE ("closed through"): a 1-minute bar, the touch bar included, CLOSES through the level by at least
+//     `throughPts`, before the next line happens.
+//   - HELD ("moved back"): after the touch bar, a 1-minute HIGH or LOW gets at least `awayPts` back away from
+//     the level first. The two are measured differently on purpose (a wick away, a close through) and the
+//     card says so. If one bar does both, it counts as broke.
+//   - NEITHER: the horizon ends with neither. NOT GRADED: a minute is missing anywhere from the start of the
+//     scan to the outcome (the first touch may have been in the gap), or the session ends inside the horizon.
+//   - One touch per price per session: the first.
+// Prices close to each other but not equal are read separately; a move that holds one and breaks the next
+// counts once for each. Pure, no I/O.
 
 import { calendarLevels, sessionLevels, OPENING_RANGE_MIN, type DayBar, type IntraBar, type BoardLevel } from "./levelBoard";
 import { etWallToEpochMs, sessionCloseMinutes, prevTradingDay, REGULAR_OPEN_MIN } from "./exchangeCalendar";
@@ -28,12 +35,17 @@ export const LEVEL_RECORD_RULES: LevelRecordRules = { awayPts: 10, throughPts: 5
 
 export type TouchOutcome = "held" | "broke" | "neither" | "ungraded";
 export interface LevelTouch {
-  date: string; key: string; label: string; price: number;
+  date: string;
+  /** Every level kind at this price, joined with "+" (keys) and " + " (labels). */
+  key: string; label: string; keys: string[]; price: number;
   /** Where the level sat against the price before the touch: "below" is a test from above. */
   side: "above" | "below";
   touchedAt: number; outcome: TouchOutcome;
 }
-export type SessionTouches = { date: string; skipped: string; touches: null } | { date: string; skipped: null; touches: LevelTouch[] };
+export type SessionTouches = { date: string; skipped: string; touches: null; startedNear?: undefined }
+  | { date: string; skipped: null; touches: LevelTouch[]; /** Prices that began within awayPts of the price: not read as touches. */ startedNear: number };
+/** Two levels this close in price are the same price. */
+const SAME_PRICE = 0.005;
 
 /** The first touch of each calendar and opening-range level in ONE finished session, with what followed. */
 export function sessionTouches(date: string, bars: IntraBar[], daily: DayBar[], nowMs: number, rules: LevelRecordRules = LEVEL_RECORD_RULES): SessionTouches {
@@ -63,36 +75,48 @@ export function sessionTouches(date: string, bars: IntraBar[], daily: DayBar[], 
     }
   }
 
-  const touches: LevelTouch[] = [];
+  // Levels at one price become one entry with every name; calendar levels (from 0) and the opening range (from 10:00) never share one.
+  const groups: Array<{ keys: string[]; labels: string[]; price: number; from: number }> = [];
   for (const { lv, from } of levels) {
+    const g = groups.find((x) => x.from === from && Math.abs(x.price - lv.price) < SAME_PRICE);
+    if (g) { g.keys.push(lv.key); g.labels.push(lv.label); } else groups.push({ keys: [lv.key], labels: [lv.label], price: lv.price, from });
+  }
+
+  const touches: LevelTouch[] = [];
+  let startedNear = 0;
+  for (const g of groups) {
+    const { from, price } = g;
     if (from >= bars.length) continue;
     // Where the level sits before it can be touched: the open for calendar levels, the last close inside the range for the opening range.
     const ref = from === 0 ? bars[0].open : bars[from - 1].close;
-    if (ref === lv.price) continue;
-    const side: "above" | "below" = lv.price > ref ? "above" : "below";
+    if (Math.abs(price - ref) < rules.awayPts) { startedNear++; continue; }
+    const side: "above" | "below" = price > ref ? "above" : "below";
     let ti = -1;
+    let gapBefore = false;
     for (let i = from; i < bars.length; i++) {
-      if (side === "above" ? bars[i].high >= lv.price : bars[i].low <= lv.price) { ti = i; break; }
+      if (i > 0 && bars[i].t - bars[i - 1].t > 60_000 && i > from) gapBefore = true;
+      if (side === "above" ? bars[i].high >= price : bars[i].low <= price) { ti = i; break; }
     }
     if (ti < 0) continue;
     const t0 = bars[ti].t;
     const end = t0 + rules.horizonMin * 60_000;
+    const through = (b: IntraBar) => (side === "above" ? b.close >= price + rules.throughPts : b.close <= price - rules.throughPts);
+    const away = (b: IntraBar) => (side === "above" ? b.low <= price - rules.awayPts : b.high >= price + rules.awayPts);
     let outcome: TouchOutcome = "neither";
     let last = t0;
-    let gap = false;
+    let gap = gapBefore;
     let resolved = false;
-    for (let i = ti + 1; i < bars.length && bars[i].t <= end; i++) {
+    if (!gap && through(bars[ti])) { outcome = "broke"; resolved = true; } // the touch bar's own close counts
+    for (let i = ti + 1; !gap && !resolved && i < bars.length && bars[i].t <= end; i++) {
       if (bars[i].t - last > 60_000) { gap = true; break; }
       last = bars[i].t;
-      const through = side === "above" ? bars[i].close >= lv.price + rules.throughPts : bars[i].close <= lv.price - rules.throughPts;
-      const away = side === "above" ? bars[i].low <= lv.price - rules.awayPts : bars[i].high >= lv.price + rules.awayPts;
-      if (through) { outcome = "broke"; resolved = true; break; }
-      if (away) { outcome = "held"; resolved = true; break; }
+      if (through(bars[i])) { outcome = "broke"; resolved = true; }
+      else if (away(bars[i])) { outcome = "held"; resolved = true; }
     }
     if (gap || (!resolved && last < end)) outcome = "ungraded"; // a missing minute, or the session ended inside the horizon
-    touches.push({ date, key: lv.key, label: lv.label, price: lv.price, side, touchedAt: t0, outcome });
+    touches.push({ date, key: g.keys.join("+"), label: g.labels.join(" + "), keys: g.keys, price, side, touchedAt: t0, outcome });
   }
-  return { date, skipped: null, touches: touches.sort((a, b) => a.touchedAt - b.touchedAt) };
+  return { date, skipped: null, touches: touches.sort((a, b) => a.touchedAt - b.touchedAt), startedNear };
 }
 
 export interface LevelTally { key: string; label: string; touches: number; held: number; broke: number; neither: number; ungraded: number }
@@ -102,6 +126,8 @@ export interface LevelRecord {
   skipped: Array<{ date: string; reason: string }>;
   byLevel: LevelTally[];
   /** Tests from above (the level was below the price) and from below, all level kinds together. */
+  /** Prices that began within awayPts of the price in their session and were not read as touches. */
+  startedNear: number;
   fromAbove: Omit<LevelTally, "key" | "label">;
   fromBelow: Omit<LevelTally, "key" | "label">;
   total: Omit<LevelTally, "key" | "label">;
@@ -117,9 +143,15 @@ export function combineLevelRecord(sessions: SessionTouches[], rules: LevelRecor
   const done = sorted.filter((s) => s.skipped == null);
   const by = new Map<string, LevelTally>();
   const fromAbove = zero(), fromBelow = zero(), total = zero();
-  for (const s of done) for (const t of s.touches ?? []) {
-    const row = by.get(t.key) ?? by.set(t.key, { key: t.key, label: t.label, ...zero() }).get(t.key)!;
-    add(row, t.outcome); add(total, t.outcome); add(t.side === "below" ? fromAbove : fromBelow, t.outcome);
+  let startedNear = 0;
+  for (const s of done) {
+    startedNear += s.startedNear ?? 0;
+    for (const t of s.touches ?? []) {
+      // One touch in the totals; one on the row of each level kind that sat at that price.
+      add(total, t.outcome); add(t.side === "below" ? fromAbove : fromBelow, t.outcome);
+      const labels = t.label.split(" + ");
+      t.keys.forEach((k, i) => add(by.get(k) ?? by.set(k, { key: k, label: labels[i] ?? k, ...zero() }).get(k)!, t.outcome));
+    }
   }
   const rank = (k: string) => { const i = ORDER.indexOf(k); return i < 0 ? ORDER.length : i; };
   return {
@@ -127,16 +159,17 @@ export function combineLevelRecord(sessions: SessionTouches[], rules: LevelRecor
     sessions: done.length, firstSession: done[0]?.date ?? null, lastSession: done[done.length - 1]?.date ?? null,
     skipped: sorted.filter((s) => s.skipped != null).map((s) => ({ date: s.date, reason: s.skipped! })),
     byLevel: [...by.values()].sort((a, b) => rank(a.key) - rank(b.key)),
-    fromAbove, fromBelow, total,
+    startedNear, fromAbove, fromBelow, total,
   };
 }
 
 /** One sentence: counts only, with the rule that defines them. */
 export function levelRecordAnswer(r: LevelRecord): string {
-  if (!r.sessions) return "No past session could be read yet.";
-  const n = `${r.sessions} past session${r.sessions === 1 ? "" : "s"}`;
+  const notRead = r.skipped.length ? ` (${r.skipped.length} more not read)` : "";
+  if (!r.sessions) return `No past session could be read yet${r.skipped.length ? ` (${r.skipped.length} not read)` : ""}.`;
+  const n = `${r.sessions} past session${r.sessions === 1 ? "" : "s"}${notRead}`;
   const t = r.total;
   if (!t.touches) return `Over ${n} the index reached none of the mapped levels.`;
   const ug = t.ungraded ? `, ${t.ungraded} could not be graded` : "";
-  return `Over ${n} the index reached a mapped level ${t.touches} time${t.touches === 1 ? "" : "s"} (first touch per level per session): ${t.held} moved ${r.rules.awayPts} points back first, ${t.broke} closed ${r.rules.throughPts} points through first, ${t.neither} did neither in ${r.rules.horizonMin} minutes${ug}.`;
+  return `Over ${n} the index reached a mapped price ${t.touches} time${t.touches === 1 ? "" : "s"} (first touch per price per session): ${t.held} traded ${r.rules.awayPts} points back first, ${t.broke} closed ${r.rules.throughPts} points through first, ${t.neither} did neither in ${r.rules.horizonMin} minutes${ug}.`;
 }
