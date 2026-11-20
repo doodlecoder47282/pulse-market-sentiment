@@ -2981,3 +2981,14 @@ server/playbook.ts is rewritten:
 - The one-sigma daily move is stated as an implied figure, not a forecast.
 - Key levels keep the walls' own names; the news playbook is given the walls it names.
 Tests: tests/quant/playbook-day-levels.test.ts (8).
+
+**ES and NQ levels from the quote's own day fields (2026-11-20).** Why: the futures showed a price and "price
+only". Futures bars are still not asked for (the price-history endpoint is not known to serve a root future,
+and a refusal cools it down for SPX too). Instead the board shows what the futures quote itself carries, with
+no extra request and nothing derived: previous close, and the open, high and low of the trading day the feed
+is counting (shared/levelBoard.ts quoteDayLevels; NormalizedQuote gains dayOpen/dayHigh/dayLow from Schwab's
+openPrice/highPrice/lowPrice, REST path). A high and low that do not contain the quote's own last price or
+open are left out. The futures' level state is never "ok": it is "partial" with the reason that there are no
+prior-day high and low, pivots, week, month or range levels, or "unavailable" when the quote carries none of
+the fields. Unverified until seen live: which of these fields Schwab's futures quote actually fills.
+Tests: tests/quant/desk-board.test.ts.

@@ -464,7 +464,8 @@ test("futures: levels are the quote's own day fields, with no bars asked for; fi
   assert.equal(es.levelsState, "partial", "never 'ok': there are no bar-based levels behind it");
   assert.match(es.levelsReason ?? "", /no prior-day high and low, pivots/);
   assert.equal(es.above?.price, 7020);
-  assert.equal(es.below?.price, 7006);
+  assert.equal(es.below?.price, 7000);
+  assert.deepEqual(es.at.map((l) => l.price), [7006], "within a tenth of a percent of the price");
   const nq = b.tickers.find((x) => x.symbol === "/NQ")!;
   assert.match(nq.levelsReason ?? "", /the quote is not current/);
   assert.ok(!calls.some((c) => c.startsWith("/ES") || c.startsWith("/NQ")), "no price history is asked for a future");
