@@ -776,6 +776,10 @@ export type NormalizedQuote = {
   ageMs?: number | null;
   /** Older than 2 min during the regular session (quoteFreshness.ts), or re-served from cache after a failed refresh; null = age unknown. */
   stale?: boolean | null;
+  /** Schwab quote openPrice / highPrice / lowPrice: the day's open, high and low as the quote itself reports them (REST only). */
+  dayOpen?: number | null;
+  dayHigh?: number | null;
+  dayLow?: number | null;
   /** Schwab regular.regularMarketLastPrice (last regular-session trade). */
   regularMarketLast?: number | null;
   /** Schwab regular.regularMarketTradeTime, epoch ms (REST only). */
@@ -986,6 +990,9 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           volume: qd.totalVolume ?? null,
           source: "schwab",
           prevClose: typeof qd.closePrice === "number" && qd.closePrice > 0 ? qd.closePrice : null,
+          dayOpen: typeof qd.openPrice === "number" && qd.openPrice > 0 ? qd.openPrice : null,
+          dayHigh: typeof qd.highPrice === "number" && qd.highPrice > 0 ? qd.highPrice : null,
+          dayLow: typeof qd.lowPrice === "number" && qd.lowPrice > 0 ? qd.lowPrice : null,
           // In Schwab's quotes response the regular-session last trade sits in
           // q.regular, not q.quote (server/schwabQuoteFields.ts).
           ...regularFields(q),

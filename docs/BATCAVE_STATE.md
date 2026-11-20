@@ -3002,3 +3002,13 @@ tab comes back into view (refetchOnWindowFocus, staleTime 30 s) and the map re-r
 while its read is old. Server: today's-expiry check in server/odteForward.ts now compares the expiry date with
 today's ET date instead of the days-to-expiry number the chain carried when fetched (a cached chain keeps the
 old number); tested with a chain whose numbers are a day behind. Tests: tests/quant/odte-freshness.test.ts (11).
+**ES and NQ levels from the quote's own day fields (2026-11-20).** Why: the futures showed a price and "price
+only". Futures bars are still not asked for (the price-history endpoint is not known to serve a root future,
+and a refusal cools it down for SPX too). Instead the board shows what the futures quote itself carries, with
+no extra request and nothing derived: previous close, and the open, high and low of the trading day the feed
+is counting (shared/levelBoard.ts quoteDayLevels; NormalizedQuote gains dayOpen/dayHigh/dayLow from Schwab's
+openPrice/highPrice/lowPrice, REST path). A high and low that do not contain the quote's own last price or
+open are left out. The labels do not say "so far": out of hours the same fields describe a finished day. The futures' level state is never "ok": it is "partial" with the reason that there are no
+prior-day high and low, pivots, week, month or range levels, or "unavailable" when the quote carries none of
+the fields. Unverified until seen live: which of these fields Schwab's futures quote actually fills.
+Tests: tests/quant/desk-board.test.ts.
