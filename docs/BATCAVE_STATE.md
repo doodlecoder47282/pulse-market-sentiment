@@ -3012,3 +3012,14 @@ open are left out. The labels do not say "so far": out of hours the same fields 
 prior-day high and low, pivots, week, month or range levels, or "unavailable" when the quote carries none of
 the fields. Unverified until seen live: which of these fields Schwab's futures quote actually fills.
 Tests: tests/quant/desk-board.test.ts.
+**Whale record: how it is spread over days, shown above the new alerts (2026-11-20).** Why: the whale win
+count swings with single days (positions flagged together move together), and the figure gave no way to see
+that. shared/whaleDays.ts (daySpread, daySpreadAnswer) counts the scored whale positions by the ET day each was
+FLAGGED (entry.detectedAt; not the close day, which piles onto Fridays by the expiry calendar and whose stamp
+can be late after a restart) and says how many days the figure rests on. A day is named only when it alone
+holds more than half of the positions, or more than half of the wins with at least 3 wins; an even split names
+no day. getPerformanceSnapshot returns it (daySpread) over exactly the scored set of the overall row,
+/api/whales/performance passes it on, and the Whale Flow panel shows it under the performance sentence with
+per-day counts. The Performance section now sits above Fresh Whales; a failed performance read now shows as
+failed instead of as "no closed positions"; switching 7d/30d keeps the last figures until the new ones arrive.
+Nothing is reweighted or removed. Tests: tests/quant/whale-days.test.ts (6).
