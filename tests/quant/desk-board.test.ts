@@ -392,8 +392,8 @@ test("build: each ticker carries its change basis; tech is read only when both s
   const lastClose = closes.get("2026-11-11")!, before = closes.get("2026-11-10")!;
   const quotes = (spyPrev: number) => async () => [
     { symbol: "$SPX", last: 113, changePercent: 0, prevClose: lastClose, stale: false },
-    { symbol: "SPY", last: 113, changePercent: 0.2, prevClose: spyPrev, stale: false },
-    { symbol: "QQQ", last: 113, changePercent: 0.8, prevClose: before, stale: false },
+    { symbol: "SPY", last: 113, changePercent: 0.2, prevClose: spyPrev, regularMarketLast: 113, stale: false },
+    { symbol: "QQQ", last: 113, changePercent: 0.8, prevClose: before, regularMarketLast: 113, stale: false },
     { symbol: "$VIX", last: 20, changePercent: 0, prevClose: lastClose, stale: false },
   ] as any;
   const d1 = deps(); d1.getQuotes = quotes(before);
@@ -407,4 +407,17 @@ test("build: each ticker carries its change basis; tech is read only when both s
   assert.match((await buildDeskBoard(EVENING, d2)).tech.text, /by the feed's day change/);
   _resetDeskBoardCache();
   assert.equal(basis(await buildDeskBoard(NOON, deps()), "$SPX"), "session");
+  // After the close an ETF's feed change follows after-hours trading: the last session's move runs to the last regular trade.
+  _resetDeskBoardCache();
+  const ah = deps();
+  ah.getQuotes = async () => [
+    { symbol: "SPY", last: 98, changePercent: -2, prevClose: before, regularMarketLast: before * 1.004, stale: false },
+    { symbol: "QQQ", last: 113, changePercent: 0.8, prevClose: before, stale: false }, // no regular-session print
+  ] as any;
+  const b3 = await buildDeskBoard(EVENING, ah);
+  const spy = b3.tickers.find((t) => t.symbol === "SPY")!;
+  assert.equal(spy.changeBasis, "last_session");
+  assert.ok(Math.abs(spy.changePct! - 0.4) < 1e-6, "the regular session's move, not the after-hours one");
+  assert.equal(basis(b3, "QQQ"), "unknown", "no regular-session print: the basis is not claimed");
+  assert.match(b3.tech.text, /by the feed's day change/);
 });

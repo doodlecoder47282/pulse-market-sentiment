@@ -13,7 +13,7 @@ import { Layers } from "lucide-react";
 import { boardAnswer, type BoardLevel, type DeskCase, type RelRead, type VixRead } from "@shared/levelBoard";
 
 interface Ticker {
-  symbol: string; label: string; kind: string; price: number | null; changePct: number | null;
+  symbol: string; label: string; kind: string; price: number | null; changePct: number | null; changeBasis?: "session" | "last_session" | "since_close" | "unknown";
   quoteState: "ok" | "stale" | "age_unknown" | "unavailable"; quoteReason: string | null;
   levels: BoardLevel[]; levelsState: "ok" | "partial" | "unavailable"; levelsReason: string | null; priorSession: string | null;
   at: BoardLevel[]; above: BoardLevel | null; below: BoardLevel | null;
@@ -88,6 +88,9 @@ export default function DeskBoard() {
                   <span className="font-mono text-sm font-semibold text-foreground">{t.label}</span>{" "}
                   <span className="font-mono text-sm">{px(t.price)}</span>{" "}
                   <span className={`font-mono text-[12px] ${t.changePct == null ? "" : t.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{pct(t.changePct)}</span>
+                  {t.changePct != null && t.changeBasis && t.changeBasis !== "session" && (
+                    <span className="ml-1 text-[11px] text-muted-foreground">{t.changeBasis === "last_session" ? "last session" : t.changeBasis === "since_close" ? "since the last close" : "day basis unclear"}</span>
+                  )}
                   {t.quoteState !== "ok" && <span className="ml-1 text-[11px] text-amber-400">{t.quoteState === "age_unknown" ? "age unknown" : t.quoteState}</span>}
                 </span>
                 <span className="shrink-0 text-[11px] text-muted-foreground">{open === t.symbol ? "less" : "all levels"}</span>

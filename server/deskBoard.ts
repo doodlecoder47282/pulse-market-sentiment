@@ -284,7 +284,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
   const tickers: BoardTicker[] = BOARD_TICKERS.map((t, idx) => {
     const q = quotes.get(t.symbol) ?? null;
     const price = priced(t.symbol) ? (q!.last as number) : null;
-    const changePct = q?.changePercent != null && Number.isFinite(q.changePercent) ? q.changePercent
+    let changePct = q?.changePercent != null && Number.isFinite(q.changePercent) ? q.changePercent
       : price != null && q?.prevClose != null && q.prevClose > 0 ? ((price - q.prevClose) / q.prevClose) * 100 : null;
     // In session an unknown age is not live; closed, the last price is the last price.
     const quoteState: BoardTicker["quoteState"] = price == null ? "unavailable" : q?.stale === true ? "stale" : sessionOpen && q?.stale == null ? "age_unknown" : "ok";
@@ -303,7 +303,14 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
     // The close the quote's change is measured from tells what the change is a change of.
     const closeOf = (date: string | undefined) => (date ? d.bars.find((b) => b.date === date)?.close ?? null : null);
     const hasPrior = priorSession != null && priorSession === expectedPrior;
-    const changeBasis = quoteChangeBasis(sessionOpen, q?.prevClose ?? null, hasPrior ? closeOf(priorSession!) : null, closeOf(hasPrior ? done[done.length - 2] : done[done.length - 1]));
+    let changeBasis = quoteChangeBasis(sessionOpen, q?.prevClose ?? null, hasPrior ? closeOf(priorSession!) : null, closeOf(hasPrior ? done[done.length - 2] : done[done.length - 1]));
+    // An ETF trades after the close and the feed's change follows it, so "in the last session" would be false of that
+    // figure. The last session's own move runs to the last regular-session trade; without that print the basis is unknown.
+    if (t.kind === "etf" && changeBasis === "last_session") {
+      const reg = q?.regularMarketLast;
+      if (typeof reg === "number" && Number.isFinite(reg) && reg > 0 && q?.prevClose != null && q.prevClose > 0) changePct = ((reg - q.prevClose) / q.prevClose) * 100;
+      else changeBasis = "unknown";
+    }
     let levelsState: BoardTicker["levelsState"] = levels.length ? "ok" : "unavailable";
     const reasons: string[] = [];
     if (!levels.length) reasons.push(d.reason ?? `no completed daily bars for ${t.symbol}`);
