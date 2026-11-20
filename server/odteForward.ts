@@ -332,7 +332,10 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     .sort((a: any, b: any) => Math.abs(a.distance) - Math.abs(b.distance)).slice(0, 14);
   // Today's 0DTE chain must be today's expiry while the session runs; before
   // the next session, the next session's expiry.
-  const expiryMismatch = horizon === "rest_of_today" ? nearestDte !== 0 : expiryDate !== nextTradingDay(todayEt);
+  // Judged by the expiry's date against today's, not by the days-to-expiry number the chain carried when it
+  // was fetched: a chain re-served from cache keeps the number it had then (last night's "1" for today's
+  // expiry, or yesterday's "0").
+  const expiryMismatch = horizon === "rest_of_today" ? expiryDate !== todayEt : expiryDate !== nextTradingDay(todayEt);
   const wiener = wienerMap({
     spot,
     // emSigma is the chain's IV only when the chain had IV; a straddle-derived
