@@ -298,6 +298,15 @@ test("build: with no kept copy a refused read stays unavailable with the source'
   assert.match(spx.levelsReason ?? "", /self-throttle/);
 });
 
+test("build: the board carries the index lines merged without option landmarks", async () => {
+  _resetDeskBoardCache();
+  const b = await buildDeskBoard(NOON, deps());
+  const keys = b.cases.levelsWithoutOptions.flatMap((l) => l.key.split("+"));
+  assert.ok(keys.includes("pdl") && keys.includes("pdh"));
+  assert.ok(!keys.includes("wallAbove"), "no landmark in the option-free list");
+  assert.ok(b.tickers.find((t) => t.symbol === "$SPX")!.levels.flatMap((l) => l.key.split("+")).includes("wallAbove"), "the shown list still has it");
+});
+
 // A whole 5-minute regular session on `date` (78 bars from 09:30), flat at `base` except the given bars.
 function fiveMin(date: string, base: number, over: Record<number, { high?: number; low?: number; close?: number }> = {}, n = 78) {
   const open = etWallToEpochMs(date, 9 * 60 + 30);
