@@ -2908,3 +2908,17 @@ so in the levels reason, including that the last intraday close can differ sligh
 live: the range levels are on the board ("20-session low", "66-session low"); on 2026-11-19 SPX closed under
 its 66-session low, so "no further mapped level below" was a true statement, not a gap.
 Tests: three added to tests/quant/desk-board.test.ts.
+
+**Level record (2026-11-20).** Third step of the "no improvement" line: the board names levels but nothing
+said what price has done at them. shared/levelRecord.ts counts, per level kind (prior-day high/low/close,
+pivot, R1, S1, opening-range high/low, prior-week and prior-month high/low/close), what the index did at the
+first touch in each stored past session: a 1-minute high or low 10 points back away before any 1-minute close
+5 points through ("traded back"), that close first, the touch bar included ("closed through"), neither within
+30 minutes, or not graded (a minute missing anywhere before the outcome, or too near the close). Levels at
+one price are one touch with several names (once in the totals, once per row); a price that starts within 10
+points of the index is not read as a touch and is counted apart. Hand-set numbers, versioned (LEVEL_RECORD_VERSION 2026.11.20-1). Uses only
+bars before the session for the levels (the session's own daily bar cannot leak; week and month open are
+left out). Shown on the Trade Desk under Protocols as one sentence with the by-level table, recent touches and
+limits on tap; counts only, with the statement that a few neighbouring sessions are too few to read a tendency
+from. Reads the stored 1-minute index bars the replay keeps. Route: GET /api/desk/level-record.
+Tests: tests/quant/level-record.test.ts (8).
