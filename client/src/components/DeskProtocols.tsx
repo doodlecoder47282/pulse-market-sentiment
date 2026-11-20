@@ -21,6 +21,7 @@ interface Log {
   bookVersion: string; minGraded: number; running: boolean; sessionOpen: boolean; evaluatedAt: number | null; lastTickError: string | null;
   protocols: Proto[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
+  contextLog?: { rows: number; sessions: number; withLandmarks: number; firstSession: string | null; everyMin: number };
   hits: Array<{ at: number; firstAt?: number; count?: number; fromBefore?: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
@@ -150,6 +151,14 @@ export default function DeskProtocols() {
               </>
             )}
         </div>
+        {l.contextLog && (
+          <p className="break-words text-[11px] text-muted-foreground" data-testid="desk-protocols-context-log">
+            The wall rule cannot be replayed from bars: it reads the option wall, tech and VIX as they were. The desk now writes those down every {l.contextLog.everyMin} minutes in session
+            {l.contextLog.rows > 0
+              ? `: ${l.contextLog.rows} rows over ${l.contextLog.sessions} session${l.contextLog.sessions === 1 ? "" : "s"} since ${l.contextLog.firstSession}, ${l.contextLog.withLandmarks} with a current option map. A replay of it needs many more sessions than that.`
+              : "; nothing is written yet (rows start with the next session)."}
+          </p>
+        )}
         {l.recent.length > 0 && (
           <div data-testid="desk-protocols-recent">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Protocol log</div>

@@ -2881,3 +2881,12 @@ levels reason with the copy's time and why the fresh read failed; the existing p
 read-before-close checks run on the copy as on any read. Not kept in the demo edition. The startup burst itself
 is not reduced by this; that is still open. Also: scoreboard setup rows word the kind as the setup log does
 ("breakout below the put wall", not "breakout_below"). Tests: two added to tests/quant/desk-board.test.ts.
+
+**Context log for option-level rules (2026-11-20).** The price-only rule can be replayed from stored bars; the
+wall rule reads the option wall, tech against the market and VIX as they were, and none of that was stored,
+so it could only ever gain one live session a day. The protocol engine now writes one row every 5 minutes in
+session (desk_context_log): the index price, the option map's state and time, the option landmark prices
+(only when the map was current; an old map's prices are not written as levels), the tech read and the VIX
+read. Nothing is replayed from it yet: it starts empty, and the Protocols card says how many rows and sessions
+exist. shared/protocols.ts contextRow (pure); the board exposes the raw option landmarks
+(cases.optionLevels). Tests: one added to tests/quant/protocols.test.ts.

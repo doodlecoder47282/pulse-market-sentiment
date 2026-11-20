@@ -292,6 +292,33 @@ export function levelHits(prev: number | null | undefined, cur: number | null | 
   return out;
 }
 
+/** Minutes between rows of the desk's context log (shared/protocols.ts contextRow). */
+export const CONTEXT_LOG_EVERY_MIN = 5;
+export interface ContextRow {
+  at: number; session: string; spx: number;
+  optionsState: string; optionsAsOfMs: number | null;
+  /** Option landmark prices by key (wallAbove, magnetBelow, flip, pin, straddleHigh, straddleLow); empty unless the map was current. */
+  landmarks: Record<string, number>;
+  tech: string; techDiff: number | null; vix: string;
+}
+/**
+ * What the wall rule reads, as it was at one moment: the index price, the option landmarks, tech against the
+ * market and VIX. The price-only rule can be replayed from stored bars; a rule that reads option levels can
+ * only be replayed from a log of those levels as they were, so the desk writes one row every few minutes in
+ * session. Landmarks are written only when the option map was current: an old map's prices are not what the
+ * desk would have shown as levels. Null when the index price itself was not live (nothing to anchor a row).
+ */
+export function contextRow(x: {
+  nowMs: number; session: string; spx: number | null; spxLive: boolean;
+  optionsState: string; optionsAsOfMs: number | null; optionLevels: Array<{ key: string; price: number }>;
+  tech: { state: string; diffPts: number | null }; vix: { state: string };
+}): ContextRow | null {
+  if (!x.spxLive || x.spx == null || !Number.isFinite(x.spx) || x.spx <= 0) return null;
+  const landmarks: Record<string, number> = {};
+  if (x.optionsState === "ok") for (const l of x.optionLevels) if (Number.isFinite(l.price) && l.price > 0) landmarks[l.key] = l.price;
+  return { at: x.nowMs, session: x.session, spx: x.spx, optionsState: x.optionsState, optionsAsOfMs: x.optionsAsOfMs, landmarks, tech: x.tech.state, techDiff: x.tech.diffPts, vix: x.vix.state };
+}
+
 /** Crossings of one level by one ticker this close together are shown as one line. */
 export const HIT_JOIN_MIN = 10;
 export interface HitRow { id?: number; at: number; symbol: string; levelKey: string; label: string; levelPrice: number; direction: string; price: number }

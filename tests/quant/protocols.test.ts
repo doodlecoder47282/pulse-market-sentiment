@@ -165,3 +165,17 @@ test("wiring: engine starts with the server, stores nothing in the demo, and the
   assert.match(eng, /PROTOCOL_RULES\.newsBeforeMin \+ PROTOCOL_RULES\.newsAfterMin \+ 5/);
   assert.match(eng, /lastRead\.delete\(t\.symbol\)/);
 });
+
+test("context row: landmarks only from a current option map, and no row without a live index price", async () => {
+  const { contextRow, CONTEXT_LOG_EVERY_MIN } = await import("../../shared/protocols");
+  const base = { nowMs: 1_000, session: "2026-11-20", spx: 7200, spxLive: true, optionsAsOfMs: 900, optionLevels: [{ key: "wallAbove", price: 7250 }, { key: "flip", price: NaN }], tech: { state: "lagging", diffPts: -0.4 }, vix: { state: "firm" } };
+  const ok = contextRow({ ...base, optionsState: "ok" })!;
+  assert.deepEqual(ok.landmarks, { wallAbove: 7250 });
+  assert.deepEqual([ok.spx, ok.tech, ok.techDiff, ok.vix, ok.session], [7200, "lagging", -0.4, "firm", "2026-11-20"]);
+  const stale = contextRow({ ...base, optionsState: "stale" })!;
+  assert.deepEqual(stale.landmarks, {}, "an old map's prices are not written as levels");
+  assert.equal(stale.optionsState, "stale");
+  assert.equal(contextRow({ ...base, optionsState: "ok", spxLive: false }), null);
+  assert.equal(contextRow({ ...base, optionsState: "ok", spx: null }), null);
+  assert.equal(CONTEXT_LOG_EVERY_MIN, 5);
+});

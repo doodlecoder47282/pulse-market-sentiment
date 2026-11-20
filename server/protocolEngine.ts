@@ -15,7 +15,7 @@ import { isRegularSessionOpen, sessionCloseMinutes, REGULAR_OPEN_MIN, etClock } 
 import { etWallToUtcMs } from "./validationMath";
 import { minutesToNextTier1 } from "../shared/macroCalendar";
 import {
-  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching,
+  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching, contextRow, CONTEXT_LOG_EVERY_MIN,
   type ProtocolCtx, type ProtocolEval, type ProtocolRecord, type ProtocolDef,
 } from "../shared/protocols";
 import type { IntraBar, BoardLevel } from "../shared/levelBoard";
@@ -95,6 +95,16 @@ function hasOpenOrRecent(protocol: string, horizonMin: number, nowMs: number): b
   return !!sqlite.prepare(`SELECT 1 FROM protocol_events WHERE protocol = ? AND (status = 'open' OR armed_at >= ?) LIMIT 1`).get(protocol, since);
 }
 
+let lastContextAt = 0;
+const CONTEXT_KEEP_MS = 400 * 86_400_000;
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS desk_context_log (
+    at INTEGER PRIMARY KEY, session TEXT NOT NULL, spx REAL NOT NULL,
+    options_state TEXT NOT NULL, options_as_of INTEGER, landmarks_json TEXT NOT NULL,
+    tech TEXT NOT NULL, tech_diff REAL, vix TEXT NOT NULL
+  );
+`);
+
 async function tick(): Promise<void> {
   if (ticking) return;
   const now = Date.now();
@@ -117,6 +127,22 @@ async function tick(): Promise<void> {
       lastRead.set(t.symbol, { price: t.price, date: today, levels: lv });
     }
     sqlite.prepare(`DELETE FROM level_hits WHERE id <= (SELECT MAX(id) FROM level_hits) - ?`).run(HIT_KEEP);
+
+    // Context log: what a rule that reads option levels would need to be replayed later. One row every few minutes.
+    if (now - lastContextAt >= CONTEXT_LOG_EVERY_MIN * 60_000) {
+      const spxT = board.tickers.find((t) => t.symbol === "$SPX");
+      const row = contextRow({
+        nowMs: now, session: today, spx: spxT?.price ?? null, spxLive: spxT?.quoteState === "ok",
+        optionsState: board.cases.optionsState, optionsAsOfMs: board.cases.optionsAsOfMs, optionLevels: board.cases.optionLevels,
+        tech: board.tech, vix: board.vix,
+      });
+      if (row) {
+        sqlite.prepare(`INSERT INTO desk_context_log (at, session, spx, options_state, options_as_of, landmarks_json, tech, tech_diff, vix) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(row.at, row.session, row.spx, row.optionsState, row.optionsAsOfMs, JSON.stringify(row.landmarks), row.tech, row.techDiff, row.vix);
+        sqlite.prepare(`DELETE FROM desk_context_log WHERE at < ?`).run(now - CONTEXT_KEEP_MS);
+        lastContextAt = now;
+      }
+    }
 
     const ctx = await contextNow(now);
     const evals = evalProtocols(ctx);
@@ -193,6 +219,8 @@ export interface ProtocolLog {
   lastTickError: string | null;
   protocols: ProtocolView[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
+  /** The context log a rule that reads option levels will be replayed from: how much of it exists. */
+  contextLog: { rows: number; sessions: number; withLandmarks: number; firstSession: string | null; everyMin: number };
   hits: Array<{ at: number; firstAt: number; count: number; fromBefore: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
@@ -225,6 +253,8 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
     expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
   }));
   // Repeat crossings of one level are joined into one line (shared/protocols.ts joinHits); the newest 30 lines are shown.
+  const cl = sqlite.prepare(`SELECT COUNT(*) AS rows, COUNT(DISTINCT session) AS sessions, SUM(CASE WHEN landmarks_json <> '{}' THEN 1 ELSE 0 END) AS lm, MIN(session) AS first FROM desk_context_log`).get() as any;
+  const contextLog = { rows: cl?.rows ?? 0, sessions: cl?.sessions ?? 0, withLandmarks: cl?.lm ?? 0, firstSession: cl?.first ?? null, everyMin: CONTEXT_LOG_EVERY_MIN };
   const HIT_READ = 300;
   const hitRows = sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT ?`).all(HIT_READ + 1) as any[];
   // More rows exist than were read (or the table has been pruned at its cap): the oldest run may start earlier than the rows show.
@@ -239,7 +269,7 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
   return {
     bookVersion: PROTOCOL_BOOK_VERSION, minGraded: PROTOCOL_MIN_GRADED, edition: editionFromEnv(),
     running: timer != null, sessionOpen: isRegularSessionOpen(nowMs), evaluatedAt, lastTickError,
-    protocols, recent, hits,
+    protocols, recent, hits, contextLog,
     note: `Each protocol is a hand-set rule taken from the desk owner's description of his own read. ${protocols.some((p) => p.record.tested) ? "A rule counts as tested" : "None has been tested: a rule counts as tested"} only after ${PROTOCOL_MIN_GRADED} graded events, and the record shows counts only. A protocol arming is a condition being met, not a forecast. A protocol can arm again once its horizon has passed; events on the same day are not independent. The desk places no orders.`,
   };
 }
