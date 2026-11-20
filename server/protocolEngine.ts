@@ -15,7 +15,7 @@ import { isRegularSessionOpen, sessionCloseMinutes, REGULAR_OPEN_MIN, etClock } 
 import { etWallToUtcMs } from "./validationMath";
 import { minutesToNextTier1 } from "../shared/macroCalendar";
 import {
-  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching, contextRow, CONTEXT_LOG_EVERY_MIN,
+  PROTOCOL_BOOK_VERSION, PROTOCOL_MIN_GRADED, PROTOCOL_RULES, protocolBook, evalProtocols, gradeProtocol, protocolRecord, levelHits, joinHits, protocolsWatching, contextRow,
   type ProtocolCtx, type ProtocolEval, type ProtocolRecord, type ProtocolDef,
 } from "../shared/protocols";
 import type { IntraBar, BoardLevel } from "../shared/levelBoard";
@@ -95,13 +95,13 @@ function hasOpenOrRecent(protocol: string, horizonMin: number, nowMs: number): b
   return !!sqlite.prepare(`SELECT 1 FROM protocol_events WHERE protocol = ? AND (status = 'open' OR armed_at >= ?) LIMIT 1`).get(protocol, since);
 }
 
-let lastContextAt = 0;
-const CONTEXT_KEEP_MS = 400 * 86_400_000;
+let lastContextPrune = 0;
+let lastContextError: string | null = null;
+const CONTEXT_KEEP_MS = 250 * 86_400_000;
+// One row per evaluation: the rule's own context (shared/protocols.ts contextRow) as JSON, with the few columns the counts need.
 sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS desk_context_log (
-    at INTEGER PRIMARY KEY, session TEXT NOT NULL, spx REAL NOT NULL,
-    options_state TEXT NOT NULL, options_as_of INTEGER, landmarks_json TEXT NOT NULL,
-    tech TEXT NOT NULL, tech_diff REAL, vix TEXT NOT NULL
+  CREATE TABLE IF NOT EXISTS desk_rule_context (
+    at INTEGER PRIMARY KEY, session TEXT NOT NULL, spx REAL, options_state TEXT NOT NULL, has_wall INTEGER NOT NULL, row_json TEXT NOT NULL
   );
 `);
 
@@ -128,22 +128,6 @@ async function tick(): Promise<void> {
     }
     sqlite.prepare(`DELETE FROM level_hits WHERE id <= (SELECT MAX(id) FROM level_hits) - ?`).run(HIT_KEEP);
 
-    // Context log: what a rule that reads option levels would need to be replayed later. One row every few minutes.
-    if (now - lastContextAt >= CONTEXT_LOG_EVERY_MIN * 60_000) {
-      const spxT = board.tickers.find((t) => t.symbol === "$SPX");
-      const row = contextRow({
-        nowMs: now, session: today, spx: spxT?.price ?? null, spxLive: spxT?.quoteState === "ok",
-        optionsState: board.cases.optionsState, optionsAsOfMs: board.cases.optionsAsOfMs, optionLevels: board.cases.optionLevels,
-        tech: board.tech, vix: board.vix,
-      });
-      if (row) {
-        sqlite.prepare(`INSERT INTO desk_context_log (at, session, spx, options_state, options_as_of, landmarks_json, tech, tech_diff, vix) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(row.at, row.session, row.spx, row.optionsState, row.optionsAsOfMs, JSON.stringify(row.landmarks), row.tech, row.techDiff, row.vix);
-        sqlite.prepare(`DELETE FROM desk_context_log WHERE at < ?`).run(now - CONTEXT_KEEP_MS);
-        lastContextAt = now;
-      }
-    }
-
     const ctx = await contextNow(now);
     const evals = evalProtocols(ctx);
     lastEval = { at: now, evals };
@@ -158,6 +142,21 @@ async function tick(): Promise<void> {
     }
     lastTickAt = now;
     lastTickError = null;
+    // Context log, after the rules have run and in its own try: writing it down can never stop a rule from arming.
+    try {
+      const q = (sym: string) => board.tickers.find((t) => t.symbol === sym);
+      const row = contextRow(ctx, today, {
+        qqqPct: q("QQQ")?.changePct ?? null, spyPct: q("SPY")?.changePct ?? null, vixPct: q("$VIX")?.changePct ?? null,
+        quotes: { SPX: q("$SPX")?.quoteState ?? "unavailable", QQQ: q("QQQ")?.quoteState ?? "unavailable", SPY: q("SPY")?.quoteState ?? "unavailable", VIX: q("$VIX")?.quoteState ?? "unavailable" },
+        optionsAsOfMs: board.cases.optionsAsOfMs,
+      });
+      sqlite.prepare(`INSERT OR REPLACE INTO desk_rule_context (at, session, spx, options_state, has_wall, row_json) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(row.at, row.session, row.spx, row.optionsState, row.optionLines.some((l) => l.key.split("+").includes("wallAbove")) ? 1 : 0, JSON.stringify(row));
+      if (now - lastContextPrune > 3_600_000) { sqlite.prepare(`DELETE FROM desk_rule_context WHERE at < ?`).run(now - CONTEXT_KEEP_MS); lastContextPrune = now; }
+      lastContextError = null;
+    } catch (e: any) {
+      lastContextError = String(e?.message ?? e).slice(0, 120);
+    }
   } catch (e: any) {
     lastTickError = String(e?.message ?? e).slice(0, 120);
   } finally {
@@ -220,7 +219,7 @@ export interface ProtocolLog {
   protocols: ProtocolView[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
   /** The context log a rule that reads option levels will be replayed from: how much of it exists. */
-  contextLog: { rows: number; sessions: number; withLandmarks: number; firstSession: string | null; everyMin: number };
+  contextLog: { rows: number; sessions: number; mapCurrent: number; withWall: number; firstSession: string | null; error: string | null };
   hits: Array<{ at: number; firstAt: number; count: number; fromBefore: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
@@ -253,8 +252,8 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
     expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
   }));
   // Repeat crossings of one level are joined into one line (shared/protocols.ts joinHits); the newest 30 lines are shown.
-  const cl = sqlite.prepare(`SELECT COUNT(*) AS rows, COUNT(DISTINCT session) AS sessions, SUM(CASE WHEN landmarks_json <> '{}' THEN 1 ELSE 0 END) AS lm, MIN(session) AS first FROM desk_context_log`).get() as any;
-  const contextLog = { rows: cl?.rows ?? 0, sessions: cl?.sessions ?? 0, withLandmarks: cl?.lm ?? 0, firstSession: cl?.first ?? null, everyMin: CONTEXT_LOG_EVERY_MIN };
+  const cl = sqlite.prepare(`SELECT COUNT(*) AS n, COUNT(DISTINCT session) AS sessions, SUM(CASE WHEN options_state = 'ok' THEN 1 ELSE 0 END) AS ok, SUM(has_wall) AS wall, MIN(session) AS first FROM desk_rule_context`).get() as any;
+  const contextLog = { rows: cl?.n ?? 0, sessions: cl?.sessions ?? 0, mapCurrent: cl?.ok ?? 0, withWall: cl?.wall ?? 0, firstSession: cl?.first ?? null, error: lastContextError };
   const HIT_READ = 300;
   const hitRows = sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT ?`).all(HIT_READ + 1) as any[];
   // More rows exist than were read (or the table has been pruned at its cap): the oldest run may start earlier than the rows show.

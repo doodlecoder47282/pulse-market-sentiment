@@ -2884,9 +2884,13 @@ is not reduced by this; that is still open. Also: scoreboard setup rows word the
 
 **Context log for option-level rules (2026-11-20).** The price-only rule can be replayed from stored bars; the
 wall rule reads the option wall, tech against the market and VIX as they were, and none of that was stored,
-so it could only ever gain one live session a day. The protocol engine now writes one row every 5 minutes in
-session (desk_context_log): the index price, the option map's state and time, the option landmark prices
-(only when the map was current; an old map's prices are not written as levels), the tech read and the VIX
-read. Nothing is replayed from it yet: it starts empty, and the Protocols card says how many rows and sessions
-exist. shared/protocols.ts contextRow (pure); the board exposes the raw option landmarks
-(cases.optionLevels). Tests: one added to tests/quant/protocols.test.ts.
+so it could only ever gain one live session a day. At every evaluation in session (each minute) the protocol
+engine now writes down what the rules were given (table desk_rule_context): the index price as the rules saw
+it (null when its quote was not live), the option map's state, the board lines that hold an option landmark
+with their merged key and price (the price the wall rule compares against, not the raw landmark), the gated
+tech and VIX reads ("unknown" when a quote behind them was not live), the release-calendar fields and the
+session clock, plus the raw day changes and quote states behind the gated reads. The row is built from the
+same context object the evaluator received (shared/protocols.ts contextRow), written after the rules run and
+in its own try, so a failed write cannot stop a rule. Nothing is replayed from it yet; the Protocols card
+says how many checks and sessions exist and at how many a wall was on the board.
+Tests: two added to tests/quant/protocols.test.ts.

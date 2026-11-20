@@ -55,9 +55,7 @@ export interface DeskBoard {
   tickers: BoardTicker[];
   tech: RelRead;
   vix: VixRead;
-  cases: { symbol: string; price: number | null; bull: DeskCase; bear: DeskCase; optionsState: "ok" | "stale" | "unavailable"; optionsReason: string | null; optionsAsOfMs: number | null;
-    /** The index's option landmarks as read, each at its own price (the ticker's level list merges them with neighbours). */
-    optionLevels: BoardLevel[] };
+  cases: { symbol: string; price: number | null; bull: DeskCase; bear: DeskCase; optionsState: "ok" | "stale" | "unavailable"; optionsReason: string | null; optionsAsOfMs: number | null };
   note: string;
 }
 
@@ -311,7 +309,7 @@ async function compose(nowMs: number, deps: DeskBoardDeps): Promise<DeskBoard> {
       symbol: "$SPX", price: spx.price,
       bull: deskCase(spxRaw, spx.price, "bull"),
       bear: deskCase(spxRaw, spx.price, "bear"),
-      optionsState: opt.state, optionsReason: opt.reason, optionsAsOfMs: opt.asOfMs, optionLevels: opt.levels,
+      optionsState: opt.state, optionsReason: opt.reason, optionsAsOfMs: opt.asOfMs,
     },
     note: "Prior-day, prior-week and prior-month levels and the pivots come from completed daily bars, as do the 20-session high and low and the high and low of every daily bar read (about three months; the label carries the count); the week, month and today's open and the opening range come from the session in progress; the option landmarks come from the nearest-expiry map and move with it. A case lists the levels on one side of the price in order; it is not a forecast and carries no odds.",
   };

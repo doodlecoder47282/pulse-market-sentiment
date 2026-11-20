@@ -21,7 +21,7 @@ interface Log {
   bookVersion: string; minGraded: number; running: boolean; sessionOpen: boolean; evaluatedAt: number | null; lastTickError: string | null;
   protocols: Proto[];
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
-  contextLog?: { rows: number; sessions: number; withLandmarks: number; firstSession: string | null; everyMin: number };
+  contextLog?: { rows: number; sessions: number; mapCurrent: number; withWall: number; firstSession: string | null; error: string | null };
   hits: Array<{ at: number; firstAt?: number; count?: number; fromBefore?: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
@@ -151,12 +151,13 @@ export default function DeskProtocols() {
               </>
             )}
         </div>
-        {l.contextLog && (
+        {l.contextLog && l.running && (
           <p className="break-words text-[11px] text-muted-foreground" data-testid="desk-protocols-context-log">
-            The wall rule cannot be replayed from bars: it reads the option wall, tech and VIX as they were. The desk now writes those down every {l.contextLog.everyMin} minutes in session
+            The wall rule cannot be replayed from bars: it reads the option wall, tech and VIX as they were. Each time the rules are checked in session, the desk now writes down what they were given.{" "}
             {l.contextLog.rows > 0
-              ? `: ${l.contextLog.rows} rows over ${l.contextLog.sessions} session${l.contextLog.sessions === 1 ? "" : "s"} since ${l.contextLog.firstSession}, ${l.contextLog.withLandmarks} with a current option map. A replay of it needs many more sessions than that.`
-              : "; nothing is written yet (rows start with the next session)."}
+              ? `So far: ${l.contextLog.rows} checks over ${l.contextLog.sessions} session${l.contextLog.sessions === 1 ? "" : "s"} since ${l.contextLog.firstSession}; the option map was current at ${l.contextLog.mapCurrent} of them and a wall above was on the board at ${l.contextLog.withWall}. Nothing is replayed from this yet.`
+              : "Nothing is written yet; the first rows come with the next session check."}
+            {l.contextLog.error ? <span className="text-amber-400"> The last write failed: {l.contextLog.error}</span> : null}
           </p>
         )}
         {l.recent.length > 0 && (

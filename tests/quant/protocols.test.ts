@@ -166,16 +166,33 @@ test("wiring: engine starts with the server, stores nothing in the demo, and the
   assert.match(eng, /lastRead\.delete\(t\.symbol\)/);
 });
 
-test("context row: landmarks only from a current option map, and no row without a live index price", async () => {
-  const { contextRow, CONTEXT_LOG_EVERY_MIN } = await import("../../shared/protocols");
-  const base = { nowMs: 1_000, session: "2026-11-20", spx: 7200, spxLive: true, optionsAsOfMs: 900, optionLevels: [{ key: "wallAbove", price: 7250 }, { key: "flip", price: NaN }], tech: { state: "lagging", diffPts: -0.4 }, vix: { state: "firm" } };
-  const ok = contextRow({ ...base, optionsState: "ok" })!;
-  assert.deepEqual(ok.landmarks, { wallAbove: 7250 });
-  assert.deepEqual([ok.spx, ok.tech, ok.techDiff, ok.vix, ok.session], [7200, "lagging", -0.4, "firm", "2026-11-20"]);
-  const stale = contextRow({ ...base, optionsState: "stale" })!;
-  assert.deepEqual(stale.landmarks, {}, "an old map's prices are not written as levels");
-  assert.equal(stale.optionsState, "stale");
-  assert.equal(contextRow({ ...base, optionsState: "ok", spxLive: false }), null);
-  assert.equal(contextRow({ ...base, optionsState: "ok", spx: null }), null);
-  assert.equal(CONTEXT_LOG_EVERY_MIN, 5);
+test("context row: taken from the rule's own context, so it carries the gated reads and the merged lines the rule saw", async () => {
+  const { contextRow } = await import("../../shared/protocols");
+  const raw = { qqqPct: -1.2, spyPct: -0.5, vixPct: 4, quotes: { SPX: "ok", QQQ: "stale", SPY: "ok", VIX: "ok" }, optionsAsOfMs: 900 };
+  const ctx: any = {
+    nowMs: 1_000, sessionOpen: true, minutesSinceOpen: 45, minutesToClose: 345, spx: 7200,
+    levels: [
+      { key: "wallAbove+pdh", label: "wall above 7,250 + prior-day high 7,253", price: 7253, group: "prior day" },
+      { key: "pdl", label: "prior-day low", price: 7100, group: "prior day" },
+      { key: "flip", label: "gamma flip", price: 7300, group: "options" },
+    ],
+    optionsState: "ok", tech: "unknown", vix: "firm", calendarKnown: true, minutesToTier1: 600, minutesSinceTier1: null, bars: [],
+  };
+  const row = contextRow(ctx, "2026-11-20", raw);
+  assert.deepEqual(row.optionLines, [{ key: "wallAbove+pdh", price: 7253 }, { key: "flip", price: 7300 }], "the merged line and price the rule compared against, not the raw landmark");
+  assert.equal(row.tech, "unknown", "a stale QQQ quote: the rule saw no tech read, and that is what is written");
+  assert.deepEqual([row.vix, row.spx, row.calendarKnown, row.minutesToTier1, row.minutesSinceOpen, row.session], ["firm", 7200, true, 600, 45, "2026-11-20"]);
+  assert.deepEqual(row.raw, raw, "what sat behind the gated reads is kept beside them");
+  const unread = contextRow({ ...ctx, spx: null, levels: [], optionsState: "stale" }, "2026-11-20", raw);
+  assert.deepEqual([unread.spx, unread.optionLines.length, unread.optionsState], [null, 0, "stale"]);
+});
+
+test("wiring: the context write comes after the rules run and cannot stop them", () => {
+  const src = readFileSync(new URL("../../server/protocolEngine.ts", import.meta.url), "utf8");
+  const evalAt = src.indexOf("const evals = evalProtocols(ctx);");
+  const writeAt = src.indexOf("INSERT OR REPLACE INTO desk_rule_context");
+  assert.ok(evalAt > 0 && writeAt > evalAt, "written after evaluation");
+  const block = src.slice(src.lastIndexOf("try {", writeAt), src.indexOf("lastContextError = String", writeAt));
+  assert.match(block, /contextRow\(ctx, today,/);
+  assert.match(block, /\} catch \(e: any\) \{/, "its own try: a failed write is recorded, not thrown into the tick");
 });
