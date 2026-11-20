@@ -2981,3 +2981,12 @@ server/playbook.ts is rewritten:
 - The one-sigma daily move is stated as an implied figure, not a forecast.
 - Key levels keep the walls' own names; the news playbook is given the walls it names.
 Tests: tests/quant/playbook-day-levels.test.ts (8).
+
+**Whale record: how it is spread over days, shown above the new alerts (2026-11-20).** Why: the whale win
+count swings with single days (positions flagged together close together), and the figure gave no way to see
+that. shared/whaleDays.ts (daySpread, daySpreadAnswer) counts the scored whale closes per ET close day and
+says in one sentence how many days the figure rests on, which day holds the most closes and the most wins,
+and flags when one day holds half or more of either. getPerformanceSnapshot returns it (daySpread),
+/api/whales/performance passes it on, and the Whale Flow panel shows it under the performance sentence with
+the per-day counts. The Performance section now sits above Fresh Whales: the record of past alerts is read
+before the new ones. Nothing is reweighted or removed. Tests: tests/quant/whale-days.test.ts (5).

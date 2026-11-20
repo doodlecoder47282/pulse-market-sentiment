@@ -5657,6 +5657,8 @@ Describe the above in the JSON schema specified in the system prompt: what the n
           // Overall = whale positions only, on the ask-in / bid-out net-of-fee
           // basis; mid-to-mid tracked rows are not mixed into it.
           overall: whaleSnap.overall,
+          // Whale closes only, the same positions as the overall row.
+          daySpread: whaleSnap.daySpread,
           overallBasis: "ask_in_bid_out_net_fees",
           priceBasisNote: whaleSnap.priceBasisNote,
           midToMidNote: "tracked-signal rows (flow alerts, UOA, manual) are mid to mid with no fees: they overstate a tradable result by the round-trip spread",

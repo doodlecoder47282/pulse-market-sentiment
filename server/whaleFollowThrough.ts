@@ -34,6 +34,8 @@ import { acceptExitQuote, etCloseMs, whaleFireSnapshot } from "./validationMath"
 import { streamOptionOverlay, syncStreamOptions } from "./streamStore";
 import { buildScoreboardRow, scoreAskToBid, SCOREBOARD_BASIS_NOTE, type ScoreboardRow, type ScoredTrade } from "./whaleScoreboard";
 import { feeForProduct } from "./feeConfig";
+import { daySpread, type DaySpread } from "../shared/whaleDays";
+import { etDate } from "../shared/exchangeCalendar";
 
 // Persistence wrappers — fail-soft, never let DB hiccups break tracking.
 function safePersistFollow(p: FollowPosition): void {
@@ -571,6 +573,8 @@ export interface PerformanceSnapshot {
   /** Aggregate across all sources */
   overall: PerformanceRow;
   priceBasisNote?: string;
+  /** The scored whale closes counted per ET day they closed on (shared/whaleDays.ts). */
+  daySpread: DaySpread;
 }
 
 const EXIT_QUOTE_MAX_AGE_MS = 20 * 60_000;
@@ -620,11 +624,12 @@ export function getPerformanceSnapshot(opts?: { windowDays?: number }): Performa
 
   const scored: Array<{ trade: ScoredTrade; peakNetReturn: number | null }> = [];
   let excluded = 0, excludedNoFee = 0;
+  const days: Array<{ day: string; win: boolean }> = [];
   for (const p of terminal) {
     const fee = feeForProduct(p.occ).fee;
     if (fee == null) { excludedNoFee++; continue; }
     const s = scoreFollowPosition(p, fee);
-    if (s) scored.push(s); else excluded++;
+    if (s) { scored.push(s); days.push({ day: etDate(p.statusAt), win: s.trade.win }); } else excluded++;
   }
   // whaleFollowThrough only tracks whale-source positions
   const row = buildScoreboardRow("whale", scored, excluded, undefined, excludedNoFee);
@@ -635,6 +640,7 @@ export function getPerformanceSnapshot(opts?: { windowDays?: number }): Performa
     bySource: terminal.length > 0 ? [row] : [],
     overall: { ...row, source: "overall" },
     priceBasisNote: SCOREBOARD_BASIS_NOTE,
+    daySpread: daySpread(days),
   };
 }
 

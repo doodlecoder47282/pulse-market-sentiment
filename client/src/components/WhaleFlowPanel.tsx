@@ -5,6 +5,7 @@ import EdgeInfo from "@/components/EdgeInfo";
 
 import PlainRead from "@/components/PlainRead";
 import { readWhalePerformance } from "@shared/plainReads";
+import { daySpreadAnswer, type DaySpread } from "@shared/whaleDays";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -725,6 +726,7 @@ interface PerformanceSnapshot {
   bySource: PerformanceRow[];
   overall: PerformanceRow;
   overallBasis?: string;
+  daySpread?: DaySpread | null;
   priceBasisNote?: string;
   midToMidNote?: string;
 }
@@ -795,6 +797,18 @@ function PerformanceCard() {
       {/* the answer first: closed whale positions that made money after costs, in this window */}
       {snap && !perfQuery.isLoading && (
         <PlainRead read={readWhalePerformance(rows.find((r) => r.source === "whale") ?? snap.overall, snap.windowDays)} testId="performance-plain" className="mb-2" />
+      )}
+      {/* how the figure is spread over days: one session can carry all of it */}
+      {snap && !perfQuery.isLoading && daySpreadAnswer(snap.daySpread) && (
+        <div className={`mb-2 rounded border px-2 py-1.5 text-xs leading-relaxed ${snap.daySpread?.oneDayCarries ? "border-amber-500/40 text-amber-200" : "border-border/40 text-muted-foreground"}`} data-testid="performance-day-spread">
+          <div>{daySpreadAnswer(snap.daySpread)}</div>
+          {(snap.daySpread?.byDay.length ?? 0) > 1 && (
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
+              {snap.daySpread!.byDay.slice(0, 10).map((d) => <span key={d.day}>{d.day.slice(5)}: {d.wins} of {d.n}</span>)}
+              {snap.daySpread!.byDay.length > 10 && <span>and {snap.daySpread!.byDay.length - 10} earlier days</span>}
+            </div>
+          )}
+        </div>
       )}
       {perfQuery.isLoading ? (
         <div className="space-y-1.5">
@@ -1034,6 +1048,9 @@ export default function WhaleFlowPanel() {
       </CardHeader>
 
       <CardContent className="space-y-6">
+        {/* ── PERFORMANCE: the record of past alerts comes before the new ones ── */}
+        <PerformanceCard />
+
         {/* ── FRESH WHALES ── */}
         <section data-testid="section-fresh-whales">
           <SectionHeader icon={<TrendingUp className="h-3.5 w-3.5" />} label="Fresh Whales" count={totalWhales} />
@@ -1087,9 +1104,6 @@ export default function WhaleFlowPanel() {
             </div>
           )}
         </section>
-
-        {/* ── PERFORMANCE ── */}
-        <PerformanceCard />
 
         {/* ── TRACKING ── */}
         <section data-testid="section-tracking">
