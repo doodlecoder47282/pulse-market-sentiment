@@ -2,7 +2,7 @@
 //
 // WHAT PRICE DID AT EACH KIND OF LEVEL. The level board names levels (prior-day high and low, pivots, prior
 // week, prior month, the opening range). This counts, over past sessions, what the index did the first time
-// it reached each one: moved back away from it, closed through it, or neither. It is a record of what
+// it reached each one: closed back away from it, closed through it, or neither. It is a record of what
 // happened, by level kind, in counts. It makes no claim that a level will hold next time, and the sessions
 // it draws on are neighbours in time, so the counts are not independent events.
 //
@@ -17,7 +17,8 @@
 //   - The TOUCH is the first 1-minute bar whose range reaches the level from that side.
 //   - ONE YARDSTICK BOTH WAYS (version 2026.11.20-2): the same distance (`awayPts` equals `throughPts`) and
 //     the same measure, a 1-minute CLOSE, the touch bar's own close included. Version -1 asked for a 10-point
-//     wick back against a 5-point close through, which tilted the count toward "closed through".
+//     wick back against a 5-point close through: two distances and two measures, so its counts (6 back, 27
+//     through over ten sessions) could not be compared with each other.
 //   - BROKE ("closed through"): a 1-minute bar closes beyond the level by at least `throughPts` first.
 //   - HELD ("closed back"): a 1-minute bar closes at least `awayPts` back on the side price came from first.
 //     One close cannot be both.
