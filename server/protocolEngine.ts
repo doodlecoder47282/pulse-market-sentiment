@@ -221,7 +221,7 @@ export interface ProtocolLog {
   recent: Array<{ id: number; bookVersion: string; protocol: string; armedAt: number; entry: number | null; levelLabel: string | null; levelPrice: number | null; expectPrice: number | null; cancelPrice: number | null; status: string; reason: string | null }>;
   /** The context log a rule that reads option levels will be replayed from: how much of it exists. */
   contextLog: { rows: number; sessions: number; mapCurrent: number; withWall: number; firstSession: string | null; error: string | null };
-  hits: Array<{ at: number; firstAt: number; count: number; fromBefore: boolean; symbol: string; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
+  hits: Array<{ at: number; firstAt: number; count: number; fromBefore: boolean; symbol: string; levelKey: string; lastRowId: number; label: string; levelPrice: number; direction: string; price: number; watchedBy: string[] }>;
   note: string;
 }
 
@@ -250,7 +250,7 @@ function readJoinedHits(book: ProtocolDef[]): ProtocolLog["hits"] {
   const rawHits = hitRows.slice(0, HIT_READ)
     .map((r) => ({ id: r.id, at: r.at, symbol: r.symbol, levelKey: r.level_key, label: r.level_label, levelPrice: r.level_price, direction: r.direction, price: r.price }));
   return joinHits(rawHits, undefined, cut && rawHits.length ? rawHits[rawHits.length - 1].at : null).slice(0, 30).map((h) => ({
-    at: h.at, firstAt: h.firstAt, count: h.count, fromBefore: h.fromBefore, symbol: h.symbol, label: h.label, levelPrice: h.levelPrice, direction: h.direction, price: h.price,
+    at: h.at, firstAt: h.firstAt, count: h.count, fromBefore: h.fromBefore, symbol: h.symbol, levelKey: h.levelKey, lastRowId: h.lastId ?? 0, label: h.label, levelPrice: h.levelPrice, direction: h.direction, price: h.price,
     watchedBy: h.symbol === "$SPX" ? protocolsWatching(h.levelKey, book) : [],
   }));
 }
