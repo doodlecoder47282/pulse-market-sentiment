@@ -119,3 +119,70 @@ export function parseLevels(text: string): number[] {
 }
 
 const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
+
+/** A level the board computed from price bars, with the name the board gives it. */
+export interface NamedLevel { price: number; label: string }
+/** How far from the price a board level may sit and still be checked: the 0DTE map carries strikes within about 2%. */
+export const BOARD_LEVEL_REACH = 0.02;
+export const BOARD_LEVEL_MAX = 12;
+
+/**
+ * The board's own bar-based levels for the index (prior day, pivots, week, month, ranges, today's open and
+ * opening range), ready to be checked against the chain with no input from the user. Give it the board's
+ * list that was merged WITHOUT option landmarks (cases.levelsWithoutOptions): on the full list a merged line
+ * takes the group of its highest member, so a group filter both lets "prior-day low + magnet below" through
+ * and throws "wall above + prior-day high" away. The group filter here is a second guard only.
+ * Levels further than BOARD_LEVEL_REACH from the price are left out (the map has no strikes there, so every
+ * one would read "chart only" for a reason that is about the map, not the level); `beyond` counts them.
+ * The nearest BOARD_LEVEL_MAX are kept, highest first. Pure.
+ */
+export function boardChartLevels(levels: Array<{ price: number; label: string; group?: string }> | null | undefined, spot: number | null | undefined): { levels: NamedLevel[]; beyond: number } {
+  if (!levels || !(typeof spot === "number" && Number.isFinite(spot) && spot > 0)) return { levels: [], beyond: 0 };
+  const seen = new Set<number>();
+  const bars = levels.filter((l) => l.group !== "options" && Number.isFinite(l.price) && l.price > 0 && !seen.has(l.price) && seen.add(l.price));
+  const near = bars.filter((l) => Math.abs(l.price - spot) / spot <= BOARD_LEVEL_REACH);
+  const kept = near.sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot)).slice(0, BOARD_LEVEL_MAX).sort((a, b) => b.price - a.price);
+  return { levels: kept.map((l) => ({ price: l.price, label: l.label })), beyond: bars.length - near.length };
+}
+
+/** What the card needs from the board payload to say where its automatic levels came from and in what state. */
+export interface BoardSourceInput {
+  /** The board request failed on its latest attempt (earlier data may still be held). */
+  failed: boolean;
+  board: {
+    forSession?: string; sessionOpen?: boolean;
+    cases?: { symbol: string; levelsWithoutOptions?: Array<{ price: number; label: string; group?: string }> } | null;
+    tickers?: Array<{ symbol: string; levelsState?: string; levelsReason?: string | null }>;
+  } | null | undefined;
+  symbol: string;
+}
+export interface BoardSource {
+  /** Levels to check; empty when the board has none that may be used. */
+  levels: Array<{ price: number; label: string; group?: string }>;
+  /** "ok": levels as the board computed them. "partial"/"stale": usable, with the notice. "unavailable"/"failed"/"reading": nothing to check, and the notice says which. */
+  state: "ok" | "partial" | "unavailable" | "failed" | "reading";
+  /** Always said when not null, also above a list of rows. */
+  notice: string | null;
+  forSession: string | null;
+}
+
+/**
+ * Where the automatic levels come from and what state that source is in. A board that was not read is never
+ * reported as a board with no levels, and levels kept from an earlier read are never shown without saying so.
+ */
+export function boardSource(i: BoardSourceInput): BoardSource {
+  const b = i.board;
+  if (!b) return { levels: [], state: i.failed ? "failed" : "reading", notice: i.failed ? "The level board could not be read (the request failed), so its levels are not checked." : "Reading the level board.", forSession: null };
+  const forSession = b.forSession ?? null;
+  const t = b.tickers?.find((x) => x.symbol === i.symbol);
+  const list = b.cases && b.cases.symbol === i.symbol ? b.cases.levelsWithoutOptions ?? [] : null;
+  const name = i.symbol.replace(/^[$/]/, "");
+  if (!t || list == null) return { levels: [], state: "unavailable", notice: `The level board carries no ${name} levels in this read, so none are checked.`, forSession };
+  const why = t.levelsReason ? `: ${t.levelsReason}` : "";
+  if (t.levelsState === "unavailable" || list.length === 0) return { levels: [], state: "unavailable", notice: `The board's ${name} price levels were not read${why}. This is not a board with no levels.`, forSession };
+  const held = i.failed ? "The latest read of the level board failed; these levels are from the read before it. " : "";
+  const session = forSession && b.sessionOpen === false ? `These are the board's levels for the ${forSession} session; the option map beside them is the chain's latest. ` : "";
+  const part = t.levelsState === "partial" && t.levelsReason ? `The board marks them incomplete: ${t.levelsReason}.` : "";
+  const notice = (held + session + part).trim() || null;
+  return { levels: list, state: i.failed ? "partial" : t.levelsState === "partial" ? "partial" : "ok", notice, forSession };
+}

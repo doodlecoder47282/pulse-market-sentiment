@@ -3066,3 +3066,18 @@ and placed by alertPanelPlace so it stays on the screen at every width (it was 4
 link is hidden below the sm width and linked from Settings on every size. States: failed read, not watching,
 last check failed, outside the session, are each said. Limits: alerts cover only what the level watch logs; a
 phone with the app closed gets nothing (no push service). Tests: tests/quant/alerts.test.ts (7).
+**Chart levels no longer wait for typing (2026-11-20).** Why: the owner's rule is that nothing but the Schwab
+sign-in should need plugging in. "Your chart levels" on the Trade Desk showed nothing until prices were typed;
+it is now "Chart levels against the chain" and checks the level board's own bar levels for the index (prior
+day, pivots, week, month, ranges, today's open and opening range) against the 0DTE map automatically, each
+with the board's name for it. It reads cases.levelsWithoutOptions, the board's list merged without option
+landmarks: on the full list a merged line takes the group of its highest member, so a group filter both lets
+a landmark through and drops a bar level (shared/levelConfluence.ts boardSource, boardChartLevels). The
+board's own state is said in the card: not read, read failed (levels held from the read before), levels for
+another session, marked incomplete with the board's reason; a board that was not read is never shown as a
+board with no levels. Levels more than 2% from the price are counted, not checked (the map has no strikes
+there). The query has the level board's key and timing, so on the Trade Desk the two share one read. Typed
+levels still work and are listed separately. Left as they are, on purpose: the ticker scan (a default symbol
+would add up to five Schwab requests to every app open, on the tab that loads first, into the startup burst),
+Seasonality research (an outside feed), the meme-token lookup (needs a token address), the position sizer
+(needs the user's own trade). Tests: tests/quant/auto-defaults.test.ts (9).
