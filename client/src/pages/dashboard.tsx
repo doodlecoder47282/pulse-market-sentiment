@@ -441,12 +441,12 @@ export default function Dashboard() {
 
             <TakeFiveFab onClick={() => setTake5Open(true)} />
 
-            {/* Method & disclosures: what every number is and is not (#/method) */}
+            {/* Method & disclosures: what every number is and is not (#/method). On phones the header has no room for it at full tap size; it is linked from Settings there. */}
             <a
               href="#/method"
               title="Method & disclosures"
               aria-label="Method and disclosures"
-              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:min-w-[2rem] sm:px-2 lg:h-auto lg:min-h-[1.75rem] lg:p-1.5 font-mono text-[11px] text-muted-foreground transition hover:border-border"
+              className="hidden sm:flex shrink-0 items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:min-w-[2rem] sm:px-2 lg:h-auto lg:min-h-[1.75rem] lg:p-1.5 font-mono text-[11px] text-muted-foreground transition hover:border-border"
               data-testid="link-method"
             >
               ?
@@ -460,7 +460,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
-              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:px-2 lg:h-auto lg:p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground"
+              className="flex shrink-0 items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:px-2 lg:h-auto lg:p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
               <Settings className="h-4 w-4 sm:h-3.5 sm:w-3.5" />

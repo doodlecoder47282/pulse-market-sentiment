@@ -3039,12 +3039,16 @@ tests/quant/stream-feed-label.test.ts (5).
 **Alert bell: the desk's own logs, announced in the app, nothing to configure (2026-11-20).** Why: the only
 alerts were Discord cards, which need webhook addresses set on the server; inside the app nothing announced
 anything. The desk already logs, once a minute in session, every board level a ticker crosses and every arm of
-the owner's rules. shared/alerts.ts (buildAlerts) turns those two logs into one newest-first list (60 max);
-GET /api/alerts serves it from storage only (protocolEngine.getLoggedEvents: no rule evaluation, no market
-read, so the poll costs no Schwab request); AlertBell.tsx in the header shows an unread count, lists the
-items, and announces new rule arms and SPX/VIX crossings as a toast, plus a browser notification when the tab
-is in the background if the user allowed one (asked from a button, never on load). SPY/QQQ/ES/NQ crossings
-are listed, not announced (they repeat the index). The first read after opening is history and announces
-nothing. States: failed read, not watching, last check failed, outside the session, are each said. Limits:
-alerts cover only what the level watch logs; a phone with the app closed gets nothing (no push service).
-Tests: tests/quant/alerts.test.ts (7).
+the owner's rules. shared/alerts.ts (buildAlerts) turns those two logs into one newest-first list; GET
+/api/alerts serves it from storage only (protocolEngine.getLoggedEvents: no rule evaluation, no market read,
+so the poll costs no Schwab request); AlertBell.tsx in the header shows an unread count, lists the items, and
+announces new rule arms and SPX/VIX crossings as a toast, plus a browser notification when the tab is in the
+background if the user allowed one (asked from a button, never on load). SPY/QQQ/ES/NQ crossings are listed,
+not announced (they repeat the index). WHAT IS NEW is decided by storage row ids (the arm's id, the id of the
+newest crossing in a joined line: joinHits now carries lastId), never by a line's first time or "from before"
+mark, which move as the 300-row read window slides; one level is announced at most once per 30 minutes; the
+first read after opening announces nothing. The panel is drawn through a portal (outside the header's layer)
+and is never wider than the screen. To keep every header control at full tap size on phones, the "?" method
+link is hidden below the sm width and linked from Settings on every size. States: failed read, not watching,
+last check failed, outside the session, are each said. Limits: alerts cover only what the level watch logs; a
+phone with the app closed gets nothing (no push service). Tests: tests/quant/alerts.test.ts (7).
