@@ -3109,9 +3109,13 @@ nothing and keeps the higher baseline; the first read on a later ET date DURING 
 starts a new session and all of its volume is new, whether below or above the previous total (deciding "new
 session" by "lower than before" lost a whole session's total when the first read came late); a read on a
 later date outside the regular session (before the open, weekend, holiday) is ignored; a read stamped on an
-earlier date is ignored. The live state carries volumeDay (rows from older builds take it from
+earlier date is ignored; and when the contract's own last trade (tradeTimeMs, the newer of the chain's and
+the stream's) is on an earlier date than the read, nothing has traded in it today, so the reading is not
+counted and a new session starts at zero (this holds whether or not Schwab zeroes volume before the first
+trade of the day, which is unverified). The live state carries volumeDay (rows from older builds take it from
 lastUpdateAt). Usually a floor: a session never read is not counted. NOT verified against the live feed and
 not a floor: if a source still serves the previous session's total, stamped in today's session, after
-today's own count was read, it is counted again (a test pins this as a known limit). Existing positions
+today's own count was read, with no last-trade time or one from today, it is counted again (a test pins this
+as a known limit). Existing positions
 continue from their stored count. lastVolumeBumpAt follows the same count. Tests:
-tests/quant/volume-since.test.ts (8).
+tests/quant/volume-since.test.ts (9).

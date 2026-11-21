@@ -272,6 +272,8 @@ export async function updateAll(): Promise<{
           ask: sq.ask ?? restLive.ask,
           mark: sq.mark ?? restLive.mark,
           volume: sq.totalVolume ?? restLive.volume,
+          // The newer of the two last-trade times: the volume count asks whether the contract has traded today.
+          tradeTimeMs: Math.max(sq.tradeTimeMs ?? 0, restLive.tradeTimeMs ?? 0) || null,
         } : restLive;
         const quoteAt = sq ? (sq.quoteTimeMs ?? flow.asOf ?? now) : (flow.asOf ?? now);
         if (!live) {
@@ -361,7 +363,7 @@ function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number, quo
   const prevVolume = p.live.volume;
   const vol = nextVolumeState(
     { volume: prevVolume, since: p.live.volumeSinceEntry ?? 0, day: p.live.volumeDay ?? etDate(p.live.lastUpdateAt) },
-    live.volume, quoteAt,
+    live.volume, quoteAt, live.tradeTimeMs ?? null,
   );
   const newVolume = vol.volume;
   const volBumped = vol.since > (p.live.volumeSinceEntry ?? 0);

@@ -5,8 +5,9 @@
 // keeps a running sum instead: each read adds what traded since the previous read, and a new session's total
 // is counted from zero. It is a FLOOR, not an exact count: a session the scanner never read is not counted.
 // One case is NOT a floor and is not verified against the live feed: if a source still reports the previous
-// session's total, stamped during today's session, after today's own count has been read, that total is
-// taken for a jump in today's volume and counted again. Pure.
+// session's total, stamped during today's session, after today's own count has been read, AND carries no
+// last-trade time (or one from today), that total is taken for a jump in today's volume and counted again.
+// With a last-trade time from an earlier day the reading is not counted at all. Pure.
 import { etDate, isRegularSessionOpen } from "./exchangeCalendar";
 
 export interface VolumeState {
@@ -30,15 +31,22 @@ export interface VolumeState {
  *     came late or the contract opened busier than it closed.)
  *   - A later ET date, read outside the regular session (before the open, a weekend, a holiday): ignored. The
  *     feed can still be showing the previous session's total then.
+ *   - The contract's own last trade is on an earlier ET date than the read (`lastTradeMs`, when the feed gives
+ *     one): nothing has traded in it today, so whatever volume the feed shows is not today's. The reading is
+ *     not counted; a new session, if one has begun, starts at zero. This holds whether or not the feed resets
+ *     its volume to zero before the first trade of the day, which is not verified.
  */
-export function nextVolumeState(prev: VolumeState, newVolume: number, readAtMs: number): VolumeState {
+export function nextVolumeState(prev: VolumeState, newVolume: number, readAtMs: number, lastTradeMs: number | null = null): VolumeState {
   if (!Number.isFinite(newVolume) || newVolume < 0 || !Number.isFinite(readAtMs)) return prev;
   const today = etDate(readAtMs);
   if (today < prev.day) return prev;
+  const untradedToday = typeof lastTradeMs === "number" && Number.isFinite(lastTradeMs) && lastTradeMs > 0 && etDate(lastTradeMs) < today;
   if (today > prev.day) {
     if (!isRegularSessionOpen(readAtMs)) return prev;
+    if (untradedToday) return { volume: 0, since: prev.since, day: today };
     return { volume: newVolume, since: prev.since + newVolume, day: today };
   }
+  if (untradedToday) return prev;
   if (newVolume > prev.volume) return { volume: newVolume, since: prev.since + (newVolume - prev.volume), day: prev.day };
   return prev;
 }

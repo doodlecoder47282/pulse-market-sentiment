@@ -58,17 +58,41 @@ test("a read stamped on an earlier day, or a bad reading, changes nothing; the c
   assert.equal(last, 100 + 800 + 60);
 });
 
+test("a strike that has not traded today adds nothing, whatever volume the feed still shows for it", () => {
+  const closed = run(FLAG, [[6100, "17", "15:59"]]);
+  const lastTradeYesterday = at("17", "15:58");
+  // 30 seconds after the open the feed still shows yesterday's 6,100 and the last trade is yesterday's.
+  let s = nextVolumeState(closed, 6100, at("18", "09:30"), lastTradeYesterday);
+  assert.deepEqual(s, { volume: 0, since: 1100, day: "2026-11-18" }, "the new session starts at zero");
+  s = nextVolumeState(s, 6100, at("18", "09:45"), lastTradeYesterday);
+  assert.equal(s.since, 1100, "and stays there until it trades");
+  // Its first trades today: the feed's count restarts and the last trade is today's.
+  s = nextVolumeState(s, 40, at("18", "10:05"), at("18", "10:04"));
+  s = nextVolumeState(s, 700, at("18", "11:00"), at("18", "10:59"));
+  assert.deepEqual(s, { volume: 700, since: 1100 + 700, day: "2026-11-18" });
+  // No last-trade time from the feed: the reading is counted as before.
+  assert.equal(nextVolumeState(closed, 300, at("18", "09:31"), null).since, 1400);
+  assert.equal(nextVolumeState(closed, 300, at("18", "09:31"), 0).since, 1400);
+  // A last trade today: counted.
+  assert.equal(nextVolumeState(closed, 8000, at("18", "10:40"), at("18", "10:39")).since, 1100 + 8000);
+});
+
 test("the one case that is not a floor is written down, not hidden", () => {
   // The previous session's total served again, stamped in today's session, after today's count was read.
   const s = run(FLAG, [[6100, "17", "15:59"], [15, "18", "09:31"], [6100, "18", "09:33"], [3000, "18", "11:00"]]);
   assert.equal(s.since, 1100 + 6100, "counted again: an overcount of the truth (1100 + 3000)");
+  // With the contract's last-trade time the same stale reading is caught when that trade is yesterday's.
+  let t = run(FLAG, [[6100, "17", "15:59"]]);
+  t = nextVolumeState(t, 6100, at("18", "09:33"), at("17", "15:58"));
+  assert.equal(t.since, 1100);
   assert.match(readFileSync("shared/volumeSince.ts", "utf8"), /One case is NOT a floor and is not verified against the live feed/);
   assert.match(readFileSync("shared/whaleWords.ts", "utf8"), /Usually a floor/);
 });
 
 test("wiring: the follow-through passes the read's own time and carries the session day", () => {
   const f = readFileSync("server/whaleFollowThrough.ts", "utf8");
-  assert.match(f, /day: p\.live\.volumeDay \?\? etDate\(p\.live\.lastUpdateAt\) \},\s+live\.volume, quoteAt,/);
+  assert.match(f, /day: p\.live\.volumeDay \?\? etDate\(p\.live\.lastUpdateAt\) \},\s+live\.volume, quoteAt, live\.tradeTimeMs \?\? null,/);
   assert.match(f, /volumeSinceEntry: vol\.since,\s+volumeDay: vol\.day,/);
   assert.doesNotMatch(f, /newVolume - p\.entry\.volume/);
+  assert.match(f, /tradeTimeMs: Math\.max\(sq\.tradeTimeMs \?\? 0, restLive\.tradeTimeMs \?\? 0\) \|\| null,/, "the stream's volume travels with the newer last-trade time");
 });
