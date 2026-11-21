@@ -46,6 +46,7 @@ import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
+import { sessionLengthAt } from "../shared/exchangeCalendar";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
 import { schwabNum } from "./schwabChainRows";
 import { buildOiBasis, chainReadMs, gammaWeighting, HYBRID_VOLUME_WEIGHT, killboxWeightMode } from "../shared/gammaBasis";
@@ -4757,7 +4758,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       if (!Number.isFinite(absDelta) || absDelta <= 0) {
         const strike = Number(b.strike), spot = Number(b.spot);
         if (Number.isFinite(strike) && Number.isFinite(spot) && strike > 0 && spot > 0) {
-          absDelta = hz.estimateOdteDelta({ spot, strike, side: side === "call" ? "C" : "P", minutesRemaining: Math.max(1, 390 - entryMod - minutesHeld), dayUnitPts: hz.currentDayUnit() });
+          absDelta = hz.estimateOdteDelta({ spot, strike, side: side === "call" ? "C" : "P", minutesRemaining: Math.max(1, sessionLengthAt(Date.now()) - entryMod - minutesHeld), dayUnitPts: hz.currentDayUnit() });
         } else {
           absDelta = 0.5;
         }
@@ -4765,7 +4766,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       absDelta = Math.min(0.9, Math.max(0.1, Math.abs(absDelta)));
       const targetPts = hz.optionPctToPoints(targetPct, entryPrice, absDelta);
       const stopPts = hz.optionPctToPoints(stopPct, entryPrice, absDelta);
-      const result = hz.computeHazard({ entryMod, targetPts, stopPts, direction: side === "call" ? "up" : "down" });
+      const result = hz.computeHazard({ entryMod, minutesLeft: sessionLengthAt(Date.now()) - entryMod, targetPts, stopPts, direction: side === "call" ? "up" : "down" });
       if ("error" in result) return res.status(422).json(result);
       const breakevenP = stopPct / (targetPct + stopPct) + 0.04; // + friction pad
       const step = result.curve.reduce((best, p) => (Math.abs(p.minute - minutesHeld) < Math.abs(best.minute - minutesHeld) ? p : best), result.curve[0]);
@@ -5874,7 +5875,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         break;
       }
       if (!picked) return res.status(503).json({ dataState: "unavailable", note: "no unsettled $SPX expiry with >= 15 quoted call strikes" });
-      const r = 0.045; // approximate risk-free; discounting only
+      const r = FLIP_RATE; // the one rate every panel uses (server/gammaProfile.ts); discounting only
       const strikes: CallStrike[] = picked.quotes
         .filter((q) => q.callMid != null && (q.callMid as number) > 0)
         .map((q) => ({ strike: q.strike, callMid: q.callMid as number, putMid: q.putMid ?? null }));

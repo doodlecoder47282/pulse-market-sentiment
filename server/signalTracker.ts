@@ -16,7 +16,7 @@
 // added later if user requests it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { etEpochMs } from "./etTime";
+import { etCloseMs } from "./validationMath";
 
 export type TrackedSource = "flow-alert" | "unusual-flow" | "whale" | "manual";
 export type TrackedStatus = "OPEN" | "CLOSED" | "EXPIRED";
@@ -224,8 +224,8 @@ export async function refreshLiveMarks(): Promise<void> {
 
         // Auto-expire if past expiration date
         if (it.expiration) {
-          const expDate = new Date(etEpochMs(it.expiration, 16, 0));
-          if (Date.now() > expDate.getTime()) {
+          // The real close of the expiry day (13:00 on a half day), not a fixed 16:00.
+          if (Date.now() > etCloseMs(it.expiration)) {
             it.status = "EXPIRED";
             it.statusAt = Date.now();
           }

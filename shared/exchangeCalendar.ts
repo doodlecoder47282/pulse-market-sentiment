@@ -226,6 +226,18 @@ export function sessionMinutes(date: IsoDate): number {
   return m == null ? 0 : m - REGULAR_OPEN_MIN;
 }
 
+/** Length of a full regular session in minutes (09:30 to 16:00 ET). */
+export const FULL_SESSION_MIN = 390;
+
+/**
+ * Minutes in the regular session of the ET day `nowMs` falls on: 390, or 210 on a 13:00 half day. On a day
+ * with no session it returns the full length, so a caller dividing by it never divides by zero; callers that
+ * must know whether there IS a session ask isTradingDay / isRegularSessionOpen.
+ */
+export function sessionLengthAt(nowMs: number): number {
+  return sessionMinutes(etDate(nowMs)) || FULL_SESSION_MIN;
+}
+
 const ET_FMT = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
   year: "numeric", month: "2-digit", day: "2-digit",

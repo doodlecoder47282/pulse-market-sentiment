@@ -3035,3 +3035,18 @@ underneath (shared/streamFeed.ts, moved out of SchwabSettings.tsx so the wording
 failures keep "Feed not verified" with their own reason, and the note shows only while the stream is in the
 refused state now (the server keeps the last error text after a later sign-in). Tests:
 tests/quant/stream-feed-label.test.ts (5).
+
+**Half days: calculations that assumed a 390-minute session (2026-11-20).** Found in a sweep of hard-coded
+session lengths and an independent review; the next half day is 2026-11-27 (13:00 close). Now read from the
+exchange calendar (shared/exchangeCalendar.ts sessionLengthAt): realtimeTargets' fraction and minutes left and
+its candle filter (at noon on a half day it said 62% of the session was left; 29% is); regimePredictor's
+session fraction and its "minutes to the close" note; exitBrain's and /api/edge/hazard's minutes left for the
+0DTE delta estimate (240 at noon instead of 60); the hazard walk itself (hazardEngine minutesLeft: on a half
+day each historical path is cut at today's close instead of running to 16:00); odteAlertEngine's remaining
+sigma for its opening band (minutes to the real close over 390, the same number as before on a full day) and
+its end-of-day window (last half hour before the real close); signalTracker's auto-expiry (the real close of
+the expiry day, not 16:00). Full-day behaviour is unchanged in each. Kept on a full session's clock on
+purpose: tickerScan's volume pace (today's volume against a 20-day average of full sessions) and the
+252 x 390 annualisation. Not changed: odteAlertEngine's time-of-day score windows (13:30 to 15:30) never
+apply on a half day, a 5-point term. Also: the straddle route discounted at its own 4.5% while every other
+panel uses FLIP_RATE (5%); it now uses FLIP_RATE. Tests: tests/quant/half-day-session.test.ts (6).
