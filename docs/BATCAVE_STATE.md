@@ -3035,3 +3035,15 @@ underneath (shared/streamFeed.ts, moved out of SchwabSettings.tsx so the wording
 failures keep "Feed not verified" with their own reason, and the note shows only while the stream is in the
 refused state now (the server keeps the last error text after a later sign-in). Tests:
 tests/quant/stream-feed-label.test.ts (5).
+
+**Two tools no longer wait for typing (2026-11-20).** Why: the owner's rule is that nothing but the Schwab
+sign-in should need plugging in. "Your chart levels" on the Trade Desk showed nothing until prices were typed;
+it is now "Chart levels against the chain" and checks the level board's own bar levels for the index (prior
+day, pivots, week, month, ranges, today's open and opening range) against the 0DTE map automatically, each
+with the board's name for it (shared/levelConfluence.ts boardChartLevels; the board query is the one the
+level board on the same tab already runs, so no extra request). Option landmarks are left out (they come from
+the map itself), and levels more than 2% from the price are counted but not checked (the map has no strikes
+there). Typed levels still work and are listed separately. The ticker scan starts on SPY until another symbol
+is scanned. Left as they are: Seasonality research (a lookup against an outside feed; starting it by default
+would call that feed on every Regime tab open), the meme-token lookup (needs a token address), the position
+sizer (needs the user's own trade). Tests: tests/quant/auto-defaults.test.ts (6).

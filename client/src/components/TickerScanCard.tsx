@@ -30,6 +30,8 @@ interface Scan {
 }
 
 const KEY = "batcave.scan.symbol";
+/** What the card scans until the user scans something else. */
+export const DEFAULT_SCAN_SYMBOL = "SPY";
 const px = (n: number | null | undefined, d = 2) => (n == null ? "—" : n.toLocaleString("en-US", { maximumFractionDigits: d }));
 const pct = (f: number | null | undefined, d = 2) => (f == null ? "—" : `${f > 0 ? "+" : ""}${(f * 100).toFixed(d)}%`);
 const big = (n: number | null | undefined) => (n == null ? "—" : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(Math.round(n)));
@@ -56,7 +58,8 @@ function SectionHead({ label, s, testId }: { label: string; s: Section; testId: 
 
 export default function TickerScanCard() {
   const [draft, setDraft] = useState("");
-  const [symbol, setSymbol] = useState<string>(() => { try { return localStorage.getItem(KEY) ?? ""; } catch { return ""; } });
+  // Starts on a default so the card reads something with nothing typed in; the last symbol scanned replaces it.
+  const [symbol, setSymbol] = useState<string>(() => { try { return localStorage.getItem(KEY) || DEFAULT_SCAN_SYMBOL; } catch { return DEFAULT_SCAN_SYMBOL; } });
   useEffect(() => { try { if (symbol) localStorage.setItem(KEY, symbol); } catch { /* per-viewer convenience */ } }, [symbol]);
 
   const q = useQuery<Scan>({

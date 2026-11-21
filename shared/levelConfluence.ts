@@ -119,3 +119,26 @@ export function parseLevels(text: string): number[] {
 }
 
 const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
+
+/** A level the board computed from price bars, with the name the board gives it. */
+export interface NamedLevel { price: number; label: string }
+/** How far from the price a board level may sit and still be checked: the 0DTE map carries strikes within about 2%. */
+export const BOARD_LEVEL_REACH = 0.02;
+export const BOARD_LEVEL_MAX = 12;
+
+/**
+ * The board's own bar-based levels for the index (prior day, pivots, week, month, ranges, today's open and
+ * opening range), ready to be checked against the chain with no input from the user. Option landmarks are
+ * left out: they come from the same map the check runs against, so they would only confirm themselves.
+ * Levels further than BOARD_LEVEL_REACH from the price are left out (the map has no strikes there, so every
+ * one would read "chart only" for a reason that is about the map, not the level); `beyond` counts them.
+ * The nearest BOARD_LEVEL_MAX are kept, highest first. Pure.
+ */
+export function boardChartLevels(levels: Array<{ price: number; label: string; group?: string }> | null | undefined, spot: number | null | undefined): { levels: NamedLevel[]; beyond: number } {
+  if (!levels || !(typeof spot === "number" && Number.isFinite(spot) && spot > 0)) return { levels: [], beyond: 0 };
+  const seen = new Set<number>();
+  const bars = levels.filter((l) => l.group !== "options" && Number.isFinite(l.price) && l.price > 0 && !seen.has(l.price) && seen.add(l.price));
+  const near = bars.filter((l) => Math.abs(l.price - spot) / spot <= BOARD_LEVEL_REACH);
+  const kept = near.sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot)).slice(0, BOARD_LEVEL_MAX).sort((a, b) => b.price - a.price);
+  return { levels: kept.map((l) => ({ price: l.price, label: l.label })), beyond: bars.length - near.length };
+}
