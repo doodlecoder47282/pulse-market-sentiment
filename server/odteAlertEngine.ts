@@ -42,6 +42,7 @@
 // fresh transitions detected via in-memory history.
 
 import { minutesToSessionClose } from "./chainClock";
+import { sessionLengthAt, FULL_SESSION_MIN } from "../shared/exchangeCalendar";
 import { gradeEvidenceLine, t1SaleContracts, ODTE_PLAN_RULES, type GradeEvidence } from "./validationMath";
 import { atmPathSigma, projectToTarget } from "./t1Projection";
 import { normalizeGammaZone, gammaZoneTag } from "./gammaZone";
@@ -975,7 +976,9 @@ function scoreSetup(args: {
   // ─── UPGRADE 7: EOD-GEX gate (Baltussen JFE 2021) ─────────────────────────────────────
   try {
     const todMin = args.hourET * 60 + args.minuteET;
-    const eodWindow = todMin >= 15 * 60 + 30 && todMin <= 15 * 60 + 55;
+    // The last half hour before the close, less its final five minutes: 15:30 to 15:55, or 12:30 to 12:55 on a half day.
+    const closeMin = 9 * 60 + 30 + sessionLengthAt(Date.now());
+    const eodWindow = todMin >= closeMin - 30 && todMin <= closeMin - 5;
     const gex = args.audit.gex;
     if (eodWindow && typeof gex === "number" && isFinite(gex)) {
       const gexNeg = gex < 0;
@@ -999,9 +1002,13 @@ function scoreSetup(args: {
         typeof atmIV === "number" && isFinite(atmIV) && atmIV > 0) {
       const todMin = args.hourET * 60 + args.minuteET;
       const minutesElapsed = Math.max(1, todMin - (9 * 60 + 30));
-      const sessionFraction = Math.min(0.99, minutesElapsed / 390);
+      // One day of sigma is spot x IV x sqrt(1/252), spread over a full session's 390 trading minutes. What is
+      // left of it is the minutes left to today's real close over 390 (the trading-minute clock the rest of the
+      // desk uses). On a full day this is the same number as before; on a half day the fixed 390 counted
+      // minutes after the 13:00 close as still to come. The floor (1% of a day) is the old 0.99 cap.
+      const minutesLeft = Math.max(0.01 * FULL_SESSION_MIN, sessionLengthAt(Date.now()) - minutesElapsed);
       const gtbrBase = args.spot * atmIV * Math.sqrt(1 / 252);
-      const gtbrAdj = gtbrBase * Math.sqrt(1 - sessionFraction);
+      const gtbrAdj = gtbrBase * Math.sqrt(minutesLeft / FULL_SESSION_MIN);
       const sessionMove = Math.abs(args.spot - sessionOpen);
       const outsideGTBR = sessionMove >= gtbrAdj;
       const shortGamma = gex < 0;
