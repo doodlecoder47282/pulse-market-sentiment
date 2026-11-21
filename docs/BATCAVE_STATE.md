@@ -3086,9 +3086,16 @@ Seasonality research (an outside feed), the meme-token lookup (needs a token add
 live Signals tab: the panel's labels (CONFLUX, NEW STRIKE, vol/OI, volSE, burn, the gate line "$2.5M • 15x •
 1-3DTE • AT_ASK") were explained nowhere, and every tracked SPX row repeated "index option: exchange fees not
 configured (set INDEX_OPTION_FEE_PER_CONTRACT); dollar P&L unavailable" (45 times in one group). Now: a closed
-"What the words on this panel mean" section at the top of the panel (shared/whaleWords.ts: the gate as a
-sentence built from the live gate settings, and one plain line per label; it says a whale is a contract, not a
-known trader, and that BULLISH/BEARISH name the contract type, not who traded or why); "volSE" reads "volume
-since flagged"; the index-fee note is said once per ticker group and each row keeps a short form. The fee
-itself is still not set: it differs by broker and only the owner can supply it, so 34 index positions stay
-out of the whale record. Tests: tests/quant/whale-words.test.ts (4).
+"What the words on this panel mean" section at the top of the panel (shared/whaleWords.ts), each sentence
+checked against the code that produces the thing it names. What that check corrected, worth knowing about the
+panel itself: premium is an ESTIMATE (volume before the first scan at that scan's mid, later volume at the
+last trade price), not dollars paid; "ask side" is an estimate from scan intervals labelled by their last
+trade, not a statement about buyers; vol/OI cannot tell opening from closing trades; a UOA cluster is repeat
+qualifying SCANS of quotes, and the list shows clusters at half their threshold; CLOSED means the mark fell to
+about zero, not a sale; W/L and burn on the Whale row are ask-in bid-out after fees while other rows are mid
+to mid; BULLISH/BEARISH follow the contract type only while the gate requires the ask side. Also found, NOT
+fixed: "volume since flagged" is session volume now minus session volume at the flag, so after the flag day it
+reads low or zero (Schwab's day volume restarts); the label now says so. "volSE" reads "volume since
+flagged"; the index-fee note is said once per tracked group and rows (open and closed) keep a short form. The
+fee itself is still not set (Schwab adds exchange fees for index options; no default is assumed), so 34 index
+positions stay out of the whale record. Tests: tests/quant/whale-words.test.ts (7).
