@@ -42,6 +42,7 @@
 // fresh transitions detected via in-memory history.
 
 import { minutesToSessionClose } from "./chainClock";
+import { sessionLengthAt } from "../shared/exchangeCalendar";
 import { gradeEvidenceLine, t1SaleContracts, ODTE_PLAN_RULES, type GradeEvidence } from "./validationMath";
 import { atmPathSigma, projectToTarget } from "./t1Projection";
 import { normalizeGammaZone, gammaZoneTag } from "./gammaZone";
@@ -999,7 +1000,8 @@ function scoreSetup(args: {
         typeof atmIV === "number" && isFinite(atmIV) && atmIV > 0) {
       const todMin = args.hourET * 60 + args.minuteET;
       const minutesElapsed = Math.max(1, todMin - (9 * 60 + 30));
-      const sessionFraction = Math.min(0.99, minutesElapsed / 390);
+      // Of today's real session: 210 minutes on a half day, not 390.
+      const sessionFraction = Math.min(0.99, minutesElapsed / sessionLengthAt(Date.now()));
       const gtbrBase = args.spot * atmIV * Math.sqrt(1 / 252);
       const gtbrAdj = gtbrBase * Math.sqrt(1 - sessionFraction);
       const sessionMove = Math.abs(args.spot - sessionOpen);

@@ -20,6 +20,7 @@ import { gatherPositioningForTicker, type PositioningSnapshot } from "./tickerAl
 import { buildSchwabFlow } from "./schwabFlow";
 import { getActiveStreamStore } from "./streamStore";
 import { isRegularSessionOpen } from "./exchangeCalendar";
+import { sessionLengthAt } from "../shared/exchangeCalendar";
 import { etParts } from "./validationMath";
 import { editionFromEnv } from "../shared/edition";
 import { relativeVolume, quietVolume, blockPrints, type RelativeVolume, type QuietVolume, type BlockPrintRead } from "../shared/volumeRead";
@@ -55,7 +56,7 @@ function sessionFraction(nowMs: number): number | null {
   if (!isRegularSessionOpen(nowMs)) return null;
   const p = etParts(nowMs);
   const mins = p.h * 60 + p.mi - (9 * 60 + 30);
-  return Math.max(0, Math.min(1, mins / 390));
+  return Math.max(0, Math.min(1, mins / sessionLengthAt(nowMs))); // 210 minutes on a half day, not 390
 }
 
 export function validScanSymbol(raw: unknown): string | null {

@@ -38,6 +38,7 @@
 //
 // Try/catch wrapped at every external surface. Pure-function eval per tick.
 
+import { minutesToSessionClose } from "./chainClock";
 import { getTracked, getOdteSnapshot, type TrackedPosition, type Side } from "./odteTracker";
 import { getMtfStack, isStackCollapse } from "./mtfStack";
 import { getRevExtSnapshot, isReversionThreat } from "./revExtClassifier";
@@ -407,7 +408,8 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
       const nowMod = (hh - 9) * 60 + mm - 30;
       const heldMin = Math.max(0, Math.round((asOf - pos.buyTimestamp) / 60_000));
       const entryMod = Math.max(0, Math.min(389, nowMod - heldMin));
-      const minutesRemaining = Math.max(1, 390 - nowMod);
+      // To the real close: on a 13:00 half day "390 - minutes since the open" said 240 minutes were left at noon.
+      const minutesRemaining = minutesToSessionClose(asOf);
       const dayUnit = hz.currentDayUnit();
       const optSide = pos.side === "call" ? "C" as const : "P" as const;
       const absDelta = hz.estimateOdteDelta({ spot, strike: pos.strike, side: optSide, minutesRemaining, dayUnitPts: dayUnit });

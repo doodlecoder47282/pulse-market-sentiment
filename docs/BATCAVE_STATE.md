@@ -3035,3 +3035,14 @@ underneath (shared/streamFeed.ts, moved out of SchwabSettings.tsx so the wording
 failures keep "Feed not verified" with their own reason, and the note shows only while the stream is in the
 refused state now (the server keeps the last error text after a later sign-in). Tests:
 tests/quant/stream-feed-label.test.ts (5).
+
+**Half days: five calculations assumed a 390-minute session (2026-11-20).** Found in a sweep of hard-coded
+session lengths; the next half day is 2026-11-27 (13:00 close). Each of these divided or subtracted a fixed 390:
+realtimeTargets.sessionFractionRemaining and its minutes-left and candle filter (at noon on a half day it said
+62% of the session was left; 29% is), tickerScan's volume pace (relative volume understated all day), exitBrain's
+minutes left for the 0DTE delta estimate (240 at noon instead of 60), the position-size route's same estimate,
+and odteAlertEngine's elapsed fraction for its opening-range band. All now use the exchange calendar
+(shared/exchangeCalendar.ts sessionLengthAt, or chainClock.minutesToSessionClose). Left as is on purpose:
+hazardEngine's 390 (it replays full historical sessions) and the annualisation constant 252 x 390. Also: the
+straddle route discounted at its own 4.5% while every other panel uses FLIP_RATE (5%); it now uses FLIP_RATE.
+Tests: tests/quant/half-day-session.test.ts (3).
