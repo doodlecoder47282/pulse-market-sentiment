@@ -4766,7 +4766,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       absDelta = Math.min(0.9, Math.max(0.1, Math.abs(absDelta)));
       const targetPts = hz.optionPctToPoints(targetPct, entryPrice, absDelta);
       const stopPts = hz.optionPctToPoints(stopPct, entryPrice, absDelta);
-      const result = hz.computeHazard({ entryMod, targetPts, stopPts, direction: side === "call" ? "up" : "down" });
+      const result = hz.computeHazard({ entryMod, minutesLeft: sessionLengthAt(Date.now()) - entryMod, targetPts, stopPts, direction: side === "call" ? "up" : "down" });
       if ("error" in result) return res.status(422).json(result);
       const breakevenP = stopPct / (targetPct + stopPct) + 0.04; // + friction pad
       const step = result.curve.reduce((best, p) => (Math.abs(p.minute - minutesHeld) < Math.abs(best.minute - minutesHeld) ? p : best), result.curve[0]);

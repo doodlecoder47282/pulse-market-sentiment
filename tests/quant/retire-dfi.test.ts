@@ -341,7 +341,7 @@ test("third review: session notes are true outside the session window, and the b
   assert.match(p, /if \(sessionFrac <= 0\) driverNotes\.push\(`the regular session is over:/);
   assert.match(p, /else if \(sessionFrac >= 1\) driverNotes\.push\(`the regular session has not opened:/);
   // The in-session notes print minutes computed from the fraction, not a fixed "1.5 hours" (the windows are 97.5 minutes).
-  assert.match(p, /\$\{Math\.round\(sessionFrac \* 390\)\} minutes to 16:00 ET/);
+  assert.match(p, /\$\{Math\.round\(sessionFrac \* sessionLengthAt\(nowMs\)\)\} minutes to the close/);
   assert.match(p, /\$\{Math\.round\(\(1 - sessionFrac\) \* 390\)\} minutes since 09:30 ET/);
   // The "under 0.25" pivot note floors, so it cannot print "0.25 ... (under 0.25)".
   assert.match(p, /\(Math\.floor\(gammaFlipProxFrac \* 100\) \/ 100\)\.toFixed\(2\)\} expected moves from the main pivot \(under 0\.25\)/);

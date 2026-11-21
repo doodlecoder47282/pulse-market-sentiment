@@ -20,7 +20,7 @@ import { gatherPositioningForTicker, type PositioningSnapshot } from "./tickerAl
 import { buildSchwabFlow } from "./schwabFlow";
 import { getActiveStreamStore } from "./streamStore";
 import { isRegularSessionOpen } from "./exchangeCalendar";
-import { sessionLengthAt } from "../shared/exchangeCalendar";
+import { FULL_SESSION_MIN } from "../shared/exchangeCalendar";
 import { etParts } from "./validationMath";
 import { editionFromEnv } from "../shared/edition";
 import { relativeVolume, quietVolume, blockPrints, type RelativeVolume, type QuietVolume, type BlockPrintRead } from "../shared/volumeRead";
@@ -56,7 +56,9 @@ function sessionFraction(nowMs: number): number | null {
   if (!isRegularSessionOpen(nowMs)) return null;
   const p = etParts(nowMs);
   const mins = p.h * 60 + p.mi - (9 * 60 + 30);
-  return Math.max(0, Math.min(1, mins / sessionLengthAt(nowMs))); // 210 minutes on a half day, not 390
+  // Of a FULL session, on purpose, also on a half day: the pace is today's volume against the 20-day average,
+  // and that average is of full sessions, so "the share of a normal day's volume due by now" is elapsed / 390.
+  return Math.max(0, Math.min(1, mins / FULL_SESSION_MIN));
 }
 
 export function validScanSymbol(raw: unknown): string | null {

@@ -38,7 +38,7 @@
 //
 // Try/catch wrapped at every external surface. Pure-function eval per tick.
 
-import { minutesToSessionClose } from "./chainClock";
+import { sessionLengthAt } from "../shared/exchangeCalendar";
 import { getTracked, getOdteSnapshot, type TrackedPosition, type Side } from "./odteTracker";
 import { getMtfStack, isStackCollapse } from "./mtfStack";
 import { getRevExtSnapshot, isReversionThreat } from "./revExtClassifier";
@@ -409,7 +409,8 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
       const heldMin = Math.max(0, Math.round((asOf - pos.buyTimestamp) / 60_000));
       const entryMod = Math.max(0, Math.min(389, nowMod - heldMin));
       // To the real close: on a 13:00 half day "390 - minutes since the open" said 240 minutes were left at noon.
-      const minutesRemaining = minutesToSessionClose(asOf);
+      // Counted from the whole minute, as before, so a full day gives the same number it always did.
+      const minutesRemaining = Math.max(1, sessionLengthAt(asOf) - nowMod);
       const dayUnit = hz.currentDayUnit();
       const optSide = pos.side === "call" ? "C" as const : "P" as const;
       const absDelta = hz.estimateOdteDelta({ spot, strike: pos.strike, side: optSide, minutesRemaining, dayUnitPts: dayUnit });
@@ -417,7 +418,7 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
       const targetPts = hz.optionPctToPoints(TGT_PCT, entry, absDelta);
       const stopPts = hz.optionPctToPoints(STP_PCT, entry, absDelta);
       const res = hz.computeHazard({
-        entryMod,
+        entryMod, minutesLeft: sessionLengthAt(asOf) - entryMod,
         targetPts,
         stopPts,
         direction: underlyingSide === "long" ? "up" : "down",
