@@ -16,7 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import DataStateChip from "@/components/DataStateChip";
 import { Layers, X } from "lucide-react";
 import type { OdteMap } from "@shared/odteMap";
-import { checkLevels, parseLevels, defaultTolerancePts, type ConfluenceTag, type LevelCheck , boardChartLevels, BOARD_LEVEL_REACH } from "@shared/levelConfluence";
+import { checkLevels, parseLevels, defaultTolerancePts, type ConfluenceTag, type LevelCheck , boardChartLevels, BOARD_LEVEL_REACH , boardSource, type BoardSourceInput } from "@shared/levelConfluence";
 
 type MapResp = OdteMap & { forwardAsOf: string; source: string };
 
@@ -56,14 +56,16 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
     retry: false,
   });
   const m = q.data;
-  // The board's own bar levels for the same index, from the query the level board on this tab already runs
-  // (same key, so no extra request): checked with nothing typed in.
-  const board = useQuery<{ tickers?: Array<{ symbol: string; levels?: Array<{ price: number; label: string; group?: string }> }> }>({
+  // The board's own bar levels for the same index. Same key and timing as the level board on this tab
+  // (DeskBoard.tsx), so the two share one read; mounted without it, this card reads the board itself.
+  const board = useQuery<BoardSourceInput["board"]>({
     queryKey: ["/api/desk/board"],
     queryFn: async () => (await apiRequest("GET", "/api/desk/board")).json(),
-    refetchInterval: 60_000, staleTime: 30_000, retry: false,
+    refetchInterval: 30_000, staleTime: 15_000, retry: false,
   });
-  const auto = useMemo(() => boardChartLevels(board.data?.tickers?.find((t) => t.symbol === symbol)?.levels, m?.spot ?? null), [board.data, symbol, m?.spot]);
+  // The list merged without option landmarks, and the state of the read it came from.
+  const src = useMemo(() => boardSource({ failed: board.isError, board: board.data, symbol }), [board.isError, board.data, symbol]);
+  const auto = useMemo(() => boardChartLevels(src.levels, m?.spot ?? null), [src, m?.spot]);
   const autoChecks: LevelCheck[] = useMemo(
     () => checkLevels(m ? { spot: m.spot, strikes: m.strikes, landmarks: m.landmarks, range: m.range } : { spot: null, strikes: [] }, auto.levels.map((l) => l.price).filter((p) => !levels.includes(p))),
     [m, auto, levels],
@@ -98,7 +100,7 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-[11px] text-muted-foreground">
-          The board's own price levels are checked against the option chain automatically. Levels you add from your own charts are checked the same way. A tag is a fact about mapped open interest near a price, not a forecast.
+          The board's own price levels (from price bars, not from the option map) are checked against the option chain automatically. Levels you add from your own charts are checked the same way. A tag is a fact about mapped open interest near a price, not a forecast.
         </p>
         <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); add(); }}>
           <label className="flex min-w-0 flex-1 flex-col gap-1 text-[11px] text-muted-foreground">
@@ -113,11 +115,15 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
         </form>
         <div data-testid="chart-levels-auto">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">From the level board, checked automatically</div>
-          {autoChecks.length === 0 ? (
+          {src.notice && (
+            <div className={`mb-1 text-[11px] leading-relaxed ${src.state === "ok" ? "text-muted-foreground" : "text-amber-300"}`} data-testid="chart-levels-board-state">{src.notice}</div>
+          )}
+          {src.levels.length === 0 ? null : autoChecks.length === 0 ? (
             <div className="min-h-[32px] text-[11px] text-muted-foreground" data-testid="chart-levels-auto-empty">
-              {board.isError ? "The level board could not be read (the request failed), so its levels are not checked."
-                : !board.data || !m ? "Reading the level board and the map."
-                : auto.levels.length === 0 ? `The board has no bar level within ${(BOARD_LEVEL_REACH * 100).toFixed(0)}% of the price${auto.beyond ? ` (${auto.beyond} sit further out, beyond the strikes the map carries)` : ""}.`
+              {!m && q.isError ? "The 0DTE map could not be read (the request failed), so the board's levels are not checked against it."
+                : !m ? "Reading the 0DTE map."
+                : m.spot == null ? "The map carries no price in this read, so the board's levels are not checked against it."
+                : auto.levels.length === 0 ? `None of the board's ${src.levels.length} bar level${src.levels.length === 1 ? "" : "s"} sits within ${(BOARD_LEVEL_REACH * 100).toFixed(0)}% of the price; further out the map carries no strikes to check them against.`
                 : "Every board level near the price is already in your own list below."}
             </div>
           ) : (

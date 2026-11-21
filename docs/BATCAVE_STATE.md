@@ -3036,14 +3036,18 @@ failures keep "Feed not verified" with their own reason, and the note shows only
 refused state now (the server keeps the last error text after a later sign-in). Tests:
 tests/quant/stream-feed-label.test.ts (5).
 
-**Two tools no longer wait for typing (2026-11-20).** Why: the owner's rule is that nothing but the Schwab
+**Chart levels no longer wait for typing (2026-11-20).** Why: the owner's rule is that nothing but the Schwab
 sign-in should need plugging in. "Your chart levels" on the Trade Desk showed nothing until prices were typed;
 it is now "Chart levels against the chain" and checks the level board's own bar levels for the index (prior
 day, pivots, week, month, ranges, today's open and opening range) against the 0DTE map automatically, each
-with the board's name for it (shared/levelConfluence.ts boardChartLevels; the board query is the one the
-level board on the same tab already runs, so no extra request). Option landmarks are left out (they come from
-the map itself), and levels more than 2% from the price are counted but not checked (the map has no strikes
-there). Typed levels still work and are listed separately. The ticker scan starts on SPY until another symbol
-is scanned. Left as they are: Seasonality research (a lookup against an outside feed; starting it by default
-would call that feed on every Regime tab open), the meme-token lookup (needs a token address), the position
-sizer (needs the user's own trade). Tests: tests/quant/auto-defaults.test.ts (6).
+with the board's name for it. It reads cases.levelsWithoutOptions, the board's list merged without option
+landmarks: on the full list a merged line takes the group of its highest member, so a group filter both lets
+a landmark through and drops a bar level (shared/levelConfluence.ts boardSource, boardChartLevels). The
+board's own state is said in the card: not read, read failed (levels held from the read before), levels for
+another session, marked incomplete with the board's reason; a board that was not read is never shown as a
+board with no levels. Levels more than 2% from the price are counted, not checked (the map has no strikes
+there). The query has the level board's key and timing, so on the Trade Desk the two share one read. Typed
+levels still work and are listed separately. Left as they are, on purpose: the ticker scan (a default symbol
+would add up to five Schwab requests to every app open, on the tab that loads first, into the startup burst),
+Seasonality research (an outside feed), the meme-token lookup (needs a token address), the position sizer
+(needs the user's own trade). Tests: tests/quant/auto-defaults.test.ts (9).
