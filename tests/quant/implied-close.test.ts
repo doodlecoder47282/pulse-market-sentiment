@@ -49,7 +49,7 @@ test("fails closed: too few strikes, a grid gap, ragged mids; never a smoothed c
   const ragged = grid(S, w, 200).map((K, i) => { const q = bs(S, K, sT); return { strike: K, callMid: q.callMid + (i % 2 ? 2 : 0), putMid: q.putMid + (i % 2 ? 2 : 0) }; });
   const r3 = impliedClose(S, ragged, w);
   assert.equal(r3.state, "unavailable");
-  assert.match(String(r3.reason), /butterflies negative|renormalised/);
+  assert.match(String(r3.reason), /butterflies negative/);
   // No two-sided quote on one side: that strike is skipped, not read as zero.
   const oneSided = grid(S, w, 200).map((K) => ({ strike: K, ...bs(S, K, sT), putMid: K < 5900 ? null : bs(S, K, sT).putMid }));
   assert.equal(impliedClose(S, oneSided, w).state, "ok");
@@ -124,7 +124,7 @@ test("mid-tick noise: nickel quantisation reads as about 1% distance; jittered m
   let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2 ** 31; return seed / 2 ** 31; };
   const jitter = impliedClose(S, grid(S, w, 200).map((K) => { const b = bsF(S, K, sT); const j = (rnd() - 0.5) * 0.2; return { strike: K, callMid: q(b.callMid + j), putMid: q(b.putMid + j) }; }), w);
   assert.equal(jitter.state, "unavailable");
-  assert.match(String(jitter.reason), /instead of 100%, and this read accepts at most 5% either way|butterflies negative/);
+  assert.match(String(jitter.reason), /took a correction of [\d.]+% of the total .*this read accepts at most 5%|butterflies negative/);
 });
 
 test("skew: a smile with higher IV below recovers a median above the forward (longer lower tail), said in words", () => {

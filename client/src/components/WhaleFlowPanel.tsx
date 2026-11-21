@@ -447,6 +447,8 @@ function TrackedTickerGroup({
   const [showAll, setShowAll] = useState(false);
   const hotCount = positions.filter((p) => freshnessTier(p) === "HOT").length;
   const soldCount = positions.filter((p) => freshnessTier(p) === "SOLD").length;
+  // Sold rows sort last, so a long group can hide all of them: the button says how many are below.
+  const hiddenSold = positions.slice(TRACKED_ROWS_SHOWN).filter((p) => freshnessTier(p) === "SOLD").length;
   const bull = positions.filter((p) => p.side === "BULLISH").length;
   const bear = positions.filter((p) => p.side === "BEARISH").length;
   const dominant = bull > bear ? "BULLISH" : bear > bull ? "BEARISH" : "MIXED";
@@ -491,7 +493,7 @@ function TrackedTickerGroup({
           {(showAll ? positions : positions.slice(0, TRACKED_ROWS_SHOWN)).map((p) => <TrackingRow key={p.occ} pos={p} />)}
           {positions.length > TRACKED_ROWS_SHOWN && (
             <button type="button" onClick={() => setShowAll((v) => !v)} className="min-h-[44px] w-full rounded border border-border/40 px-2 text-xs text-muted-foreground hover:text-foreground lg:min-h-[32px]" data-testid={`tracked-show-all-${ticker}`}>
-              {showAll ? `show the first ${TRACKED_ROWS_SHOWN} only` : `showing ${TRACKED_ROWS_SHOWN} of ${positions.length}: show all`}
+              {showAll ? `show the first ${TRACKED_ROWS_SHOWN} only` : `showing ${TRACKED_ROWS_SHOWN} of ${positions.length}${hiddenSold > 0 ? ` (${hiddenSold} sold row${hiddenSold === 1 ? " is" : "s are"} below)` : ""}: show all`}
             </button>
           )}
         </div>

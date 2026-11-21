@@ -81,6 +81,19 @@ export const FORWARD_WINDOW_PCT = 0.0075;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * Why a chain is refused for needing too large a correction. Read strike by strike, the unclipped masses of a
+ * chain always sum to exactly 1 (the butterflies cancel term by term), so `raw` differs from 1 only by what
+ * the clips did: readings below zero set to zero push it up, an end of the range cut back to its bounds
+ * moves it either way. The number said is that correction, |1 - raw|, as a share of the total; it is not
+ * "what the prices add up to".
+ */
+export function renormalisedReason(raw: number): string {
+  const off = Math.abs(1 - raw) * 100;
+  const shown = off < 10 ? off.toFixed(1) : String(Math.round(off));
+  return `the option prices are out of line with each other: making them into one distribution for the settle took a correction of ${shown}% of the total (readings below zero set to zero, or an end of the range cut to its bounds), and this read accepts at most ${Math.round(MAX_RENORMALISED * 100)}%`;
+}
+
 export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number): ImpliedClose {
   const base = { method: IMPLIED_CLOSE_METHOD, bucket: bucket > 0 ? bucket : null, buckets: [] as ImpliedCloseBucket[], sigma: null, mean: null, median: null, forward: null, resolution: bucket > 0 ? r4(MID_TICK / bucket) : null, diagnostics: { strikes: 0, clipped: 0, lowTail: 0, highTail: 0, renormalised: 0 } };
   if (!(spot > 0)) return { ...base, state: "unavailable", reason: "no spot" };
@@ -142,7 +155,7 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
   const raw = lowTail + highTail + inner.reduce((s, b) => s + b.p, 0);
   if (!(raw > 0)) return { ...base, state: "unavailable", reason: "zero total mass from the mids", diagnostics: { ...base.diagnostics, strikes: n, clipped }, forward: r2(forward) };
   if (Math.abs(1 - raw) > MAX_RENORMALISED) {
-    return { ...base, state: "unavailable", reason: `the option prices do not fit together as one set of odds for the close: read strike by strike they add up to ${Math.round(raw * 100)}% instead of 100%, and this read accepts at most ${Math.round(MAX_RENORMALISED * 100)}% either way`, diagnostics: { ...base.diagnostics, strikes: n, clipped, renormalised: r4(Math.abs(1 - raw)) }, forward: r2(forward) };
+    return { ...base, state: "unavailable", reason: renormalisedReason(raw), diagnostics: { ...base.diagnostics, strikes: n, clipped, renormalised: r4(Math.abs(1 - raw)) }, forward: r2(forward) };
   }
   const scale = 1 / raw;
   // Exact (unrounded) masses for the moments; the published buckets are rounded.
