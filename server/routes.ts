@@ -3281,7 +3281,9 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       // the ladder splits it into expiry segments and merges them.
       const { getOptionChainLadder } = await import("./schwab");
       let chain = dte > 14 ? await getOptionChainLadder(symbol, dte) : await schwabGetOptionChain(symbol, dte);
-      if ("error" in chain && dte > 14) chain = await schwabGetOptionChain(symbol, Math.min(dte, 14));
+      // How many days of expiries were actually read: the ladder's, or the shorter single chain it fell back to.
+      let dteRead = dte;
+      if ("error" in chain && dte > 14) { chain = await schwabGetOptionChain(symbol, Math.min(dte, 14)); dteRead = Math.min(dte, 14); }
       const usedSymbol = symbol;
 
       if ("error" in chain) {
@@ -3318,6 +3320,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       audit.chainAsOfMs = chain.asOfMs;
       audit.chainStale = chain.stale;
       (audit as any).oiState = chain.oiState ?? null;
+      audit.dteRead = dteRead;
       audit.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;

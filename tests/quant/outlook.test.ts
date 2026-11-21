@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { maxPainStrike, expirySummary, rankLevels, outlookWindows, windowSentence, outlookChart, collarLevels, shortDate, OUTLOOK_LINES_PER_SIDE, type OutlookContract } from "../../shared/outlook";
+import { maxPainStrike, expirySummary, rankLevels, outlookWindows, windowSentence, outlookChart, collarLevels, boardOutlookLevels, spreadLabels, sharePct, shortDate, OUTLOOK_LINES_PER_SIDE, type OutlookContract } from "../../shared/outlook";
+import { mergeLevels, type BoardLevel } from "../../shared/levelBoard";
 
 const c = (expiry: string, dte: number, side: "call" | "put", strike: number, oi: number, iv = 0.2): OutlookContract => ({ expiry, dte, tYears: Math.max(dte, 0.5) / 365, side, strike, oi, iv });
 
@@ -56,7 +57,9 @@ test("the collar is drawn only while its strikes are live; otherwise the reason 
   assert.deepEqual(live.levels.map((l) => [l.price, l.label]), [[8060, "collar short call"], [7245, "collar long put"], [6110, "collar short put"]]);
   assert.match(live.levels[0].source, /JPM collar to 2026-12-31 \(partial\)/);
   const gone = collarLevels({ rollDate: "2026-03-31", longPut: 5565, shortPut: 4700, shortCall: 6165, expired: true, staleNote: "Strikes on file expired at the 2026-03-31 roll." });
-  assert.deepEqual([gone.levels.length, gone.note], [0, "Strikes on file expired at the 2026-03-31 roll."]);
+  assert.equal(gone.levels.length, 0);
+  assert.equal(gone.note, "the strikes on file expired at the 2026-03-31 roll, and the current collar's strikes are not on file (no reputable source was found for them), so no collar level is listed or drawn.");
+  assert.doesNotMatch(gone.note!, /historical reference/, "the page's own words: here nothing is shown");
   assert.deepEqual(collarLevels(null), { levels: [], note: null });
 });
 
@@ -80,7 +83,7 @@ test("the stretch ahead is cut into this week, the next two weeks, then month pi
   assert.deepEqual(outlookWindows("2027-02-01", ex, events, spot), [], "nothing ahead, nothing drawn");
   // The sentence: counts, dates and prices, and the range named as priced in.
   const s = windowSentence(w[3]);
-  assert.match(s, /^Scheduled: FOMC \(Dec 16\), Quad witching \(Dec 18\)\. 2 expiries; the largest by open interest is Dec 18 with 48% of the chain's open contracts, max pain 7,000\./);
+  assert.match(s, /^Scheduled: FOMC \(Dec 16\), Quad witching \(Dec 18\)\. 2 expiries; the largest by open interest is Dec 18 with 48% of the open contracts in the chain that was read \(2,000 of 4,200\), max pain 7,000\./);
   assert.match(s, /Option prices imply about plus or minus [\d,]+ points by Dec 31 \(one standard deviation, [\d,]+ to [\d,]+\): a priced-in range, not a forecast\.$/);
   assert.match(windowSentence(w[0]), /^Nothing on the event calendar\. No option expiry in the chain that was read\.$/);
   assert.equal(shortDate("2027-01-05"), "Jan 5");
@@ -111,6 +114,48 @@ test("the picture: time to the last expiry, the implied range widening, the near
   assert.equal(outlookChart("2027-03-01", spot, ex, levels, []), null, "no expiry ahead: nothing is drawn");
 });
 
+test("a share is never 0% for an expiry that has open interest", () => {
+  assert.equal(sharePct(0.004), "under 1%");
+  assert.equal(sharePct(0.005), "1%");
+  assert.equal(sharePct(0), "0%");
+  assert.equal(sharePct(0.476), "48%");
+});
+
+test("board levels carry a true source, and option-map levels are left out when the board's map is not current", () => {
+  const BARS: BoardLevel[] = [{ key: "pdh", label: "prior-day high", price: 7048.6, group: "prior day" }, { key: "pdl", label: "prior-day low", price: 6998.2, group: "prior day" }, { key: "pp", label: "pivot", price: 7020, group: "pivot" }];
+  const OPTS: BoardLevel[] = [{ key: "wall", label: "wall above", price: 7050, group: "options" }, { key: "flip", label: "gamma flip", price: 7126, group: "options" }];
+  const all = mergeLevels([...BARS, ...OPTS], 7018), without = mergeLevels(BARS, 7018);
+  const ok = boardOutlookLevels({ all, withoutOptions: without, optionsState: "ok" });
+  assert.equal(ok.optionsNote, null);
+  const src = (label: RegExp) => ok.levels.filter((l) => label.test(l.label)).map((l) => l.source);
+  assert.deepEqual(src(/^prior-day high$/), ["level board"], "the bar level is listed by itself, not hidden in the wall's line");
+  assert.deepEqual(src(/^gamma flip$/), ["option map"]);
+  assert.deepEqual(src(/wall above.*prior-day high|prior-day high.*wall above/), ["option map, joined with a board level at the same price"]);
+  // The board's option map is stale: its levels are not listed as if current, and the reason is given.
+  const stale = boardOutlookLevels({ all, withoutOptions: without, optionsState: "stale", optionsReason: "the chain is the last session's" });
+  assert.deepEqual(stale.levels.map((l) => l.source), ["level board", "level board", "level board"]);
+  assert.equal(stale.optionsNote, "Option-map levels (walls, pin, flip, straddle range) are left out: the board's option map is stale (the chain is the last session's).");
+  assert.ok(!stale.levels.some((l) => /wall|flip/.test(l.label)));
+  // No option-free list for this index: nothing is guessed from the mixed list.
+  const none = boardOutlookLevels({ all, withoutOptions: null, optionsState: "ok" });
+  assert.deepEqual([none.levels.length, none.optionsNote], [0, "The board sent no level list for this index, so its levels are not listed."]);
+  // A board with bars only and no landmarks: no note.
+  assert.deepEqual(boardOutlookLevels({ all: without, withoutOptions: without, optionsState: "unavailable" }).optionsNote, null);
+});
+
+test("labels are pushed apart so one does not print on another, in their own order and inside the box", () => {
+  assert.deepEqual(spreadLabels([0.5, 0.2, 0.8], 0.05), [0.5, 0.2, 0.8], "already apart: untouched");
+  const packed = spreadLabels([0.500, 0.502, 0.504], 0.05);
+  assert.ok(Math.abs(packed[1] - packed[0] - 0.05) < 1e-12 && Math.abs(packed[2] - packed[1] - 0.05) < 1e-12);
+  assert.equal(packed[0], 0.5);
+  const order = spreadLabels([0.504, 0.5, 0.502], 0.05);
+  assert.ok(order[1] < order[2] && order[2] < order[0], "each keeps its place relative to the others");
+  const bottom = spreadLabels([0.97, 0.98, 0.99], 0.05);
+  assert.ok(bottom.every((y) => y >= 0 && y <= 1));
+  assert.ok(Math.abs(bottom[2] - 1) < 1e-12 && Math.abs(bottom[1] - 0.95) < 1e-12);
+  assert.deepEqual(spreadLabels([], 0.05), []);
+});
+
 test("wiring: the chain audit carries the per-expiry rows", () => {
   const s = readFileSync("server/chainAudit.ts", "utf8");
   assert.match(s, /expiries: expirySummary\(contracts\.map\(\(c\) => \(\{ expiry: c\.expiry, dte: c\.dte, tYears: c\.tYears, side: c\.side, strike: c\.strike, oi: c\.oi, iv: c\.sigma \?\? c\.iv \}\)\), spot\),/);
@@ -124,6 +169,12 @@ test("wiring: the page reads four existing endpoints, shares the audit and board
   assert.match(ui, /This is not a list of no expiries\./);
   assert.match(ui, /This is not a calendar with nothing on it\./);
   assert.match(ui, /its levels are missing from this list/);
+  assert.match(ui, /data-answer-tab="outlook" data-ready=\{settled \? "1" : "0"\}/, "the layout audit waits for this line on every tab");
+  assert.match(ui, /boardOutlookLevels\(\{ all: spx\.levels, withoutOptions: cases\?\.levelsWithoutOptions \?\? null, optionsState: cases\?\.optionsState \?\? null/);
+  assert.match(ui, /lastSession=\{audit\.data\?\.chainLastSession \?\? null\}/);
+  assert.match(ui, /data-testid="outlook-oi-note"/);
+  assert.match(ui, /dteRead != null && dteRead < 60/);
+  assert.match(readFileSync("server/routes.ts", "utf8"), /audit\.dteRead = dteRead;/);
   assert.match(ui, /priced in, not a forecast/);
   assert.match(ui, /A level is a mapped price, not a target\./);
   assert.doesNotMatch(ui, /<text /, "labels are ordinary text over the drawing, so they keep their size on a phone");

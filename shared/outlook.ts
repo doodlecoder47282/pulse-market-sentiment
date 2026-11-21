@@ -162,6 +162,9 @@ export function outlookWindows(today: string, expiries: ExpiryRow[], events: Out
   });
 }
 
+/** A share as a percentage; a share that exists but rounds to nothing is "under 1%", never "0%". */
+export const sharePct = (f: number) => (f > 0 && f < 0.005 ? "under 1%" : `${(f * 100).toFixed(0)}%`);
+
 /** The window's facts as one or two sentences. Counts, dates and prices only. */
 export function windowSentence(w: OutlookWindow): string {
   const px = (n: number) => Math.round(n).toLocaleString("en-US");
@@ -170,7 +173,9 @@ export function windowSentence(w: OutlookWindow): string {
   else parts.push("Nothing on the event calendar.");
   if (!w.expiries.length) parts.push("No option expiry in the chain that was read.");
   else if (w.largest && w.largest.oiShare != null) {
-    parts.push(`${w.expiries.length} expir${w.expiries.length === 1 ? "y" : "ies"}; the largest by open interest is ${shortDate(w.largest.expiry)} with ${(w.largest.oiShare * 100).toFixed(0)}% of the chain's open contracts${w.largest.maxPain != null ? `, max pain ${px(w.largest.maxPain)}` : ""}.`);
+    // A share is never said without its count: N of the M open contracts in the chain that was read.
+    const total = w.largest.oiShare > 0 ? Math.round(w.largest.oi / w.largest.oiShare) : 0;
+    parts.push(`${w.expiries.length} expir${w.expiries.length === 1 ? "y" : "ies"}; the largest by open interest is ${shortDate(w.largest.expiry)} with ${sharePct(w.largest.oiShare)} of the open contracts in the chain that was read (${px(w.largest.oi)} of ${px(total)})${w.largest.maxPain != null ? `, max pain ${px(w.largest.maxPain)}` : ""}.`);
   } else parts.push(`${w.expiries.length} expir${w.expiries.length === 1 ? "y" : "ies"}, none with open interest in this read.`);
   if (w.range) parts.push(`Option prices imply about plus or minus ${px(w.range.sigmaPts)} points by ${shortDate(w.range.expiry)} (one standard deviation, ${px(w.range.lo)} to ${px(w.range.hi)}): a priced-in range, not a forecast.`);
   return parts.join(" ");
@@ -231,11 +236,61 @@ export function outlookChart(today: string, spot: number | null | undefined, exp
 export interface CollarIn { quarter?: string; rollDate?: string; longPut?: number; shortPut?: number; shortCall?: number; verification?: string; expired?: boolean; staleNote?: string | null }
 export function collarLevels(c: CollarIn | null | undefined): { levels: OutlookLevelIn[]; note: string | null } {
   if (!c) return { levels: [], note: null };
-  if (c.expired) return { levels: [], note: c.staleNote ?? `The collar strikes on file expired at the ${c.rollDate ?? "last"} roll; the current collar's strikes are not on file, so none are drawn.` };
+  // The page's own words: the server's note for other panels ends "shown as historical reference only", and here nothing is shown.
+  if (c.expired) return { levels: [], note: `the strikes on file expired at the ${c.rollDate ?? "last"} roll, and the current collar's strikes are not on file (no reputable source was found for them), so no collar level is listed or drawn.` };
   const src = `JPM collar to ${c.rollDate ?? "its roll"}${c.verification && c.verification !== "verified" ? ` (${c.verification})` : ""}`;
   const out: OutlookLevelIn[] = [];
   if (finite(c.shortCall)) out.push({ price: c.shortCall, label: "collar short call", source: src });
   if (finite(c.longPut)) out.push({ price: c.longPut, label: "collar long put", source: src });
   if (finite(c.shortPut)) out.push({ price: c.shortPut, label: "collar short put", source: src });
   return { levels: out, note: null };
+}
+
+/** A level as the level board sends it. */
+export interface BoardLine { price: number; label: string; group?: string }
+export interface BoardLevelsIn {
+  /** The board's full merged list for the ticker: bar levels and option-map landmarks, merged where they sit together. */
+  all: BoardLine[] | null | undefined;
+  /** The same list merged WITHOUT option landmarks (cases.levelsWithoutOptions); null when the board's cases are for another symbol. */
+  withoutOptions: BoardLine[] | null | undefined;
+  /** The option map's own state on the board: "ok", "stale" or "unavailable". */
+  optionsState?: string | null;
+  optionsReason?: string | null;
+}
+
+/**
+ * The board's levels for this page, with a true source on each. Bar levels come from the list merged without
+ * landmarks, so none is hidden inside a landmark's line. Option-map levels are taken only while the board
+ * says its option map is current; otherwise they are left out and the reason is returned to be shown. A
+ * line that mixes a landmark with a bar level says so in its source instead of claiming one of the two.
+ */
+export function boardOutlookLevels(i: BoardLevelsIn): { levels: OutlookLevelIn[]; optionsNote: string | null } {
+  const bars = (i.withoutOptions ?? []).filter((l) => l && l.group !== "options");
+  const out: OutlookLevelIn[] = bars.map((l) => ({ price: l.price, label: l.label, source: "level board" }));
+  const barKeys = new Set(bars.map((l) => `${l.price}|${l.label}`));
+  // What the full list has beyond the bar-only list: lines that are, or contain, an option-map landmark.
+  const withLandmark = i.withoutOptions == null ? [] : (i.all ?? []).filter((l) => l && !barKeys.has(`${l.price}|${l.label}`));
+  if (!withLandmark.length) return { levels: out, optionsNote: i.withoutOptions == null ? "The board sent no level list for this index, so its levels are not listed." : null };
+  if (i.optionsState !== "ok") {
+    return { levels: out, optionsNote: `Option-map levels (walls, pin, flip, straddle range) are left out: the board's option map is ${i.optionsState ?? "not current"}${i.optionsReason ? ` (${i.optionsReason})` : ""}.` };
+  }
+  for (const l of withLandmark) out.push({ price: l.price, label: l.label, source: l.label.includes(" + ") ? "option map, joined with a board level at the same price" : "option map" });
+  return { levels: out, optionsNote: null };
+}
+
+/**
+ * Label positions pushed apart so text does not print on text. `ys` are fractions of the plot height, in
+ * any order; the result is in the same order, each at least `gap` from its neighbours where the box allows,
+ * moved as little as possible (a pass down, then a pass up from the bottom edge).
+ */
+export function spreadLabels(ys: number[], gap: number): number[] {
+  const order = ys.map((y, i) => ({ y, i })).sort((a, b) => a.y - b.y);
+  for (let k = 1; k < order.length; k++) if (order[k].y - order[k - 1].y < gap) order[k].y = order[k - 1].y + gap;
+  if (order.length && order[order.length - 1].y > 1) {
+    order[order.length - 1].y = 1;
+    for (let k = order.length - 2; k >= 0; k--) if (order[k + 1].y - order[k].y < gap) order[k].y = order[k + 1].y - gap;
+  }
+  const out = new Array<number>(ys.length);
+  for (const o of order) out[o.i] = Math.max(0, o.y);
+  return out;
 }

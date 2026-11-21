@@ -3149,7 +3149,13 @@ open interest, share, max pain, ATM IV, sigma), computed from contracts already 
 The page reads /api/chain-audit (same key and request as the Chain Audit panel), /api/desk/board,
 /api/vol-calendar and /api/jpm-collar, only while its tab is showing. Honest states: a failed read is never an
 empty list; a chain with no open interest shows shares and max pain as n/a; levels not drawn are counted.
+Board levels carry a true source (boardOutlookLevels): bar levels come from cases.levelsWithoutOptions, and
+option-map levels are listed only while the board says its option map is current (otherwise they are left
+out with the board's reason); a line that joins a landmark and a bar level says so. A last-session chain and
+held open interest are labelled; the route now reports how many days of expiries it actually read (dteRead:
+60, or 14 when the long read failed) and the page says so; every share is printed with its contract count;
+chart labels are pushed apart so they do not overprint.
 NOT in it: a path or scenario lines (the friend's dashed lines read as forecasts and nothing grades them),
 anything beyond the 60 days of chain read, a VIX futures curve (not read at all), and the CURRENT JPM collar:
 the strikes on file expired and the collar live to 2026-12-31 was never entered for want of a reputable
-source, so the page says so instead of drawing it. Tests: tests/quant/outlook.test.ts (8).
+source, so the page says so instead of drawing it. Tests: tests/quant/outlook.test.ts (12).

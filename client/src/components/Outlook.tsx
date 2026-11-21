@@ -9,13 +9,25 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import DataStateChip from "@/components/DataStateChip";
 import {
-  rankLevels, outlookWindows, windowSentence, outlookChart, collarLevels, shortDate,
-  type ExpiryRow, type OutlookEvent, type OutlookLevelIn, type CollarIn,
+  rankLevels, outlookWindows, windowSentence, outlookChart, collarLevels, boardOutlookLevels, spreadLabels, sharePct, shortDate,
+  type ExpiryRow, type OutlookEvent, type OutlookLevelIn, type CollarIn, type BoardLine,
 } from "@shared/outlook";
 import { etDate } from "@shared/exchangeCalendar";
 
-interface AuditResp { spot?: number; asOf?: number; stale?: boolean; staleReason?: string; audit?: { expiries?: ExpiryRow[]; chainAsOfMs?: number; chainStale?: boolean; chainCoverage?: { belowPct: number; abovePct: number; complete: boolean } | null } }
-interface BoardResp { forSession?: string; sessionOpen?: boolean; tickers?: Array<{ symbol: string; price: number | null; quoteState: string; quoteReason: string | null; levels?: Array<{ price: number; label: string; group?: string }>; levelsState?: string; levelsReason?: string | null }> }
+interface AuditResp {
+  spot?: number; asOf?: number; stale?: boolean; staleReason?: string;
+  chainAsOfMs?: number; chainStale?: boolean; chainLastSession?: boolean;
+  audit?: {
+    expiries?: ExpiryRow[]; dteRead?: number;
+    oiState?: { source?: string; sessionDate?: string | null; note?: string | null } | null;
+    chainCoverage?: { belowPct: number; abovePct: number; complete: boolean } | null;
+  };
+}
+interface BoardResp {
+  forSession?: string; sessionOpen?: boolean;
+  tickers?: Array<{ symbol: string; price: number | null; quoteState: string; quoteReason: string | null; levels?: BoardLine[]; levelsState?: string; levelsReason?: string | null }>;
+  cases?: { symbol: string; levelsWithoutOptions?: BoardLine[]; optionsState?: string; optionsReason?: string | null } | null;
+}
 interface CalResp { events?: Array<{ date: string; type: string; label: string }>; warnings?: string[] }
 interface CollarResp { current?: CollarIn }
 
@@ -57,20 +69,31 @@ export default function Outlook({ active = true }: { active?: boolean }) {
   const events: OutlookEvent[] = useMemo(() => (cal.data?.events ?? []).map((e) => ({ date: e.date, label: e.label, type: e.type })), [cal.data]);
   const col = useMemo(() => collarLevels(collar.data?.current), [collar.data]);
 
+  // Bar levels from the board's list merged without option landmarks; option-map levels only while the board says its map is current.
+  const cases = board.data?.cases && board.data.cases.symbol === SYMBOL ? board.data.cases : null;
+  const fromBoard = useMemo(
+    () => (spx ? boardOutlookLevels({ all: spx.levels, withoutOptions: cases?.levelsWithoutOptions ?? null, optionsState: cases?.optionsState ?? null, optionsReason: cases?.optionsReason ?? null }) : { levels: [], optionsNote: null }),
+    [spx, cases],
+  );
   const levels = useMemo(() => {
-    const ins: OutlookLevelIn[] = [];
-    for (const l of spx?.levels ?? []) ins.push({ price: l.price, label: l.label, source: l.group === "options" ? "option map (level board)" : "level board" });
+    const ins: OutlookLevelIn[] = [...fromBoard.levels];
     for (const e of expiries.filter((x) => x.expiry >= today && x.maxPain != null && x.oi > 0).slice(0, 3)) ins.push({ price: e.maxPain!, label: `max pain, ${shortDate(e.expiry)} expiry`, source: "open interest" });
     ins.push(...col.levels);
     return rankLevels(ins, spot);
-  }, [spx, expiries, col, spot, today]);
+  }, [fromBoard, expiries, col, spot, today]);
   const windows = useMemo(() => outlookWindows(today, expiries, events, spot), [today, expiries, events, spot]);
   const chart = useMemo(() => outlookChart(today, spot, expiries, levels, events), [today, spot, expiries, levels, events]);
   const ahead = expiries.filter((e) => e.expiry >= today);
   const maxShare = ahead.reduce((m, e) => Math.max(m, e.oiShare ?? 0), 0);
   const noOi = ahead.length > 0 && ahead.every((e) => e.oiShare == null);
 
-  const auditState = audit.isError ? "unavailable" : !audit.data ? "loading" : audit.data.stale || audit.data.audit?.chainStale ? "stale" : "ok";
+  const auditState = audit.isError ? "unavailable" : !audit.data ? "loading" : audit.data.stale || audit.data.chainStale ? "stale" : "ok";
+  const oi = audit.data?.audit?.oiState ?? null;
+  const dteRead = audit.data?.audit?.dteRead ?? null;
+  // Labels pushed apart so one does not print on another (about one line of text in a 300 px plot).
+  const labelY = useMemo(() => (chart ? spreadLabels(chart.levels.map((l) => l.y), 0.055) : []), [chart]);
+  // The page's one-line answer, and whether the reads behind it have settled (data or a failed request).
+  const settled = (!!audit.data || audit.isError) && (!!board.data || board.isError);
 
   return (
     <div className="space-y-4" data-testid="outlook">
@@ -82,9 +105,9 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               Everything the terminal has mapped between the price and the last option expiry it reads, on one page: levels with their distance, each expiry's share of open interest, the range option prices imply, and what is scheduled. Nothing here is a forecast.
             </p>
           </div>
-          <DataStateChip state={auditState} reason={audit.data?.staleReason ?? null} asOf={audit.data?.audit?.chainAsOfMs ?? audit.data?.asOf ?? null} stale={audit.data?.audit?.chainStale ?? null} source="option chain" testId="outlook-chain-state" />
+          <DataStateChip state={auditState} reason={audit.data?.staleReason ?? null} asOf={audit.data?.chainAsOfMs ?? audit.data?.asOf ?? null} stale={audit.data?.chainStale ?? null} lastSession={audit.data?.chainLastSession ?? null} source="option chain" testId="outlook-chain-state" />
         </div>
-        <div className="mt-2 font-mono text-sm" data-testid="outlook-spot">
+        <div className="mt-2 font-mono text-sm" data-testid="outlook-spot" data-answer-tab="outlook" data-ready={settled ? "1" : "0"}>
           {spot != null ? <>SPX {px(spot)} <span className="text-xs text-muted-foreground">from {spotFrom}{spx && spx.quoteState !== "ok" ? `; ${spx.quoteReason ?? "the quote is not current"}` : ""}</span></> : <span className="text-xs text-amber-300">No SPX price in either read, so no distances or ranges are shown.</span>}
         </div>
       </div>
@@ -123,8 +146,8 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               </svg>
               {/* labels in ordinary text, so they stay readable at every width */}
               <span className="absolute left-1 -translate-y-1/2 rounded bg-background/80 px-1 font-mono text-[11px] text-foreground" style={{ top: `${chart.ySpot * 88}%` }}>now {px(spot!)}</span>
-              {chart.levels.map((l) => (
-                <span key={`t|${l.source}|${l.label}|${l.price}`} className={`absolute right-1 max-w-[62%] -translate-y-1/2 truncate rounded bg-background/80 px-1 font-mono text-[11px] ${SIDE_CLS[l.side]}`} style={{ top: `${l.y * 88}%` }}>
+              {chart.levels.map((l, i) => (
+                <span key={`t|${l.source}|${l.label}|${l.price}`} className={`absolute right-1 max-w-[62%] -translate-y-1/2 truncate rounded bg-background/80 px-1 font-mono text-[11px] ${SIDE_CLS[l.side]}`} style={{ top: `${(labelY[i] ?? l.y) * 88}%` }}>
                   {px(l.price)} {l.label}
                 </span>
               ))}
@@ -152,6 +175,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
           {board.isError && <p className="mb-2 text-[11px] text-amber-300">The level board could not be read (the request failed); its levels are missing from this list.</p>}
           {spx && spx.levelsState !== "ok" && spx.levelsReason && <p className="mb-2 text-[11px] text-amber-300">The board marks its levels {spx.levelsState}: {spx.levelsReason}</p>}
           {board.data?.sessionOpen === false && board.data.forSession && <p className="mb-2 text-[11px] text-muted-foreground">The board's levels are for the {board.data.forSession} session.</p>}
+          {fromBoard.optionsNote && <p className="mb-2 text-[11px] text-amber-300" data-testid="outlook-options-note">{fromBoard.optionsNote}</p>}
           {col.note && <p className="mb-2 text-[11px] text-muted-foreground" data-testid="outlook-collar-note">JPM collar: {col.note}</p>}
           {collar.isError && <p className="mb-2 text-[11px] text-amber-300">The collar could not be read (the request failed).</p>}
           {levels.length === 0 ? (
@@ -181,11 +205,13 @@ export default function Outlook({ active = true }: { active?: boolean }) {
           ) : (
             <>
               {noOi && <p className="mb-2 text-[11px] text-amber-300">This read of the chain carries no open interest (Schwab reports none at some hours), so shares and max pain are not shown.</p>}
+              {oi?.note && <p className="mb-2 text-[11px] text-amber-300" data-testid="outlook-oi-note">Open interest: {oi.note}</p>}
+              {dteRead != null && dteRead < 60 && <p className="mb-2 text-[11px] text-amber-300" data-testid="outlook-dte-note">Only the next {dteRead} days of expiries could be read this time (the longer read failed), so the page ends there and each share is of that shorter chain.</p>}
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[420px] text-xs">
                   <thead>
                     <tr className="text-left text-[11px] text-muted-foreground">
-                      <th className="pr-2 font-normal">expiry</th><th className="pr-2 font-normal">days</th><th className="pr-2 font-normal">share of open interest</th><th className="pr-2 font-normal">max pain</th><th className="font-normal">implied move</th>
+                      <th className="pr-2 font-normal">expiry</th><th className="pr-2 font-normal">days</th><th className="pr-2 font-normal">share of open interest (contracts)</th><th className="pr-2 font-normal">max pain</th><th className="font-normal">implied move</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -197,7 +223,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
                           {e.oiShare == null ? <span className="text-muted-foreground">n/a</span> : (
                             <span className="flex items-center gap-2">
                               <span className="inline-block h-2 rounded-sm bg-yellow-400/70" style={{ width: `${Math.max(2, (e.oiShare / (maxShare || 1)) * 70)}px` }} />
-                              <span className="font-mono tabular-nums">{pct(e.oiShare)}</span>
+                              <span className="font-mono tabular-nums" title={`${px(e.oi)} open contracts`}>{sharePct(e.oiShare)} <span className="text-muted-foreground">({px(e.oi)})</span></span>
                               {maxShare > 0 && e.oiShare === maxShare && <span className="text-[11px] text-yellow-300">largest</span>}
                             </span>
                           )}
@@ -210,7 +236,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
                 </table>
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                Share is of the open contracts in the chain that was read (about the next 60 days), not of all SPX options. Max pain is the strike where that expiry's options would pay holders least, from open interest and the strikes that were read{audit.data?.audit?.chainCoverage && !audit.data.audit.chainCoverage.complete ? " (the strike range read is not complete, so it can sit at the edge of what was read)" : ""}; it is not a target. Implied move is one standard deviation from at-the-money implied volatility: priced in, not a forecast.
+                Share is of the {px(ahead.reduce((n, e) => n + e.oi, 0))} open contracts in the expiries listed here (the next {dteRead ?? 60} days that were read), not of all SPX options. Max pain is the strike where that expiry's options would pay holders least, from open interest and the strikes that were read{audit.data?.audit?.chainCoverage && !audit.data.audit.chainCoverage.complete ? " (the strike range read is not complete, so it can sit at the edge of what was read)" : ""}; it is not a target. Implied move is one standard deviation from at-the-money implied volatility: priced in, not a forecast.
               </p>
             </>
           )}
