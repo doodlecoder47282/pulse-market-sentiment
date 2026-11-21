@@ -3081,3 +3081,14 @@ levels still work and are listed separately. Left as they are, on purpose: the t
 would add up to five Schwab requests to every app open, on the tab that loads first, into the startup burst),
 Seasonality research (an outside feed), the meme-token lookup (needs a token address), the position sizer
 (needs the user's own trade). Tests: tests/quant/auto-defaults.test.ts (9).
+
+**Whale panel read as someone new to options (2026-11-20).** First tab of the tab-by-tab pass. Found on the
+live Signals tab: the panel's labels (CONFLUX, NEW STRIKE, vol/OI, volSE, burn, the gate line "$2.5M • 15x •
+1-3DTE • AT_ASK") were explained nowhere, and every tracked SPX row repeated "index option: exchange fees not
+configured (set INDEX_OPTION_FEE_PER_CONTRACT); dollar P&L unavailable" (45 times in one group). Now: a closed
+"What the words on this panel mean" section at the top of the panel (shared/whaleWords.ts: the gate as a
+sentence built from the live gate settings, and one plain line per label; it says a whale is a contract, not a
+known trader, and that BULLISH/BEARISH name the contract type, not who traded or why); "volSE" reads "volume
+since flagged"; the index-fee note is said once per ticker group and each row keeps a short form. The fee
+itself is still not set: it differs by broker and only the owner can supply it, so 34 index positions stay
+out of the whale record. Tests: tests/quant/whale-words.test.ts (4).
