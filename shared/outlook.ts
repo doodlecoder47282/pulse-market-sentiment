@@ -246,8 +246,8 @@ export function collarLevels(c: CollarIn | null | undefined): { levels: OutlookL
   return { levels: out, note: null };
 }
 
-/** A level as the level board sends it. */
-export interface BoardLine { price: number; label: string; group?: string }
+/** A level as the level board sends it. A merged line's `key` is its members' keys joined by "+". */
+export interface BoardLine { key?: string; price: number; label: string; group?: string }
 export interface BoardLevelsIn {
   /** The board's full merged list for the ticker: bar levels and option-map landmarks, merged where they sit together. */
   all: BoardLine[] | null | undefined;
@@ -257,24 +257,28 @@ export interface BoardLevelsIn {
   optionsState?: string | null;
   optionsReason?: string | null;
 }
+/** Keys of the option-map landmarks on the board (shared/protocols.ts OPTION_LEVEL_KEYS). */
+export const LANDMARK_KEYS = ["pin", "wallAbove", "magnetBelow", "flip", "straddleHigh", "straddleLow"];
 
 /**
  * The board's levels for this page, with a true source on each. Bar levels come from the list merged without
- * landmarks, so none is hidden inside a landmark's line. Option-map levels are taken only while the board
- * says its option map is current; otherwise they are left out and the reason is returned to be shown. A
- * line that mixes a landmark with a bar level says so in its source instead of claiming one of the two.
+ * landmarks, so none is hidden inside a landmark's line. From the full list only lines that HOLD a landmark
+ * are taken, told by the line's member keys (not by comparing the two lists: a landmark can regroup the bars
+ * around it, so the same bar level sits in differently merged lines in the two lists). Those lines are taken
+ * only while the board says its option map is current; otherwise they are left out and the reason is
+ * returned to be shown. A line of landmarks only is "option map"; one that also holds bar levels says so.
  */
 export function boardOutlookLevels(i: BoardLevelsIn): { levels: OutlookLevelIn[]; optionsNote: string | null } {
-  const bars = (i.withoutOptions ?? []).filter((l) => l && l.group !== "options");
-  const out: OutlookLevelIn[] = bars.map((l) => ({ price: l.price, label: l.label, source: "level board" }));
-  const barKeys = new Set(bars.map((l) => `${l.price}|${l.label}`));
-  // What the full list has beyond the bar-only list: lines that are, or contain, an option-map landmark.
-  const withLandmark = i.withoutOptions == null ? [] : (i.all ?? []).filter((l) => l && !barKeys.has(`${l.price}|${l.label}`));
-  if (!withLandmark.length) return { levels: out, optionsNote: i.withoutOptions == null ? "The board sent no level list for this index, so its levels are not listed." : null };
+  if (i.withoutOptions == null) return { levels: [], optionsNote: "The board sent no level list for this index, so its levels are not listed." };
+  const isLandmark = (k: string) => LANDMARK_KEYS.includes(k);
+  const keysOf = (l: BoardLine) => (l.key ?? "").split("+").filter(Boolean);
+  const out: OutlookLevelIn[] = i.withoutOptions.filter((l) => l && !keysOf(l).some(isLandmark)).map((l) => ({ price: l.price, label: l.label, source: "level board" }));
+  const withLandmark = (i.all ?? []).filter((l) => l && keysOf(l).some(isLandmark));
+  if (!withLandmark.length) return { levels: out, optionsNote: null };
   if (i.optionsState !== "ok") {
     return { levels: out, optionsNote: `Option-map levels (walls, pin, flip, straddle range) are left out: the board's option map is ${i.optionsState ?? "not current"}${i.optionsReason ? ` (${i.optionsReason})` : ""}.` };
   }
-  for (const l of withLandmark) out.push({ price: l.price, label: l.label, source: l.label.includes(" + ") ? "option map, joined with a board level at the same price" : "option map" });
+  for (const l of withLandmark) out.push({ price: l.price, label: l.label, source: keysOf(l).every(isLandmark) ? "option map" : "option map, joined with board levels within a few points" });
   return { levels: out, optionsNote: null };
 }
 

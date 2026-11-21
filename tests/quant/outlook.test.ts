@@ -123,14 +123,14 @@ test("a share is never 0% for an expiry that has open interest", () => {
 
 test("board levels carry a true source, and option-map levels are left out when the board's map is not current", () => {
   const BARS: BoardLevel[] = [{ key: "pdh", label: "prior-day high", price: 7048.6, group: "prior day" }, { key: "pdl", label: "prior-day low", price: 6998.2, group: "prior day" }, { key: "pp", label: "pivot", price: 7020, group: "pivot" }];
-  const OPTS: BoardLevel[] = [{ key: "wall", label: "wall above", price: 7050, group: "options" }, { key: "flip", label: "gamma flip", price: 7126, group: "options" }];
+  const OPTS: BoardLevel[] = [{ key: "wallAbove", label: "wall above", price: 7050, group: "options" }, { key: "flip", label: "gamma flip", price: 7126, group: "options" }];
   const all = mergeLevels([...BARS, ...OPTS], 7018), without = mergeLevels(BARS, 7018);
   const ok = boardOutlookLevels({ all, withoutOptions: without, optionsState: "ok" });
   assert.equal(ok.optionsNote, null);
   const src = (label: RegExp) => ok.levels.filter((l) => label.test(l.label)).map((l) => l.source);
   assert.deepEqual(src(/^prior-day high$/), ["level board"], "the bar level is listed by itself, not hidden in the wall's line");
   assert.deepEqual(src(/^gamma flip$/), ["option map"]);
-  assert.deepEqual(src(/wall above.*prior-day high|prior-day high.*wall above/), ["option map, joined with a board level at the same price"]);
+  assert.deepEqual(src(/wall above.*prior-day high|prior-day high.*wall above/), ["option map, joined with board levels within a few points"]);
   // The board's option map is stale: its levels are not listed as if current, and the reason is given.
   const stale = boardOutlookLevels({ all, withoutOptions: without, optionsState: "stale", optionsReason: "the chain is the last session's" });
   assert.deepEqual(stale.levels.map((l) => l.source), ["level board", "level board", "level board"]);
@@ -139,6 +139,17 @@ test("board levels carry a true source, and option-map levels are left out when 
   // No option-free list for this index: nothing is guessed from the mixed list.
   const none = boardOutlookLevels({ all, withoutOptions: null, optionsState: "ok" });
   assert.deepEqual([none.levels.length, none.optionsNote], [0, "The board sent no level list for this index, so its levels are not listed."]);
+  // A landmark can REGROUP the bars around it: bars-only merges "prior-day high + R1"; with a wall just above,
+  // the wall takes the high and R1 is left alone. R1 is a pivot whichever list it is read from.
+  const B2: BoardLevel[] = [{ key: "pdh", label: "prior-day high", price: 6700, group: "prior day" }, { key: "r1", label: "pivot R1", price: 6697, group: "pivot" }];
+  const all2 = mergeLevels([...B2, { key: "wallAbove", label: "wall above", price: 6703, group: "options" }], 6700), without2 = mergeLevels(B2, 6700);
+  assert.equal(without2.length, 1, "the two bars are one line without the wall");
+  assert.ok(all2.some((l) => l.key === "r1"), "and R1 stands alone once the wall takes the high");
+  const re = boardOutlookLevels({ all: all2, withoutOptions: without2, optionsState: "ok" });
+  assert.deepEqual(re.levels.filter((l) => /R1/.test(l.label)).map((l) => l.source), ["level board"], "R1 is listed once, as a board level, never as an option-map level");
+  assert.deepEqual(re.levels.filter((l) => /wall above/.test(l.label)).map((l) => l.source), ["option map, joined with board levels within a few points"]);
+  assert.equal(re.levels.length, 2);
+  assert.ok(!re.levels.some((l) => /at the same price/.test(l.source)));
   // A board with bars only and no landmarks: no note.
   assert.deepEqual(boardOutlookLevels({ all: without, withoutOptions: without, optionsState: "unavailable" }).optionsNote, null);
 });
