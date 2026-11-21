@@ -468,7 +468,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   if (sessionFrac <= 0) driverNotes.push(`the regular session is over: the late-session hand-set weight toward a chop read is applied.`);
   else if (sessionFrac < 0.25) driverNotes.push(`last quarter of the regular session (${Math.round(sessionFrac * sessionLengthAt(nowMs))} minutes to the close): a hand-set weight toward a chop read.`);
   else if (sessionFrac >= 1) driverNotes.push(`the regular session has not opened: the early-session hand-set weight toward a trend read is applied.`);
-  else if (sessionFrac > 0.75) driverNotes.push(`first quarter of the regular session (${Math.round((1 - sessionFrac) * 390)} minutes since 09:30 ET): a hand-set weight toward a trend read.`);
+  else if (sessionFrac > 0.75) driverNotes.push(`first quarter of the regular session (${Math.round((1 - sessionFrac) * sessionLengthAt(nowMs))} minutes since 09:30 ET): a hand-set weight toward a trend read.`);
   if (flipRate > 0.3) driverNotes.push(`the regime read changed ${flipRate.toFixed(2)} times per minute over the recent samples: weighs toward a neutral read.`);
 
   // Gamma unknown, or an input missing: no bucket applies, so no candidates,
