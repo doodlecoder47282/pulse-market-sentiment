@@ -142,7 +142,7 @@ export function impliedClose(spot: number, quotes: StrikeQuote[], bucket: number
   const raw = lowTail + highTail + inner.reduce((s, b) => s + b.p, 0);
   if (!(raw > 0)) return { ...base, state: "unavailable", reason: "zero total mass from the mids", diagnostics: { ...base.diagnostics, strikes: n, clipped }, forward: r2(forward) };
   if (Math.abs(1 - raw) > MAX_RENORMALISED) {
-    return { ...base, state: "unavailable", reason: `the mids' masses sum to ${raw.toFixed(3)}, not 1: ${Math.round(Math.abs(1 - raw) * 100)}% had to be renormalised (limit ${Math.round(MAX_RENORMALISED * 100)}%); not one consistent distribution`, diagnostics: { ...base.diagnostics, strikes: n, clipped, renormalised: r4(Math.abs(1 - raw)) }, forward: r2(forward) };
+    return { ...base, state: "unavailable", reason: `the option prices do not fit together as one set of odds for the close: read strike by strike they add up to ${Math.round(raw * 100)}% instead of 100%, and this read accepts at most ${Math.round(MAX_RENORMALISED * 100)}% either way`, diagnostics: { ...base.diagnostics, strikes: n, clipped, renormalised: r4(Math.abs(1 - raw)) }, forward: r2(forward) };
   }
   const scale = 1 / raw;
   // Exact (unrounded) masses for the moments; the published buckets are rounded.

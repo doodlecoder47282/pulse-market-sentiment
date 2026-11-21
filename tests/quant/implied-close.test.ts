@@ -124,7 +124,7 @@ test("mid-tick noise: nickel quantisation reads as about 1% distance; jittered m
   let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2 ** 31; return seed / 2 ** 31; };
   const jitter = impliedClose(S, grid(S, w, 200).map((K) => { const b = bsF(S, K, sT); const j = (rnd() - 0.5) * 0.2; return { strike: K, callMid: q(b.callMid + j), putMid: q(b.putMid + j) }; }), w);
   assert.equal(jitter.state, "unavailable");
-  assert.match(String(jitter.reason), /renormalised \(limit 5%\)|butterflies negative/);
+  assert.match(String(jitter.reason), /instead of 100%, and this read accepts at most 5% either way|butterflies negative/);
 });
 
 test("skew: a smile with higher IV below recovers a median above the forward (longer lower tail), said in words", () => {

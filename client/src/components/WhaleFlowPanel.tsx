@@ -165,6 +165,9 @@ interface ClosingPrint {
 // Tradable-price read from the server (whaleScoreboard.ts): bought at the
 // logged ask, sold at the bid, $0.65 per contract per side. netReturn is a
 // FRACTION. Terminal = final; active = what selling at the current bid nets.
+/** Rows a tracked group shows when opened, before "show all". */
+const TRACKED_ROWS_SHOWN = 8;
+
 interface FollowScore {
   basis: string;
   netReturn: number | null;
@@ -441,6 +444,7 @@ function TrackedTickerGroup({
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [showAll, setShowAll] = useState(false);
   const hotCount = positions.filter((p) => freshnessTier(p) === "HOT").length;
   const soldCount = positions.filter((p) => freshnessTier(p) === "SOLD").length;
   const bull = positions.filter((p) => p.side === "BULLISH").length;
@@ -483,7 +487,13 @@ function TrackedTickerGroup({
           {positions.some((p) => isIndexFeeReason(p.score?.reason)) && (
             <div className="rounded border border-border/40 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground" data-testid={`tracked-fee-note-${ticker}`}>{INDEX_FEE_NOTE}</div>
           )}
-          {positions.map((p) => <TrackingRow key={p.occ} pos={p} />)}
+          {/* A long group opens to its first rows; the rest are one tap away. Nothing is dropped, and the count is said. */}
+          {(showAll ? positions : positions.slice(0, TRACKED_ROWS_SHOWN)).map((p) => <TrackingRow key={p.occ} pos={p} />)}
+          {positions.length > TRACKED_ROWS_SHOWN && (
+            <button type="button" onClick={() => setShowAll((v) => !v)} className="min-h-[44px] w-full rounded border border-border/40 px-2 text-xs text-muted-foreground hover:text-foreground lg:min-h-[32px]" data-testid={`tracked-show-all-${ticker}`}>
+              {showAll ? `show the first ${TRACKED_ROWS_SHOWN} only` : `showing ${TRACKED_ROWS_SHOWN} of ${positions.length}: show all`}
+            </button>
+          )}
         </div>
       )}
     </div>
