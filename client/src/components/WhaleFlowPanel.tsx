@@ -6,7 +6,7 @@ import EdgeInfo from "@/components/EdgeInfo";
 import PlainRead from "@/components/PlainRead";
 import { readWhalePerformance } from "@shared/plainReads";
 import { daySpreadAnswer, type DaySpread } from "@shared/whaleDays";
-import { whaleWords, INDEX_FEE_NOTE, INDEX_FEE_SHORT, gateSentence, isIndexFeeReason } from "@shared/whaleWords";
+import { whaleWords, INDEX_FEE_NOTE, INDEX_FEE_GLOSSARY, INDEX_FEE_SHORT, gateSentence, isIndexFeeReason } from "@shared/whaleWords";
 import { useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -1067,7 +1067,7 @@ export default function WhaleFlowPanel() {
         <details className="rounded border border-border/40 px-3 py-2 text-xs" data-testid="whale-words">
           <summary className="flex min-h-[44px] cursor-pointer select-none items-center font-semibold text-foreground lg:min-h-[32px]">What the words on this panel mean</summary>
           {cfg && <p className="mt-2 leading-relaxed text-muted-foreground" data-testid="whale-gate-sentence">{gateSentence(cfg)}</p>}
-          <p className="mt-2 leading-relaxed text-muted-foreground">{INDEX_FEE_NOTE}</p>
+          <p className="mt-2 leading-relaxed text-muted-foreground">{INDEX_FEE_GLOSSARY}</p>
           <dl className="mt-2 space-y-1.5 leading-relaxed">
             {whaleWords(cfg?.requiredTag).map((w) => (
               <div key={w.term}><dt className="inline font-mono text-foreground">{w.term}</dt><dd className="inline text-muted-foreground">: {w.meaning}</dd></div>

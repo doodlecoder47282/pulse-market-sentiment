@@ -48,16 +48,16 @@ export function whaleWords(requiredTag: string = "AT_ASK"): WordEntry[] {
     { term: "vol/OI 44.2x", meaning: "today's volume is 44.2 times the open interest, the contracts open at the start of the day. It shows today's trading is large next to what was already open; it does not show whether trades opened or closed positions." },
     { term: "NEW STRIKE", meaning: "no contracts were open at that strike before today, so the ratio above cannot be computed." },
     // server/uoaScanner.ts: per-tier scans and floors; the list also shows clusters at half their threshold.
-    { term: "UOA cluster", meaning: "unusual options activity: the same contract qualified on several separate scans within a few hours, each with new volume worth at least a dollar floor set by the company's size. The list also shows clusters halfway to firing. These are scans of quotes, not individual trades." },
+    { term: "UOA cluster", meaning: "unusual options activity: the same contract qualified on several separate scans within a few hours: the first counting the day's volume so far, each later one the new volume since the previous scan, each worth at least a dollar floor set by the underlying's market-cap tier (index products use the top tier). The list also shows clusters halfway to firing. These are scans of quotes, not individual trades." },
     { term: "CONFLUX", meaning: "the same contract is in both the whale list and the UOA cluster list on this screen. Two lists agree it was busy; that is all it says." },
     // server/whaleFollowThrough.ts: CLOSED is the mark at or under $0.05 or 5% of entry, "not a voluntary exit".
     { term: "tracking", meaning: "after a contract is flagged, its price is followed until it expires or falls to about zero (shown as CLOSED; nobody sold it), so the record above can be counted." },
-    { term: "entry / mark / mid", meaning: "entry is the midpoint between bid and ask when it was first flagged; mark is Schwab's current mark, normally that midpoint. A mid-to-mid change leaves out the spread and fees a real trade would pay." },
+    { term: "entry / mark / mid", meaning: "entry is the midpoint between bid and ask when it was first flagged (the day's average traded price when no quote was logged); mark is Schwab's current mark, normally that midpoint; mid on a whale row is Schwab's mark, or the last trade when it sits inside the spread, otherwise the midpoint. A mid-to-mid change leaves out the spread and fees a real trade would pay." },
     { term: "peak", meaning: "the best mark-against-entry change seen on any scan since it was flagged." },
     // whaleFollowThrough.ts: session volume now minus session volume at the flag; Schwab's volume restarts each session.
     { term: "volume since flagged", meaning: "contracts traded in it after the flag, counted on the day it was flagged only. Schwab's day volume restarts each session, so on later days this reads low or zero." },
     // server/whaleScoreboard.ts.
-    { term: "W / L, WIN%", meaning: "on the Whale row: closed and expired positions with a result above zero, and those at or below zero, bought at the ask when flagged and sold at the bid at the end, after per-contract fees. Positions without both quotes are left out and counted. Other rows are mid to mid without fees and say so." },
+    { term: "W / L, WIN%", meaning: "on the Whale row: closed and expired positions with a result above zero, and those at or below zero, bought at the ask when flagged and sold at the bid at the end, after per-contract fees. Positions without both quotes, and index options while no index fee is set, are left out and counted. Other rows are mid to mid without fees and say so." },
     { term: "burn", meaning: "on the Whale row: a position whose best bid while tracked would have returned at least 50% after costs, and that still ended at or below zero. Other rows use the mid." },
   ];
 }
@@ -72,3 +72,7 @@ export const INDEX_FEE_NOTE =
 export const isIndexFeeReason = (reason: string | null | undefined) => /fees not configured/i.test(reason ?? "");
 /** The short form shown on a row in place of the server's configuration sentence. */
 export const INDEX_FEE_SHORT = "after costs: not computed (index fee not set)";
+
+/** The same fact for the glossary, where the page cannot know whether the fee is set: said as a condition. */
+export const INDEX_FEE_GLOSSARY =
+  "Index options: when the all-in fee per contract per side for index options (Schwab adds exchange fees for these) is not set on this server, the result after costs is not computed for them; the mid-to-mid change is shown, which leaves out the spread and fees.";

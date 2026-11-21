@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { whaleWords, directionSentence, INDEX_FEE_NOTE, INDEX_FEE_SHORT, gateSentence, isIndexFeeReason } from "../../shared/whaleWords";
+import { whaleWords, directionSentence, INDEX_FEE_NOTE, INDEX_FEE_GLOSSARY, INDEX_FEE_SHORT, gateSentence, isIndexFeeReason } from "../../shared/whaleWords";
 
 const src = (p: string) => readFileSync(p, "utf8");
 const GATE = { premiumFloor: 2_500_000, volOiRatio: 15, minDte: 1, maxDte: 3, requiredTag: "AT_ASK", deltaMin: 0.2, deltaMax: 0.8 };
@@ -38,6 +38,11 @@ test("every label a new reader meets is explained, and the claims the first draf
   assert.match(by("premium"), /an estimate of today's dollars traded/);
   assert.match(by("vol/OI"), /does not show whether trades opened or closed positions/);
   assert.match(by("UOA"), /scans of quotes, not individual trades/);
+  assert.match(by("UOA"), /the first counting the day's volume so far, each later one the new volume since the previous scan/);
+  assert.match(by("UOA"), /market-cap tier \(index products use the top tier\)/);
+  assert.match(by("entry / mark / mid"), /\(the day's average traded price when no quote was logged\)/);
+  assert.match(by("entry / mark / mid"), /mid on a whale row is Schwab's mark, or the last trade when it sits inside the spread, otherwise the midpoint/);
+  assert.match(by("W / L"), /index options while no index fee is set, are left out and counted/);
   assert.match(by("CONFLUX"), /in both the whale list and the UOA cluster list/);
   assert.match(by("tracking"), /nobody sold it/);
   assert.match(by("volume since flagged"), /on the day it was flagged only/);
@@ -61,6 +66,11 @@ test("the fee note matches the server's reason and what the server says about th
   assert.equal(isIndexFeeReason("bid quote missing"), false);
   assert.match(INDEX_FEE_NOTE, /per contract per side for index options \(Schwab adds exchange fees for these\) is not set on this server/);
   assert.doesNotMatch(INDEX_FEE_NOTE, /differs by broker/);
+  // In the glossary the page cannot know whether the fee is set, so it is said as a condition; the flat statement shows only beside rows that carry the server's reason.
+  assert.match(INDEX_FEE_GLOSSARY, /^Index options: when the all-in fee .* is not set on this server, the result after costs is not computed for them/);
+  const ui = src("client/src/components/WhaleFlowPanel.tsx");
+  assert.equal((ui.match(/\{INDEX_FEE_NOTE\}/g) ?? []).length, 1, "the flat statement only in the tracked group that has the reason");
+  assert.match(ui, /\{INDEX_FEE_GLOSSARY\}/);
 });
 
 test("wiring: the fee note once per tracked group, the short form on open and closed rows, the glossary on the panel", () => {
