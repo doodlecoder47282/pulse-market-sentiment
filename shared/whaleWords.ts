@@ -54,8 +54,8 @@ export function whaleWords(requiredTag: string = "AT_ASK"): WordEntry[] {
     { term: "tracking", meaning: "after a contract is flagged, its price is followed until it expires or falls to about zero (shown as CLOSED; nobody sold it), so the record above can be counted." },
     { term: "entry / mark / mid", meaning: "entry is the midpoint between bid and ask when it was first flagged (the day's average traded price when no quote was logged); mark is Schwab's current mark, normally that midpoint; mid on a whale row is Schwab's mark, or the last trade when it sits inside the spread, otherwise the midpoint. A mid-to-mid change leaves out the spread and fees a real trade would pay." },
     { term: "peak", meaning: "the best mark-against-entry change seen on any scan since it was flagged." },
-    // whaleFollowThrough.ts: session volume now minus session volume at the flag; Schwab's volume restarts each session.
-    { term: "volume since flagged", meaning: "contracts traded in it after the flag, counted on the day it was flagged only. Schwab's day volume restarts each session, so on later days this reads low or zero." },
+    // shared/volumeSince.ts: summed across sessions (Schwab's volume restarts each session); a floor.
+    { term: "volume since flagged", meaning: "contracts traded in it since the flag, added up across the sessions the scanner read. Usually a floor: a session it never read is not counted." },
     // server/whaleScoreboard.ts.
     { term: "W / L, WIN%", meaning: "on the Whale row: closed and expired positions with a result above zero, and those at or below zero, bought at the ask when flagged and sold at the bid at the end, after per-contract fees. Positions without both quotes, and index options while no index fee is set, are left out and counted. Other rows are mid to mid without fees and say so." },
     { term: "burn", meaning: "on the Whale row: a position whose best bid while tracked would have returned at least 50% after costs, and that still ended at or below zero. Other rows use the mid." },

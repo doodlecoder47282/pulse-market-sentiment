@@ -419,7 +419,7 @@ function TrackingRow({ pos }: { pos: FollowPosition }) {
         ) : (
           <span className="text-muted-foreground" data-testid={`tracking-net-${pos.occ}`}>{isIndexFeeReason(pos.score?.reason) ? INDEX_FEE_SHORT : pos.score?.reason ?? "bid-exit n/a"}</span>
         )}
-        <span className="text-muted-foreground" data-testid={`tracking-volse-${pos.occ}`} title="counted on the day it was flagged only; Schwab's day volume restarts each session">volume since flagged {pos.live.volumeSinceEntry.toLocaleString()}</span>
+        <span className="text-muted-foreground" data-testid={`tracking-volse-${pos.occ}`} title="added up across the sessions the scanner read since the flag">volume since flagged {pos.live.volumeSinceEntry.toLocaleString()}</span>
       </div>
     </div>
   );

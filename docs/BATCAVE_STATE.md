@@ -3099,3 +3099,23 @@ reads low or zero (Schwab's day volume restarts); the label now says so. "volSE"
 flagged"; the index-fee note is said once per tracked group and rows (open and closed) keep a short form. The
 fee itself is still not set (Schwab adds exchange fees for index options; no default is assumed), so 34 index
 positions stay out of the whale record. Tests: tests/quant/whale-words.test.ts (7).
+
+**Volume since a flag is carried across sessions (2026-11-20).** Found while fact-checking the whale glossary:
+volumeSinceEntry was "session volume now minus session volume at the flag", and Schwab's option volume
+restarts each session, so from the day after the flag it read low or zero for a contract that kept trading
+(most positions live two or three days). shared/volumeSince.ts (nextVolumeState) keeps a running sum, keyed
+on the TIME of each read: an increase within a session is added; a lower reading in the same session adds
+nothing and keeps the higher baseline; the first read on a later ET date DURING that day's regular session
+starts a new session and all of its volume is new, whether below or above the previous total (deciding "new
+session" by "lower than before" lost a whole session's total when the first read came late); a read on a
+later date outside the regular session (before the open, weekend, holiday) is ignored; a read stamped on an
+earlier date is ignored; and when the contract's own last trade (tradeTimeMs, the newer of the chain's and
+the stream's) is on an earlier date than the read, nothing has traded in it today, so the reading is not
+counted and a new session starts at zero (this holds whether or not Schwab zeroes volume before the first
+trade of the day, which is unverified). The live state carries volumeDay (rows from older builds take it from
+lastUpdateAt). Usually a floor: a session never read is not counted. NOT verified against the live feed and
+not a floor: if a source still serves the previous session's total, stamped in today's session, after
+today's own count was read, with no last-trade time or one from today, it is counted again (a test pins this
+as a known limit). Existing positions
+continue from their stored count. lastVolumeBumpAt follows the same count. Tests:
+tests/quant/volume-since.test.ts (9).

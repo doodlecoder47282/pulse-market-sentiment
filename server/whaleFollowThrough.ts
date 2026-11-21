@@ -35,6 +35,7 @@ import { streamOptionOverlay, syncStreamOptions } from "./streamStore";
 import { buildScoreboardRow, scoreAskToBid, SCOREBOARD_BASIS_NOTE, type ScoreboardRow, type ScoredTrade } from "./whaleScoreboard";
 import { feeForProduct } from "./feeConfig";
 import { daySpread, type DaySpread } from "../shared/whaleDays";
+import { nextVolumeState } from "../shared/volumeSince";
 import { etDate } from "../shared/exchangeCalendar";
 
 // Persistence wrappers — fail-soft, never let DB hiccups break tracking.
@@ -84,8 +85,11 @@ export interface FollowPosition {
     peakMark: number;
     peakPctChange: number;
     troughMark: number;
-    volume: number;        // latest session volume
+    volume: number;        // highest session volume read in the session `volumeDay`
+    /** Contracts traded since the flag, summed across sessions (shared/volumeSince.ts): a floor. */
     volumeSinceEntry: number;
+    /** ET date of the session `volume` belongs to (absent on rows from older builds: taken from lastUpdateAt). */
+    volumeDay?: string;
     lastUpdateAt: number;
     /** Consecutive ticks where mark has been falling */
     fadeStreak: number;
@@ -268,6 +272,8 @@ export async function updateAll(): Promise<{
           ask: sq.ask ?? restLive.ask,
           mark: sq.mark ?? restLive.mark,
           volume: sq.totalVolume ?? restLive.volume,
+          // The newer of the two last-trade times: the volume count asks whether the contract has traded today.
+          tradeTimeMs: Math.max(sq.tradeTimeMs ?? 0, restLive.tradeTimeMs ?? 0) || null,
         } : restLive;
         const quoteAt = sq ? (sq.quoteTimeMs ?? flow.asOf ?? now) : (flow.asOf ?? now);
         if (!live) {
@@ -352,9 +358,15 @@ function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number, quo
   const pctChange = p.entry.mark > 0 ? (newMark - p.entry.mark) / p.entry.mark : 0;
 
   // Volume tracking (Schwab volume is session cumulative — bump if it grew)
+  // Schwab's volume is the session's running total and restarts each session, so "now minus at the flag" is
+  // right only on the flag day. The count is carried across sessions instead.
   const prevVolume = p.live.volume;
-  const newVolume = live.volume;
-  const volBumped = newVolume > prevVolume;
+  const vol = nextVolumeState(
+    { volume: prevVolume, since: p.live.volumeSinceEntry ?? 0, day: p.live.volumeDay ?? etDate(p.live.lastUpdateAt) },
+    live.volume, quoteAt, live.tradeTimeMs ?? null,
+  );
+  const newVolume = vol.volume;
+  const volBumped = vol.since > (p.live.volumeSinceEntry ?? 0);
 
   // Streaks
   const fadeStreak = newMark < prevMark ? p.live.fadeStreak + 1 : 0;
@@ -370,7 +382,8 @@ function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number, quo
     peakPctChange: Math.max(p.live.peakPctChange, pctChange),
     troughMark: Math.min(p.live.troughMark, newMark),
     volume: newVolume,
-    volumeSinceEntry: Math.max(0, newVolume - p.entry.volume),
+    volumeSinceEntry: vol.since,
+    volumeDay: vol.day,
     lastUpdateAt: now,
     fadeStreak,
     drawdownStreak,

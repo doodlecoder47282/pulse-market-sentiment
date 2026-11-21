@@ -45,7 +45,7 @@ test("every label a new reader meets is explained, and the claims the first draf
   assert.match(by("W / L"), /index options while no index fee is set, are left out and counted/);
   assert.match(by("CONFLUX"), /in both the whale list and the UOA cluster list/);
   assert.match(by("tracking"), /nobody sold it/);
-  assert.match(by("volume since flagged"), /on the day it was flagged only/);
+  assert.match(by("volume since flagged"), /added up across the sessions the scanner read\. Usually a floor/);
   assert.match(by("W / L"), /^on the Whale row: .* Other rows are mid to mid without fees and say so\.$/);
   assert.match(by("burn"), /best bid while tracked .* Other rows use the mid\.$/);
   assert.ok(words.every((w) => w.meaning.length > 20 && /[.)]$/.test(w.meaning)));
