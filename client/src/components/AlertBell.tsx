@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Bell } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { announcement, laterSeen, newLoud, seenOf, unreadCount, validSeen, type AlertItem, type AlertSeen } from "@shared/alerts";
+import { alertPanelPlace, announcement, laterSeen, newLoud, seenOf, unreadCount, validSeen, type AlertItem, type AlertSeen } from "@shared/alerts";
 
 interface AlertsPayload {
   asOfMs: number; items: AlertItem[];
@@ -31,7 +31,7 @@ export default function AlertBell() {
   const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState<AlertSeen>(readSeen);
   const [perm, setPerm] = useState<string>(permission);
-  const [place, setPlace] = useState<{ top: number; right: number } | null>(null);
+  const [place, setPlace] = useState<{ top: number; right: number; width: number } | null>(null);
   // The mark of the previous read (it only moves forward) and when each level was last announced.
   const prev = useRef<AlertSeen | null>(null);
   const said = useRef<Record<string, number>>({});
@@ -67,7 +67,7 @@ export default function AlertBell() {
   // Close on a click outside or Escape; keep the panel under the bell when the window changes.
   useEffect(() => {
     if (!open) return;
-    const put = () => { const r = btn.current?.getBoundingClientRect(); if (r) setPlace({ top: Math.round(r.bottom + 8), right: Math.max(12, Math.round(window.innerWidth - r.right)) }); };
+    const put = () => { const r = btn.current?.getBoundingClientRect(); if (r) setPlace(alertPanelPlace(r, window.innerWidth)); };
     put();
     const away = (e: MouseEvent) => { const t = e.target as Node; if (!btn.current?.contains(t) && !panel.current?.contains(t)) setOpen(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); btn.current?.focus(); } };
@@ -121,8 +121,8 @@ export default function AlertBell() {
       {open && place && createPortal(
         <div
           ref={panel} id="alerts-panel" role="region" aria-label="Alerts" data-testid="alerts-panel"
-          style={{ top: place.top, right: place.right }}
-          className="fixed z-[60] w-[380px] max-w-[calc(100vw-24px)] rounded-md border border-border bg-background p-3 shadow-xl"
+          style={{ top: place.top, right: place.right, width: place.width }}
+          className="fixed z-[60] rounded-md border border-border bg-background p-3 shadow-xl"
         >
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-foreground">Alerts</span>

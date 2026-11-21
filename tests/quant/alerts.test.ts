@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildAlerts, unreadCount, newLoud, announcement, seenOf, laterSeen, validSeen, ALERT_QUIET_MS, type AlertArm, type AlertHit } from "../../shared/alerts";
+import { buildAlerts, unreadCount, newLoud, announcement, seenOf, laterSeen, validSeen, alertPanelPlace, ALERT_QUIET_MS, type AlertArm, type AlertHit } from "../../shared/alerts";
 import { joinHits, type HitRow } from "../../shared/protocols";
 import { etWallToEpochMs } from "../../shared/exchangeCalendar";
 
@@ -99,6 +99,20 @@ test("an item that leaves the list and comes back is not new; a mark from a rese
   assert.deepEqual(validSeen({ arm: 900, hit: 5000 }, []), { arm: 900, hit: 5000 }, "an empty read proves nothing");
 });
 
+test("the panel stays on the screen at every width", () => {
+  // On a phone the header's last control is settings (44 px) with an 8 px gap and a 12 px page margin, so the bell's right edge is 64 px in.
+  for (const vw of [320, 375, 393, 430, 443, 640]) {
+    const p = alertPanelPlace({ bottom: 56, right: vw - 64 }, vw);
+    const left = vw - p.right - p.width;
+    assert.ok(left >= 12, `left edge ${left} at ${vw}`);
+    assert.ok(p.right >= 12 && p.width <= 380 && p.width <= vw - 24, `${vw}: ${JSON.stringify(p)}`);
+  }
+  assert.deepEqual(alertPanelPlace({ bottom: 56, right: 311 }, 375), { top: 64, right: 12, width: 351 }, "a phone: the full width between the margins");
+  assert.deepEqual(alertPanelPlace({ bottom: 40, right: 1300 }, 1440), { top: 48, right: 140, width: 380 }, "desktop: right edge on the bell");
+  assert.deepEqual(alertPanelPlace({ bottom: 40, right: 1436 }, 1440), { top: 48, right: 12, width: 380 }, "a bell at the very edge keeps the margin");
+  assert.equal(alertPanelPlace({ bottom: 40, right: 100 }, 1440).right, 1048, "a bell far to the left: the panel moves right until it fits");
+});
+
 test("wiring: the route builds from the desk's own log, the bell is in the header, and a failed read is not shown as no alerts", () => {
   const routes = readFileSync("server/routes.ts", "utf8");
   assert.match(routes, /app\.get\("\/api\/alerts"/);
@@ -112,7 +126,7 @@ test("wiring: the route builds from the desk's own log, the bell is in the heade
   assert.match(bell, /Not read, so this is not a list of no alerts\./);
   assert.match(bell, /prev\.current = prev\.current \? laterSeen\(prev\.current, now\) : now;/, "the mark only moves forward");
   assert.match(bell, /createPortal\(/, "the panel is drawn outside the header's layer");
-  assert.match(bell, /max-w-\[calc\(100vw-24px\)\]/, "and never wider than the screen");
+  assert.match(bell, /setPlace\(alertPanelPlace\(r, window\.innerWidth\)\)/, "and placed so it stays on the screen");
   assert.match(bell, /the level watch is not running, so nothing is being logged/);
   const dash = readFileSync("client/src/pages/dashboard.tsx", "utf8");
   assert.match(dash, /className="hidden sm:flex shrink-0[^"]*"\s+data-testid="link-method"/, "the method link gives way on phones so every header control keeps its full tap size");

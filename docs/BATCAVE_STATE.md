@@ -3048,7 +3048,7 @@ not announced (they repeat the index). WHAT IS NEW is decided by storage row ids
 newest crossing in a joined line: joinHits now carries lastId), never by a line's first time or "from before"
 mark, which move as the 300-row read window slides; one level is announced at most once per 30 minutes; the
 first read after opening announces nothing. The panel is drawn through a portal (outside the header's layer)
-and is never wider than the screen. To keep every header control at full tap size on phones, the "?" method
+and placed by alertPanelPlace so it stays on the screen at every width (it was 40 px off the left edge on phones). To keep every header control at full tap size on phones, the "?" method
 link is hidden below the sm width and linked from Settings on every size. States: failed read, not watching,
 last check failed, outside the session, are each said. Limits: alerts cover only what the level watch logs; a
 phone with the app closed gets nothing (no push service). Tests: tests/quant/alerts.test.ts (7).

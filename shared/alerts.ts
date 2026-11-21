@@ -118,3 +118,19 @@ export function announcement(fresh: AlertItem[]): { title: string; text: string 
   if (fresh.length === 1) return { title: fresh[0].title, text: fresh[0].text };
   return { title: `${fresh.length} new alerts`, text: fresh.slice(0, 3).map((f) => f.title).join(" · ") + (fresh.length > 3 ? ` · and ${fresh.length - 3} more` : "") };
 }
+
+/** Width of the alert panel and its margin from the screen edge, in pixels. */
+export const ALERT_PANEL_W = 380;
+export const ALERT_PANEL_GAP = 12;
+
+/**
+ * Where the panel goes: under the bell, its right edge on the bell's right edge, but never off the screen.
+ * The bell is not the last control in the header, so on a phone "right edge on the bell" pushed a panel as
+ * wide as the screen off the left side. Returns the fixed-position top and right and the width to draw.
+ */
+export function alertPanelPlace(btn: { bottom: number; right: number }, viewportW: number): { top: number; right: number; width: number } {
+  const width = Math.max(0, Math.min(ALERT_PANEL_W, viewportW - 2 * ALERT_PANEL_GAP));
+  const wanted = Math.max(ALERT_PANEL_GAP, viewportW - btn.right);
+  const right = Math.max(ALERT_PANEL_GAP, Math.min(wanted, viewportW - width - ALERT_PANEL_GAP));
+  return { top: Math.round(btn.bottom + 8), right: Math.round(right), width: Math.round(width) };
+}
