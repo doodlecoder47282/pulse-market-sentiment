@@ -89,7 +89,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * "what the prices add up to".
  */
 export function renormalisedReason(raw: number): string {
-  const off = Math.abs(1 - raw) * 100;
+  const off = Math.round(Math.abs(1 - raw) * 1000) / 10; // one decimal, so 9.9999 does not print as "10.0"
   const shown = off < 10 ? off.toFixed(1) : String(Math.round(off));
   return `the option prices are out of line with each other: making them into one distribution for the settle took a correction of ${shown}% of the total (readings below zero set to zero, or an end of the range cut to its bounds), and this read accepts at most ${Math.round(MAX_RENORMALISED * 100)}%`;
 }
