@@ -3119,3 +3119,16 @@ today's own count was read, with no last-trade time or one from today, it is cou
 as a known limit). Existing positions
 continue from their stored count. lastVolumeBumpAt follows the same count. Tests:
 tests/quant/volume-since.test.ts (9).
+
+**Signals tab, two more plain-reading fixes (2026-11-20).** (1) The projected-path line read "options chain not
+readable: the mids' masses sum to 1.465, not 1: 47% had to be renormalised (limit 5%); not one consistent
+distribution". The rule is unchanged; the reason now reads "the option prices are out of line with each other:
+making them into one distribution for the settle took a correction of 47% of the total (readings below zero
+set to zero, or an end of the range cut to its bounds), and this read accepts at most 5%"
+(shared/impliedClose.ts renormalisedReason). A first rewording said the prices "add up to 147% instead of
+100%", which is false: unclipped, the strike-by-strike masses of any chain sum to exactly one, and the whole
+distance from one is what the clips did (a test pins the identity). (2) A tracked whale group opened to every
+row (45 SPX rows on the tab that loads first); it now opens to its first 8 (hot and newest first, as the
+group already sorts) with "showing 8 of 45 (3 sold rows are below): show all". Counts and the group average
+still use every position. Not capped: the fresh-whales groups and the closed archive (collapsed by default).
+Tests: tests/quant/signals-plain.test.ts (3).
