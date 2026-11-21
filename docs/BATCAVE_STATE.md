@@ -3099,3 +3099,14 @@ reads low or zero (Schwab's day volume restarts); the label now says so. "volSE"
 flagged"; the index-fee note is said once per tracked group and rows (open and closed) keep a short form. The
 fee itself is still not set (Schwab adds exchange fees for index options; no default is assumed), so 34 index
 positions stay out of the whale record. Tests: tests/quant/whale-words.test.ts (7).
+
+**Volume since a flag is carried across sessions (2026-11-20).** Found while fact-checking the whale glossary:
+volumeSinceEntry was "session volume now minus session volume at the flag", and Schwab's option volume
+restarts each session, so from the day after the flag it read low or zero for a contract that kept trading
+(most positions live two or three days). shared/volumeSince.ts (nextVolumeState) keeps a running sum: an
+increase within a session is added; a lower reading on a later date is a new session, all of whose volume is
+new; a lower reading in the same session (a correction or an older snapshot) adds nothing and keeps the
+baseline; a later date still showing the previous total is not treated as new. The live state carries
+volumeDay (rows from older builds take it from lastUpdateAt). It is a floor: a session never read is not
+counted. Existing positions continue from their stored count. lastVolumeBumpAt now follows the same count.
+Tests: tests/quant/volume-since.test.ts (6).
