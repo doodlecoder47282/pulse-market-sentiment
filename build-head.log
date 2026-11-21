@@ -1,0 +1,40 @@
+[2m../dist/public/[22m[2massets/[22m[36mMLProjectionPanel-DHZwvy6X.js    [39m[1m[2m 30.49 kB[22m[1m[22m[2m │ gzip:   9.90 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mLiveOdteTracker-Gj5YBto0.js      [39m[1m[2m 31.97 kB[22m[1m[22m[2m │ gzip:   8.53 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mWhaleFlowPanel-D1phR_K5.js       [39m[1m[2m 44.34 kB[22m[1m[22m[2m │ gzip:  10.45 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mHeatseeker-C0MRjrdG.js           [39m[1m[2m 47.97 kB[22m[1m[22m[2m │ gzip:  14.17 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mFlowPanel-CD87vwOC.js            [39m[1m[2m 49.79 kB[22m[1m[22m[2m │ gzip:  12.95 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-radix-B_S71Af1.js         [39m[1m[2m 99.97 kB[22m[1m[22m[2m │ gzip:  29.40 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mChartPanel-BEPI3pAq.js           [39m[1m[2m105.99 kB[22m[1m[22m[2m │ gzip:  27.58 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mRegimePanel-BlvGMFzP.js          [39m[1m[2m124.32 kB[22m[1m[22m[2m │ gzip:  29.66 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mCryptoPanel-LEp4jdrk.js          [39m[1m[2m129.82 kB[22m[1m[22m[2m │ gzip:  36.99 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mModelsPanel-hnL04M0Y.js          [39m[1m[2m131.56 kB[22m[1m[22m[2m │ gzip:  32.92 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-markdown-CbmQ1Ke2.js      [39m[1m[2m141.60 kB[22m[1m[22m[2m │ gzip:  41.66 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mTradeDesk-DDnfp-8h.js            [39m[1m[2m157.10 kB[22m[1m[22m[2m │ gzip:  38.94 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-charts-MZd6FOTH.js        [39m[1m[2m272.93 kB[22m[1m[22m[2m │ gzip:  62.77 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mindex-ZAUVysdO.js                [39m[1m[2m470.36 kB[22m[1m[22m[2m │ gzip: 130.99 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-three-D3dLVpBC.js         [39m[1m[2m493.34 kB[22m[1m[22m[2m │ gzip: 123.93 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-B89mKzOF.js               [39m[1m[33m653.60 kB[39m[22m[2m │ gzip: 210.95 kB[22m
+[33m
+(!) Some chunks are larger than 600 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 7.07s[39m
+building server...
+▲ [WARNING] Duplicate key "target" in object literal [duplicate-object-key]
+
+    tsconfig.json:11:4:
+      11 │     "target": "ES2022",
+         ╵     ~~~~~~~~
+
+  The original key "target" is here:
+
+    tsconfig.json:8:4:
+      8 │     "target": "ES2022",
+        ╵     ~~~~~~~~
+
+1 warning
+
+  dist/index.cjs  2.8mb ⚠️
+
+⚡ Done in 213ms
