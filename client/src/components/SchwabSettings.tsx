@@ -527,6 +527,10 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               Stock/index prices, option chains and derived market scores use simulated data in this preview. Crypto and news may come from separate public feeds and retain their own source and freshness limits. Nothing here is investment advice.
             </DialogDescription>
           </DialogHeader>
+          {/* The header's "?" is hidden on phones for room; the same page is linked here on every size. */}
+          <a href="#/method" className="inline-flex min-h-[32px] items-center text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" data-testid="settings-link-method">
+            Method and disclosures: what every number is and is not
+          </a>
           <BackgroundPicker />
           <div className="space-y-3 text-sm text-muted-foreground" data-testid="demo-settings">
             <p>The stock/options screens demonstrate calculations, not current market conditions. Passing the tests does not establish forecast accuracy or a trading edge.</p>
@@ -567,6 +571,10 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
 
         <div className="space-y-4">
           {/* Appearance: background style, saved on this device */}
+          {/* The header's "?" is hidden on phones for room; the same page is linked here on every size. */}
+          <a href="#/method" className="inline-flex min-h-[32px] items-center text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" data-testid="settings-link-method">
+            Method and disclosures: what every number is and is not
+          </a>
           <BackgroundPicker />
 
           {/* Connection status card */}

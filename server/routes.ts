@@ -3775,6 +3775,28 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.status(500).json({ error: "protocols_failed", message: e?.message ?? String(e) });
     }
   });
+  // ALERT FEED (shared/alerts.ts): the desk's own logs (rule arms, board levels crossed) as one newest-first list for the bell. Nothing to configure.
+  app.get("/api/alerts", async (_req, res) => {
+    try {
+      // The stored logs only: no rule evaluation and no market read, so polling the bell costs no Schwab request.
+      const { getLoggedEvents } = await import("./protocolEngine");
+      const { buildAlerts } = await import("../shared/alerts");
+      const log = getLoggedEvents();
+      const items = buildAlerts({
+        arms: log.recent.map((r) => ({ id: r.id, protocol: r.protocol, armedAt: r.armedAt, entry: r.entry, levelLabel: r.levelLabel, levelPrice: r.levelPrice, status: r.status })),
+        hits: log.hits,
+        names: log.names,
+      });
+      res.json({
+        asOfMs: Date.now(), items,
+        watching: log.running, sessionOpen: log.sessionOpen, evaluatedAt: log.evaluatedAt, lastTickError: log.lastTickError,
+        note: "Each alert is a row the desk logged while watching the level board once a minute in the regular session: a board level a ticker crossed, or one of the hand-set rules arming. They say what happened, not what follows. Outside the session nothing is watched.",
+      });
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "alerts_failed", message: e?.message ?? String(e) });
+    }
+  });
   // PROTOCOL REPLAY (server/protocolReplay.ts): the price-only rule run over stored past sessions, counts only, kept apart from the live record.
   app.get("/api/desk/protocols/replay", async (_req, res) => {
     try {
