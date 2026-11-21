@@ -16,6 +16,7 @@
  * 10. Vol Risk Premium (VRP)
  */
 
+import { expirySummary, type ExpiryRow } from "../shared/outlook";
 import type { OptionChainResponse } from "./schwab";
 import { etEpochMs } from "./etTime";
 import { timeToExpiry, settlementStyleOf, type SettlementStyle } from "./timeToExpiry";
@@ -286,6 +287,9 @@ export interface ChainAuditResult {
   pinningMeta?: PinningMeta;
   // 10
   vrp: VRPEntry[];
+
+  /** One row per expiry in the chain that was read: open interest, its share, max pain, ATM IV and the implied one-sigma move (shared/outlook.ts). */
+  expiries: ExpiryRow[];
 
   // Metadata
   contractsProcessed: number;
@@ -1129,6 +1133,7 @@ export function buildChainAudit(
     pinning: pinning.pins,
     pinningMeta: pinning.meta,
     vrp: computeVRP(contracts, spot),
+    expiries: expirySummary(contracts.map((c) => ({ expiry: c.expiry, dte: c.dte, tYears: c.tYears, side: c.side, strike: c.strike, oi: c.oi, iv: c.sigma ?? c.iv })), spot),
     contractsProcessed: contracts.length,
     expiriesFound: expiries.length,
     dataQuality,
