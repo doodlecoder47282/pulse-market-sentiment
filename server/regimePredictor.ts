@@ -39,6 +39,7 @@
 //
 // All math is bounded, fail-soft, and independent of any LLM.
 
+import { sessionLengthAt } from "../shared/exchangeCalendar";
 import { gammaZoneEffect } from "./gammaZone";
 import { FLIP_DISTANCE_STRONG_EM, dexSlopeSignFromAudit, dexSlopeSignValue, flipDistanceEM, regimeBucketFor, type DexSlopeSign } from "@shared/gammaRegime";
 
@@ -219,8 +220,9 @@ function sessionFracRemaining(nowMs: number): number {
   const get = (t: string) => parseInt(parts.find((p) => p.type === t)?.value || "0", 10);
   const minsFromOpen = (get("hour") - 9) * 60 + (get("minute") - 30) + get("second") / 60;
   if (minsFromOpen <= 0) return 1.0;
-  if (minsFromOpen >= 390) return 0.0;
-  return 1 - minsFromOpen / 390;
+  const len = sessionLengthAt(nowMs); // 210 on a 13:00 half day
+  if (minsFromOpen >= len) return 0.0;
+  return 1 - minsFromOpen / len;
 }
 
 /** A day-over-day VIX move of at least this many points counts as vol expanding or bleeding (the label threshold in models.ts). */
@@ -461,12 +463,12 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   if (macroStress === "stress") driverNotes.push(`VIX9D above VIX (ratio ${(vixTermRatio as number).toFixed(2)}, backwardation): weighs toward a trend or neutral read.`);
   else if (macroStress === "calm") driverNotes.push(`VIX9D below VIX (ratio ${(vixTermRatio as number).toFixed(2)}, steep contango): weighs toward a chop read.`);
   if (Math.abs(whalePressure) > 0.4) driverNotes.push(`large SPY option prints, last 30 minutes: ${Math.abs(whalePressure * 100).toFixed(0)}% net premium on the ${whalePressure > 0 ? "call" : "put"} side (calls counted +, puts -, by premium; the buyer or seller side is not known): weighs toward a trend read.`);
-  // sessionFracRemaining is 0 after 16:00 ET and 1 before 09:30 ET, so the same weights apply outside the
+  // sessionFracRemaining is 0 after the close and 1 before 09:30 ET, so the same weights apply outside the
   // session; the note says which case it is instead of naming a window the clock is not in.
   if (sessionFrac <= 0) driverNotes.push(`the regular session is over: the late-session hand-set weight toward a chop read is applied.`);
-  else if (sessionFrac < 0.25) driverNotes.push(`last quarter of the regular session (${Math.round(sessionFrac * 390)} minutes to 16:00 ET): a hand-set weight toward a chop read.`);
+  else if (sessionFrac < 0.25) driverNotes.push(`last quarter of the regular session (${Math.round(sessionFrac * sessionLengthAt(nowMs))} minutes to the close): a hand-set weight toward a chop read.`);
   else if (sessionFrac >= 1) driverNotes.push(`the regular session has not opened: the early-session hand-set weight toward a trend read is applied.`);
-  else if (sessionFrac > 0.75) driverNotes.push(`first quarter of the regular session (${Math.round((1 - sessionFrac) * 390)} minutes since 09:30 ET): a hand-set weight toward a trend read.`);
+  else if (sessionFrac > 0.75) driverNotes.push(`first quarter of the regular session (${Math.round((1 - sessionFrac) * sessionLengthAt(nowMs))} minutes since 09:30 ET): a hand-set weight toward a trend read.`);
   if (flipRate > 0.3) driverNotes.push(`the regime read changed ${flipRate.toFixed(2)} times per minute over the recent samples: weighs toward a neutral read.`);
 
   // Gamma unknown, or an input missing: no bucket applies, so no candidates,

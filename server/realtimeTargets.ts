@@ -32,6 +32,7 @@
 //
 // Read-only. Pure function. Try/catch wrapped at every external surface.
 
+import { sessionLengthAt } from "../shared/exchangeCalendar";
 import { getPriceHistory } from "./schwab";
 import { regimeBucketFromAudit } from "@shared/gammaRegime";
 
@@ -41,7 +42,8 @@ const RTH_OPEN_HH = 9;
 const RTH_OPEN_MM = 30;
 const RTH_CLOSE_HH = 16;
 const RTH_CLOSE_MM = 0;
-const RTH_FULL_MINUTES = (16 - 9) * 60 + (0 - 30); // 390 min
+// The session length is read from the exchange calendar per day: 390 minutes, or 210 on a 13:00 half day.
+// A fixed 390 said 62% of the session was left at noon on a half day when 29% was.
 
 function etParts(ms: number): {
   dateKey: string;
@@ -70,7 +72,7 @@ function etParts(ms: number): {
 
 /**
  * Fraction of RTH session remaining at the given timestamp.
- * Returns 1.0 before 9:30 ET, 0.0 after 16:00 ET, linear in between.
+ * Returns 1.0 before 9:30 ET, 0.0 after the close (16:00 ET, 13:00 on a half day), linear in between.
  */
 export function sessionFractionRemaining(nowMs: number = Date.now()): number {
   const { hh, mm, ss } = etParts(nowMs);
@@ -78,8 +80,9 @@ export function sessionFractionRemaining(nowMs: number = Date.now()): number {
   const minsFromOpen =
     (hh - RTH_OPEN_HH) * 60 + (mm - RTH_OPEN_MM) + ss / 60;
   if (minsFromOpen <= 0) return 1.0;
-  if (minsFromOpen >= RTH_FULL_MINUTES) return 0.0;
-  return Math.max(0, Math.min(1, 1 - minsFromOpen / RTH_FULL_MINUTES));
+  const len = sessionLengthAt(nowMs);
+  if (minsFromOpen >= len) return 0.0;
+  return Math.max(0, Math.min(1, 1 - minsFromOpen / len));
 }
 
 // ─── HOD / LOD pull (from Schwab 1m bars, today only) ──────────────────
@@ -121,7 +124,7 @@ async function fetchSessionRange(symbol: string): Promise<SessionRange> {
       if (p.dateKey !== todayKey) continue;
       const m = (p.hh - RTH_OPEN_HH) * 60 + (p.mm - RTH_OPEN_MM);
       if (m < 0) continue;
-      if (m > RTH_FULL_MINUTES) continue;
+      if (m > sessionLengthAt(c.datetime)) continue;
       if (hod == null || c.high > hod) hod = c.high;
       if (lod == null || c.low < lod) lod = c.low;
       n++;
@@ -338,7 +341,7 @@ export async function computeRealtimeTargets(
 ): Promise<RealtimeTargetsOutput> {
   const now = input.nowMs ?? Date.now();
   const fracRemaining = sessionFractionRemaining(now);
-  const minutesRemaining = Math.round(fracRemaining * RTH_FULL_MINUTES);
+  const minutesRemaining = Math.round(fracRemaining * sessionLengthAt(now));
 
   const eod: Triple = {
     bull: Number(input.scenarioTargets?.bull ?? input.spot),

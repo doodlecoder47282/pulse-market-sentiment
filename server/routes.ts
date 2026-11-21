@@ -46,6 +46,7 @@ import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
+import { sessionLengthAt } from "../shared/exchangeCalendar";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
 import { schwabNum } from "./schwabChainRows";
 import { buildOiBasis, chainReadMs, gammaWeighting, HYBRID_VOLUME_WEIGHT, killboxWeightMode } from "../shared/gammaBasis";
@@ -3774,6 +3775,28 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       res.status(500).json({ error: "protocols_failed", message: e?.message ?? String(e) });
     }
   });
+  // ALERT FEED (shared/alerts.ts): the desk's own logs (rule arms, board levels crossed) as one newest-first list for the bell. Nothing to configure.
+  app.get("/api/alerts", async (_req, res) => {
+    try {
+      // The stored logs only: no rule evaluation and no market read, so polling the bell costs no Schwab request.
+      const { getLoggedEvents } = await import("./protocolEngine");
+      const { buildAlerts } = await import("../shared/alerts");
+      const log = getLoggedEvents();
+      const items = buildAlerts({
+        arms: log.recent.map((r) => ({ id: r.id, protocol: r.protocol, armedAt: r.armedAt, entry: r.entry, levelLabel: r.levelLabel, levelPrice: r.levelPrice, status: r.status })),
+        hits: log.hits,
+        names: log.names,
+      });
+      res.json({
+        asOfMs: Date.now(), items,
+        watching: log.running, sessionOpen: log.sessionOpen, evaluatedAt: log.evaluatedAt, lastTickError: log.lastTickError,
+        note: "Each alert is a row the desk logged while watching the level board once a minute in the regular session: a board level a ticker crossed, or one of the hand-set rules arming. They say what happened, not what follows. Outside the session nothing is watched.",
+      });
+    } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
+      res.status(500).json({ error: "alerts_failed", message: e?.message ?? String(e) });
+    }
+  });
   // PROTOCOL REPLAY (server/protocolReplay.ts): the price-only rule run over stored past sessions, counts only, kept apart from the live record.
   app.get("/api/desk/protocols/replay", async (_req, res) => {
     try {
@@ -4757,7 +4780,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       if (!Number.isFinite(absDelta) || absDelta <= 0) {
         const strike = Number(b.strike), spot = Number(b.spot);
         if (Number.isFinite(strike) && Number.isFinite(spot) && strike > 0 && spot > 0) {
-          absDelta = hz.estimateOdteDelta({ spot, strike, side: side === "call" ? "C" : "P", minutesRemaining: Math.max(1, 390 - entryMod - minutesHeld), dayUnitPts: hz.currentDayUnit() });
+          absDelta = hz.estimateOdteDelta({ spot, strike, side: side === "call" ? "C" : "P", minutesRemaining: Math.max(1, sessionLengthAt(Date.now()) - entryMod - minutesHeld), dayUnitPts: hz.currentDayUnit() });
         } else {
           absDelta = 0.5;
         }
@@ -4765,7 +4788,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       absDelta = Math.min(0.9, Math.max(0.1, Math.abs(absDelta)));
       const targetPts = hz.optionPctToPoints(targetPct, entryPrice, absDelta);
       const stopPts = hz.optionPctToPoints(stopPct, entryPrice, absDelta);
-      const result = hz.computeHazard({ entryMod, targetPts, stopPts, direction: side === "call" ? "up" : "down" });
+      const result = hz.computeHazard({ entryMod, minutesLeft: sessionLengthAt(Date.now()) - entryMod, targetPts, stopPts, direction: side === "call" ? "up" : "down" });
       if ("error" in result) return res.status(422).json(result);
       const breakevenP = stopPct / (targetPct + stopPct) + 0.04; // + friction pad
       const step = result.curve.reduce((best, p) => (Math.abs(p.minute - minutesHeld) < Math.abs(best.minute - minutesHeld) ? p : best), result.curve[0]);
@@ -5874,7 +5897,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         break;
       }
       if (!picked) return res.status(503).json({ dataState: "unavailable", note: "no unsettled $SPX expiry with >= 15 quoted call strikes" });
-      const r = 0.045; // approximate risk-free; discounting only
+      const r = FLIP_RATE; // the one rate every panel uses (server/gammaProfile.ts); discounting only
       const strikes: CallStrike[] = picked.quotes
         .filter((q) => q.callMid != null && (q.callMid as number) > 0)
         .map((q) => ({ strike: q.strike, callMid: q.callMid as number, putMid: q.putMid ?? null }));

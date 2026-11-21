@@ -3036,6 +3036,36 @@ failures keep "Feed not verified" with their own reason, and the note shows only
 refused state now (the server keeps the last error text after a later sign-in). Tests:
 tests/quant/stream-feed-label.test.ts (5).
 
+**Half days: calculations that assumed a 390-minute session (2026-11-20).** Found in a sweep of hard-coded
+session lengths and an independent review; the next half day is 2026-11-27 (13:00 close). Now read from the
+exchange calendar (shared/exchangeCalendar.ts sessionLengthAt): realtimeTargets' fraction and minutes left and
+its candle filter (at noon on a half day it said 62% of the session was left; 29% is); regimePredictor's
+session fraction and its "minutes to the close" note; exitBrain's and /api/edge/hazard's minutes left for the
+0DTE delta estimate (240 at noon instead of 60); the hazard walk itself (hazardEngine minutesLeft: on a half
+day each historical path is cut at today's close instead of running to 16:00); odteAlertEngine's remaining
+sigma for its opening band (minutes to the real close over 390, the same number as before on a full day) and
+its end-of-day window (last half hour before the real close); signalTracker's auto-expiry (the real close of
+the expiry day, not 16:00). Full-day behaviour is unchanged in each. Kept on a full session's clock on
+purpose: tickerScan's volume pace (today's volume against a 20-day average of full sessions) and the
+252 x 390 annualisation. Not changed: odteAlertEngine's time-of-day score windows (13:30 to 15:30) never
+apply on a half day, a 5-point term. Also: the straddle route discounted at its own 4.5% while every other
+panel uses FLIP_RATE (5%); it now uses FLIP_RATE. Tests: tests/quant/half-day-session.test.ts (6).
+**Alert bell: the desk's own logs, announced in the app, nothing to configure (2026-11-20).** Why: the only
+alerts were Discord cards, which need webhook addresses set on the server; inside the app nothing announced
+anything. The desk already logs, once a minute in session, every board level a ticker crosses and every arm of
+the owner's rules. shared/alerts.ts (buildAlerts) turns those two logs into one newest-first list; GET
+/api/alerts serves it from storage only (protocolEngine.getLoggedEvents: no rule evaluation, no market read,
+so the poll costs no Schwab request); AlertBell.tsx in the header shows an unread count, lists the items, and
+announces new rule arms and SPX/VIX crossings as a toast, plus a browser notification when the tab is in the
+background if the user allowed one (asked from a button, never on load). SPY/QQQ/ES/NQ crossings are listed,
+not announced (they repeat the index). WHAT IS NEW is decided by storage row ids (the arm's id, the id of the
+newest crossing in a joined line: joinHits now carries lastId), never by a line's first time or "from before"
+mark, which move as the 300-row read window slides; one level is announced at most once per 30 minutes; the
+first read after opening announces nothing. The panel is drawn through a portal (outside the header's layer)
+and placed by alertPanelPlace so it stays on the screen at every width (it was 40 px off the left edge on phones). To keep every header control at full tap size on phones, the "?" method
+link is hidden below the sm width and linked from Settings on every size. States: failed read, not watching,
+last check failed, outside the session, are each said. Limits: alerts cover only what the level watch logs; a
+phone with the app closed gets nothing (no push service). Tests: tests/quant/alerts.test.ts (7).
 **Chart levels no longer wait for typing (2026-11-20).** Why: the owner's rule is that nothing but the Schwab
 sign-in should need plugging in. "Your chart levels" on the Trade Desk showed nothing until prices were typed;
 it is now "Chart levels against the chain" and checks the level board's own bar levels for the index (prior

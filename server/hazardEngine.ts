@@ -242,6 +242,12 @@ const simCache = new Map<string, HazardResult>();
  *  above, stop below); 'down' mirrors. */
 export function computeHazard(opts: {
   entryMod: number;       // minutes since 9:30 ET at entry (0..389)
+  /**
+   * Minutes left in TODAY's session at entry, when that is less than a full session would leave (a half day).
+   * Each historical path is then cut off there: without it a noon entry on a 13:00 day was given paths that
+   * ran to 16:00, which overstates how often the target is reached. Omit on a full day.
+   */
+  minutesLeft?: number;
   targetPts: number;      // SPX points to target (positive)
   stopPts: number;        // SPX points to stop (positive)
   direction: "up" | "down";
@@ -254,7 +260,8 @@ export function computeHazard(opts: {
   if (!Number.isFinite(targetPts) || !Number.isFinite(stopPts) || targetPts <= 0 || stopPts <= 0) {
     return { error: "targetPts and stopPts must be positive numbers" };
   }
-  const key = `${Math.round(entryMod / 5) * 5}|${targetPts.toFixed(1)}|${stopPts.toFixed(1)}|${direction}|${windowMin}`;
+  const cap = typeof opts.minutesLeft === "number" && Number.isFinite(opts.minutesLeft) && opts.minutesLeft < 390 - entryMod ? Math.max(1, Math.floor(opts.minutesLeft)) : null;
+  const key = `${Math.round(entryMod / 5) * 5}|${targetPts.toFixed(1)}|${stopPts.toFixed(1)}|${direction}|${windowMin}${cap != null ? `|cap${Math.round(cap / 5) * 5}` : ""}`;
   const hit = simCache.get(key);
   if (hit) return hit;
 
@@ -284,6 +291,7 @@ export function computeHazard(opts: {
       let minutes = 0;
       for (let j = idx + 1; j < day.bars.length; j++) {
         const b = day.bars[j];
+        if (cap != null && b.mod - m > cap) { minutes = cap; break; } // today's session ends here: the path expires
         minutes = b.mod - m;
         const hitTgt = direction === "up" ? b.h >= tgtPx : b.l <= tgtPx;
         const hitStp = direction === "up" ? b.l <= stpPx : b.h >= stpPx;
@@ -306,7 +314,7 @@ export function computeHazard(opts: {
 
   // Conditional survival curve at 5-min steps
   const curve: HazardCurvePoint[] = [];
-  const maxHorizon = Math.min(390 - entryMod, 240);
+  const maxHorizon = Math.min(cap ?? 390 - entryMod, 240);
   for (let m = 0; m <= maxHorizon; m += 5) {
     const alivePaths = samples.filter((s) => s.minutes > m || (s.outcome === "expire" && s.minutes >= m));
     const wins = alivePaths.filter((s) => s.outcome === "target").length;
