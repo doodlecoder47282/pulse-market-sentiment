@@ -85,7 +85,7 @@ export interface FollowPosition {
     peakMark: number;
     peakPctChange: number;
     troughMark: number;
-    volume: number;        // latest session volume
+    volume: number;        // highest session volume read in the session `volumeDay`
     /** Contracts traded since the flag, summed across sessions (shared/volumeSince.ts): a floor. */
     volumeSinceEntry: number;
     /** ET date of the session `volume` belongs to (absent on rows from older builds: taken from lastUpdateAt). */
@@ -361,7 +361,7 @@ function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number, quo
   const prevVolume = p.live.volume;
   const vol = nextVolumeState(
     { volume: prevVolume, since: p.live.volumeSinceEntry ?? 0, day: p.live.volumeDay ?? etDate(p.live.lastUpdateAt) },
-    live.volume, etDate(quoteAt),
+    live.volume, quoteAt,
   );
   const newVolume = vol.volume;
   const volBumped = vol.since > (p.live.volumeSinceEntry ?? 0);

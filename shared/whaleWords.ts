@@ -55,7 +55,7 @@ export function whaleWords(requiredTag: string = "AT_ASK"): WordEntry[] {
     { term: "entry / mark / mid", meaning: "entry is the midpoint between bid and ask when it was first flagged (the day's average traded price when no quote was logged); mark is Schwab's current mark, normally that midpoint; mid on a whale row is Schwab's mark, or the last trade when it sits inside the spread, otherwise the midpoint. A mid-to-mid change leaves out the spread and fees a real trade would pay." },
     { term: "peak", meaning: "the best mark-against-entry change seen on any scan since it was flagged." },
     // shared/volumeSince.ts: summed across sessions (Schwab's volume restarts each session); a floor.
-    { term: "volume since flagged", meaning: "contracts traded in it since the flag, added up across sessions. It is a floor: trading in a session the scanner never read is not counted." },
+    { term: "volume since flagged", meaning: "contracts traded in it since the flag, added up across the sessions the scanner read. Usually a floor: a session it never read is not counted." },
     // server/whaleScoreboard.ts.
     { term: "W / L, WIN%", meaning: "on the Whale row: closed and expired positions with a result above zero, and those at or below zero, bought at the ask when flagged and sold at the bid at the end, after per-contract fees. Positions without both quotes, and index options while no index fee is set, are left out and counted. Other rows are mid to mid without fees and say so." },
     { term: "burn", meaning: "on the Whale row: a position whose best bid while tracked would have returned at least 50% after costs, and that still ended at or below zero. Other rows use the mid." },
