@@ -234,6 +234,40 @@ export function getProtocolRecords(): { bookVersion: string; minGraded: number; 
   };
 }
 
+function readRecentArms(): ProtocolLog["recent"] {
+  return (sqlite.prepare(`SELECT * FROM protocol_events ORDER BY armed_at DESC LIMIT 20`).all() as any[]).map((r) => ({
+    id: r.id, bookVersion: r.book_version, protocol: r.protocol, armedAt: r.armed_at, entry: r.entry, levelLabel: r.level_label, levelPrice: r.level_price,
+    expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
+  }));
+}
+
+function readJoinedHits(book: ProtocolDef[]): ProtocolLog["hits"] {
+  const HIT_READ = 300;
+  const hitRows = sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT ?`).all(HIT_READ + 1) as any[];
+  // More rows exist than were read (or the table has been pruned at its cap): the oldest run may start earlier than the rows show.
+  const total = (sqlite.prepare(`SELECT COUNT(*) AS n FROM level_hits`).get() as any)?.n ?? 0;
+  const cut = hitRows.length > HIT_READ || total >= HIT_KEEP;
+  const rawHits = hitRows.slice(0, HIT_READ)
+    .map((r) => ({ id: r.id, at: r.at, symbol: r.symbol, levelKey: r.level_key, label: r.level_label, levelPrice: r.level_price, direction: r.direction, price: r.price }));
+  return joinHits(rawHits, undefined, cut && rawHits.length ? rawHits[rawHits.length - 1].at : null).slice(0, 30).map((h) => ({
+    at: h.at, firstAt: h.firstAt, count: h.count, fromBefore: h.fromBefore, symbol: h.symbol, label: h.label, levelPrice: h.levelPrice, direction: h.direction, price: h.price,
+    watchedBy: h.symbol === "$SPX" ? protocolsWatching(h.levelKey, book) : [],
+  }));
+}
+
+/**
+ * The two logs alone (rule arms, joined level crossings), read from storage with no evaluation and no market
+ * read: what the alert feed polls. `evaluatedAt` is the engine's own last check, null if it has not run.
+ */
+export function getLoggedEvents(nowMs: number = Date.now()): Pick<ProtocolLog, "recent" | "hits" | "running" | "sessionOpen" | "evaluatedAt" | "lastTickError"> & { names: Record<string, string> } {
+  const book = protocolBook();
+  return {
+    recent: readRecentArms(), hits: readJoinedHits(book),
+    running: timer != null, sessionOpen: isRegularSessionOpen(nowMs), evaluatedAt: lastEval?.at ?? null, lastTickError,
+    names: Object.fromEntries(book.map((p) => [p.id, p.name])),
+  };
+}
+
 export async function getProtocolLog(nowMs: number = Date.now()): Promise<ProtocolLog> {
   const book = protocolBook();
   // The engine's own evaluation when it is fresh; otherwise evaluate now so the conditions shown are current.
@@ -248,24 +282,11 @@ export async function getProtocolLog(nowMs: number = Date.now()): Promise<Protoc
       record: protocolRecord(rows.filter((r) => r.protocol === p.id).map((r) => r.status), p.graded),
     };
   });
-  const recent = (sqlite.prepare(`SELECT * FROM protocol_events ORDER BY armed_at DESC LIMIT 20`).all() as any[]).map((r) => ({
-    id: r.id, bookVersion: r.book_version, protocol: r.protocol, armedAt: r.armed_at, entry: r.entry, levelLabel: r.level_label, levelPrice: r.level_price,
-    expectPrice: r.expect_price, cancelPrice: r.cancel_price, status: r.status, reason: r.grade_reason,
-  }));
+  const recent = readRecentArms();
   // Repeat crossings of one level are joined into one line (shared/protocols.ts joinHits); the newest 30 lines are shown.
   const cl = sqlite.prepare(`SELECT COUNT(*) AS n, COUNT(DISTINCT session) AS sessions, SUM(CASE WHEN options_state = 'ok' THEN 1 ELSE 0 END) AS ok, SUM(has_wall) AS wall, MIN(session) AS first FROM desk_rule_context`).get() as any;
   const contextLog = { rows: cl?.n ?? 0, sessions: cl?.sessions ?? 0, mapCurrent: cl?.ok ?? 0, withWall: cl?.wall ?? 0, firstSession: cl?.first ?? null, error: lastContextError };
-  const HIT_READ = 300;
-  const hitRows = sqlite.prepare(`SELECT * FROM level_hits ORDER BY at DESC, id DESC LIMIT ?`).all(HIT_READ + 1) as any[];
-  // More rows exist than were read (or the table has been pruned at its cap): the oldest run may start earlier than the rows show.
-  const total = (sqlite.prepare(`SELECT COUNT(*) AS n FROM level_hits`).get() as any)?.n ?? 0;
-  const cut = hitRows.length > HIT_READ || total >= HIT_KEEP;
-  const rawHits = hitRows.slice(0, HIT_READ)
-    .map((r) => ({ id: r.id, at: r.at, symbol: r.symbol, levelKey: r.level_key, label: r.level_label, levelPrice: r.level_price, direction: r.direction, price: r.price }));
-  const hits = joinHits(rawHits, undefined, cut && rawHits.length ? rawHits[rawHits.length - 1].at : null).slice(0, 30).map((h) => ({
-    at: h.at, firstAt: h.firstAt, count: h.count, fromBefore: h.fromBefore, symbol: h.symbol, label: h.label, levelPrice: h.levelPrice, direction: h.direction, price: h.price,
-    watchedBy: h.symbol === "$SPX" ? protocolsWatching(h.levelKey, book) : [],
-  }));
+  const hits = readJoinedHits(book);
   return {
     bookVersion: PROTOCOL_BOOK_VERSION, minGraded: PROTOCOL_MIN_GRADED, edition: editionFromEnv(),
     running: timer != null, sessionOpen: isRegularSessionOpen(nowMs), evaluatedAt, lastTickError,

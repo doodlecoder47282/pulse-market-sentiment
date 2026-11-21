@@ -45,6 +45,7 @@ import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useToast } from "@/hooks/use-toast";
+import AlertBell from "@/components/AlertBell";
 import {
   RefreshCw, ArrowDownRight, ArrowUpRight, Zap,
   Activity, Waves, MessageSquare, AlertTriangle,
@@ -450,6 +451,9 @@ export default function Dashboard() {
             >
               ?
             </a>
+
+            {/* Alerts: what the desk logged while watching (rule arms, levels crossed). Nothing to configure. */}
+            <AlertBell />
 
             {/* Settings gear — always visible (44px tap target on mobile) */}
             <button
