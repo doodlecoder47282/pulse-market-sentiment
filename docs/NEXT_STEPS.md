@@ -65,7 +65,21 @@ work queue: each item is small, says where to look, and says what "done" means. 
    against the code that produces the number, the way `shared/whaleWords.ts` was checked (that check found
    thirteen false sentences in a first draft, and one wrong calculation).
 3. **Sweeps by class of assumption.** These find real faults faster than reading formulas one by one. Done:
-   fixed 390-minute sessions (half days); UTC or server-local "today" (in review at the time of writing).
+   fixed 390-minute sessions (half days); UTC or server-local "today" on the server (PR #144).
+   Found by that sweep's reviewer and NOT fixed yet (each is a confirmed fault, small, and wants its own PR):
+   - `server/econWeek.ts` (about lines 102, 160, 171) buckets the week's events by UTC day: an 8 PM New York
+     event lands on the next day's row;
+   - `client/src/components/Heatseeker.tsx` (about 184-212, 284) builds the expiry quick picks from the
+     browser's date, memoises them for the life of the page, and counts weekdays, not sessions;
+   - `client/src/components/TradeDesk.tsx` (about 1614-1619) `isOpexToday` uses the browser's date and
+     misses an OPEX moved by a holiday (use `shared/exchangeCalendar.ts`);
+   - `server/tickerCalendar.ts` `MACRO_2026` ends 2026-07-29, so the per-ticker calendar shows no macro
+     event after that date, and two of its dates were wrong (June quad OPEX listed as 06-19; June NFP as
+     07-02). Either extend it from official release calendars or drop the table and read the news calendar;
+   - the earnings cache in `server/earnings.ts` is not keyed by day, so a list cached before midnight New
+     York time is served into the next day until it expires.
+   Also new with #144: the Trade Desk "News Context" card draws for the first time (it was always empty).
+   Look at it on the first day with a scheduled release and read its wording as a newcomer.
    Not done:
    - weekday checks that ignore holidays (`getDay()` / `getUTCDay()` used to mean "is a session");
    - volatility scale mixed between percent and fraction (`iv > 1`, `/ 100` near an IV);
