@@ -113,7 +113,7 @@ function etDay(whenSec: number): string {
  *    day is folded in: its previous/forecast/actual values are attached to
  *    the official event (labeled as Nasdaq values) and the row is dropped.
  *  - A computed/estimated row of the same family (hardcoded CPI list,
- *    first-Friday NFP rule) within 7 days of an official one is dropped:
+ *    hardcoded NFP date) within 7 days of an official one is dropped:
  *    the official schedule supersedes the estimate.
  * Rows of a family with no official event are kept with their own labels.
  */

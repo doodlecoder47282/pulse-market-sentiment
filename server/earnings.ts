@@ -1,3 +1,4 @@
+import { etDate } from "../shared/exchangeCalendar";
 // earnings.ts
 // Earnings calendar — weekly + monthly upcoming reports, Earnings Whispers style.
 // Source: Nasdaq's undocumented calendar JSON (api.nasdaq.com/api/calendar/
@@ -272,8 +273,9 @@ export async function getEarnings(horizon: "weekly" | "monthly" = "weekly"): Pro
   const cache = horizon === "weekly" ? weeklyCache : monthlyCache;
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.value;
 
-  const today = new Date();
-  const todayIso = today.toISOString().slice(0, 10);
+  // New York's date. The UTC date rolls over at 7 or 8 PM ET, which dropped today's reports (the ones made
+  // after the close) from the list for the rest of the evening.
+  const todayIso = etDate(Date.now());
   const days = horizon === "weekly" ? 7 : 30;
 
   const dates: string[] = [];
