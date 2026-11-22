@@ -10,7 +10,7 @@ const BASE = process.env.BASE_URL || "http://127.0.0.1:5070";
 const OUT = process.env.UX_OUT || "rep/ux";
 // Read once up front: the tab loop needs answerExempt, the scorecard needs the rest.
 const budgetForRun = JSON.parse(readFileSyncTop(new URL("./budget.json", import.meta.url), "utf8"));
-const tabs = ["signals", "chart", "models", "heatseeker", "tradedesk", "regime", "cosmos", "news", "takefive", "edgelab", "crypto"];
+const tabs = ["signals", "outlook", "chart", "models", "heatseeker", "tradedesk", "regime", "cosmos", "news", "takefive", "edgelab", "crypto"];
 const viewports = [
   { name: "phone-se", width: 375, height: 667, mobile: true },
   { name: "phone-15", width: 393, height: 852, mobile: true },

@@ -65,6 +65,7 @@ import { useEffect, useState, useRef, lazy, Suspense } from "react";
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
 const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
+const Outlook = lazy(() => import("@/components/Outlook"));
 const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"));
 const TabHeadline = lazy(() => import("@/components/TabHeadline"));
 import QuickDetails from "@/components/QuickDetails";
@@ -532,6 +533,7 @@ export default function Dashboard() {
               data-testid="tabs-dashboard"
             >
               <TabsTrigger value="signals" data-testid="tab-signals" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Signals</TabsTrigger>
+              <TabsTrigger value="outlook" data-testid="tab-outlook" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Outlook</TabsTrigger>
               <TabsTrigger value="chart" data-testid="tab-chart" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Chart</TabsTrigger>
               <TabsTrigger value="models" data-testid="tab-models" className="min-h-[44px] shrink-0 px-2.5 text-[13px] lg:min-h-0 lg:flex-1 xl:px-4 xl:text-[15px] xl:font-semibold">Models</TabsTrigger>
               <TabsTrigger
@@ -588,6 +590,12 @@ export default function Dashboard() {
           <div hidden={activeTab !== "signals"} data-testid="stock-research-workspace">
             <ErrorBoundary label="Stock research"><TradeBriefSearch /></ErrorBoundary>
           </div>
+
+          {/* ── Outlook tab (lazy): levels, expiries, implied range and events on one page ── */}
+          <TabsContent value="outlook" className="space-y-6">
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="price and option-chain data" />
+            <ErrorBoundary label="Outlook"><Suspense fallback={null}><Outlook active={activeTab === "outlook"} /></Suspense></ErrorBoundary>
+          </TabsContent>
 
           {/* ── Chart tab (lazy) ── */}
           <TabsContent value="chart" className="space-y-6">
@@ -1217,6 +1225,7 @@ function TermBar({ label, value, max, highlight }: { label: string; value: numbe
 // more to either side.
 const MOBILE_TABS: { key: TabKey; label: string }[] = [
   { key: "signals", label: "Signals" },
+  { key: "outlook", label: "Outlook" },
   { key: "chart", label: "Chart" },
   { key: "models", label: "Models" },
   { key: "heatseeker", label: "Heatseeker" },

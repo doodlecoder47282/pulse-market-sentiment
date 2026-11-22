@@ -3133,6 +3133,32 @@ group already sorts) with "showing 8 of 45 (3 sold rows are below): show all". C
 still use every position. Not capped: the fresh-whales groups and the closed archive (collapsed by default).
 Tests: tests/quant/signals-plain.test.ts (3).
 
+**Outlook tab: levels, expiries, implied range and events on one page (2026-11-21).** Why: the owner compared
+the terminal with a friend's single-screen map and asked for a cleaner format. The pieces already existed,
+spread over eleven tabs; nothing merged them. The Outlook tab (second tab) computes nothing new about the
+market (shared/outlook.ts, client Outlook.tsx): (1) every mapped SPX level in one list, highest first, with
+its name, the tool it came from and its distance from the price (level board levels incl. option landmarks,
+max pain of the three nearest expiries, the JPM collar while its strikes are live); (2) one time axis from
+today to the last expiry in the 60-day chain the Chain Audit already reads, with the range option prices
+imply to each expiry (spot x ATM IV x sqrt(T), one standard deviation, labelled priced-in, not a forecast),
+the nearest levels as lines, events as marks and each expiry as a bar sized by its share of open interest;
+(3) a table of expiries (share of open interest in the chain read, max pain, implied move); (4) dated
+windows (this week, the next two, then by month) each saying what is scheduled, the largest expiry and the
+implied range. New on the server: the chain audit result carries `expiries` (expirySummary: per-expiry
+open interest, share, max pain, ATM IV, sigma), computed from contracts already in memory, no extra request.
+The page reads /api/chain-audit (same key and request as the Chain Audit panel), /api/desk/board,
+/api/vol-calendar and /api/jpm-collar, only while its tab is showing. Honest states: a failed read is never an
+empty list; a chain with no open interest shows shares and max pain as n/a; levels not drawn are counted.
+Board levels carry a true source (boardOutlookLevels): bar levels come from cases.levelsWithoutOptions, and
+option-map levels are listed only while the board says its option map is current (otherwise they are left
+out with the board's reason); a line that joins a landmark and a bar level says so. A last-session chain and
+held open interest are labelled; the route now reports how many days of expiries it actually read (dteRead:
+60, or 14 when the long read failed) and the page says so; every share is printed with its contract count;
+chart labels are pushed apart so they do not overprint.
+NOT in it: a path or scenario lines (the friend's dashed lines read as forecasts and nothing grades them),
+anything beyond the 60 days of chain read, a VIX futures curve (not read at all), and the CURRENT JPM collar:
+the strikes on file expired and the collar live to 2026-12-31 was never entered for want of a reputable
+source, so the page says so instead of drawing it. Tests: tests/quant/outlook.test.ts (12).
 **Rules-written text that gave instructions or claimed positioning, rewritten as description (2026-11-21).**
 Found in a sweep of shipped strings for advice words. (1) News tab, ALPHA card: when no model key is set
 (the normal state here) the card shows the rules-based brief from server/alphaEngine.ts. Its "TRADE
