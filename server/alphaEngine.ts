@@ -34,13 +34,90 @@ interface ScoredItem {
 // ──────────────────────────────────────────────────────────────────────────
 
 interface Rule {
-  re: RegExp;
+  re: { test(text: string): boolean };
   category: Category;
   impact: number;
   direction?: Direction;
   horizon?: Horizon;
   tickers?: string[];
 }
+
+// ─── A move word next to a market ────────────────────────────────────────────────────────────────
+// Words, not a regex over characters: a move word counts when a market word sits within MOVE_REACH words of
+// it in the same clause. A clause ends at ; : , a sentence end, or a joining word (as, while, after, but,
+// though, despite, amid), so "Stocks rally as dollar slides" is one up-move and no down-move. Linear in the
+// length of the text. Yields, bonds and the dollar are not market words here: "yields jump" is not a bullish
+// headline, and a direction tag on them would carry the wrong sign as often as the right one.
+export const MOVE_REACH = 5;
+const EQUITY = new Set(["stocks", "stock", "shares", "equities", "equity", "nasdaq", "dow", "s&p", "spx", "russell", "nikkei", "ftse", "stoxx", "kospi", "hangseng", "futures", "wallstreet", "chipmakers", "markets", "market", "index", "indexes", "indices"]);
+const OTHER_MKT = new Set(["gold", "silver", "copper", "oil", "crude", "brent", "wti", "bitcoin", "ether", "ethereum", "crypto"]);
+const JOINERS = new Set(["as", "while", "after", "but", "though", "despite", "amid"]);
+const UP = new Set(["rally", "rallies", "rallied", "surge", "surges", "surged", "soar", "soars", "soared", "jump", "jumps", "jumped"]);
+const DOWN = new Set(["correction", "plunge", "plunges", "plunged", "crash", "crashes", "crashed", "rout", "tumble", "tumbles", "tumbled", "slump", "slumps", "slumped", "slide", "slides", "slid"]);
+/** Only shares and indexes "sink": next to oil or copper the word is a ship. */
+const DOWN_EQUITY_ONLY = new Set(["sink", "sinks", "sank"]);
+/** A crash beside one of these is not a price. */
+const NOT_A_PRICE_CRASH = new Set(["site", "app", "website", "outage", "plane", "car", "tanker", "exchange", "train", "helicopter", "bus"]);
+const NOT_THIS_MARKET: Record<string, { before?: string[]; after?: string[] }> = {
+  market: { before: ["housing", "job", "jobs", "labor", "labour", "property", "rental"], after: ["share"] },
+  markets: { before: ["housing", "job", "jobs", "labor", "labour", "property", "rental"] },
+  index: { before: ["dollar", "price", "prices", "volatility", "confidence", "sentiment", "manufacturing", "services", "managers", "managers'"] },
+  stock: { after: ["car"] },
+  gold: { after: ["coast", "medal", "medals", "rush"] },
+  silver: { after: ["alert", "medal", "medals"] },
+  oil: { after: ["tanker", "spill"] },
+  crude: { after: ["tanker"] },
+};
+
+function clauses(text: string): string[][] {
+  const out: string[][] = [[]];
+  const raw = text.toLowerCase().replace(/wall street/g, "wallstreet").replace(/hang seng/g, "hangseng").split(/\s+/);
+  for (const r of raw) {
+    const ends = /[;:,!?]$/.test(r) || (/\.$/.test(r) && !/^([a-z]\.)+$/.test(r)); // "u.s." does not end a sentence
+    // Possessives are the bare word ("Nasdaq's plunge"), straight or curly apostrophe.
+    const w = r.replace(/^[^a-z0-9&]+|[^a-z0-9&%'’]+$/g, "").replace(/['’]s?$/, "");
+    if (JOINERS.has(w)) { out.push([]); continue; }
+    if (w) out[out.length - 1].push(w);
+    if (ends) out.push([]);
+  }
+  return out;
+}
+
+function moveNearMarket(text: string, moves: Set<string>, equityOnly: Set<string> | null): boolean {
+  for (const c of clauses(text)) {
+    const mk: Array<{ i: number; equity: boolean }> = [];
+    c.forEach((whole, i) => {
+      // A joined word counts by its parts ("stock-market", "S&P/TSX", "Nasdaq-100"); it stays one word for distance.
+      // The market part has to be the head of the join: its last part ("stock-market", not "gold-medal"), or
+      // any part when the rest are numbers or other market names ("nasdaq-100", "s&p/tsx").
+      const isMkt = (p: string) => EQUITY.has(p) || OTHER_MKT.has(p);
+      const parts = whole.split(/[-/]/);
+      const head = parts.length > 1
+        ? (isMkt(parts[parts.length - 1]) ? parts[parts.length - 1] : parts.every((p) => isMkt(p) || /^\d+$/.test(p) || p === "tsx" || p === "jones") ? parts.find(isMkt) : undefined)
+        : undefined;
+      const w = isMkt(whole) ? whole : head ?? whole;
+      const joinedBefore = head && parts.length > 1 ? parts[parts.length - 2] : null;
+      // "tech" is a market only directly before a move word or a share word ("tech rout", "tech stocks").
+      const techMove = whole === "tech" && (moves.has(c[i + 1] ?? "") || (equityOnly?.has(c[i + 1] ?? "") ?? false));
+      const equity = EQUITY.has(w) || techMove;
+      if (!equity && !OTHER_MKT.has(w)) return;
+      const not = NOT_THIS_MARKET[w];
+      if (not?.before?.includes(joinedBefore ?? c[i - 1] ?? "") || not?.after?.includes(c[i + 1] ?? "")) return;
+      mk.push({ i, equity });
+    });
+    if (!mk.length) continue;
+    for (let j = 0; j < c.length; j++) {
+      const w = c[j];
+      const any = moves.has(w), eq = equityOnly?.has(w) ?? false;
+      if (!any && !eq) continue;
+      if (w.startsWith("crash") && c.some((x) => NOT_A_PRICE_CRASH.has(x))) continue;
+      if (mk.some((m) => Math.abs(m.i - j) <= MOVE_REACH && m.i !== j && (any || m.equity))) return true;
+    }
+  }
+  return false;
+}
+export const MARKET_UP = { test: (text: string) => moveNearMarket(text, UP, null) };
+export const MARKET_DOWN = { test: (text: string) => moveNearMarket(text, DOWN, DOWN_EQUITY_ONLY) };
 
 const RULES: Rule[] = [
   // ---- RATES / FED (broad index impact) ----
@@ -93,8 +170,11 @@ const RULES: Rule[] = [
   { re: /\b(aaii|naaim|put-?call|gamma (squeeze|exposure)|dealer gamma)\b/i, category: "SENTIMENT", impact: 5, horizon: "Days" },
   { re: /\b(margin (debt|call)|deleveraging|liquidation)\b/i, category: "SENTIMENT", impact: 7, direction: "Bearish", horizon: "Intraday" },
   { re: /\b(record high|all-?time high|new high)s?\b/i, category: "SENTIMENT", impact: 3, direction: "Bullish" },
-  { re: /\b(bear market|correction|plunge|crash|selloff|rout)\b/i, category: "SENTIMENT", impact: 6, direction: "Bearish", horizon: "Days" },
-  { re: /\b(rally|surge|soar|rip)\b/i, category: "SENTIMENT", impact: 3, direction: "Bullish" },
+  { re: /\b(bear market|sell-?\s?offs?)\b/i, category: "SENTIMENT", impact: 6, direction: "Bearish", horizon: "Days" },
+  // Move words count only next to a market (moveNearMarket above): "Croatians rally in Zagreb" is a protest,
+  // "a correction" can be a newspaper's, and a "crash" can be a car's.
+  { re: MARKET_DOWN, category: "SENTIMENT", impact: 6, direction: "Bearish", horizon: "Days" },
+  { re: MARKET_UP, category: "SENTIMENT", impact: 3, direction: "Bullish" },
 ];
 
 // Bias adverbs/qualifiers that bump impact up or down

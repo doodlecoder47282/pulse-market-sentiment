@@ -3224,3 +3224,25 @@ and the calendar notes lost their direction claims ("Hot read = bond selloff + r
 "Largest single-day vol catalyst", "dealer hedging unwinds", "Historically the highest-volume day").
 server/econWeek.ts still estimates its own synthetic jobs chip by the first-Friday rule (labelled an
 estimate there). Test: tests/quant/ny-dates.test.ts.
+
+**News keyword rules: a move word needs a market next to it (2026-11-21).** Seen live on the ALPHA card:
+"Croatians rally in Zagreb demanding justice..." was scored 4/10 and tagged Bullish (the bare word "rally"),
+and the feed's topic chips marked a tennis result as EARNINGS (the bare word "beat"). server/alphaEngine.ts
+`moveNearMarket`: an up word (rally, surge, soar, jump) or a down word (correction, plunge, crash, rout,
+tumble, slump, slide; sink for shares and indexes only) counts when a market word is within 5 words of it in
+the same clause; a clause ends at ; : , a sentence end, or as/while/after/but/though/despite/amid. It works on
+words, not a character regex, so it runs in linear time on any text (a first regex version could be made to
+run for 35 seconds). Market words: stocks, shares, the named indexes, futures, Wall Street, chipmakers,
+market/index (not the housing or job market, market share, the dollar or a price index), gold, silver,
+copper, oil, crude, bitcoin, ether, crypto. Yields, bonds and the dollar are deliberately NOT market words:
+"yields jump" would be tagged Bullish with the wrong sign; so "Bond rally deepens" is untagged, as is "DAX
+slumps". "tech" counts only directly before a move word or a share word. A crash beside site, app, plane, car, tanker or
+exchange is not a price. "bear market" and "sell-off" still stand alone; the bare "rip" is gone. The
+vocabulary also grew (jump, tumble, slump, slide, plural and past forms), so some headlines are tagged for
+the first time ("Bitcoin crashes below 60,000", "Oil jumps 4%"). Known and left: "Farmers rally at Wall
+Street protest" still matches; the QUALIFIERS list still adds bearish votes for a bare "crash". server/news.ts
+EARNINGS topic: phrases ("beats ... estimates", "beats on revenue", "third-quarter results", "profit falls"),
+not the bare verbs, and not when the word before the verb is a macro one ("CPI tops forecasts", "Jobs report
+beats expectations"). Still open: the
+headline feed itself carries many non-market stories (advice columns, sports) under "Market-relevant
+headlines". Tests: tests/quant/news-keywords.test.ts (4).
