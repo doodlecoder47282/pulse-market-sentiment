@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { maxPainStrike, expirySummary, rankLevels, outlookWindows, windowSentence, outlookChart, collarLevels, boardOutlookLevels, spreadLabels, sharePct, shortDate, OUTLOOK_LINES_PER_SIDE, type OutlookContract } from "../../shared/outlook";
+import { maxPainStrike, expirySummary, rankLevels, outlookWindows, windowLines, windowHasContent, mainExpiryRows, outlookChart, collarLevels, boardOutlookLevels, spreadLabels, sharePct, shortDate, OUTLOOK_LINES_PER_SIDE, type OutlookContract } from "../../shared/outlook";
 import { mergeLevels, type BoardLevel } from "../../shared/levelBoard";
 
 const c = (expiry: string, dte: number, side: "call" | "put", strike: number, oi: number, iv = 0.2): OutlookContract => ({ expiry, dte, tYears: Math.max(dte, 0.5) / 365, side, strike, oi, iv });
@@ -81,11 +81,29 @@ test("the stretch ahead is cut into this week, the next two weeks, then month pi
   assert.equal(w[3].range!.expiry, "2026-12-31", "the range runs to the window's last expiry");
   assert.ok(w.every((x, i) => i === 0 || x.from > w[i - 1].to), "no day in two windows");
   assert.deepEqual(outlookWindows("2027-02-01", ex, events, spot), [], "nothing ahead, nothing drawn");
-  // The sentence: counts, dates and prices, and the range named as priced in.
-  const s = windowSentence(w[3]);
-  assert.match(s, /^Scheduled: FOMC \(Dec 16\), Quad witching \(Dec 18\)\. 2 expiries; the largest by open interest is Dec 18 with 48% of the open contracts in the chain that was read \(2,000 of 4,200\), max pain 7,000\./);
-  assert.match(s, /Option prices imply about plus or minus [\d,]+ points by Dec 31 \(one standard deviation, [\d,]+ to [\d,]+\): a priced-in range, not a forecast\.$/);
-  assert.match(windowSentence(w[0]), /^Nothing on the event calendar\. No option expiry in the chain that was read\.$/);
+  // Short labelled lines: counts, dates and prices. An empty window says nothing and is not shown.
+  const lines = windowLines(w[3]);
+  assert.deepEqual(lines.slice(0, 2), [
+    { label: "Events", text: "FOMC Dec 16, Quad witching Dec 18" },
+    { label: "Largest expiry", text: "Dec 18, 48% of open interest read (2,000 contracts), max pain 7,000" },
+  ]);
+  assert.equal(lines[2].label, "Implied range by Dec 31");
+  assert.match(lines[2].text, /^[\d,]+ to [\d,]+ \(±[\d,]+\)$/);
+  assert.deepEqual(windowLines(w[0]), []);
+  assert.equal(windowHasContent(w[0]), false);
+  assert.equal(windowHasContent(w[3]), true);
+  // The expiry table opens on the nearest expiry and the ones that hold 2% or more; the rest are one tap away.
+  const rows = [{ oiShare: 0.004 }, { oiShare: 0.0149 }, { oiShare: 0.015 }, { oiShare: 0.48 }, { oiShare: 0.01 }];
+  assert.deepEqual(mainExpiryRows(rows), [rows[0], rows[2], rows[3]]);
+  assert.equal(sharePct(0.015), "2%", "a row printed as 2% is never hidden");
+  // A flat chain: the largest row stays even when nothing reaches the cut.
+  const flat = [{ oiShare: 0.01 }, { oiShare: 0.012 }, { oiShare: 0.011 }];
+  assert.deepEqual(mainExpiryRows(flat), [flat[0], flat[1]]);
+  // The partial strike read is still said, and only then.
+  const tsx = readFileSync("client/src/components/Outlook.tsx", "utf8");
+  assert.match(tsx, /chainCoverage && !audit\.data\.audit\.chainCoverage\.complete \? " \(the strike range read is not complete/);
+  assert.match(tsx, /windows\.some\(\(w\) => w\.range\) &&/);
+  assert.deepEqual(mainExpiryRows([{ oiShare: null }, { oiShare: null }]).length, 2, "no open interest read: nothing to rank by");
   assert.equal(shortDate("2027-01-05"), "Jan 5");
 });
 
