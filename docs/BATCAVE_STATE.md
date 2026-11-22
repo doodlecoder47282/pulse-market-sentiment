@@ -3159,3 +3159,11 @@ NOT in it: a path or scenario lines (the friend's dashed lines read as forecasts
 anything beyond the 60 days of chain read, a VIX futures curve (not read at all), and the CURRENT JPM collar:
 the strikes on file expired and the collar live to 2026-12-31 was never entered for want of a reputable
 source, so the page says so instead of drawing it. Tests: tests/quant/outlook.test.ts (12).
+
+**Outlook tab: fewer words, same facts (2026-11-21).** Owner's rule: every line has to be useful and clear to
+read. Seen live on its first render, the tab said the same caveat five times and listed 28 expiries, most of
+them under 1% of the open interest. Now: each dated window is two or three labelled lines (Events, Largest
+expiry, Implied range by a date) and the "not a forecast" note is said once under them; a window with no
+event and no expiry is not drawn; the expiry table opens on the nearest expiry and those holding 2% or more
+of the open interest read, with one button for the rest (the count hidden is stated); captions are shorter.
+No number or state changed. shared/outlook.ts `windowLines`, `windowHasContent`, `mainExpiryRows`.
