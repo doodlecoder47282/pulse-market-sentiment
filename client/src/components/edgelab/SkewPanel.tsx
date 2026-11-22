@@ -105,7 +105,7 @@ export default function SkewPanel() {
           {/* risk reversal */}
           <div className="rounded border border-border p-3">
             <div className="flex items-center justify-between mb-1">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">25Δ risk reversal (~30d)</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">25Δ risk reversal (call IV minus put IV)</div>
               <span className={`text-sm font-mono font-semibold tabular-nums ${
                 (data.riskReversalNow ?? 0) < 0 ? "text-rose-500" : "text-emerald-500"
               }`} data-testid="text-risk-reversal">

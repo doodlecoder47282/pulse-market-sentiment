@@ -3132,3 +3132,17 @@ row (45 SPX rows on the tab that loads first); it now opens to its first 8 (hot 
 group already sorts) with "showing 8 of 45 (3 sold rows are below): show all". Counts and the group average
 still use every position. Not capped: the fresh-whales groups and the closed archive (collapsed by default).
 Tests: tests/quant/signals-plain.test.ts (3).
+
+**Rules-written text that gave instructions or claimed positioning, rewritten as description (2026-11-21).**
+Found in a sweep of shipped strings for advice words. (1) News tab, ALPHA card: when no model key is set
+(the normal state here) the card shows the rules-based brief from server/alphaEngine.ts. Its "TRADE
+IMPLICATIONS" section told the reader to tighten stops, consider SPY put spreads, keep size light, range-trade
+and pair-trade, all from keyword matches on headlines; the watch list ended with hard-coded "key levels" (10Y
+4.20/4.50, VIX 15/18/22). The section is now "WHAT THE RULES COUNTED" (counts of scored headlines by tag and
+category, `ruleCounts`), the hard-coded levels are gone, and the caveat says the scores are hand-set, not
+graded, and that a tag is a keyword match. shared/alphaBrief.ts already stripped that section before handing
+the brief to a model; the reader got it unstripped. (2) Edge Lab, skew panel (server/skewEngine.ts): the notes
+said "sellers favored", "buyers favored", "melt-up positioning or single-name FOMO", "crash premium priced".
+They now state the term-structure relation and the risk reversal in vol points with the expiry it was read at
+(`riskReversalNote` in shared/vol.ts); the tile no longer says "~30d" (the engine falls back to the first
+expiry when none is near 30 days). No number changed. Tests: tests/quant/descriptive-rules-text.test.ts (3).
