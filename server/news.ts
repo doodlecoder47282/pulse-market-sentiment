@@ -124,7 +124,13 @@ const TOPIC_KEYWORDS: Record<NewsTopic, RegExp[]> = {
   JOBS: [/\bnfp\b/i, /\bnon[- ]?farm\b/i, /\bpayroll/i, /\bunemployment\b/i, /\bjobs (report|data)\b/i, /\bjobless claims\b/i, /\bjolts\b/i],
   GROWTH: [/\bgdp\b/i, /\brecession\b/i, /\bism\b/i, /\bpmi\b/i, /\bretail sales\b/i, /\bconsumer (spending|confidence)\b/i, /\bhousing starts\b/i],
   GEO: [/\bchina\b/i, /\brussia\b/i, /\bukraine\b/i, /\bisrael\b/i, /\bgaza\b/i, /\biran\b/i, /\btaiwan\b/i, /\btrade war\b/i, /\btariff/i, /\bwar\b/i, /\bsanction/i],
-  EARNINGS: [/\bearnings\b/i, /\beps\b/i, /\bguidance\b/i, /\bbeat(s|\b)\b/i, /\bmiss(es|\b)\b/i, /\bq[1-4] (results|report)\b/i, /\bquarterly\b/i],
+  // Phrases, not the bare verbs: "beat" alone is a tennis result. A macro print is not earnings: the word before the verb must not be one ("CPI tops forecasts").
+  EARNINGS: [/\bearnings\b/i, /\beps\b/i, /\bguidance\b/i,
+    /(?<!\b(cpi|ppi|pce|gdp|inflation|payrolls?|claims|sales|report|ism|pmi|manufacturing|services|confidence|sentiment|data|index|starts|orders)\s)\b(beat|beats|tops?|topped|miss(es|ed)?)\b(?:\s+[\w'-]+){0,3}\s+(estimates|expectations|forecasts?|consensus)\b/i,
+    /\b(beats?|miss(es)?) on (revenue|sales|profit|earnings|eps|(the )?top|(the )?bottom)\b/i,
+    /(?<!\b(retail|home|existing-home|new-home|vehicle|auto)\s)\b(profit|revenue|sales) (beats?|miss(es)?|rises?|falls?|jumps?|drops?)\b/i,
+    /\b(first|second|third|fourth)[- ]quarter (results|earnings|profit|revenue|sales)\b/i,
+    /\bq[1-4] (results|report)\b/i, /\bquarterly\b/i],
   RATES: [/\btreasur(y|ies)\b/i, /\byield/i, /\b10[- ]?year\b/i, /\b2[- ]?year\b/i, /\bbond\b/i, /\bauction\b/i],
   OIL: [/\bopec\b/i, /\bcrude\b/i, /\boil price/i, /\bwti\b/i, /\bbrent\b/i, /\benergy stocks\b/i],
   OTHER: [],
@@ -556,33 +562,32 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
     let notes: string | undefined;
     let source = "VolCalendar (computed)";
     // Tier per row: FOMC and CPI dates are hardcoded copies of the official
-    // schedules (computed); NFP is a first-Friday rule (an estimate, weak).
+    // schedules (computed), and so are the jobs report dates (server/volCalendar.ts NFP_DATES).
     // The official BLS calendar supersedes CPI/NFP rows when it is reachable.
-    let tier: SourceTier = "computed";
+    const tier: SourceTier = "computed";
     let family: string | null = null;
     switch (ev.type) {
       case "fomc":
         kind = "FED"; hourEt = 14; minEt = 0;
-        notes = "FOMC rate decision @ 2pm ET, Powell presser @ 2:30pm ET. Largest single-day vol catalyst.";
+        notes = "FOMC rate decision at 2pm ET, press conference at 2:30pm ET.";
         source = "Federal Reserve schedule (hardcoded copy)";
         break;
       case "cpi":
         kind = "ECON"; hourEt = 8; minEt = 30;
         title = `${ev.label} (CPI)`;
-        notes = "Inflation print @ 8:30am ET. Hot read = bond selloff + risk-off; cool = rally.";
+        notes = "Consumer Price Index release at 8:30am ET.";
         source = "BLS schedule (hardcoded copy)";
         family = "CPI";
         break;
       case "nfp":
         kind = "ECON"; hourEt = 8; minEt = 30;
-        notes = "Jobs print @ 8:30am ET (estimated by the first-Friday rule; BLS sometimes releases on another Friday). Watch headline + average hourly earnings + revisions.";
-        source = "First-Friday rule (estimate)";
-        tier = "weak";
+        notes = "Employment Situation report at 8:30am ET: payrolls, unemployment rate, average hourly earnings, revisions.";
+        source = "BLS schedule (hardcoded copy)";
         family = "NFP";
         break;
       case "monthly_opex":
         kind = "OPEX"; hourEt = 16; minEt = 0;
-        notes = "Monthly options expiration. Gamma roll-off after 4pm — dealer hedging unwinds.";
+        notes = "Monthly options expiration at the 4pm ET close.";
         source = "Exchange expiration rule (computed)";
         break;
       case "vix_exp":
@@ -592,7 +597,7 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
         break;
       case "quad_witching":
         kind = "WITCH"; hourEt = 16; minEt = 0;
-        notes = "Quad witching — index futures, index options, single-stock futures, equity options ALL expire. Historically the highest-volume day of the quarter.";
+        notes = "Quad witching — index futures, index options, single-stock futures, equity options all expire.";
         source = "Exchange expiration rule (computed)";
         break;
       default:
@@ -610,10 +615,10 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
       importance,
       source,
       notes,
-      sourceId: tier === "weak" ? "estimate" : "exchange_rules",
+      sourceId: "exchange_rules",
       tier,
-      tierLabel: tier === "weak" ? "estimate" : TIER_LABEL[tier],
-      timeExact: tier !== "weak",
+      tierLabel: TIER_LABEL[tier],
+      timeExact: true,
       family,
     });
   }

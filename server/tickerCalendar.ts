@@ -8,6 +8,7 @@
 // out, EPS estimate, timing, IV expected move if available) + up to 3 closest
 // macro events in the next 30 days.
 
+import { etDate } from "../shared/exchangeCalendar";
 import { getEarnings, type EarningsRow } from "./earnings";
 
 export type TickerCatalystEarnings = {
@@ -45,8 +46,9 @@ function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((b - a) / 86400000);
 }
 
+/** Today in New York (the name is kept for its callers; the UTC date is tomorrow's from 7 or 8 PM ET). */
 function todayIsoUtc(): string {
-  return new Date().toISOString().slice(0, 10);
+  return etDate(Date.now());
 }
 
 // Hard-coded macro calendar — known FOMC / CPI / NFP / OPEX prints for 2026.

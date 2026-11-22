@@ -3132,3 +3132,117 @@ row (45 SPX rows on the tab that loads first); it now opens to its first 8 (hot 
 group already sorts) with "showing 8 of 45 (3 sold rows are below): show all". Counts and the group average
 still use every position. Not capped: the fresh-whales groups and the closed archive (collapsed by default).
 Tests: tests/quant/signals-plain.test.ts (3).
+
+**Outlook tab: levels, expiries, implied range and events on one page (2026-11-21).** Why: the owner compared
+the terminal with a friend's single-screen map and asked for a cleaner format. The pieces already existed,
+spread over eleven tabs; nothing merged them. The Outlook tab (second tab) computes nothing new about the
+market (shared/outlook.ts, client Outlook.tsx): (1) every mapped SPX level in one list, highest first, with
+its name, the tool it came from and its distance from the price (level board levels incl. option landmarks,
+max pain of the three nearest expiries, the JPM collar while its strikes are live); (2) one time axis from
+today to the last expiry in the 60-day chain the Chain Audit already reads, with the range option prices
+imply to each expiry (spot x ATM IV x sqrt(T), one standard deviation, labelled priced-in, not a forecast),
+the nearest levels as lines, events as marks and each expiry as a bar sized by its share of open interest;
+(3) a table of expiries (share of open interest in the chain read, max pain, implied move); (4) dated
+windows (this week, the next two, then by month) each saying what is scheduled, the largest expiry and the
+implied range. New on the server: the chain audit result carries `expiries` (expirySummary: per-expiry
+open interest, share, max pain, ATM IV, sigma), computed from contracts already in memory, no extra request.
+The page reads /api/chain-audit (same key and request as the Chain Audit panel), /api/desk/board,
+/api/vol-calendar and /api/jpm-collar, only while its tab is showing. Honest states: a failed read is never an
+empty list; a chain with no open interest shows shares and max pain as n/a; levels not drawn are counted.
+Board levels carry a true source (boardOutlookLevels): bar levels come from cases.levelsWithoutOptions, and
+option-map levels are listed only while the board says its option map is current (otherwise they are left
+out with the board's reason); a line that joins a landmark and a bar level says so. A last-session chain and
+held open interest are labelled; the route now reports how many days of expiries it actually read (dteRead:
+60, or 14 when the long read failed) and the page says so; every share is printed with its contract count;
+chart labels are pushed apart so they do not overprint.
+NOT in it: a path or scenario lines (the friend's dashed lines read as forecasts and nothing grades them),
+anything beyond the 60 days of chain read, a VIX futures curve (not read at all), and the CURRENT JPM collar:
+the strikes on file expired and the collar live to 2026-12-31 was never entered for want of a reputable
+source, so the page says so instead of drawing it. Tests: tests/quant/outlook.test.ts (12).
+**Rules-written text that gave instructions or claimed positioning, rewritten as description (2026-11-21).**
+Found in a sweep of shipped strings for advice words. (1) News tab, ALPHA card: when no model key is set
+(the normal state here) the card shows the rules-based brief from server/alphaEngine.ts. Its "TRADE
+IMPLICATIONS" section told the reader to tighten stops, consider SPY put spreads, keep size light, range-trade
+and pair-trade, all from keyword matches on headlines; the watch list ended with hard-coded "key levels" (10Y
+4.20/4.50, VIX 15/18/22). The section is now "WHAT THE RULES COUNTED" (counts of scored headlines by tag and
+category, `ruleCounts`), the hard-coded levels are gone, the "watch list" is removed (it re-listed up to three headlines whose title contained fed, cpi, earnings and the like, "FedEx" included, under their publish time, as if they were upcoming events), the table column is "Rule score", the card's own description no longer says an AI agent ranks by market impact, and the caveat says the scores are hand-set, not
+graded, and that a tag is a keyword match. shared/alphaBrief.ts already stripped that section before handing
+the brief to a model; the reader got it unstripped. (2) Edge Lab, skew panel (server/skewEngine.ts): the notes
+said "sellers favored", "buyers favored", "melt-up positioning or single-name FOMO", "crash premium priced".
+They now state the term-structure relation and the risk reversal in vol points with the expiry it was read at
+(`riskReversalNote` in shared/vol.ts); the tile no longer says "~30d" (the engine falls back to the first
+expiry when none is near 30 days); the panel's footer and the skew description handed to a model lost "fear", "panic", "greed", "market expects" and "extremes mean-revert". No number changed. Tests: tests/quant/descriptive-rules-text.test.ts (3).
+**"Today" is New York's date; day counts and session dates fixed (2026-11-21).** Found in a sweep for dates
+taken from the server's clock zone. (1) The event calendar's days-away count (server/volCalendar.ts) compared
+noon UTC on the event date with LOCAL midnight today; on a UTC server that is always half a day more and the
+half rounded up, so an event today read "1 day away" and every count was one too many. It now counts
+calendar days between two dates, and "today" is New York's date. (2) From 7 or 8 PM New York time the UTC
+date is already tomorrow. Three places took today's date from UTC: the earnings calendar
+(server/earnings.ts, today's after-the-close reporters dropped from the list for the rest of the evening),
+the per-ticker calendar (server/tickerCalendar.ts) and the date in the master-alpha packet. All use
+etDate(now). (3) The playbook's "today's catalysts" list (server/routes.ts) was ALWAYS empty, at any hour:
+it filtered calendar events on a `date` field they do not carry (an event has `when` in epoch seconds,
+`title`, `whenLabel`). It now reads the event's own time on New York's date (shared/playbookEvents.ts).
+This switches on a Trade Desk card that had never drawn, so the card was rewritten before it could: it
+used to pair each release with a direction under green BULL and red BEAR boxes ("Hot print", "Weak jobs
+(recession fear)", "Risk-on reaction"), which nothing here has measured. It now lists the day's
+HIGH-importance releases (kinds ECON and FED, one line per release: rows that share the calendar's family key are one
+line, the rows of one rate decision are one line, minutes and speeches keep their own titles; at most 4;
+when the list is empty and the BLS, BEA or Nasdaq release calendar failed, the card says the
+day's releases are not known; a failed Treasury auction read or one failed Nasdaq day does not trigger it) and states the call wall and put wall once, each with its signed distance, as context. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
+built on the server clock's date while the chain pricing for the same horizons was on New York's; in the
+evening the labels were a day ahead, and on monthly OPEX evening a month. They moved to
+server/horizonDates.ts with the clock as an argument and are tested to agree with horizonTargetIso.
+(5) The ten-day cone (server/multiDayProjection.ts) dated its bands by counting weekdays from the UTC day,
+so a band landed on Thanksgiving and every other holiday; it now walks the exchange calendar's sessions
+from the bar the cone starts from (band n is n sessions from that bar's close; before the open band 1 is
+today; the bar's date is read twelve hours after its midnight stamp, as server/dayChange.ts does). Checked and left: date helpers that format a date already built at noon UTC, and FRED/news id
+strings. Also fixed on the way: the calendar's family classifier (server/sources/parse.ts) read "ADP Nonfarm
+Employment Change" and "Nonfarm Productivity" as the jobs report, and the merge then dropped both rows
+as its duplicates; ADP is now its own row and productivity its own family. Known and not in this change:
+the computed CPI and jobs rows are graded MED, so they do not reach the releases card when the official
+read fails (the card then says the calendar was not fully read); server/econWeek.ts buckets events by UTC day; Heatseeker's expiry
+quick picks and Trade Desk's isOpexToday use the browser's date and ignore holidays; tickerCalendar's
+MACRO_2026 list ends 2026-07-29. Tests: tests/quant/ny-dates.test.ts (8), run under UTC, New York and
+Tokyo server clocks.
+
+**Outlook tab: fewer words, same facts (2026-11-21).** Owner's rule: every line has to be useful and clear to
+read. Seen live on its first render, the tab said the same caveat five times and listed 28 expiries, most of
+them under 1% of the open interest. Now: each dated window is two or three labelled lines (Events, Largest
+expiry, Implied range by a date) and the "not a forecast" note is said once under them; a window with no
+event and no expiry is not drawn; the expiry table opens on the nearest expiry and those holding 2% or more
+of the open interest read (as printed, after rounding) plus the largest, with one button for the rest (the count hidden is stated); captions are shorter. The partial-strike-read warning on max pain is kept, shown only when the read is partial.
+No number or state changed. shared/outlook.ts `windowLines`, `windowHasContent`, `mainExpiryRows`.
+**Jobs report dates come from the BLS schedule (2026-11-21).** Seen on the Outlook tab's first live render:
+"Jan Jobs Report (NFP) Jan 1", a holiday. server/volCalendar.ts put the jobs report on every first Friday.
+The BLS schedule (bls.gov/schedule/news_release/empsit.htm, read 2026-11-21) has it on Jan 8, 2027 and on
+Oct 8, 2027 (the rule had Jan 1 and Oct 1); the other listed dates are first Fridays. The rule also placed the report's expected move and its alert-gate
+actions (SUPPRESS_VRP_GATE, ANNOTATE_WHALE_EVENT_DAY) on a day with no release. `NFP_DATES` now lists the
+official dates from 2026-11-06 to 2027-12-03, with the same stale and end-of-list warnings as FOMC and CPI;
+past the list nothing is invented. In server/news.ts the row's source reads "BLS schedule (hardcoded copy)"
+and the calendar notes lost their direction claims ("Hot read = bond selloff + risk-off; cool = rally",
+"Largest single-day vol catalyst", "dealer hedging unwinds", "Historically the highest-volume day").
+server/econWeek.ts still estimates its own synthetic jobs chip by the first-Friday rule (labelled an
+estimate there). Test: tests/quant/ny-dates.test.ts.
+
+**News keyword rules: a move word needs a market next to it (2026-11-21).** Seen live on the ALPHA card:
+"Croatians rally in Zagreb demanding justice..." was scored 4/10 and tagged Bullish (the bare word "rally"),
+and the feed's topic chips marked a tennis result as EARNINGS (the bare word "beat"). server/alphaEngine.ts
+`moveNearMarket`: an up word (rally, surge, soar, jump) or a down word (correction, plunge, crash, rout,
+tumble, slump, slide; sink for shares and indexes only) counts when a market word is within 5 words of it in
+the same clause; a clause ends at ; : , a sentence end, or as/while/after/but/though/despite/amid. It works on
+words, not a character regex, so it runs in linear time on any text (a first regex version could be made to
+run for 35 seconds). Market words: stocks, shares, the named indexes, futures, Wall Street, chipmakers,
+market/index (not the housing or job market, market share, the dollar or a price index), gold, silver,
+copper, oil, crude, bitcoin, ether, crypto. Yields, bonds and the dollar are deliberately NOT market words:
+"yields jump" would be tagged Bullish with the wrong sign; so "Bond rally deepens" is untagged, as is "DAX
+slumps". "tech" counts only directly before a move word or a share word. A crash beside site, app, plane, car, tanker or
+exchange is not a price. "bear market" and "sell-off" still stand alone; the bare "rip" is gone. The
+vocabulary also grew (jump, tumble, slump, slide, plural and past forms), so some headlines are tagged for
+the first time ("Bitcoin crashes below 60,000", "Oil jumps 4%"). Known and left: "Farmers rally at Wall
+Street protest" still matches; the QUALIFIERS list still adds bearish votes for a bare "crash". server/news.ts
+EARNINGS topic: phrases ("beats ... estimates", "beats on revenue", "third-quarter results", "profit falls"),
+not the bare verbs, and not when the word before the verb is a macro one ("CPI tops forecasts", "Jobs report
+beats expectations"). Still open: the
+headline feed itself carries many non-market stories (advice columns, sports) under "Market-relevant
+headlines". Tests: tests/quant/news-keywords.test.ts (4).

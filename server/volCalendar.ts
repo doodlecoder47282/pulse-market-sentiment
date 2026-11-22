@@ -1,9 +1,11 @@
+import { etDate } from "../shared/exchangeCalendar";
 // server/volCalendar.ts
 //
 // Volatility event calendar — computes upcoming OPEX, VIX expirations,
 // triple witching, FOMC meetings, CPI releases, and NFP dates.
 //
-// Monthly OPEX, VIX exp, and NFP are computed algorithmically.
+// Monthly OPEX and VIX exp are computed algorithmically; NFP, FOMC and CPI dates are hardcoded copies of
+// the official schedules.
 // FOMC and CPI dates for 2025-2026 are hardcoded from the official schedule.
 // Vol calendar is recomputed per request (cheap date math, no external calls).
 
@@ -47,10 +49,13 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function daysAway(dateStr: string, today: Date): number {
-  const d = new Date(dateStr + "T12:00:00Z");
-  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round((d.getTime() - t.getTime()) / 86400000);
+/**
+ * Whole days from today's date to an event's date, both as calendar dates. (This compared noon UTC on the
+ * event's date with local midnight today: on a server whose clock is UTC that is always a half day more, and
+ * the half rounded up, so an event today read "1 day away" and every count was one too many.)
+ */
+export function daysAway(dateStr: string, today: Date): number {
+  return Math.round((Date.parse(`${dateStr}T12:00:00Z`) - Date.parse(`${toDateStr(today)}T12:00:00Z`)) / 86400000);
 }
 
 /** Get the Nth occurrence of a weekday (0=Sun, 1=Mon…6=Sat) in a given year/month. */
@@ -66,11 +71,6 @@ function nthWeekday(year: number, month: number, weekday: number, n: number): Da
 /** Third Friday of month — standard monthly OPEX. */
 function thirdFriday(year: number, month: number): Date {
   return nthWeekday(year, month, 5, 3);
-}
-
-/** First Friday of month — NFP. */
-function firstFriday(year: number, month: number): Date {
-  return nthWeekday(year, month, 5, 1);
 }
 
 /**
@@ -112,6 +112,18 @@ const FOMC_DATES: string[] = [
   // 2027
   "2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09",
   "2027-07-28", "2027-09-15", "2027-10-27", "2027-12-08",
+];
+
+// ---- Hardcoded Employment Situation (NFP) release dates (BLS scheduled) ----
+// Source: bls.gov/schedule/news_release/empsit.htm, read 2026-11-21. The release is NOT always the first
+// Friday of the month, which is the rule this file used until then: the report on December 2026 comes out
+// on January 8, 2027 (the first Friday is New Year's Day), and the October 2027 release is on the 8th, a
+// second Friday.
+// The rule put a jobs report, its expected move and its alert-gate actions on a day with no release.
+export const NFP_DATES: string[] = [
+  "2026-11-06", "2026-12-04",
+  "2027-01-08", "2027-02-05", "2027-03-05", "2027-04-02", "2027-05-07", "2027-06-04",
+  "2027-07-02", "2027-08-06", "2027-09-03", "2027-10-08", "2027-11-05", "2027-12-03",
 ];
 
 // ---- Hardcoded CPI release dates 2025-2027 (BLS scheduled) ----
@@ -157,8 +169,10 @@ export function getTodayEventContext(): {
   };
 }
 
-export function buildVolCalendar(): VolCalendarResponse {
-  const today = new Date();
+export function buildVolCalendar(nowMs: number = Date.now()): VolCalendarResponse {
+  // Today in New York, as a Date whose own year, month and day read that date wherever the server runs.
+  const [ty, tm, td] = etDate(nowMs).split("-").map(Number);
+  const today = new Date(ty, tm - 1, td, 12);
   const todayStr = toDateStr(today);
   const cutoffDate = new Date(today);
   cutoffDate.setDate(cutoffDate.getDate() + 90);
@@ -186,10 +200,17 @@ export function buildVolCalendar(): VolCalendarResponse {
   // say so, so an empty stretch is not read as "no FOMC/CPI in the window".
   if (!fomcStale && cutoffStr > lastFomc) warnings.push(`FOMC schedule ends ${lastFomc}: meetings after that date inside the next 90 days are not listed.`);
   if (!cpiStale && cutoffStr > lastCpi) warnings.push(`CPI schedule ends ${lastCpi}: releases after that date inside the next 90 days are not listed.`);
+  const lastNfp = NFP_DATES[NFP_DATES.length - 1];
+  if (todayStr > lastNfp) {
+    const msg = `Jobs report schedule stale: last listed date ${lastNfp} is past today (${todayStr}). Refresh NFP_DATES from the BLS release schedule.`;
+    warnings.push(msg);
+    console.warn(`[volCalendar] ${msg}`);
+  }
+  else if (cutoffStr > lastNfp) warnings.push(`Jobs report schedule ends ${lastNfp}: releases after that date inside the next 90 days are not listed.`);
 
   const events: VolEvent[] = [];
 
-  // Generate OPEX/VIX/NFP for current month + next 7 months
+  // Generate OPEX/VIX for current month + next 7 months
   for (let offset = 0; offset <= 7; offset++) {
     const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
     const year = d.getFullYear();
@@ -223,16 +244,16 @@ export function buildVolCalendar(): VolCalendarResponse {
         importance: "medium",
       });
     }
+  }
 
-    // NFP — first Friday of month
-    const nfpDate = firstFriday(year, month);
-    const nfpStr = toDateStr(nfpDate);
-    if (nfpStr >= todayStr && nfpStr <= cutoffStr) {
+  // NFP dates (BLS schedule; no rule: see NFP_DATES)
+  for (const dateStr of NFP_DATES) {
+    if (dateStr >= todayStr && dateStr <= cutoffStr) {
       events.push({
-        date: nfpStr,
+        date: dateStr,
         type: "nfp",
-        label: `${MONTH_NAMES[month]} Jobs Report (NFP)`,
-        daysAway: daysAway(nfpStr, today),
+        label: `${MONTH_NAMES[Number(dateStr.slice(5, 7)) - 1]} Jobs Report (NFP)`,
+        daysAway: daysAway(dateStr, today),
         importance: "medium",
         expectedMoveBps: 53,
         gateActions: ["SUPPRESS_VRP_GATE", "ANNOTATE_WHALE_EVENT_DAY"],

@@ -1,3 +1,4 @@
+import { eventsOnEtDate, releaseCalendarNote } from "../shared/playbookEvents";
 import { levelsSourceFor, INDEX_NOT_WIRED_REASON } from "../shared/chartLevels";
 import { EMPTY_RETRY_CAP_MS, EMPTY_RETRY_SESSION_CAP_MS, emptyRetryDelayMs, modelsCacheGate, modelsPeekReason } from "./modelsBackoff";
 import { briefForPrompt, sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
@@ -529,17 +530,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       // Pull today's catalyst events for news-aware playbook (best-effort)
       let todaysEvents: Array<{ kind: string; label: string; timeLabel?: string }> = [];
+      let releaseSources: Array<{ id: string; state: string }> | null = null; // null until the news snapshot is read
       try {
         const { buildNewsSnapshot } = await import("./news");
         const news = await buildNewsSnapshot();
-        const todayIso = new Date().toISOString().slice(0, 10);
-        todaysEvents = (news.calendar ?? [])
-          .filter((e: any) => e.date === todayIso)
-          .map((e: any) => ({
-            kind: e.kind,
-            label: e.label || e.title || "",
-            timeLabel: e.timeLabel || "",
-          }));
+        // Events on New York's date. A calendar event carries epoch seconds, not a date string.
+        todaysEvents = eventsOnEtDate(news.calendar, etDate(Date.now()));
+        releaseSources = news.sources;
       } catch (e) {
         // non-fatal
       }
@@ -568,6 +565,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         gammaMaxAgeMs: maxServeAgeMs("chains"),
         squeeze,
         playbook,
+        // Why the releases list may be empty without the day being empty (null: the calendar was read).
+        releaseCalendarNote: todaysEvents.length === 0 ? releaseCalendarNote(releaseSources) : null,
         dataState: snap.stale ? "stale" : "ok",
         composite: { score: snap.composite.score, label: snap.composite.label },
         voicesBias: voicesData?.voicesBias ?? null,
@@ -2427,7 +2426,7 @@ RULES:
 NEWS FEED (${items.length} items, ranked by deterministic impact):
 ${itemLines || "(empty)"}
 
-DETERMINISTIC BASELINE BRIEF (rules engine; trade section removed):
+DETERMINISTIC BASELINE BRIEF (rules engine: keyword scores and counts):
 ${briefForPrompt(deterministic)}
 
 ${fusionBlock}
@@ -3281,7 +3280,9 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       // the ladder splits it into expiry segments and merges them.
       const { getOptionChainLadder } = await import("./schwab");
       let chain = dte > 14 ? await getOptionChainLadder(symbol, dte) : await schwabGetOptionChain(symbol, dte);
-      if ("error" in chain && dte > 14) chain = await schwabGetOptionChain(symbol, Math.min(dte, 14));
+      // How many days of expiries were actually read: the ladder's, or the shorter single chain it fell back to.
+      let dteRead = dte;
+      if ("error" in chain && dte > 14) { chain = await schwabGetOptionChain(symbol, Math.min(dte, 14)); dteRead = Math.min(dte, 14); }
       const usedSymbol = symbol;
 
       if ("error" in chain) {
@@ -3318,6 +3319,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       audit.chainAsOfMs = chain.asOfMs;
       audit.chainStale = chain.stale;
       (audit as any).oiState = chain.oiState ?? null;
+      audit.dteRead = dteRead;
       audit.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;

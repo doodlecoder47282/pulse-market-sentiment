@@ -462,7 +462,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
               variant="outline"
               className="border-amber-500/40 text-amber-300/80 text-[11px]"
             >
-              Impact Engine
+              Headline scoring
             </Badge>
             {mutation.data?.mode === "with_search" && (
               <Badge
@@ -490,7 +490,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            AI agent sifts geopolitics, rates, insider, sentiment. Ranks by market impact.
+            Scores the headlines in the feed by keyword rules: category, score, direction tag. When a model key is configured, a model writes a descriptive summary from them.
           </p>
         </div>
         <Button
