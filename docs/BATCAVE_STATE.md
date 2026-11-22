@@ -3132,3 +3132,17 @@ row (45 SPX rows on the tab that loads first); it now opens to its first 8 (hot 
 group already sorts) with "showing 8 of 45 (3 sold rows are below): show all". Counts and the group average
 still use every position. Not capped: the fresh-whales groups and the closed archive (collapsed by default).
 Tests: tests/quant/signals-plain.test.ts (3).
+
+**"Today" is New York's date; day counts and session dates fixed (2026-11-21).** Found in a sweep for dates
+taken from the server's clock zone. (1) The event calendar's days-away count (server/volCalendar.ts) compared
+noon UTC on the event date with LOCAL midnight today; on a UTC server that is always half a day more and the
+half rounded up, so an event today read "1 day away" and every count was one too many. It now counts
+calendar days between two dates, and "today" is New York's date. (2) From 7 or 8 PM New York time the UTC
+date is already tomorrow. Four places took today's date from UTC: the playbook's "today's events"
+(server/routes.ts, tomorrow's events shown as today's in the evening), the earnings calendar
+(server/earnings.ts, today's after-the-close reporters dropped from the list for the rest of the evening),
+the per-ticker calendar (server/tickerCalendar.ts) and the date in the master-alpha packet. All use
+etDate(now). (3) The ten-day cone (server/multiDayProjection.ts) dated its bands by counting weekdays from
+the UTC day, so a band landed on Thanksgiving and every other holiday; it now walks the exchange calendar's
+sessions. Checked and left: date helpers that format a date already built at noon UTC, and FRED/news id
+strings. Tests: tests/quant/ny-dates.test.ts (5), run under UTC, New York and Tokyo server clocks.

@@ -1,3 +1,4 @@
+import { etDate, nextTradingDay } from "../shared/exchangeCalendar";
 import { vixToAtmPct } from "@shared/vol";
 // server/multiDayProjection.ts
 //
@@ -266,13 +267,16 @@ export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeRes
 
   const spot = bars[bars.length - 1].c;
   const asOfTs = bars[bars.length - 1].t;
-  const now = new Date();
+  // The next ten SESSIONS from New York's date, on the exchange calendar. Counting weekdays put a band on
+  // Thanksgiving and every other holiday, and dated the bands from the UTC day.
+  const sessionDates: string[] = [];
+  for (let d = nextTradingDay(etDate(Date.now())); sessionDates.length < 10; d = nextTradingDay(d)) sessionDates.push(d);
 
   const bands: ConeBand[] = [];
   for (let n = 1; n <= 10; n++) {
     bands.push({
       day: n,
-      date: nextWeekdayDate(now, n).toISOString().slice(0, 10),
+      date: sessionDates[n - 1],
       ...coneBandPrices(spot, sigmaAdj, n),
     });
   }

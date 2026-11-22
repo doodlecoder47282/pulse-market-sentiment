@@ -1,3 +1,4 @@
+import { etDate } from "../shared/exchangeCalendar";
 // server/volCalendar.ts
 //
 // Volatility event calendar — computes upcoming OPEX, VIX expirations,
@@ -47,10 +48,13 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function daysAway(dateStr: string, today: Date): number {
-  const d = new Date(dateStr + "T12:00:00Z");
-  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round((d.getTime() - t.getTime()) / 86400000);
+/**
+ * Whole days from today's date to an event's date, both as calendar dates. (This compared noon UTC on the
+ * event's date with local midnight today: on a server whose clock is UTC that is always a half day more, and
+ * the half rounded up, so an event today read "1 day away" and every count was one too many.)
+ */
+export function daysAway(dateStr: string, today: Date): number {
+  return Math.round((Date.parse(`${dateStr}T12:00:00Z`) - Date.parse(`${toDateStr(today)}T12:00:00Z`)) / 86400000);
 }
 
 /** Get the Nth occurrence of a weekday (0=Sun, 1=Mon…6=Sat) in a given year/month. */
@@ -157,8 +161,10 @@ export function getTodayEventContext(): {
   };
 }
 
-export function buildVolCalendar(): VolCalendarResponse {
-  const today = new Date();
+export function buildVolCalendar(nowMs: number = Date.now()): VolCalendarResponse {
+  // Today in New York, as a Date whose own year, month and day read that date wherever the server runs.
+  const [ty, tm, td] = etDate(nowMs).split("-").map(Number);
+  const today = new Date(ty, tm - 1, td, 12);
   const todayStr = toDateStr(today);
   const cutoffDate = new Date(today);
   cutoffDate.setDate(cutoffDate.getDate() + 90);

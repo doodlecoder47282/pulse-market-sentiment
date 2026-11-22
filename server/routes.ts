@@ -532,7 +532,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try {
         const { buildNewsSnapshot } = await import("./news");
         const news = await buildNewsSnapshot();
-        const todayIso = new Date().toISOString().slice(0, 10);
+        const todayIso = etDate(Date.now()); // New York's date: the UTC date is already tomorrow from 7 or 8 PM ET
         todaysEvents = (news.calendar ?? [])
           .filter((e: any) => e.date === todayIso)
           .map((e: any) => ({
