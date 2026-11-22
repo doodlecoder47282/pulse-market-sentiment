@@ -128,6 +128,7 @@ export function useKeyboardShortcuts({
 
 export const TAB_LABELS: Record<TabKey, string> = {
   signals: "Signals",
+  outlook: "Outlook",
   chart: "Chart",
   models: "Models",
   heatseeker: "Heatseeker",
