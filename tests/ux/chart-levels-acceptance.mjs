@@ -58,6 +58,10 @@ async function setup(browser, viewport, mobile) {
   });
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   const tab = page.locator('[data-testid="tab-chart"]');
+  // Wait for the app to draw one of the two navigations before asking which one this width has: checked at
+  // DOMContentLoaded, neither exists yet, and a desktop run then waited 30 s on the phone bar it never shows.
+  await page.locator('[data-testid="tab-chart"], [data-testid="bottomnav-chart"]').first().waitFor({ state: "attached", timeout: 30000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="tab-chart"], [data-testid="bottomnav-chart"]')].some((el) => el.getClientRects().length > 0), null, { timeout: 30000 });
   if (await tab.isVisible().catch(() => false)) await tab.click();
   else { await page.locator('[data-testid="bottomnav-chart"]').scrollIntoViewIfNeeded(); await page.locator('[data-testid="bottomnav-chart"]').click(); }
   await page.locator('[data-testid="chart-panel"]').waitFor({ timeout: 30000 });
