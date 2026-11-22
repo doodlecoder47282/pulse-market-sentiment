@@ -3246,3 +3246,13 @@ not the bare verbs, and not when the word before the verb is a macro one ("CPI t
 beats expectations"). Still open: the
 headline feed itself carries many non-market stories (advice columns, sports) under "Market-relevant
 headlines". Tests: tests/quant/news-keywords.test.ts (4).
+
+**News feed: a quote page is not a headline; the header no longer claims a filter (2026-11-21).** Seen live:
+the ALPHA brief's top-scored "headline" was "Tesla Inc (TSLA.O) | Stock Price & Latest News - Reuters", 8/10,
+a quote page the Google News search feed returns beside stories. server/sources/merge.ts `isIndexPage` drops
+such titles at intake (not counted as undated): the quote-page forms with a ticker in brackets, and a
+title made only of section names ("Business News | Today's International Headlines | Reuters"). A story that
+starts with such a phrase is kept. The News tab's top line and explainer said "Market-relevant headlines" and
+"Filter: SPX-relevant..."; no such filter exists (160 of 200 stories were topic OTHER, with advice columns and
+sports among them). They now say what the feed is (tagged by topic, not filtered); CFTC is no longer listed as a source read
+for headlines (its feed is off). Not done: hiding OTHER by default (owner's choice).

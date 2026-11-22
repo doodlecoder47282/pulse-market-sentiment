@@ -1,4 +1,4 @@
-# Next steps (as of 2026-11-21, main at PR #149; for whoever picks this up, human or model)
+# Next steps (as of 2026-11-21, after PRs #143 to #150; for whoever picks this up, human or model)
 
 Read `docs/REVIEWER_BRIEF.md` and the last dozen entries of `docs/BATCAVE_STATE.md` first. This file is the
 work queue: each item is small, says where to look, and says what "done" means. Delete an item when it ships.
@@ -108,13 +108,13 @@ first trim of the Outlook tab dropped a "strike range read is not complete" warn
    endpoint for SPX too). A safe version: one guarded attempt per session with a long negative cache.
 6. **Push alerts to a closed phone app.** The bell works only while the app is open in a tab. A real push
    needs a push service and, on iOS, the Capacitor push plugin and an APNs key.
-7. **News tab.** PR #148 fixed the keyword tags (a protest tagged Bullish, a tennis result tagged EARNINGS).
-   Still open: (a) the tab's top line says "Market-relevant headlines" and "Filter: SPX-relevant"
-   (`server/headline.ts`), but the feed is not filtered that way and carries advice columns and sports
-   results. Either filter by topic (drop OTHER from the default view) or say what the feed is. (b) The ALPHA card tells the reader to
-   "set ANTHROPIC_API_KEY or OPENAI_API_KEY": developer text on a user's screen, and it omits the third key
-   the route accepts. (c) `server/routes.ts` still holds a dead `ALPHA_SYSTEM_PROMPT` that asks for "TRADE
-   IMPLICATIONS". (d) `QUALIFIERS` in `server/alphaEngine.ts` still adds bearish votes for a bare "crash".
+7. **News tab.** Fixed: keyword tags (PR #148); quote pages in the feed and the "Market-relevant /
+   SPX-relevant" header that claimed a filter the feed does not have. Still open: (a) the feed carries
+   advice columns and sports results under OTHER (160 of 200 stories when last seen); hiding OTHER by default
+   is a product choice for the owner. (b) The ALPHA card tells the reader to "set ANTHROPIC_API_KEY or
+   OPENAI_API_KEY": developer text on a user's screen, and it omits the third key the route accepts.
+   (c) `server/routes.ts` still holds a dead `ALPHA_SYSTEM_PROMPT` that asks for "TRADE IMPLICATIONS".
+   (d) `QUALIFIERS` in `server/alphaEngine.ts` still adds bearish votes for a bare "crash".
 8. **One source of event dates.** `server/econWeek.ts` still estimates a jobs chip by the first-Friday
    rule (wrong on Jan 1 and Oct 1, 2027); `shared/macroCalendar.ts` and `server/tickerCalendar.ts` (see 3)
    keep their own lists. Point them all at `NFP_DATES`, `CPI_DATES` and `FOMC_DATES` in

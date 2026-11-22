@@ -30,6 +30,25 @@ export interface TieredItem {
  * stamped in the future (beyond FUTURE_SKEW_MS) are dropped and counted:
  * the feed never invents a publish time.
  */
+/**
+ * A search feed returns site pages beside stories: a quote page ("Tesla Inc (TSLA.O) | Stock Price & Latest
+ * News - Reuters") or a topic page. They carry a date but no news, and the headline rules scored the Tesla
+ * quote page 8 of 10 as the day's top story.
+ */
+export function isIndexPage(title: string): boolean {
+  // The quote-page forms: "<Company> (TICKER.X) | Stock Price & Latest News", "... Stock Price, News, Quote & History".
+  if (/\((?:[A-Z0-9]{1,6})\.[A-Z]{1,3}\)\s*\|?\s*(stock|share) price\s*(&|,)\s*(latest )?news\b/i.test(title)) return true;
+  if (/^[A-Z][A-Z.]{0,5}\s*\|\s*[Ss](tock|hare) [Pp]rice\s*(&|,)/.test(title)) return true; // an upper-case ticker, not a word
+  // A section page: every part of the title is a section name (a trailing publisher name aside). A story
+  // that merely starts with one ("Stock market news: Dow falls 500 points") has a part that is not.
+  const SECTION = /^((latest|breaking) news (&|and) (headlines|updates)|(business|markets?|stock market|world|finance) news|today's (international|latest) [a-z ]*(headlines|news))$/i;
+  // Parts are split on " | " and " - " only: what follows a colon is the story ("Business news: Stocks rise").
+  const segs = title.split(/\s+[|\-–]\s+/).map((x) => x.trim()).filter(Boolean);
+  // A trailing publisher name is not a part of the title; any other short last part is a story ("- Powell resigns").
+  if (segs.length > 1 && /^(reuters|bloomberg|cnbc|marketwatch|ft|financial times|wsj|the wall street journal|ap|ap news|yahoo finance)$/i.test(segs[segs.length - 1])) segs.pop();
+  return segs.length > 0 && segs.every((x) => SECTION.test(x));
+}
+
 export function tierItems(
   sourceId: string,
   items: FeedItem[],
@@ -42,6 +61,7 @@ export function tierItems(
   const out: TieredItem[] = [];
   for (const it of items) {
     if (it.publishedMs == null || it.publishedMs > nowMs + FUTURE_SKEW_MS) { undatedDropped++; continue; }
+    if (isIndexPage(it.title)) continue; // a quote or topic page, not a story
     out.push({
       sourceId,
       source: spec?.name ?? sourceId,

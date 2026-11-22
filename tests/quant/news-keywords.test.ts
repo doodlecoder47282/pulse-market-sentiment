@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { MARKET_UP, MARKET_DOWN, buildDeterministicAlphaBrief } from "../../server/alphaEngine";
+import { isIndexPage, tierItems } from "../../server/sources/merge";
 
 const up = (t: string) => MARKET_UP.test(t), down = (t: string) => MARKET_DOWN.test(t);
 
@@ -44,4 +45,20 @@ test("the earnings topic needs an earnings phrase, not the bare words beat or mi
   for (const t of ["Alcaraz digs deep to beat Shelton, will face world number one Zverev in final", "Team misses playoffs", "Trump tops polls", "CPI tops forecasts", "GDP misses estimates", "Payrolls beat consensus", "Third-quarter GDP rises 2.8%", "Jobs report beats expectations", "ISM manufacturing tops forecasts", "Retail sales jump 0.7%", "Retail sales beat expectations", "Home sales miss estimates", "Inflation data tops forecasts", "Housing starts beat forecasts"]) assert.equal(hit(t), false, t);
   for (const t of ["Nvidia beats estimates as data-center revenue jumps", "Target profit falls, guidance cut", "Apple earnings due Thursday", "Apple beats on revenue", "Microsoft beats Wall Street expectations", "Amazon beats analyst estimates",
     "Walmart tops Q3 estimates", "Netflix misses subscriber estimates", "Nvidia reports fiscal third-quarter results", "Meta beats on top and bottom lines", "Walmart beats estimates as inflation-weary shoppers trade down", "Nvidia beats estimates; CPI due Thursday"]) assert.equal(hit(t), true, t);
+});
+
+test("a quote page or topic page from a search feed is not a headline", () => {
+  for (const t of ["Tesla Inc (TSLA.O) | Stock Price & Latest News - Reuters", "Apple Inc (AAPL.O) | Stock Price & Latest News", "Apple Inc (AAPL.O) Stock Price & Latest News | Reuters",
+    "Tesla Inc (TSLA.OQ) Stock Price, News, Quote & History - Reuters", "NVDA | Share Price, Quote & News", "Latest News & Headlines | Reuters", "World News | Reuters", "Business News | Today's International Headlines | Reuters", "Stock Market News | Reuters"]) assert.equal(isIndexPage(t), true, t);
+  for (const t of ["Tesla stock price falls 5% after recall news", "Nasdaq has its worst week since 2020; Dow, S&P 500 in correction - Reuters", "Fed holds rates | Reuters", "Latest news on the strike: talks resume",
+    "Ukraine war latest news and updates: talks resume", "Live: Latest news and updates as markets react to Fed", "Breaking news and updates: Fed holds rates steady", "Breaking News & Updates: Nvidia earnings beat",
+    "Live updates | Stock price reaction to CPI news", "Opinion | Share price is not the news; ask what the quote charts", "Exclusive | Share price slump forces SoftBank to rethink chart of Arm stake news - Reuters",
+    "Stock market news: Dow falls 500 points", "Breaking news and updates: Powell resigns", "Business news: Stocks rise", "Latest news and updates: Fed decides", "Tesla | Share price, deliveries fall", "Apple | Stock price & news to watch", "Breaking news and updates - Powell resigns", "Business News | Fed decides"]) assert.equal(isIndexPage(t), false, t);
+  const now = Date.UTC(2026, 10, 22);
+  const r = tierItems("google_news_reuters", [
+    { title: "Tesla Inc (TSLA.O) | Stock Price & Latest News - Reuters", link: "https://x/1", publishedMs: now - 1000 },
+    { title: "Stocks fall as yields rise - Reuters", link: "https://x/2", publishedMs: now - 2000 },
+  ] as any, now, now);
+  assert.deepEqual(r.items.map((x) => x.title), ["Stocks fall as yields rise - Reuters"]);
+  assert.equal(r.undatedDropped, 0, "a dated index page is not counted as undated");
 });

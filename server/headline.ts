@@ -231,15 +231,15 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone: "neutral",
-        topLine: "Market-relevant headlines and macro events.",
-        subLine: "Filter: SPX-relevant, Fed/Treasury, geopolitics, OpEx/FOMC calendar.",
+        topLine: "Headlines from the listed sources, and scheduled macro events.",
+        subLine: "Topic chips filter the headlines by keyword tag; OTHER holds everything no rule tagged, market story or not.",
         bullets: [
-          "Official sources first (SEC, Fed, BLS, BEA, Treasury, CFTC), then established newswires; the source line shows which are live.",
+          "Official sources first (SEC, Fed, BLS, BEA, Treasury), then established newswires; the source line shows which are live.",
           "Reddit and anonymous blogs are filtered out.",
           "Calendar: FOMC, data releases, OpEx and holidays.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Market news from tiered, labeled sources, filtered for SPX relevance.",
+        whatThisIs: "News from tiered, labeled sources. It is tagged by topic, not filtered for relevance to the index.",
       };
 
     case "voices":
