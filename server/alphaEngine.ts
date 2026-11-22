@@ -42,11 +42,15 @@ interface Rule {
   tickers?: string[];
 }
 
-// A market named within the same clause as a move word, in either order.
-const MKT = "(?:stocks?|shares|equit(?:y|ies)|markets?|nasdaq|dow|s&p|spx|russell|index(?:es)?|indices|futures|wall street|treasur(?:y|ies)|bonds?|yields?|dollar|gold|oil|crude|bitcoin|crypto)";
-const near = (moves: string) => new RegExp(`\\b${MKT}\\b[^.;:]{0,60}\\b(?:${moves})\\b|\\b(?:${moves})\\b[^.;:]{0,40}\\b${MKT}\\b`, "i");
+// A market named within the same clause as a move word, in either order. Risk assets only: yields, bonds
+// and the dollar are left out, because "yields jump" is not a bullish headline and a direction tag on them
+// would carry the wrong sign as often as the right one.
+const MKT = "(?:stocks?|shares|equit(?:y|ies)|markets?|nasdaq|dow|s&p|spx|russell|nikkei|ftse|dax|stoxx|hang seng|kospi|index(?:es)?|indices|futures|wall street|tech|chip(?:maker)?s?|semiconductors?|gold|silver|copper|oil|crude|brent|wti|bitcoin|ether(?:eum)?|crypto)";
+// A clause ends at ; : or a period followed by a space; the periods of an initialism ("U.S.") do not end it.
+const IN_CLAUSE = "(?:[^.;:]|\\.(?=\\S)|(?<=\\b\\w)\\.)";
+const near = (moves: string) => new RegExp(`\\b${MKT}\\b${IN_CLAUSE}{0,60}\\b(?:${moves})\\b|\\b(?:${moves})\\b${IN_CLAUSE}{0,40}\\b${MKT}\\b`, "i");
 export const MARKET_UP = near("rally|rallies|rallied|surges?|surged|soars?|soared|jumps?|jumped");
-export const MARKET_DOWN = near("correction|plunges?|plunged|crash(?:es|ed)?|rout|tumbles?|tumbled|slump(?:s|ed)?");
+export const MARKET_DOWN = near("correction|plunges?|plunged|crash(?:es|ed)?|rout|tumbles?|tumbled|slump(?:s|ed)?|sinks?|sank|slides?|slid|sell-?\\s?offs?");
 
 const RULES: Rule[] = [
   // ---- RATES / FED (broad index impact) ----

@@ -3178,7 +3178,10 @@ expiry when none is near 30 days); the panel's footer and the skew description h
 and the feed's topic chips marked a tennis result as EARNINGS (the bare word "beat"). server/alphaEngine.ts:
 rally/surge/soar/jump and correction/plunge/crash/rout/tumble/slump now count only within the same clause as
 a market word (stocks, shares, Nasdaq, Dow, S&P, futures, yields, oil, gold, bitcoin...); "bear market" and
-"selloff" still stand alone; the bare "rip" is gone. server/news.ts EARNINGS topic: "beats/misses/tops
-estimates|expectations|forecasts|consensus" and "profit|revenue|sales beats/misses/rises/falls", not the bare
+"selloff" still stand alone; the bare "rip" is gone. Yields, bonds and the dollar are deliberately not market
+words here: "yields jump" would be tagged Bullish with the wrong sign. The vocabulary also grew (jump, tumble,
+slump, sink, slide, plural and past forms), so some headlines are tagged for the first time ("Bitcoin crashes
+below 60,000", "Oil jumps 4%"). server/news.ts EARNINGS topic: "beats/misses/tops (up to three words) estimates|expectations|forecasts|consensus", "beats on revenue",
+"third-quarter" and "profit|revenue|sales beats/misses/rises/falls", not the bare
 verbs. Still open: the headline feed itself carries many non-market stories (advice columns, sports) under
 "Market-relevant headlines". Tests: tests/quant/news-keywords.test.ts (3).
