@@ -48,8 +48,8 @@ interface Rule {
 // though, despite, amid), so "Stocks rally as dollar slides" is one up-move and no down-move. Linear in the
 // length of the text. Yields, bonds and the dollar are not market words here: "yields jump" is not a bullish
 // headline, and a direction tag on them would carry the wrong sign as often as the right one.
-export const MOVE_REACH = 4;
-const EQUITY = new Set(["stocks", "stock", "shares", "equities", "equity", "nasdaq", "dow", "s&p", "spx", "russell", "nikkei", "ftse", "stoxx", "kospi", "futures", "wallstreet", "chipmakers", "markets", "market", "index", "indexes", "indices"]);
+export const MOVE_REACH = 5;
+const EQUITY = new Set(["stocks", "stock", "shares", "equities", "equity", "nasdaq", "dow", "s&p", "spx", "russell", "nikkei", "ftse", "stoxx", "kospi", "hangseng", "futures", "wallstreet", "chipmakers", "markets", "market", "index", "indexes", "indices"]);
 const OTHER_MKT = new Set(["gold", "silver", "copper", "oil", "crude", "brent", "wti", "bitcoin", "ether", "ethereum", "crypto"]);
 const JOINERS = new Set(["as", "while", "after", "but", "though", "despite", "amid"]);
 const UP = new Set(["rally", "rallies", "rallied", "surge", "surges", "surged", "soar", "soars", "soared", "jump", "jumps", "jumped"]);
@@ -63,7 +63,7 @@ const NOT_THIS_MARKET: Record<string, { before?: string[]; after?: string[] }> =
   markets: { before: ["housing", "job", "jobs", "labor", "labour", "property", "rental"] },
   index: { before: ["dollar", "price", "prices", "volatility", "confidence", "sentiment", "manufacturing", "services", "managers", "managers'"] },
   stock: { after: ["car"] },
-  gold: { after: ["coast", "medal", "medals"] },
+  gold: { after: ["coast", "medal", "medals", "rush"] },
   silver: { after: ["alert", "medal", "medals"] },
   oil: { after: ["tanker", "spill"] },
   crude: { after: ["tanker"] },
@@ -71,10 +71,11 @@ const NOT_THIS_MARKET: Record<string, { before?: string[]; after?: string[] }> =
 
 function clauses(text: string): string[][] {
   const out: string[][] = [[]];
-  const raw = text.toLowerCase().replace(/wall street/g, "wallstreet").split(/\s+/);
+  const raw = text.toLowerCase().replace(/wall street/g, "wallstreet").replace(/hang seng/g, "hangseng").split(/\s+/);
   for (const r of raw) {
     const ends = /[;:,!?]$/.test(r) || (/\.$/.test(r) && !/^([a-z]\.)+$/.test(r)); // "u.s." does not end a sentence
-    const w = r.replace(/^[^a-z0-9&]+|[^a-z0-9&%']+$/g, "");
+    // Possessives are the bare word ("Nasdaq's plunge"), straight or curly apostrophe.
+    const w = r.replace(/^[^a-z0-9&]+|[^a-z0-9&%'’]+$/g, "").replace(/['’]s$/, "");
     if (JOINERS.has(w)) { out.push([]); continue; }
     if (w) out[out.length - 1].push(w);
     if (ends) out.push([]);
@@ -85,8 +86,12 @@ function clauses(text: string): string[][] {
 function moveNearMarket(text: string, moves: Set<string>, equityOnly: Set<string> | null): boolean {
   for (const c of clauses(text)) {
     const mk: Array<{ i: number; equity: boolean }> = [];
-    c.forEach((w, i) => {
-      const equity = EQUITY.has(w);
+    c.forEach((whole, i) => {
+      // A joined word counts by its parts ("stock-market", "S&P/TSX", "Nasdaq-100"); it stays one word for distance.
+      const w = EQUITY.has(whole) || OTHER_MKT.has(whole) ? whole : whole.split(/[-/]/).find((p) => EQUITY.has(p) || OTHER_MKT.has(p)) ?? whole;
+      // "tech" is a market only directly before a move word or a share word ("tech rout", "tech stocks").
+      const techMove = whole === "tech" && (moves.has(c[i + 1] ?? "") || (equityOnly?.has(c[i + 1] ?? "") ?? false));
+      const equity = EQUITY.has(w) || techMove;
       if (!equity && !OTHER_MKT.has(w)) return;
       const not = NOT_THIS_MARKET[w];
       if (not?.before?.includes(c[i - 1] ?? "") || not?.after?.includes(c[i + 1] ?? "")) return;
