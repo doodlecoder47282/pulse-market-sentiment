@@ -3256,3 +3256,26 @@ starts with such a phrase is kept. The News tab's top line and explainer said "M
 "Filter: SPX-relevant..."; no such filter exists (160 of 200 stories were topic OTHER, with advice columns and
 sports among them). They now say what the feed is (tagged by topic, not filtered); CFTC is no longer listed as a source read
 for headlines (its feed is off). Not done: hiding OTHER by default (owner's choice).
+
+**Daily playbook: a wall out of one day's range is not a one-day path (2026-11-22).** Reported by the owner
+from the Edge Lab on a phone: SPY 697.48, "BULL · SQUEEZE HIGHER, 19% wt, target 775.00 - 788.76". The
+playbook (server/dailyPlaybook.ts) sizes everything for ONE session (its sigma is a one-day move from VIX,
+13.76 here) but ties its up and down paths to the call wall and put wall, which come from gamma across every
+expiry read and can sit anywhere. After the month's fall the call wall was 77.5 points above the price, 5.6
+one-day moves; the put wall 22.5 below, 1.6. The up path was drawn anyway, with a target and a weight. Now
+(shared/playbookReach.ts): a wall more than 2 one-day moves from the price is not a path. The card says how
+far the wall is in points and one-day moves and why no path is drawn from it; no weight, trigger or target is
+shown for it. Its weight is NOT moved to another path (a first version did, which made the middle path read
+"100% wt" when both walls were far): the rule weights stay as set and the wing's share is simply not
+assigned. The Daily Playbook chart draws no band, mid line or trigger line for it and no health pill; the
+Edge Lab verdict takes no vote from the playbook while a wing is out of range (the comparison would be decided
+by how far a wall is); the headline names the heaviest path that is drawn; the middle path's condition no
+longer speaks of a break of the far wall; the email follows. The Edge Lab header now says the
+card is for one day and that the weights are rule tilts, not measured odds (they start at 30/40/30 and are
+nudged by gamma sign, VIX curve, composite score and price against the flip; nothing has graded them).
+Also: the "daily model" target was dated on the calendar day ("SUN NOV 22"); on a weekend or holiday it is now the next
+session (server/horizonDates.ts). Known gap: on a trading day outside regular hours the pricing already uses
+the following session's expiry while the label says today. NOT changed, still open on this card: the
+remaining instruction-style wording ("Targets", "trigger", "cascading sells", "last line", BULL/BEAR), and
+whether the walls for a one-day card should come from near expiries only. Tests:
+tests/quant/playbook-reach.test.ts (5), using the reported numbers.

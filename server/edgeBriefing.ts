@@ -45,9 +45,9 @@ export interface BriefingCrossAsset {
 export interface BriefingPlaybook {
   marketSession: string;
   paths: {
-    bull: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
-    base: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
-    bear: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
+    bull: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
+    base: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
+    bear: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
   };
   levels: { support: number | null; resistance: number | null };
 }
@@ -233,6 +233,8 @@ function buildPlaybook(p: any): BriefingPlaybook | null {
       targetHigh: Number(x.target?.high ?? 0),
       oneLiner: String(x.oneLiner ?? ""),
       drivers: Array.isArray(x.drivers) ? x.drivers.slice(0, 4) : [],
+      // The wall this path hangs on is out of one day's range: no weight, trigger or target is shown.
+      outOfReach: x.reach != null && x.reach.withinDay === false,
     };
   };
   return {
@@ -323,7 +325,10 @@ export function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictC
   const pbUsable = !!b.playbook && [b.playbook.paths.bull, b.playbook.paths.base, b.playbook.paths.bear]
     .every((p) => Number.isFinite(p.probability)) &&
     (b.playbook.paths.bull.probability + b.playbook.paths.base.probability + b.playbook.paths.bear.probability) > 0;
-  if (b.playbook && pbUsable) {
+  // A wing whose wall is out of one day's range is not a path: comparing its weight with the other wing's
+  // would be a vote cast by how far a wall is, not by anything directional. No vote then.
+  const pbWingOut = !!b.playbook && (b.playbook.paths.bull.outOfReach === true || b.playbook.paths.bear.outOfReach === true);
+  if (b.playbook && pbUsable && !pbWingOut) {
     signals++;
     const bullP = b.playbook.paths.bull.probability;
     const bearP = b.playbook.paths.bear.probability;

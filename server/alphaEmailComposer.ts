@@ -187,6 +187,8 @@ export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string
     lines.push(bar("3-path scenarios (edge lab baseline)"));
     const renderPath = (tag: string, p: any) => {
       if (!p) return;
+      // The wall this path hangs on is out of one day's range: say that, with no weight, range or trigger.
+      if (p.outOfReach) { lines.push(`  [${tag}] not a one-day path`); if (p.oneLiner) lines.push(`        ${p.oneLiner}`); return; }
       const prob = p.probability != null ? `${(p.probability * 100).toFixed(0)}%` : "?";
       const range = (p.targetLow != null && p.targetHigh != null) ? `${p.targetLow.toFixed(2)}–${p.targetHigh.toFixed(2)}` : "?";
       lines.push(`  [${tag}] ${prob} · ${p.label ?? "?"} · range ${range}`);
