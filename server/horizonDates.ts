@@ -4,7 +4,7 @@
 // "Today" is New York's date. From 7 or 8 PM New York time a UTC server clock is already on tomorrow, and
 // these labels used to move a day (and, on monthly OPEX evening, a month) ahead of the chain pricing.
 
-import { etDate } from "../shared/exchangeCalendar";
+import { etDate, isTradingDay, nextTradingDay } from "../shared/exchangeCalendar";
 
 export type HorizonKey = "daily" | "weekly" | "monthly" | "quarterly";
 
@@ -29,7 +29,12 @@ export function buildHorizonDates(h: HorizonKey, nowMs: number = Date.now()): {
 
   if (h === "daily") {
     const labels = ["OPEN", "10:30", "12:00", "14:00", "CLOSE"];
-    return { spotAnchorDate, targetDate: `${spotAnchorDate} CLOSE`, targetDateLong: fmtLong(now), waypointLabels: labels };
+    // The daily target is a session's close. On a weekend or holiday that is the next session, which is
+    // also the expiry the pricing picks (the first one on or after today): the label said "SUN NOV 22".
+    const todayIso = etDate(nowMs);
+    const [sy, sm, sd] = (isTradingDay(todayIso) ? todayIso : nextTradingDay(todayIso)).split("-").map(Number);
+    const session = new Date(sy, sm - 1, sd, 12);
+    return { spotAnchorDate, targetDate: `${fmt(session)} CLOSE`, targetDateLong: fmtLong(session), waypointLabels: labels };
   }
 
   if (h === "weekly") {

@@ -41,7 +41,7 @@ interface Briefing {
   playbook: {
     marketSession: string;
     paths: {
-      bull: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
+      bull: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
       base: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
       bear: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
     };
@@ -113,15 +113,19 @@ function PathCard({ kind, p }: { kind: "bull" | "base" | "bear"; p: { label: str
     <div className={`rounded-md border ${color} p-3 space-y-2`}>
       <div className="flex items-center justify-between">
         <span className={`text-[11px] uppercase tracking-wider font-bold ${accent}`}>{kind} · {p.label}</span>
-        <span className="font-mono font-bold">{fmtProb(p.probability)}</span>
+        <span className="font-mono font-bold">{p.outOfReach ? "not a one-day path" : fmtProb(p.probability)}</span>
       </div>
       <div className="text-[11px] text-muted-foreground leading-snug">{p.oneLiner}</div>
-      <div className="text-[11px]">
-        <span className="text-muted-foreground">trigger:</span> <span className="font-mono">{p.trigger}</span>
-      </div>
-      <div className="text-[11px]">
-        <span className="text-muted-foreground">target:</span> <span className="font-mono">{p.targetLow.toFixed(2)} – {p.targetHigh.toFixed(2)}</span>
-      </div>
+      {!p.outOfReach && (
+        <>
+          <div className="text-[11px]">
+            <span className="text-muted-foreground">trigger:</span> <span className="font-mono">{p.trigger}</span>
+          </div>
+          <div className="text-[11px]">
+            <span className="text-muted-foreground">target:</span> <span className="font-mono">{p.targetLow.toFixed(2)} – {p.targetHigh.toFixed(2)}</span>
+          </div>
+        </>
+      )}
       {p.drivers.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {p.drivers.map((d, i) => (
@@ -338,7 +342,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {d.playbook && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">playbook · 3 paths · {d.playbook.marketSession}</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">playbook · one day · {d.playbook.marketSession} · weights are rule tilts, not measured odds</div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <PathCard kind="bull" p={d.playbook.paths.bull} />

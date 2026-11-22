@@ -36,7 +36,8 @@ interface PathScenario {
   key: PathKey;
   label: string;
   probability: number;
-  trigger: { level: number; condition: string };
+  trigger: { level: number; condition: string   reach?: { points: number; sigmas: number; withinDay: boolean };
+};
   target: { low: number; high: number };
   invalidation: number;
   oneLiner: string;
@@ -422,15 +423,17 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     )}
                   </div>
                   <span className="font-mono text-[12px] font-bold" style={{ color: PATH_COLORS[k], textDecoration: isDead ? "line-through" : "none" }}>
-<span>{Math.round(p.probability * 100)}% wt</span>
+<span>{p.reach && !p.reach.withinDay ? "not a one-day path" : `${Math.round(p.probability * 100)}% wt`}</span>
                   </span>
                 </div>
                 <div className={`text-[11px] leading-snug ${isDead ? "text-muted-foreground" : "text-foreground/80"}`}>{p.oneLiner}</div>
+                {!(p.reach && !p.reach.withinDay) && (
                 <div className="grid grid-cols-2 gap-1 text-[11px] text-muted-foreground border-t border-border/20 pt-1.5">
                   <div>Trigger: <span className="font-mono text-foreground">${fmt$(p.trigger.level)}</span></div>
                   <div>Target: <span className="font-mono text-foreground">${fmt$(p.target.low)}–${fmt$(p.target.high)}</span></div>
                 </div>
-                {p.invalidation > 0 && (
+                )}
+                {p.invalidation > 0 && !(p.reach && !p.reach.withinDay) && (
                   <div className="text-[11px] text-muted-foreground">
                     Invalidates: <span className="font-mono text-red-400/80">${fmt$(p.invalidation)}</span>
                   </div>

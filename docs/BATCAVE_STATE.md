@@ -3256,3 +3256,21 @@ starts with such a phrase is kept. The News tab's top line and explainer said "M
 "Filter: SPX-relevant..."; no such filter exists (160 of 200 stories were topic OTHER, with advice columns and
 sports among them). They now say what the feed is (tagged by topic, not filtered); CFTC is no longer listed as a source read
 for headlines (its feed is off). Not done: hiding OTHER by default (owner's choice).
+
+**Daily playbook: a wall out of one day's range is not a one-day path (2026-11-22).** Reported by the owner
+from the Edge Lab on a phone: SPY 697.48, "BULL · SQUEEZE HIGHER, 19% wt, target 775.00 - 788.76". The
+playbook (server/dailyPlaybook.ts) sizes everything for ONE session (its sigma is a one-day move from VIX,
+13.76 here) but ties its up and down paths to the call wall and put wall, which come from gamma across every
+expiry read and can sit anywhere. After the month's fall the call wall was 77.5 points above the price, 5.6
+one-day moves; the put wall 22.5 below, 1.6. The up path was drawn anyway, with a target and a weight. Now
+(shared/playbookReach.ts): a wall more than 2 one-day moves from the price is not a path. The card says how
+far the wall is in points and one-day moves and why no path is drawn from it; no weight, trigger or target is
+shown for it; its weight goes to the middle path so the three still sum to one. Both screens that draw the
+paths (Edge Lab briefing, Daily Playbook chart) and the email follow it. The Edge Lab header now says the
+card is for one day and that the weights are rule tilts, not measured odds (they start at 30/40/30 and are
+nudged by gamma sign, VIX curve, composite score and price against the flip; nothing has graded them).
+Also: the "daily model" target was dated on the calendar day ("SUN NOV 22"); it is now the session it prices
+(the next one on a weekend or holiday), server/horizonDates.ts. NOT changed, still open on this card: the
+remaining instruction-style wording ("Targets", "trigger", "cascading sells", "last line", BULL/BEAR), and
+whether the walls for a one-day card should come from near expiries only. Tests:
+tests/quant/playbook-reach.test.ts (5), using the reported numbers.

@@ -115,6 +115,13 @@ first trim of the Outlook tab dropped a "strike range read is not complete" warn
    OPENAI_API_KEY": developer text on a user's screen, and it omits the third key the route accepts.
    (c) `server/routes.ts` still holds a dead `ALPHA_SYSTEM_PROMPT` that asks for "TRADE IMPLICATIONS".
    (d) `QUALIFIERS` in `server/alphaEngine.ts` still adds bearish votes for a bare "crash".
+7a. **Edge Lab daily playbook.** PR #151 stopped it drawing a one-day path from a wall that is out of one
+   day's range. Still open on the same card: (a) its wording is instruction-style ("Targets", "trigger",
+   "cascading sells", "Put wall as last line", BULL/BEAR headers); rewrite as description, as was done for
+   the Trade Desk releases card. (b) The walls come from every expiry in the chain read; for a one-day card
+   the owner may prefer walls from the nearest expiries only. That changes numbers shown elsewhere, so it is
+   a decision, not a fix. (c) The weights are ungraded hand-set tilts; either grade them against outcomes or
+   drop the percentages. (d) The Daily Playbook chart may still draw the far wall's target zone as a band.
 8. **One source of event dates.** `server/econWeek.ts` still estimates a jobs chip by the first-Friday
    rule (wrong on Jan 1 and Oct 1, 2027); `shared/macroCalendar.ts` and `server/tickerCalendar.ts` (see 3)
    keep their own lists. Point them all at `NFP_DATES`, `CPI_DATES` and `FOMC_DATES` in

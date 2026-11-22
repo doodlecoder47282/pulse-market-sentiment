@@ -1,6 +1,7 @@
 import { vixToAtmPct } from "@shared/vol";
 import { etClock, sessionCloseMinutes } from "./exchangeCalendar";
 import { UpstreamUnavailableError } from "@shared/unavailable";
+import { wallReach, weightsForReach, outOfReachLine, type WallReach } from "@shared/playbookReach";
 /**
  * dailyPlaybook.ts
  *
@@ -66,6 +67,10 @@ export interface PathScenario {
   invalidation: number;            // price beyond which this path is dead
   oneLiner: string;                // plain-English thesis
   drivers: string[];               // bullet drivers (3 max)
+  /** Distance from the price to this path's wall, in points and one-day moves (bull and bear only). When
+   *  `withinDay` is false the wall is out of one day's range: the path carries no weight and its trigger and
+   *  target are not shown. */
+  reach?: WallReach;
 }
 
 export interface LevelMagnet {
@@ -216,6 +221,13 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const sum = pBull + pBase + pBear;
   pBull /= sum; pBase /= sum; pBear /= sum;
 
+  // A path tied to a wall that is out of one day's range is not a one-day path: its weight goes to the middle.
+  const bullReach = wallReach(spot, callWall, sigma);
+  const bearReach = wallReach(spot, putWall, sigma);
+  const bullOut = bullReach != null && !bullReach.withinDay;
+  const bearOut = bearReach != null && !bearReach.withinDay;
+  ({ bull: pBull, base: pBase, bear: pBear } = weightsForReach({ bull: pBull, base: pBase, bear: pBear }, !bullOut, !bearOut));
+
   // ─── Path construction ──────────────────────────────────────────────────────
   // Targets are anchored to walls (callWall/putWall), with sigma-extension on breaks.
   const above = callWall > spot ? callWall : spot + 0.5 * sigma;
@@ -244,6 +256,13 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
       !termKnown ? "VIX term structure unavailable" : isContango ? "VIX contango (calm)" : "VIX flat/backwardation (fragile)",
     ],
   };
+
+  if (bullReach) bull.reach = bullReach;
+  if (bullOut) {
+    bull.trigger = { level: callWall, condition: "out of one day's range" };
+    bull.oneLiner = outOfReachLine("call", callWall, bullReach!, sigma);
+    bull.drivers = [];
+  }
 
   const base: PathScenario = {
     key: "base",
@@ -292,6 +311,13 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
       compScore != null ? `Composite (market blocks) ${compScore}/100` : "Composite (market blocks) unavailable: tilt skipped",
     ],
   };
+
+  if (bearReach) bear.reach = bearReach;
+  if (bearOut) {
+    bear.trigger = { level: putWall, condition: "out of one day's range" };
+    bear.oneLiner = outOfReachLine("put", putWall, bearReach!, sigma);
+    bear.drivers = [];
+  }
 
   // ─── Level magnets (for chart overlays) ─────────────────────────────────────
   const magnets: LevelMagnet[] = ([
