@@ -3149,7 +3149,7 @@ used to pair each release with a direction under green BULL and red BEAR boxes (
 (recession fear)", "Risk-on reaction"), which nothing here has measured. It now lists the day's
 HIGH-importance releases (kinds ECON and FED, one line per release: rows that share the calendar's family key are one
 line, the rows of one rate decision are one line, minutes and speeches keep their own titles; at most 4;
-when the list is empty and the BLS, BEA or Nasdaq release calendar failed or is stale, the card says the
+when the list is empty and the BLS, BEA or Nasdaq release calendar failed, the card says the
 day's releases are not known; a failed Treasury auction read or one failed Nasdaq day does not trigger it) and states the call wall and put wall once, each with its signed distance, as context. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
 built on the server clock's date while the chain pricing for the same horizons was on New York's; in the
 evening the labels were a day ahead, and on monthly OPEX evening a month. They moved to

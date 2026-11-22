@@ -99,7 +99,8 @@ test("the playbook's releases are the HIGH ones on New York's date, read from th
   assert.equal(releaseCalendarNote(st("ok", "ok", "ok", "partial")), null, "one failed Nasdaq day of fourteen");
   assert.equal(releaseCalendarNote(st("ok", "ok", "ok", "not_configured")), null);
   assert.equal(releaseCalendarNote(st("failed", "ok", "ok", "ok")), "Scheduled releases today: not known (the BLS release calendar was not read). This is not a statement that nothing is scheduled.");
-  assert.match(String(releaseCalendarNote(st("stale", "failed", "ok", "failed"))), /the BLS, BEA and Nasdaq release calendars were not read/);
+  assert.match(String(releaseCalendarNote(st("failed", "failed", "ok", "failed"))), /the BLS, BEA and Nasdaq release calendars were not read/);
+  assert.equal(releaseCalendarNote(st("stale", "stale", "ok", "stale")), null, "a stale copy was read and feeds the list");
   assert.match(String(releaseCalendarNote(null)), /could not be read\). This is not a statement that nothing is scheduled/);
   // The route reads the event's time, not a date field the events do not carry.
   const routes = src("server/routes.ts");

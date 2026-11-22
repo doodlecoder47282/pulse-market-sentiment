@@ -72,13 +72,14 @@ const RELEASE_SOURCES: Array<[string, string]> = [["bls_calendar", "BLS"], ["bea
 /**
  * Says so when an empty releases list may be empty because a release calendar was not read. `sources` is the
  * news snapshot's per-source status; null means the news read itself failed. A source counts as not read when
- * it failed or is stale. A partly read Nasdaq calendar (one of its fourteen daily requests failed) does not:
+ * it failed. A stale one is the last good copy, which was read and feeds the list, so it raises no note. A
+ * partly read Nasdaq calendar (one of its fourteen daily requests failed) does not:
  * which day failed is not reported, and the official calendars carry the major releases.
  */
 export function releaseCalendarNote(sources: ReadonlyArray<{ id?: unknown; state?: unknown }> | null | undefined): string | null {
   const tail = "This is not a statement that nothing is scheduled.";
   if (!sources) return `Scheduled releases today: not known (the release calendar could not be read). ${tail}`;
-  const bad = RELEASE_SOURCES.filter(([id]) => sources.some((s) => s.id === id && (s.state === "failed" || s.state === "stale"))).map(([, name]) => name);
+  const bad = RELEASE_SOURCES.filter(([id]) => sources.some((s) => s.id === id && s.state === "failed")).map(([, name]) => name);
   if (bad.length === 0) return null;
   return `Scheduled releases today: not known (the ${bad.length > 1 ? `${bad.slice(0, -1).join(", ")} and ${bad[bad.length - 1]}` : bad[0]} release calendar${bad.length === 1 ? " was" : "s were"} not read). ${tail}`;
 }
