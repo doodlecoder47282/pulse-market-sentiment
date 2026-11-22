@@ -1,3 +1,4 @@
+import { eventsOnEtDate } from "../shared/playbookEvents";
 import { levelsSourceFor, INDEX_NOT_WIRED_REASON } from "../shared/chartLevels";
 import { EMPTY_RETRY_CAP_MS, EMPTY_RETRY_SESSION_CAP_MS, emptyRetryDelayMs, modelsCacheGate, modelsPeekReason } from "./modelsBackoff";
 import { briefForPrompt, sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
@@ -532,14 +533,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try {
         const { buildNewsSnapshot } = await import("./news");
         const news = await buildNewsSnapshot();
-        const todayIso = etDate(Date.now()); // New York's date: the UTC date is already tomorrow from 7 or 8 PM ET
-        todaysEvents = (news.calendar ?? [])
-          .filter((e: any) => e.date === todayIso)
-          .map((e: any) => ({
-            kind: e.kind,
-            label: e.label || e.title || "",
-            timeLabel: e.timeLabel || "",
-          }));
+        // Events on New York's date. A calendar event carries epoch seconds, not a date string.
+        todaysEvents = eventsOnEtDate(news.calendar, etDate(Date.now()));
       } catch (e) {
         // non-fatal
       }

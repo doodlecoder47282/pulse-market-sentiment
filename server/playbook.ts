@@ -431,7 +431,7 @@ export function buildNewsPlaybook(
     const k = ev.kind.toUpperCase();
     const lc = ev.label.toLowerCase();
     let up = "Risk-on reaction", dn = "Risk-off reaction";
-    if (k === "FOMC" || lc.includes("fomc") || lc.includes("powell")) { up = "Dovish read"; dn = "Hawkish read"; }
+    if (k === "FOMC" || k === "FED" || lc.includes("fomc") || lc.includes("powell")) { up = "Dovish read"; dn = "Hawkish read"; }
     else if (lc.includes("cpi") || lc.includes("ppi")) { up = "Cool print (below consensus)"; dn = "Hot print (above consensus)"; }
     else if (lc.includes("pce")) { up = "Cool core PCE"; dn = "Hot core PCE"; }
     else if (lc.includes("nfp") || lc.includes("payroll") || lc.includes("jobs")) { up = "Strong jobs"; dn = "Weak jobs (recession fear)"; }

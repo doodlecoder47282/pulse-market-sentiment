@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildVolCalendar, daysAway } from "../../server/volCalendar";
 import { etDate, etWallToEpochMs, isTradingDay, nextTradingDay } from "../../shared/exchangeCalendar";
+import { eventsOnEtDate, PLAYBOOK_EVENTS_MAX } from "../../shared/playbookEvents";
+import { buildHorizonDates } from "../../server/horizonDates";
+import { horizonTargetIso } from "../../server/impliedScenario";
 
 const src = (p: string) => readFileSync(p, "utf8");
 
@@ -40,13 +43,9 @@ test("ten sessions ahead skip holidays as well as weekends", () => {
   for (let d = nextTradingDay("2026-11-23"); dates.length < 10; d = nextTradingDay(d)) dates.push(d);
   assert.deepEqual(dates.slice(0, 5), ["2026-11-24", "2026-11-25", "2026-11-27", "2026-11-30", "2026-12-01"]);
   assert.ok(dates.every(isTradingDay));
-  const m = src("server/multiDayProjection.ts");
-  assert.match(m, /for \(let d = nextTradingDay\(etDate\(Date\.now\(\)\)\); sessionDates\.length < 10; d = nextTradingDay\(d\)\) sessionDates\.push\(d\);/);
-  assert.doesNotMatch(m, /nextWeekdayDate\(now, n\)/);
 });
 
 test("wiring: today is New York's date wherever a calendar day is compared", () => {
-  assert.match(src("server/routes.ts"), /const todayIso = etDate\(Date\.now\(\)\); \/\/ New York's date/);
   assert.match(src("server/earnings.ts"), /const todayIso = etDate\(Date\.now\(\)\);/);
   assert.match(src("server/tickerCalendar.ts"), /function todayIsoUtc\(\): string \{\s+return etDate\(Date\.now\(\)\);/);
   assert.match(src("server/masterAlpha.ts"), /date: etDate\(Date\.now\(\)\),/);
@@ -54,4 +53,65 @@ test("wiring: today is New York's date wherever a calendar day is compared", () 
   for (const f of ["server/earnings.ts", "server/tickerCalendar.ts", "server/masterAlpha.ts"]) {
     assert.doesNotMatch(src(f), /new Date\(\)\.toISOString\(\)\.(slice\(0, ?10\)|split\("T"\)\[0\])/, f);
   }
+});
+
+test("the playbook's events are the ones on New York's date, read from the event's own time", () => {
+  const at = (d: string, min: number) => Math.floor(etWallToEpochMs(d, min) / 1000);
+  const cal = [
+    { kind: "ECON", title: "CPI", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "FED", title: "FOMC minutes", when: at("2026-11-23", 14 * 60), whenLabel: "Mon 11/23 · 2:00 PM ET", importance: "HIGH" },
+    // 7:30 PM New York time: already the 24th in UTC, still today's event.
+    { kind: "FED", title: "Fed speaker", when: at("2026-11-23", 19 * 60 + 30), whenLabel: "Mon 11/23 · 7:30 PM ET", importance: "MED" },
+    { kind: "ECON", title: "GDP", when: at("2026-11-24", 8 * 60 + 30), whenLabel: "Tue", importance: "HIGH" },
+    { kind: "OPEX", title: "Weekly expiry", when: at("2026-11-23", 16 * 60), whenLabel: "", importance: "MED" },
+    { kind: "EARNINGS", title: "NVDA", when: at("2026-11-23", 16 * 60 + 5), whenLabel: "", importance: "HIGH" },
+    { kind: "ECON", title: "no time" },
+  ];
+  const got = eventsOnEtDate(cal, "2026-11-23");
+  assert.deepEqual(got.map((e) => e.label), ["CPI", "FOMC minutes", "Fed speaker"]);
+  assert.equal(got[0].timeLabel, "Mon 11/23 · 8:30 AM ET");
+  assert.deepEqual(eventsOnEtDate(cal, "2026-11-24").map((e) => e.label), ["GDP"]);
+  assert.deepEqual(eventsOnEtDate(null, "2026-11-23"), []);
+  // The cut keeps the most important.
+  const many = Array.from({ length: 9 }, (_, i) => ({ kind: "ECON", title: `e${i}`, when: at("2026-11-23", 480 + i), whenLabel: "", importance: i === 8 ? "HIGH" : "LOW" }));
+  const cut = eventsOnEtDate(many, "2026-11-23");
+  assert.equal(cut.length, PLAYBOOK_EVENTS_MAX);
+  assert.equal(cut[0].label, "e8");
+  // The route reads the event's time, not a date field the events do not carry.
+  const routes = src("server/routes.ts");
+  assert.ok(routes.includes("eventsOnEtDate(news.calendar, etDate(Date.now()))"));
+  assert.ok(!routes.includes("e.date === todayIso"));
+});
+
+test("horizon labels are on New York's date and agree with the chain pricing, in the evening too", () => {
+  const md = (iso: string) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
+  const cases: Array<[string, number]> = [
+    ["2026-11-23", 20 * 60 + 30], // Monday evening: UTC is Tuesday
+    ["2026-11-20", 20 * 60],      // monthly OPEX evening: UTC is Saturday
+    ["2026-11-20", 10 * 60],      // monthly OPEX morning
+    ["2026-11-19", 21 * 60],      // the evening before OPEX
+    ["2026-11-21", 12 * 60],      // Saturday
+    ["2026-12-31", 22 * 60],      // New Year's Eve: UTC is next year
+    ["2026-11-25", 9 * 60],
+  ];
+  for (const [d, min] of cases) {
+    const ms = etWallToEpochMs(d, min);
+    const daily = buildHorizonDates("daily", ms);
+    assert.ok(daily.spotAnchorDate.endsWith(` ${md(d)}`), `${d} ${min}: anchor ${daily.spotAnchorDate}`);
+    for (const h of ["weekly", "monthly", "quarterly"] as const) {
+      const iso = horizonTargetIso(h, new Date(ms));
+      const lab = buildHorizonDates(h, ms).targetDate;
+      assert.ok(lab.endsWith(` ${md(iso)}`), `${h} at ${d} ${min}: label ${lab}, priced ${iso}`);
+    }
+  }
+});
+
+test("cone bands are dated from the bar they start from", () => {
+  const m = src("server/multiDayProjection.ts");
+  assert.ok(m.includes("nextTradingDay(etDate(asOfTs))"));
+  assert.ok(!m.includes("nextWeekdayDate"));
+  // Before Monday's open the last bar is Friday's: band 1 is Monday, not Tuesday.
+  assert.equal(nextTradingDay(etDate(etWallToEpochMs("2026-11-20", 60))), "2026-11-23");
+  // Wednesday's bar before Thanksgiving: band 1 is Friday.
+  assert.equal(nextTradingDay("2026-11-25"), "2026-11-27");
 });
