@@ -1,18 +1,24 @@
-# Next steps (written 2026-11-21 for whoever picks this up, human or model)
+# Next steps (as of 2026-11-21, main at PR #149; for whoever picks this up, human or model)
 
 Read `docs/REVIEWER_BRIEF.md` and the last dozen entries of `docs/BATCAVE_STATE.md` first. This file is the
 work queue: each item is small, says where to look, and says what "done" means. Delete an item when it ships.
 
 ## How work gets shipped here (the parts that are easy to get wrong)
 
-- One bounded change per pull request, from a `feat/*` branch (CI runs only on `main` and `feat/**`).
-- Every change gets an independent read-only review before merge, then CI, then a look at the LIVE site.
-  A change is "done" only after it has been seen live. Reviews in this project have found a real fault in
-  most first drafts, including in wording. Do not skip them for "small" changes.
-- Four test files cannot load without `node_modules` (`alpha-news-honesty`, `connection-gate`,
-  `schwab-readiness`, `schwab-semantics`). They pin SOURCE TEXT in `server/schwab.ts`,
-  `server/schwabStream.ts`, `client/src/components/SchwabSettings.tsx`, `client/src/pages/dashboard.tsx`
-  and a few others. If you move or reword code in those files, grep those four tests for the old text.
+- One bounded change per pull request, from a `feat/*` branch. CI (`.github/workflows/quant-fixes.yml`) runs
+  on a PUSH to `main`, `quant-fixes` or `feat/**`; there is no pull-request trigger, so another branch name
+  gets no CI. A run takes 15 to 20 minutes.
+- Order: independent read-only review (give the reviewer `docs/REVIEWER_BRIEF.md`; it must return a verdict
+  and concrete findings) -> fix -> re-review until MERGE-READY -> CI green on the head synced with main ->
+  squash-merge -> Railway deploys `main` in about 5 minutes -> look at the LIVE site
+  (https://pulse-market-sentiment-pulse.up.railway.app). "Done" means seen live. Do not skip the review
+  for a "small" change. The owner has given standing permission to merge reviewed, CI-green improvements.
+- Tests: `node --experimental-transform-types --no-warnings --import ./tests/quant/loader/register.mjs
+  --test 'tests/quant/*.test.ts'` (`npm run test:regression` covers only `tests/*.test.ts`). Without
+  `node_modules` four files fail to load for a missing package (`alpha-news-honesty`, `connection-gate`,
+  `schwab-readiness`, `schwab-semantics`); CI loads them. About two thirds of the test files read SOURCE
+  TEXT, so before rewording or moving code, grep all of `tests/` for the old text.
+- Open pull requests not to collide with: #37 and #2 (old).
 - CI's type gate fails if any file gains a tsc error. Two traps met so far: comparing a union member that
   an aliased condition has already narrowed away (TS2367), and `Record<TabKey, string>` tables when a tab
   is added (`client/src/hooks/use-keyboard-shortcuts.ts`).
@@ -37,9 +43,9 @@ first trim of the Outlook tab dropped a "strike range read is not complete" warn
    or VIX crossing or a rule arm is logged in session. Watch one arrive; confirm it is announced once.
 2. **Volume since flagged** (`shared/volumeSince.ts`). Watch a tracked whale position across the open.
    Open question to settle with one live chain read at 09:30 ET: does Schwab still report yesterday's
-   `totalVolume` for a strike after it has traded today? If yes, the documented overcount is real and needs
-   the fix sketched in the module header.
-3. **Outlook tab** (if merged): first real look at the page with a live chain. Check label overlap on a
+   `totalVolume` for a strike after it has traded today? If yes, the overcount described in the module
+   header is real and needs a fix (none is designed yet).
+3. **Outlook tab:** first look at the page with a live chain (seen so far only on a closed market). Check label overlap on a
    phone, that the option-map note appears when the board's map is stale, and that "share of open interest"
    is not n/a in session.
 4. **Half day 2026-11-27 (13:00 close).** The regime read, exit timing, hazard walk and the 0DTE alert
@@ -70,8 +76,7 @@ first trim of the Outlook tab dropped a "strike range read is not complete" warn
    News, Take Five, Edge Lab, Crypto. For each tab: (a) read the live page as someone who has never traded
    an option and list every label that is explained nowhere, every tool that shows nothing until something
    is typed, every sentence that could be read as advice or a forecast; (b) fact-check each explanation
-   against the code that produces the number, the way `shared/whaleWords.ts` was checked (that check found
-   thirteen false sentences in a first draft, and one wrong calculation).
+   against the code that produces the number, the way `shared/whaleWords.ts` was checked.
 3. **Sweeps by class of assumption.** These find real faults faster than reading formulas one by one. Done:
    fixed 390-minute sessions (half days); UTC or server-local "today" on the server (PR #144).
    Found by that sweep's reviewer and NOT fixed yet (each is a confirmed fault, small, and wants its own PR):
@@ -79,15 +84,15 @@ first trim of the Outlook tab dropped a "strike range read is not complete" warn
      event lands on the next day's row;
    - `client/src/components/Heatseeker.tsx` (about 184-212, 284) builds the expiry quick picks from the
      browser's date, memoises them for the life of the page, and counts weekdays, not sessions;
-   - `client/src/components/TradeDesk.tsx` (about 1614-1619) `isOpexToday` uses the browser's date and
+   - `client/src/components/TradeDesk.tsx` (about 1610-1615) `isOpexToday` uses the browser's date and
      misses an OPEX moved by a holiday (use `shared/exchangeCalendar.ts`);
    - `server/tickerCalendar.ts` `MACRO_2026` ends 2026-07-29, so the per-ticker calendar shows no macro
-     event after that date, and two of its dates were wrong (June quad OPEX listed as 06-19; June NFP as
-     07-02). Either extend it from official release calendars or drop the table and read the news calendar;
+     event after that date, and two of its dates are wrong (June quad OPEX is listed as 06-20, a Saturday: it was 06-18;
+     the June jobs report is listed as 07-03: it was 07-02). Either extend it from official release calendars or drop the table and read the news calendar;
    - the earnings cache in `server/earnings.ts` is not keyed by day, so a list cached before midnight New
      York time is served into the next day until it expires.
-   Also new with #144: the Trade Desk "News Context" card draws for the first time (it was always empty).
-   Look at it on the first day with a scheduled release and read its wording as a newcomer.
+   Also new with #144: the Trade Desk "Scheduled releases today" card draws for the first time (its list
+   was always empty before). Look at it on the first day with a HIGH-importance release.
    Not done:
    - weekday checks that ignore holidays (`getDay()` / `getUTCDay()` used to mean "is a session");
    - volatility scale mixed between percent and fraction (`iv > 1`, `/ 100` near an IV);
@@ -102,18 +107,20 @@ first trim of the Outlook tab dropped a "strike range read is not complete" warn
    endpoint for SPX too). A safe version: one guarded attempt per session with a long negative cache.
 6. **Push alerts to a closed phone app.** The bell works only while the app is open in a tab. A real push
    needs a push service and, on iOS, the Capacitor push plugin and an APNs key.
-7. **News tab.** (a) The feed under "Market-relevant headlines" carries advice columns and sports results
-   (seen live: "My husband is happily retired at 64...", a tennis final). Either filter by topic (drop
-   OTHER from the default view) or rename the header to what it is. (b) The ALPHA card tells the reader to
+7. **News tab.** PR #148 fixed the keyword tags (a protest tagged Bullish, a tennis result tagged EARNINGS).
+   Still open: (a) the tab's top line says "Market-relevant headlines" and "Filter: SPX-relevant"
+   (`server/headline.ts`), but the feed is not filtered that way and carries advice columns and sports
+   results. Either filter by topic (drop OTHER from the default view) or say what the feed is. (b) The ALPHA card tells the reader to
    "set ANTHROPIC_API_KEY or OPENAI_API_KEY": developer text on a user's screen, and it omits the third key
    the route accepts. (c) `server/routes.ts` still holds a dead `ALPHA_SYSTEM_PROMPT` that asks for "TRADE
    IMPLICATIONS". (d) `QUALIFIERS` in `server/alphaEngine.ts` still adds bearish votes for a bare "crash".
-8. **Calendars that still compute or copy dates on their own.** `server/econWeek.ts` estimates a jobs
-   chip by the first-Friday rule (wrong on Jan 1 and Oct 1, 2027; use `NFP_DATES` from
-   `server/volCalendar.ts`); `shared/macroCalendar.ts` and `server/tickerCalendar.ts` each keep their own
-   lists. One source of dates for all of them would end this class of fault. The computed CPI and jobs rows
-   are graded "medium", so they do not reach the Trade Desk releases card when the official read fails.
-9. **Small leftovers.** The layout audit does not look at `<summary>` elements (24 of them); crypto funding
+8. **One source of event dates.** `server/econWeek.ts` still estimates a jobs chip by the first-Friday
+   rule (wrong on Jan 1 and Oct 1, 2027); `shared/macroCalendar.ts` and `server/tickerCalendar.ts` (see 3)
+   keep their own lists. Point them all at `NFP_DATES`, `CPI_DATES` and `FOMC_DATES` in
+   `server/volCalendar.ts`. Separately: the computed CPI and jobs rows there have importance "medium", so
+   they do not reach the HIGH-only releases card when the official BLS read fails.
+9. **Small leftovers.** The layout audit does not measure `<summary>` elements, so a collapsed section's
+   tap target is never checked; crypto funding
    is an "average of 1 venue"; `levels.instruction` in the playbook payload still carries BUY/SELL words
-   (not rendered); the fresh-whales groups are not capped like the tracked ones; the remote branch
-   `fix/today-bar-labels` is a leftover.
+   (not rendered); the fresh-whales groups are not capped like the tracked ones; merged branches are not deleted on
+   the remote.
