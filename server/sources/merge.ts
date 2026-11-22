@@ -44,7 +44,8 @@ export function isIndexPage(title: string): boolean {
   const SECTION = /^((latest|breaking) news (&|and) (headlines|updates)|(business|markets?|stock market|world|finance) news|today's (international|latest) [a-z ]*(headlines|news))$/i;
   // Parts are split on " | " and " - " only: what follows a colon is the story ("Business news: Stocks rise").
   const segs = title.split(/\s+[|\-–]\s+/).map((x) => x.trim()).filter(Boolean);
-  if (segs.length > 1 && segs[segs.length - 1].split(/\s+/).length <= 2 && !SECTION.test(segs[segs.length - 1])) segs.pop();
+  // A trailing publisher name is not a part of the title; any other short last part is a story ("- Powell resigns").
+  if (segs.length > 1 && /^(reuters|bloomberg|cnbc|marketwatch|ft|financial times|wsj|the wall street journal|ap|ap news|yahoo finance)$/i.test(segs[segs.length - 1])) segs.pop();
   return segs.length > 0 && segs.every((x) => SECTION.test(x));
 }
 

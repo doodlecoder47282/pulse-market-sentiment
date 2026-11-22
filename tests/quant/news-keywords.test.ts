@@ -53,7 +53,7 @@ test("a quote page or topic page from a search feed is not a headline", () => {
   for (const t of ["Tesla stock price falls 5% after recall news", "Nasdaq has its worst week since 2020; Dow, S&P 500 in correction - Reuters", "Fed holds rates | Reuters", "Latest news on the strike: talks resume",
     "Ukraine war latest news and updates: talks resume", "Live: Latest news and updates as markets react to Fed", "Breaking news and updates: Fed holds rates steady", "Breaking News & Updates: Nvidia earnings beat",
     "Live updates | Stock price reaction to CPI news", "Opinion | Share price is not the news; ask what the quote charts", "Exclusive | Share price slump forces SoftBank to rethink chart of Arm stake news - Reuters",
-    "Stock market news: Dow falls 500 points", "Breaking news and updates: Powell resigns", "Business news: Stocks rise", "Latest news and updates: Fed decides", "Tesla | Share price, deliveries fall", "Apple | Stock price & news to watch"]) assert.equal(isIndexPage(t), false, t);
+    "Stock market news: Dow falls 500 points", "Breaking news and updates: Powell resigns", "Business news: Stocks rise", "Latest news and updates: Fed decides", "Tesla | Share price, deliveries fall", "Apple | Stock price & news to watch", "Breaking news and updates - Powell resigns", "Business News | Fed decides"]) assert.equal(isIndexPage(t), false, t);
   const now = Date.UTC(2026, 10, 22);
   const r = tierItems("google_news_reuters", [
     { title: "Tesla Inc (TSLA.O) | Stock Price & Latest News - Reuters", link: "https://x/1", publishedMs: now - 1000 },
