@@ -23,6 +23,14 @@ work queue: each item is small, says where to look, and says what "done" means. 
 - Schwab allows 100 requests a minute and the first page load after a deploy already uses most of it. Do
   not add a request to the Signals tab or to app start without measuring what it costs.
 
+## The owner's rule for every screen (said 2026-11-21)
+
+"Every line has to be useful and clear to read." Apply it as a test when touching any tab: a line that
+repeats another, hedges without adding a fact, or explains something obvious goes; a caveat is said once
+per card, not once per row; a long table opens on the rows that matter with one button for the rest and
+says how many are hidden. Trimming must not remove a data state (see `docs/REVIEWER_BRIEF.md` rule 1): the
+first trim of the Outlook tab dropped a "strike range read is not complete" warning and the reviewer caught it.
+
 ## Waiting on the first live session (Monday 2026-11-23)
 
 1. **Alert bell announcements.** Seen live: the bell, its list, its states. NOT seen: a toast when a new SPX
@@ -94,7 +102,18 @@ work queue: each item is small, says where to look, and says what "done" means. 
    endpoint for SPX too). A safe version: one guarded attempt per session with a long negative cache.
 6. **Push alerts to a closed phone app.** The bell works only while the app is open in a tab. A real push
    needs a push service and, on iOS, the Capacitor push plugin and an APNs key.
-7. **Small leftovers.** The layout audit does not look at `<summary>` elements (24 of them); crypto funding
+7. **News tab.** (a) The feed under "Market-relevant headlines" carries advice columns and sports results
+   (seen live: "My husband is happily retired at 64...", a tennis final). Either filter by topic (drop
+   OTHER from the default view) or rename the header to what it is. (b) The ALPHA card tells the reader to
+   "set ANTHROPIC_API_KEY or OPENAI_API_KEY": developer text on a user's screen, and it omits the third key
+   the route accepts. (c) `server/routes.ts` still holds a dead `ALPHA_SYSTEM_PROMPT` that asks for "TRADE
+   IMPLICATIONS". (d) `QUALIFIERS` in `server/alphaEngine.ts` still adds bearish votes for a bare "crash".
+8. **Calendars that still compute or copy dates on their own.** `server/econWeek.ts` estimates a jobs
+   chip by the first-Friday rule (wrong on Jan 1 and Oct 1, 2027; use `NFP_DATES` from
+   `server/volCalendar.ts`); `shared/macroCalendar.ts` and `server/tickerCalendar.ts` each keep their own
+   lists. One source of dates for all of them would end this class of fault. The computed CPI and jobs rows
+   are graded "medium", so they do not reach the Trade Desk releases card when the official read fails.
+9. **Small leftovers.** The layout audit does not look at `<summary>` elements (24 of them); crypto funding
    is an "average of 1 venue"; `levels.instruction` in the playbook payload still carries BUY/SELL words
    (not rendered); the fresh-whales groups are not capped like the tracked ones; the remote branch
    `fix/today-bar-labels` is a leftover.
