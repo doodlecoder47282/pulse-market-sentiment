@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildVolCalendar, daysAway } from "../../server/volCalendar";
+import { buildVolCalendar, daysAway, NFP_DATES } from "../../server/volCalendar";
 import { etDate, etWallToEpochMs, isTradingDay, nextTradingDay } from "../../shared/exchangeCalendar";
 import { eventsOnEtDate, PLAYBOOK_EVENTS_MAX, releaseCalendarNote, releaseGroup } from "../../shared/playbookEvents";
 import { buildHorizonDates } from "../../server/horizonDates";
@@ -144,4 +144,22 @@ test("cone bands are dated from the bar they start from", () => {
   assert.equal(nextTradingDay(etDate(etWallToEpochMs("2026-11-20", 60) + 12 * 3600_000)), "2026-11-23");
   // Wednesday's bar before Thanksgiving: band 1 is Friday.
   assert.equal(nextTradingDay("2026-11-25"), "2026-11-27");
+});
+
+test("the jobs report is on the BLS schedule's dates, not on every first Friday", () => {
+  const cal = buildVolCalendar(etWallToEpochMs("2026-11-21", 12 * 60));
+  const nfp = cal.events.filter((e) => e.type === "nfp").map((e) => [e.date, e.label]);
+  // December 4, then January 8: January 1, 2027 is a first Friday and a holiday, and carries no release.
+  assert.deepEqual(nfp, [["2026-12-04", "Dec Jobs Report (NFP)"], ["2027-01-08", "Jan Jobs Report (NFP)"], ["2027-02-05", "Feb Jobs Report (NFP)"]]);
+  assert.ok(!cal.events.some((e) => e.date === "2027-01-01" && e.type === "nfp"));
+  // The two 2027 releases the first-Friday rule had on the wrong day: January 1 and October 1.
+  assert.ok(NFP_DATES.includes("2027-01-08") && !NFP_DATES.includes("2027-01-01"));
+  assert.ok(NFP_DATES.includes("2027-10-08") && !NFP_DATES.includes("2027-10-01"));
+  assert.ok(NFP_DATES.every((d, i) => i === 0 || d > NFP_DATES[i - 1]), "ascending");
+  // Past the end of the list the calendar says so and invents nothing.
+  const late = buildVolCalendar(etWallToEpochMs("2027-11-01", 12 * 60));
+  assert.ok((late.warnings ?? []).some((w) => /Jobs report schedule ends 2027-12-03/.test(w)));
+  const after = buildVolCalendar(etWallToEpochMs("2027-12-20", 12 * 60));
+  assert.ok(!after.events.some((e) => e.type === "nfp"));
+  assert.ok((after.warnings ?? []).some((w) => /Jobs report schedule stale/.test(w)));
 });

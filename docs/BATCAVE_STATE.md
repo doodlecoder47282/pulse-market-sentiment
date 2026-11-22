@@ -3213,3 +3213,14 @@ expiry, Implied range by a date) and the "not a forecast" note is said once unde
 event and no expiry is not drawn; the expiry table opens on the nearest expiry and those holding 2% or more
 of the open interest read (as printed, after rounding) plus the largest, with one button for the rest (the count hidden is stated); captions are shorter. The partial-strike-read warning on max pain is kept, shown only when the read is partial.
 No number or state changed. shared/outlook.ts `windowLines`, `windowHasContent`, `mainExpiryRows`.
+**Jobs report dates come from the BLS schedule (2026-11-21).** Seen on the Outlook tab's first live render:
+"Jan Jobs Report (NFP) Jan 1", a holiday. server/volCalendar.ts put the jobs report on every first Friday.
+The BLS schedule (bls.gov/schedule/news_release/empsit.htm, read 2026-11-21) has it on Jan 8, 2027 and on
+Oct 8, 2027 (the rule had Jan 1 and Oct 1); the other listed dates are first Fridays. The rule also placed the report's expected move and its alert-gate
+actions (SUPPRESS_VRP_GATE, ANNOTATE_WHALE_EVENT_DAY) on a day with no release. `NFP_DATES` now lists the
+official dates from 2026-11-06 to 2027-12-03, with the same stale and end-of-list warnings as FOMC and CPI;
+past the list nothing is invented. In server/news.ts the row's source reads "BLS schedule (hardcoded copy)"
+and the calendar notes lost their direction claims ("Hot read = bond selloff + risk-off; cool = rally",
+"Largest single-day vol catalyst", "dealer hedging unwinds", "Historically the highest-volume day").
+server/econWeek.ts still estimates its own synthetic jobs chip by the first-Friday rule (labelled an
+estimate there). Test: tests/quant/ny-dates.test.ts.
