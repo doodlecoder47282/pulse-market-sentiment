@@ -1,7 +1,7 @@
 import { vixToAtmPct } from "@shared/vol";
 import { etClock, sessionCloseMinutes } from "./exchangeCalendar";
 import { UpstreamUnavailableError } from "@shared/unavailable";
-import { wallReach, weightsForReach, outOfReachLine, type WallReach } from "@shared/playbookReach";
+import { wallReach, outOfReachLine, type WallReach } from "@shared/playbookReach";
 /**
  * dailyPlaybook.ts
  *
@@ -68,8 +68,9 @@ export interface PathScenario {
   oneLiner: string;                // plain-English thesis
   drivers: string[];               // bullet drivers (3 max)
   /** Distance from the price to this path's wall, in points and one-day moves (bull and bear only). When
-   *  `withinDay` is false the wall is out of one day's range: the path carries no weight and its trigger and
-   *  target are not shown. */
+   *  `withinDay` is false the wall is out of one day's range: the path is not drawn, and its weight, trigger
+   *  and target are not shown. The three weights are left as the rules set them (they still sum to 1): the
+   *  out-of-range wing's weight is shown as not assigned, never added to another path. */
   reach?: WallReach;
 }
 
@@ -221,12 +222,13 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const sum = pBull + pBase + pBear;
   pBull /= sum; pBase /= sum; pBear /= sum;
 
-  // A path tied to a wall that is out of one day's range is not a one-day path: its weight goes to the middle.
+  // A path tied to a wall that is out of one day's range is not a one-day path. Its weight is not given to
+  // another path (that would make the middle path look more certain than any rule says); it is shown as
+  // not assigned.
   const bullReach = wallReach(spot, callWall, sigma);
   const bearReach = wallReach(spot, putWall, sigma);
   const bullOut = bullReach != null && !bullReach.withinDay;
   const bearOut = bearReach != null && !bearReach.withinDay;
-  ({ bull: pBull, base: pBase, bear: pBear } = weightsForReach({ bull: pBull, base: pBase, bear: pBear }, !bullOut, !bearOut));
 
   // ─── Path construction ──────────────────────────────────────────────────────
   // Targets are anchored to walls (callWall/putWall), with sigma-extension on breaks.
@@ -272,6 +274,9 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
       level: pinAnchor,
       condition: isPositiveGamma
         ? `Hold inside ${below.toFixed(2)}–${above.toFixed(2)}; gravitate to ${pinAnchor.toFixed(2)}`
+        : bullOut && bearOut ? "Both walls are out of one day's range"
+        : bullOut ? `No 15m close below the put wall ${putWall.toFixed(2)}. The call wall ${callWall.toFixed(2)} is out of one day's range.`
+        : bearOut ? `No 15m close above the call wall ${callWall.toFixed(2)}. The put wall ${putWall.toFixed(2)} is out of one day's range.`
         : `No clean break of ${below.toFixed(2)} or ${above.toFixed(2)}`,
     },
     target: {
@@ -329,11 +334,10 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   ] as LevelMagnet[]).sort((a, b) => a.level - b.level);
 
   // ─── Headline ───────────────────────────────────────────────────────────────
-  const winner: PathKey = pBase >= pBull && pBase >= pBear ? "base"
-                       : pBull >= pBear ? "bull" : "bear";
-  const winnerLabel = winner === "bull" ? "lean up"
-                    : winner === "bear" ? "lean down" : "pin & chop";
-  const winnerProb = winner === "bull" ? pBull : winner === "bear" ? pBear : pBase;
+  // The heaviest path that is drawn (a wing whose wall is out of one day's range is not a candidate).
+  const cand: Array<[PathKey, number]> = [["base", pBase], ...(bullOut ? [] : [["bull", pBull] as [PathKey, number]]), ...(bearOut ? [] : [["bear", pBear] as [PathKey, number]])];
+  const [winner, winnerProb] = cand.reduce((a, b) => (b[1] > a[1] ? b : a));
+  const winnerLabel = winner === "bull" ? "lean up" : winner === "bear" ? "lean down" : base.label.toLowerCase();
   // Path weights are hand-set heuristic tilts, not probabilities: say so.
   const headline =
     `${symbol} ${spot.toFixed(2)} · ${winnerLabel} (${Math.round(winnerProb * 100)}% wt, heuristic). ` +
@@ -451,6 +455,7 @@ export async function getDriftFromLocked(symbol: "SPY" | "SPX" = "SPY"): Promise
   const triggerHits = (["bull", "base", "bear"] as PathKey[]).map(k => {
     const t = live.paths[k].trigger.level;
     if (!t) return { path: k, hit: false, closeness: 0 };
+    if (live.paths[k].reach && !live.paths[k].reach!.withinDay) return { path: k, hit: false, closeness: 0 }; // not a path
     const distance = Math.abs(live.spot - t);
     const sigma = Math.max(1, live.expectedRange.high - live.expectedRange.low);
     const closeness = 1 - Math.min(1, distance / (sigma / 2));
@@ -490,8 +495,9 @@ export async function getDriftFromLocked(symbol: "SPY" | "SPX" = "SPY"): Promise
       // Base case dies when EITHER wing's trigger is decisively breached
       const bullTrig = locked.paths.bull.trigger.level;
       const bearTrig = locked.paths.bear.trigger.level;
-      const aboveBull = bullTrig > 0 && livePrice > bullTrig;
-      const belowBear = bearTrig > 0 && livePrice < bearTrig;
+      const drawn = (w: PathScenario) => !(w.reach && !w.reach.withinDay);
+      const aboveBull = drawn(locked.paths.bull) && bullTrig > 0 && livePrice > bullTrig;
+      const belowBear = drawn(locked.paths.bear) && bearTrig > 0 && livePrice < bearTrig;
       if (aboveBull) {
         return { path: k, health: "dead", reason: `spot ${livePrice.toFixed(2)} pierced bull trigger ${bullTrig.toFixed(2)}` };
       }

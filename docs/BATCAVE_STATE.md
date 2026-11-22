@@ -3265,12 +3265,17 @@ expiry read and can sit anywhere. After the month's fall the call wall was 77.5 
 one-day moves; the put wall 22.5 below, 1.6. The up path was drawn anyway, with a target and a weight. Now
 (shared/playbookReach.ts): a wall more than 2 one-day moves from the price is not a path. The card says how
 far the wall is in points and one-day moves and why no path is drawn from it; no weight, trigger or target is
-shown for it; its weight goes to the middle path so the three still sum to one. Both screens that draw the
-paths (Edge Lab briefing, Daily Playbook chart) and the email follow it. The Edge Lab header now says the
+shown for it. Its weight is NOT moved to another path (a first version did, which made the middle path read
+"100% wt" when both walls were far): the rule weights stay as set and the wing's share is simply not
+assigned. The Daily Playbook chart draws no band, mid line or trigger line for it and no health pill; the
+Edge Lab verdict takes no vote from the playbook while a wing is out of range (the comparison would be decided
+by how far a wall is); the headline names the heaviest path that is drawn; the middle path's condition no
+longer speaks of a break of the far wall; the email follows. The Edge Lab header now says the
 card is for one day and that the weights are rule tilts, not measured odds (they start at 30/40/30 and are
 nudged by gamma sign, VIX curve, composite score and price against the flip; nothing has graded them).
-Also: the "daily model" target was dated on the calendar day ("SUN NOV 22"); it is now the session it prices
-(the next one on a weekend or holiday), server/horizonDates.ts. NOT changed, still open on this card: the
+Also: the "daily model" target was dated on the calendar day ("SUN NOV 22"); on a weekend or holiday it is now the next
+session (server/horizonDates.ts). Known gap: on a trading day outside regular hours the pricing already uses
+the following session's expiry while the label says today. NOT changed, still open on this card: the
 remaining instruction-style wording ("Targets", "trigger", "cascading sells", "last line", BULL/BEAR), and
 whether the walls for a one-day card should come from near expiries only. Tests:
 tests/quant/playbook-reach.test.ts (5), using the reported numbers.

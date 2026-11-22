@@ -42,8 +42,8 @@ interface Briefing {
     marketSession: string;
     paths: {
       bull: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
-      base: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
-      bear: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
+      base: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
+      bear: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
     };
     levels: { support: number | null; resistance: number | null };
   } | null;
@@ -106,7 +106,7 @@ function LevelChip({ label, value, hint }: { label: string; value: number | null
   );
 }
 
-function PathCard({ kind, p }: { kind: "bull" | "base" | "bear"; p: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] } }) {
+function PathCard({ kind, p }: { kind: "bull" | "base" | "bear"; p: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean } }) {
   const color = kind === "bull" ? "border-emerald-500/30 bg-emerald-500/5" : kind === "bear" ? "border-rose-500/30 bg-rose-500/5" : "border-amber-500/30 bg-amber-500/5";
   const accent = kind === "bull" ? "text-emerald-400" : kind === "bear" ? "text-rose-400" : "text-amber-400";
   return (

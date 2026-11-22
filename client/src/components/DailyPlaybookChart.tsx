@@ -36,8 +36,9 @@ interface PathScenario {
   key: PathKey;
   label: string;
   probability: number;
-  trigger: { level: number; condition: string   reach?: { points: number; sigmas: number; withinDay: boolean };
-};
+  trigger: { level: number; condition: string };
+  /** Distance to this path's wall. withinDay false: the wall is out of one day's range and the path is not drawn. */
+  reach?: { points: number; sigmas: number; withinDay: boolean };
   target: { low: number; high: number };
   invalidation: number;
   oneLiner: string;
@@ -168,6 +169,9 @@ function MagnetLegend({ magnets }: { magnets: LevelMagnet[] }) {
 /** Build the fan-chart series. Each path is anchored at spot at t=0 and
  *  arcs to (target.low, target.high) at t=1 (EOD). Returns an array of
  *  rows the chart can render. */
+/** A wing whose wall is out of one day's range is not a one-day path. */
+const notDrawn = (p: PathScenario) => p.reach != null && !p.reach.withinDay;
+
 function buildPathSeries(pb: DailyPlaybook) {
   const STEPS = 12; // 12 buckets across the day
   const rows: any[] = [];
@@ -176,6 +180,7 @@ function buildPathSeries(pb: DailyPlaybook) {
     const t = i / STEPS;
     const row: Record<string, number> = { t };
     for (const k of ["bull", "base", "bear"] as PathKey[]) {
+      if (notDrawn(pb.paths[k])) continue; // its wall is out of one day's range: no band, no line
       const tgt = pb.paths[k].target;
       const mid = (tgt.low + tgt.high) / 2;
       // ease-out from spot to midpoint
@@ -267,7 +272,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
 
   const { paths, magnets, expectedRange, headline, inputs, currentRegime } = pb;
   const ordered: PathKey[] = ["bull", "base", "bear"]; // visual order top→bottom
-  const winningPath = ordered.reduce((acc, k) => paths[k].probability > paths[acc].probability ? k : acc, "base" as PathKey);
+  const winningPath = ordered.reduce((acc, k) => !notDrawn(paths[k]) && paths[k].probability > paths[acc].probability ? k : acc, "base" as PathKey);
 
   // Path health lookup (from drift); falls back to alive when no lock
   const healthByPath: Record<PathKey, PathHealthEntry | undefined> = {
@@ -408,7 +413,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                       {p.label}
                     </span>
                     {/* Health pill */}
-                    {h && drift?.hasLock && (
+                    {h && drift?.hasLock && !notDrawn(p) && (
                       <span
                         className="ml-1 text-[11px] font-mono uppercase px-1 py-0.5 rounded"
                         style={{
@@ -423,23 +428,23 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     )}
                   </div>
                   <span className="font-mono text-[12px] font-bold" style={{ color: PATH_COLORS[k], textDecoration: isDead ? "line-through" : "none" }}>
-<span>{p.reach && !p.reach.withinDay ? "not a one-day path" : `${Math.round(p.probability * 100)}% wt`}</span>
+<span>{notDrawn(p) ? "not a one-day path" : `${Math.round(p.probability * 100)}% wt`}</span>
                   </span>
                 </div>
                 <div className={`text-[11px] leading-snug ${isDead ? "text-muted-foreground" : "text-foreground/80"}`}>{p.oneLiner}</div>
-                {!(p.reach && !p.reach.withinDay) && (
+                {!notDrawn(p) && (
                 <div className="grid grid-cols-2 gap-1 text-[11px] text-muted-foreground border-t border-border/20 pt-1.5">
                   <div>Trigger: <span className="font-mono text-foreground">${fmt$(p.trigger.level)}</span></div>
                   <div>Target: <span className="font-mono text-foreground">${fmt$(p.target.low)}–${fmt$(p.target.high)}</span></div>
                 </div>
                 )}
-                {p.invalidation > 0 && !(p.reach && !p.reach.withinDay) && (
+                {p.invalidation > 0 && !notDrawn(p) && (
                   <div className="text-[11px] text-muted-foreground">
                     Invalidates: <span className="font-mono text-red-400/80">${fmt$(p.invalidation)}</span>
                   </div>
                 )}
                 {/* Health reason — one-liner why thesis is dead/weak/alive */}
-                {h && drift?.hasLock && (isDead || isWeak) && (
+                {h && drift?.hasLock && !notDrawn(p) && (isDead || isWeak) && (
                   <div className="text-[11px] italic leading-snug pt-1 border-t border-border/20"
                        style={{ color: isDead ? "#fca5a5" : "#fcd34d" }}>
                     {h.reason}
@@ -450,7 +455,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
           })}
         </div>
         <div className="text-[10px] leading-snug text-muted-foreground/80" data-testid="path-weight-note">
-          % wt = heuristic path weight (bull + base + bear = 100%), not a calibrated probability.
+          % wt = heuristic path weight (bull + base + bear = 100%), not a calibrated probability. A path whose wall is out of one day's range is not drawn and its weight is not assigned to another path.
         </div>
 
         {/* Fan chart */}
@@ -497,7 +502,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               {/* Path bands: a range area between Lo and Hi. (A function
                   `baseLine` is not a recharts prop: it was overridden by the
                   computed baseline, so each band filled from the axis floor.) */}
-              {ordered.map(k => (
+              {ordered.filter(k => !notDrawn(paths[k])).map(k => (
                 <Area
                   key={`band-${k}`}
                   name={`${k}Band`}
@@ -511,7 +516,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               ))}
 
               {/* Mid lines */}
-              {ordered.map(k => (
+              {ordered.filter(k => !notDrawn(paths[k])).map(k => (
                 <Line
                   key={`mid-${k}`}
                   type="monotone"
@@ -540,7 +545,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               {/* Trigger lines — tinted by current regime (long gamma = cool, short = hot) */}
               {ordered.map(k => {
                 const trig = paths[k].trigger.level;
-                if (!trig || trig === paths[k].invalidation) return null;
+                if (!trig || trig === paths[k].invalidation || notDrawn(paths[k])) return null;
                 const isAlive = !drift?.hasLock || healthByPath[k]?.health !== "dead";
                 return (
                   <ReferenceLine

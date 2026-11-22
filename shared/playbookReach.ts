@@ -25,12 +25,6 @@ export function wallReach(spot: number, wall: number, sigma: number): WallReach 
   return { points, sigmas, withinDay: sigmas <= ONE_DAY_REACH_SIGMAS };
 }
 
-/** A wing whose wall is out of the day's range carries no weight: it goes to the middle path. */
-export function weightsForReach(w: { bull: number; base: number; bear: number }, bullWithin: boolean, bearWithin: boolean): { bull: number; base: number; bear: number } {
-  const bull = bullWithin ? w.bull : 0, bear = bearWithin ? w.bear : 0;
-  return { bull, bear, base: w.base + (w.bull - bull) + (w.bear - bear) };
-}
-
 /** What the card says in place of a path. States the distance; names no target. */
 export function outOfReachLine(side: "call" | "put", wall: number, r: WallReach, sigma: number): string {
   const pts = Math.abs(r.points).toFixed(1);
