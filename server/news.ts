@@ -558,7 +558,7 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
     // Tier per row: FOMC and CPI dates are hardcoded copies of the official
     // schedules (computed), and so are the jobs report dates (server/volCalendar.ts NFP_DATES).
     // The official BLS calendar supersedes CPI/NFP rows when it is reachable.
-    let tier: SourceTier = "computed";
+    const tier: SourceTier = "computed";
     let family: string | null = null;
     switch (ev.type) {
       case "fomc":
@@ -609,10 +609,10 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
       importance,
       source,
       notes,
-      sourceId: tier === "weak" ? "estimate" : "exchange_rules",
+      sourceId: "exchange_rules",
       tier,
-      tierLabel: tier === "weak" ? "estimate" : TIER_LABEL[tier],
-      timeExact: tier !== "weak",
+      tierLabel: TIER_LABEL[tier],
+      timeExact: true,
       family,
     });
   }
