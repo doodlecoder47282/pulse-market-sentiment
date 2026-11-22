@@ -136,8 +136,8 @@ type Playbook = {
   gameplan: string[];
   newsPlaybook?: Array<{
     event: string;
-    bullScenario: string;
-    bearScenario: string;
+    callWall: string;
+    putWall: string;
   }>;
 };
 
@@ -494,37 +494,26 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
           </div>
         </div>
 
-        {/* News context: per-event reaction + nearest gamma levels (descriptive, no orders) */}
+        {/* Scheduled releases today, with the option map's two walls as context (descriptive, no reaction, no orders) */}
         {playbook.newsPlaybook && playbook.newsPlaybook.length > 0 && (
-          <div className="mt-4">
-            <div className="mb-2 flex items-center gap-2">
+          <div className="mt-4" data-testid="news-playbook">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-400">
-                News Context — Today's Catalysts
+                Scheduled releases today
               </span>
-              <span className="text-[11px] text-muted-foreground">levels as context per release, not entries, stops or targets</span>
+              <span className="text-[11px] text-muted-foreground">which way a release moves the index is not estimated here</span>
             </div>
-            <div className="space-y-2">
-              {playbook.newsPlaybook.map((np, i) => (
-                <div
-                  key={i}
-                  className="rounded-sm border border-cyan-500/20 bg-cyan-500/5 p-2.5"
-                  data-testid={`news-playbook-${i}`}
-                >
-                  <div className="mb-1.5 font-mono text-[11px] font-semibold uppercase tracking-wider text-cyan-300">
-                    ▸ {np.event}
-                  </div>
-                  <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
-                    <div className="rounded-sm border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[11px] leading-snug text-emerald-200">
-                      <span className="mr-1 font-bold text-emerald-400">BULL</span>
-                      {np.bullScenario}
-                    </div>
-                    <div className="rounded-sm border border-red-500/30 bg-red-500/5 px-2 py-1.5 font-mono text-[11px] leading-snug text-red-200">
-                      <span className="mr-1 font-bold text-red-400">BEAR</span>
-                      {np.bearScenario}
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="rounded-sm border border-cyan-500/20 bg-cyan-500/5 p-2.5">
+              <ul className="space-y-1">
+                {playbook.newsPlaybook.map((np, i) => (
+                  <li key={i} className="font-mono text-[11px] font-semibold tracking-wider text-cyan-300" data-testid={`news-playbook-${i}`}>
+                    {np.event}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-2 font-mono text-[11px] leading-snug text-muted-foreground" data-testid="news-playbook-levels">
+                Option-map levels on this read, as context and not entries, stops or targets: {playbook.newsPlaybook[0].callWall}; {playbook.newsPlaybook[0].putWall}.
+              </div>
             </div>
           </div>
         )}

@@ -3144,16 +3144,18 @@ the per-ticker calendar (server/tickerCalendar.ts) and the date in the master-al
 etDate(now). (3) The playbook's "today's catalysts" list (server/routes.ts) was ALWAYS empty, at any hour:
 it filtered calendar events on a `date` field they do not carry (an event has `when` in epoch seconds,
 `title`, `whenLabel`). It now reads the event's own time on New York's date (shared/playbookEvents.ts).
-This switches on a Trade Desk card that had never drawn. It is limited to scheduled releases (kinds ECON
-and FED; the reaction wording was written for a print, not for an expiry, an auction or an earnings date),
-most important first, at most 4. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
+This switches on a Trade Desk card that had never drawn, so the card was rewritten before it could: it
+used to pair each release with a direction under green BULL and red BEAR boxes ("Hot print", "Weak jobs
+(recession fear)", "Risk-on reaction"), which nothing here has measured. It now lists the day's
+HIGH-importance releases (kinds ECON and FED, one line per release: several vendor rows of one CPI are one
+line; at most 4) and states the call wall and put wall once, each with its signed distance, as context. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
 built on the server clock's date while the chain pricing for the same horizons was on New York's; in the
 evening the labels were a day ahead, and on monthly OPEX evening a month. They moved to
 server/horizonDates.ts with the clock as an argument and are tested to agree with horizonTargetIso.
 (5) The ten-day cone (server/multiDayProjection.ts) dated its bands by counting weekdays from the UTC day,
 so a band landed on Thanksgiving and every other holiday; it now walks the exchange calendar's sessions
 from the bar the cone starts from (band n is n sessions from that bar's close; before the open band 1 is
-today). Checked and left: date helpers that format a date already built at noon UTC, and FRED/news id
+today; the bar's date is read twelve hours after its midnight stamp, as server/dayChange.ts does). Checked and left: date helpers that format a date already built at noon UTC, and FRED/news id
 strings. Known and not in this change: server/econWeek.ts buckets events by UTC day; Heatseeker's expiry
 quick picks and Trade Desk's isOpexToday use the browser's date and ignore holidays; tickerCalendar's
 MACRO_2026 list ends 2026-07-29. Tests: tests/quant/ny-dates.test.ts (8), run under UTC, New York and

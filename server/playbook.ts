@@ -99,11 +99,11 @@ export type DailyPlaybook = {
   gameplan: string[];        // descriptive context bullets (no trade, structure or size advice)
   /** Inputs that were unavailable and added no points (never read as 0 / 1.00). */
   unavailableInputs?: string[];
-  /** NEW: today's news playbook — per-event reaction map. */
+  /** Today's scheduled releases, each with the option map's two walls as context. No reaction, no direction. */
   newsPlaybook?: Array<{
-    event: string;            // e.g. "FOMC 2pm"
-    bullScenario: string;     // descriptive: reaction + nearest gamma level above spot (no orders)
-    bearScenario: string;     // descriptive: reaction + nearest gamma level below spot (no orders)
+    event: string;            // e.g. "FOMC · 2:00 PM ET"
+    callWall: string;         // "call wall 5850 (+50 pts, +0.86% from spot 5800)" or "call wall unavailable"
+    putWall: string;
     /** "context-levels": levels are context, not entries / stops / targets. */
     kind?: "context-levels";
   }>;
@@ -421,23 +421,13 @@ export function buildNewsPlaybook(
     const pct = (d / spot) * 100;
     return `${d >= 0 ? "+" : "-"}${fmtPrice(Math.abs(d), t === 5 ? 1 : t)} pts, ${pct >= 0 ? "+" : "-"}${Math.abs(pct).toFixed(2)}%`;
   };
-  const above = okLvl(cw) ? `call wall ${fmtPrice(cw, t)} (${dist(cw)} from spot ${fmtPrice(spot, t)})` : "call wall unavailable";
-  const below = okLvl(pw) ? `put wall ${fmtPrice(pw, t)} (${dist(pw)} from spot ${fmtPrice(spot, t)})` : "put wall unavailable";
-  const ctx = (reaction: string, side: "up" | "down") =>
-    `${reaction}: nearest gamma level ${side === "up" ? "above" : "below"} is the ${side === "up" ? above : below}. Context only, not an entry, stop or target.`;
-
+  // The walls are stated with their signed distance, wherever they sit: a call wall can be below the price.
+  // No reaction is named. The card used to pair each release with a direction ("Hot print" under a red BEAR
+  // box, "Weak jobs (recession fear)"): nothing here has measured which way a print moves the index.
+  const callWall = okLvl(cw) ? `call wall ${fmtPrice(cw, t)} (${dist(cw)} from spot ${fmtPrice(spot, t)})` : "call wall unavailable";
+  const putWall = okLvl(pw) ? `put wall ${fmtPrice(pw, t)} (${dist(pw)} from spot ${fmtPrice(spot, t)})` : "put wall unavailable";
   for (const ev of events) {
-    const tag = `${ev.label}${ev.timeLabel ? " · " + ev.timeLabel : ""}`;
-    const k = ev.kind.toUpperCase();
-    const lc = ev.label.toLowerCase();
-    let up = "Risk-on reaction", dn = "Risk-off reaction";
-    if (k === "FOMC" || k === "FED" || lc.includes("fomc") || lc.includes("powell")) { up = "Dovish read"; dn = "Hawkish read"; }
-    else if (lc.includes("cpi") || lc.includes("ppi")) { up = "Cool print (below consensus)"; dn = "Hot print (above consensus)"; }
-    else if (lc.includes("pce")) { up = "Cool core PCE"; dn = "Hot core PCE"; }
-    else if (lc.includes("nfp") || lc.includes("payroll") || lc.includes("jobs")) { up = "Strong jobs"; dn = "Weak jobs (recession fear)"; }
-    else if (k === "EARN" || lc.includes("earn") || /\b(MSFT|AAPL|GOOGL|GOOG|META|AMZN|TSLA|NVDA)\b/.test(ev.label)) { up = "Beat"; dn = "Miss"; }
-    else if (lc.includes("jobless") || lc.includes("claims")) { up = "Low claims (tight labor)"; dn = "Spike in claims (slowdown)"; }
-    out.push({ event: tag, bullScenario: ctx(up, "up"), bearScenario: ctx(dn, "down"), kind: "context-levels" });
+    out.push({ event: `${ev.label}${ev.timeLabel ? " · " + ev.timeLabel : ""}`, callWall, putWall, kind: "context-levels" });
   }
 
   return out;

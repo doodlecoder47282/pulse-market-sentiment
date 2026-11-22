@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildVolCalendar, daysAway } from "../../server/volCalendar";
 import { etDate, etWallToEpochMs, isTradingDay, nextTradingDay } from "../../shared/exchangeCalendar";
-import { eventsOnEtDate, PLAYBOOK_EVENTS_MAX } from "../../shared/playbookEvents";
+import { eventsOnEtDate, PLAYBOOK_EVENTS_MAX, releaseFamily } from "../../shared/playbookEvents";
 import { buildHorizonDates } from "../../server/horizonDates";
 import { horizonTargetIso } from "../../server/impliedScenario";
 
@@ -55,28 +55,37 @@ test("wiring: today is New York's date wherever a calendar day is compared", () 
   }
 });
 
-test("the playbook's events are the ones on New York's date, read from the event's own time", () => {
+test("the playbook's releases are the HIGH ones on New York's date, read from the event's own time, one line per release", () => {
   const at = (d: string, min: number) => Math.floor(etWallToEpochMs(d, min) / 1000);
   const cal = [
-    { kind: "ECON", title: "CPI", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
-    { kind: "FED", title: "FOMC minutes", when: at("2026-11-23", 14 * 60), whenLabel: "Mon 11/23 · 2:00 PM ET", importance: "HIGH" },
+    { kind: "ECON", title: "MBA Mortgage Applications", when: at("2026-11-23", 7 * 60), whenLabel: "7:00 AM ET", importance: "LOW" },
+    // One CPI release as the calendar can carry it when the official read fails: three vendor rows and a computed one.
+    { kind: "ECON", title: "CPI MoM", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "ECON", title: "Core CPI MoM", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "ECON", title: "CPI YoY", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "ECON", title: "CPI Release (CPI)", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "FED", title: "FOMC Rate Decision", when: at("2026-11-23", 14 * 60), whenLabel: "Mon 11/23 · 2:00 PM ET", importance: "HIGH" },
     // 7:30 PM New York time: already the 24th in UTC, still today's event.
-    { kind: "FED", title: "Fed speaker", when: at("2026-11-23", 19 * 60 + 30), whenLabel: "Mon 11/23 · 7:30 PM ET", importance: "MED" },
+    { kind: "ECON", title: "Some evening release", when: at("2026-11-23", 19 * 60 + 30), whenLabel: "Mon 11/23 · 7:30 PM ET", importance: "HIGH" },
+    { kind: "FED", title: "Fed speaker", when: at("2026-11-23", 12 * 60), whenLabel: "", importance: "MED" },
     { kind: "ECON", title: "GDP", when: at("2026-11-24", 8 * 60 + 30), whenLabel: "Tue", importance: "HIGH" },
-    { kind: "OPEX", title: "Weekly expiry", when: at("2026-11-23", 16 * 60), whenLabel: "", importance: "MED" },
+    { kind: "OPEX", title: "Weekly expiry", when: at("2026-11-23", 16 * 60), whenLabel: "", importance: "HIGH" },
     { kind: "EARNINGS", title: "NVDA", when: at("2026-11-23", 16 * 60 + 5), whenLabel: "", importance: "HIGH" },
-    { kind: "ECON", title: "no time" },
+    { kind: "ECON", title: "no time", importance: "HIGH" },
   ];
   const got = eventsOnEtDate(cal, "2026-11-23");
-  assert.deepEqual(got.map((e) => e.label), ["CPI", "FOMC minutes", "Fed speaker"]);
+  assert.deepEqual(got.map((e) => e.label), ["CPI", "FOMC", "Some evening release"]);
   assert.equal(got[0].timeLabel, "Mon 11/23 · 8:30 AM ET");
+  assert.doesNotMatch(JSON.stringify(got), /recession|Risk-on|Mortgage/);
   assert.deepEqual(eventsOnEtDate(cal, "2026-11-24").map((e) => e.label), ["GDP"]);
   assert.deepEqual(eventsOnEtDate(null, "2026-11-23"), []);
-  // The cut keeps the most important.
-  const many = Array.from({ length: 9 }, (_, i) => ({ kind: "ECON", title: `e${i}`, when: at("2026-11-23", 480 + i), whenLabel: "", importance: i === 8 ? "HIGH" : "LOW" }));
-  const cut = eventsOnEtDate(many, "2026-11-23");
-  assert.equal(cut.length, PLAYBOOK_EVENTS_MAX);
-  assert.equal(cut[0].label, "e8");
+  const many = Array.from({ length: 9 }, (_, i) => ({ kind: "ECON", title: `e${i}`, when: at("2026-11-23", 480 + i), whenLabel: "", importance: "HIGH" }));
+  assert.deepEqual(eventsOnEtDate(many, "2026-11-23").map((e) => e.label), ["e0", "e1", "e2", "e3"]);
+  assert.equal(PLAYBOOK_EVENTS_MAX, 4);
+  assert.equal(releaseFamily("Nonfarm Payrolls"), "Payrolls");
+  assert.equal(releaseFamily("Initial Jobless Claims"), "Jobless claims");
+  assert.equal(releaseFamily("Core PCE Price Index MoM"), "PCE");
+  assert.equal(releaseFamily("Retail Sales MoM"), null);
   // The route reads the event's time, not a date field the events do not carry.
   const routes = src("server/routes.ts");
   assert.ok(routes.includes("eventsOnEtDate(news.calendar, etDate(Date.now()))"));
@@ -108,10 +117,14 @@ test("horizon labels are on New York's date and agree with the chain pricing, in
 
 test("cone bands are dated from the bar they start from", () => {
   const m = src("server/multiDayProjection.ts");
-  assert.ok(m.includes("nextTradingDay(etDate(asOfTs))"));
+  assert.ok(m.includes("nextTradingDay(etDate(asOfTs + 12 * 3600_000))"));
+  // A bar stamped midnight UTC, midnight Central or midnight Eastern of Tuesday Nov 24 is Tuesday's bar: band 1 is Wednesday.
+  for (const stamp of [Date.UTC(2026, 10, 24, 0), Date.UTC(2026, 10, 24, 5), Date.UTC(2026, 10, 24, 6)]) {
+    assert.equal(nextTradingDay(etDate(stamp + 12 * 3600_000)), "2026-11-25");
+  }
   assert.ok(!m.includes("nextWeekdayDate"));
   // Before Monday's open the last bar is Friday's: band 1 is Monday, not Tuesday.
-  assert.equal(nextTradingDay(etDate(etWallToEpochMs("2026-11-20", 60))), "2026-11-23");
+  assert.equal(nextTradingDay(etDate(etWallToEpochMs("2026-11-20", 60) + 12 * 3600_000)), "2026-11-23");
   // Wednesday's bar before Thanksgiving: band 1 is Friday.
   assert.equal(nextTradingDay("2026-11-25"), "2026-11-27");
 });

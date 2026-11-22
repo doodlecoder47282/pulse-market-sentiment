@@ -260,7 +260,9 @@ export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeRes
   // that bar's close, so its date is counted from the bar and not from the clock: before the open the last
   // bar is the previous session's, and band 1 is today. Counting weekdays put a band on every holiday.
   const sessionDates: string[] = [];
-  for (let d = nextTradingDay(etDate(asOfTs)); sessionDates.length < 10; d = nextTradingDay(d)) sessionDates.push(d);
+  // A daily bar is stamped at midnight of its session in the vendor's zone (Central, Eastern or UTC); twelve
+  // hours on gives the session's date under any of them (the rule server/dayChange.ts uses).
+  for (let d = nextTradingDay(etDate(asOfTs + 12 * 3600_000)); sessionDates.length < 10; d = nextTradingDay(d)) sessionDates.push(d);
 
   const bands: ConeBand[] = [];
   for (let n = 1; n <= 10; n++) {
