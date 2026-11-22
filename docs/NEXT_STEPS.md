@@ -1,4 +1,4 @@
-# Next steps (as of 2026-11-21, main at PR #148; for whoever picks this up, human or model)
+# Next steps (as of 2026-11-21, after PRs #143 to #150; for whoever picks this up, human or model)
 
 Read `docs/REVIEWER_BRIEF.md` and the last dozen entries of `docs/BATCAVE_STATE.md` first. This file is the
 work queue: each item is small, says where to look, and says what "done" means. Delete an item when it ships.

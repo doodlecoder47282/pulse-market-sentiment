@@ -36,7 +36,16 @@ export interface TieredItem {
  * quote page 8 of 10 as the day's top story.
  */
 export function isIndexPage(title: string): boolean {
-  return /\|\s*(stock price|share price|quote)\b[^|]*\b(news|quote|chart)s?\b/i.test(title) || /\b(latest|breaking) news (&|and) (headlines|updates)\b/i.test(title);
+  // The quote-page forms: "<Company> (TICKER.X) | Stock Price & Latest News", "... Stock Price, News, Quote & History".
+  if (/\((?:[A-Z0-9]{1,6})\.[A-Z]{1,3}\)\s*\|?\s*(stock|share) price\s*(&|,)\s*(latest )?news\b/i.test(title)) return true;
+  if (/^[A-Z.]{1,6}\s*\|\s*(stock|share) price\s*(&|,)/i.test(title)) return true;
+  // A section page: every part of the title is a section name (a trailing publisher name aside). A story
+  // that merely starts with one ("Stock market news: Dow falls 500 points") has a part that is not.
+  const SECTION = /^((latest|breaking) news (&|and) (headlines|updates)|(business|markets?|stock market|world|finance) news|markets|today's (international|latest) [a-z ]*(headlines|news))$/i;
+  const segs = title.split(/\s+[|\-–]\s+|:\s+/).map((x) => x.trim()).filter(Boolean);
+  if (segs.length > 1 && segs[segs.length - 1].split(/\s+/).length <= 2 && !SECTION.test(segs[segs.length - 1])) segs.pop();
+  const named = segs.filter((x) => !/^markets$/i.test(x));
+  return named.length > 0 && segs.every((x) => SECTION.test(x));
 }
 
 export function tierItems(

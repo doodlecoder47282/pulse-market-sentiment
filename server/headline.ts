@@ -232,14 +232,14 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         tab,
         tone: "neutral",
         topLine: "Headlines from the listed sources, and scheduled macro events.",
-        subLine: "Topic chips sort the headlines by keyword; OTHER holds everything the rules did not place, market story or not.",
+        subLine: "Topic chips filter the headlines by keyword tag; OTHER holds everything no rule tagged, market story or not.",
         bullets: [
-          "Official sources first (SEC, Fed, BLS, BEA, Treasury, CFTC), then established newswires; the source line shows which are live.",
+          "Official sources first (SEC, Fed, BLS, BEA, Treasury), then established newswires; the source line shows which are live.",
           "Reddit and anonymous blogs are filtered out.",
           "Calendar: FOMC, data releases, OpEx and holidays.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Market news from tiered, labeled sources, filtered for SPX relevance.",
+        whatThisIs: "News from tiered, labeled sources. It is tagged by topic, not filtered for relevance to the index.",
       };
 
     case "voices":
