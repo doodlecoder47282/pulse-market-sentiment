@@ -42,6 +42,12 @@ interface Rule {
   tickers?: string[];
 }
 
+// A market named within the same clause as a move word, in either order.
+const MKT = "(?:stocks?|shares|equit(?:y|ies)|markets?|nasdaq|dow|s&p|spx|russell|index(?:es)?|indices|futures|wall street|treasur(?:y|ies)|bonds?|yields?|dollar|gold|oil|crude|bitcoin|crypto)";
+const near = (moves: string) => new RegExp(`\\b${MKT}\\b[^.;:]{0,60}\\b(?:${moves})\\b|\\b(?:${moves})\\b[^.;:]{0,40}\\b${MKT}\\b`, "i");
+export const MARKET_UP = near("rally|rallies|rallied|surges?|surged|soars?|soared|jumps?|jumped");
+export const MARKET_DOWN = near("correction|plunges?|plunged|crash(?:es|ed)?|rout|tumbles?|tumbled|slump(?:s|ed)?");
+
 const RULES: Rule[] = [
   // ---- RATES / FED (broad index impact) ----
   { re: /\b(fomc|fed( decision)?|rate (cut|hike|decision)|powell|fed chair)\b/i, category: "RATES/FED", impact: 9, horizon: "Days", tickers: ["SPY", "TLT", "DXY"] },
@@ -93,8 +99,11 @@ const RULES: Rule[] = [
   { re: /\b(aaii|naaim|put-?call|gamma (squeeze|exposure)|dealer gamma)\b/i, category: "SENTIMENT", impact: 5, horizon: "Days" },
   { re: /\b(margin (debt|call)|deleveraging|liquidation)\b/i, category: "SENTIMENT", impact: 7, direction: "Bearish", horizon: "Intraday" },
   { re: /\b(record high|all-?time high|new high)s?\b/i, category: "SENTIMENT", impact: 3, direction: "Bullish" },
-  { re: /\b(bear market|correction|plunge|crash|selloff|rout)\b/i, category: "SENTIMENT", impact: 6, direction: "Bearish", horizon: "Days" },
-  { re: /\b(rally|surge|soar|rip)\b/i, category: "SENTIMENT", impact: 3, direction: "Bullish" },
+  { re: /\b(bear market|sell-?off)\b/i, category: "SENTIMENT", impact: 6, direction: "Bearish", horizon: "Days" },
+  // Move words count only next to a market: "Croatians rally in Zagreb" is a protest, "a correction" can be a
+  // newspaper's, and a "crash" can be a car's. Each was tagged as a market move by the bare word.
+  { re: MARKET_DOWN, category: "SENTIMENT", impact: 6, direction: "Bearish", horizon: "Days" },
+  { re: MARKET_UP, category: "SENTIMENT", impact: 3, direction: "Bullish" },
 ];
 
 // Bias adverbs/qualifiers that bump impact up or down

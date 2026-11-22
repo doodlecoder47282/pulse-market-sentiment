@@ -124,7 +124,7 @@ const TOPIC_KEYWORDS: Record<NewsTopic, RegExp[]> = {
   JOBS: [/\bnfp\b/i, /\bnon[- ]?farm\b/i, /\bpayroll/i, /\bunemployment\b/i, /\bjobs (report|data)\b/i, /\bjobless claims\b/i, /\bjolts\b/i],
   GROWTH: [/\bgdp\b/i, /\brecession\b/i, /\bism\b/i, /\bpmi\b/i, /\bretail sales\b/i, /\bconsumer (spending|confidence)\b/i, /\bhousing starts\b/i],
   GEO: [/\bchina\b/i, /\brussia\b/i, /\bukraine\b/i, /\bisrael\b/i, /\bgaza\b/i, /\biran\b/i, /\btaiwan\b/i, /\btrade war\b/i, /\btariff/i, /\bwar\b/i, /\bsanction/i],
-  EARNINGS: [/\bearnings\b/i, /\beps\b/i, /\bguidance\b/i, /\bbeat(s|\b)\b/i, /\bmiss(es|\b)\b/i, /\bq[1-4] (results|report)\b/i, /\bquarterly\b/i],
+  EARNINGS: [/\bearnings\b/i, /\beps\b/i, /\bguidance\b/i, /\b(beats?|tops?|miss(es)?) (estimates|expectations|forecasts|consensus|the street)\b/i, /\b(profit|revenue|sales) (beats?|miss(es)?|rises?|falls?|jumps?|drops?)\b/i, /\bq[1-4] (results|report)\b/i, /\bquarterly\b/i],
   RATES: [/\btreasur(y|ies)\b/i, /\byield/i, /\b10[- ]?year\b/i, /\b2[- ]?year\b/i, /\bbond\b/i, /\bauction\b/i],
   OIL: [/\bopec\b/i, /\bcrude\b/i, /\boil price/i, /\bwti\b/i, /\bbrent\b/i, /\benergy stocks\b/i],
   OTHER: [],

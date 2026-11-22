@@ -3172,3 +3172,13 @@ said "sellers favored", "buyers favored", "melt-up positioning or single-name FO
 They now state the term-structure relation and the risk reversal in vol points with the expiry it was read at
 (`riskReversalNote` in shared/vol.ts); the tile no longer says "~30d" (the engine falls back to the first
 expiry when none is near 30 days); the panel's footer and the skew description handed to a model lost "fear", "panic", "greed", "market expects" and "extremes mean-revert". No number changed. Tests: tests/quant/descriptive-rules-text.test.ts (3).
+
+**News keyword rules: a move word needs a market next to it (2026-11-21).** Seen live on the ALPHA card:
+"Croatians rally in Zagreb demanding justice..." was scored 4/10 and tagged Bullish (the bare word "rally"),
+and the feed's topic chips marked a tennis result as EARNINGS (the bare word "beat"). server/alphaEngine.ts:
+rally/surge/soar/jump and correction/plunge/crash/rout/tumble/slump now count only within the same clause as
+a market word (stocks, shares, Nasdaq, Dow, S&P, futures, yields, oil, gold, bitcoin...); "bear market" and
+"selloff" still stand alone; the bare "rip" is gone. server/news.ts EARNINGS topic: "beats/misses/tops
+estimates|expectations|forecasts|consensus" and "profit|revenue|sales beats/misses/rises/falls", not the bare
+verbs. Still open: the headline feed itself carries many non-market stories (advice columns, sports) under
+"Market-relevant headlines". Tests: tests/quant/news-keywords.test.ts (3).
