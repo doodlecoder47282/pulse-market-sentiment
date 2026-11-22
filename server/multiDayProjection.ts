@@ -1,3 +1,4 @@
+import { etDate, nextTradingDay } from "../shared/exchangeCalendar";
 import { vixToAtmPct } from "@shared/vol";
 // server/multiDayProjection.ts
 //
@@ -173,17 +174,6 @@ export function coneBandPrices(spot: number, sigmaDaily: number, n: number, nu: 
   };
 }
 
-function nextWeekdayDate(start: Date, sessions: number): Date {
-  const d = new Date(start);
-  let added = 0;
-  while (added < sessions) {
-    d.setUTCDate(d.getUTCDate() + 1);
-    const dow = d.getUTCDay();
-    if (dow !== 0 && dow !== 6) added += 1;
-  }
-  return d;
-}
-
 function std(arr: number[]): number {
   if (arr.length < 2) return 0;
   const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -266,13 +256,19 @@ export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeRes
 
   const spot = bars[bars.length - 1].c;
   const asOfTs = bars[bars.length - 1].t;
-  const now = new Date();
+  // The ten SESSIONS after the bar the cone starts from, on the exchange calendar. Band n is n sessions from
+  // that bar's close, so its date is counted from the bar and not from the clock: before the open the last
+  // bar is the previous session's, and band 1 is today. Counting weekdays put a band on every holiday.
+  const sessionDates: string[] = [];
+  // A daily bar is stamped at midnight of its session in the vendor's zone (Central, Eastern or UTC); twelve
+  // hours on gives the session's date under any of them (the rule server/dayChange.ts uses).
+  for (let d = nextTradingDay(etDate(asOfTs + 12 * 3600_000)); sessionDates.length < 10; d = nextTradingDay(d)) sessionDates.push(d);
 
   const bands: ConeBand[] = [];
   for (let n = 1; n <= 10; n++) {
     bands.push({
       day: n,
-      date: nextWeekdayDate(now, n).toISOString().slice(0, 10),
+      date: sessionDates[n - 1],
       ...coneBandPrices(spot, sigmaAdj, n),
     });
   }

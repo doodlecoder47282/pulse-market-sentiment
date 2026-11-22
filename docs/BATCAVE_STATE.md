@@ -3172,3 +3172,36 @@ said "sellers favored", "buyers favored", "melt-up positioning or single-name FO
 They now state the term-structure relation and the risk reversal in vol points with the expiry it was read at
 (`riskReversalNote` in shared/vol.ts); the tile no longer says "~30d" (the engine falls back to the first
 expiry when none is near 30 days); the panel's footer and the skew description handed to a model lost "fear", "panic", "greed", "market expects" and "extremes mean-revert". No number changed. Tests: tests/quant/descriptive-rules-text.test.ts (3).
+**"Today" is New York's date; day counts and session dates fixed (2026-11-21).** Found in a sweep for dates
+taken from the server's clock zone. (1) The event calendar's days-away count (server/volCalendar.ts) compared
+noon UTC on the event date with LOCAL midnight today; on a UTC server that is always half a day more and the
+half rounded up, so an event today read "1 day away" and every count was one too many. It now counts
+calendar days between two dates, and "today" is New York's date. (2) From 7 or 8 PM New York time the UTC
+date is already tomorrow. Three places took today's date from UTC: the earnings calendar
+(server/earnings.ts, today's after-the-close reporters dropped from the list for the rest of the evening),
+the per-ticker calendar (server/tickerCalendar.ts) and the date in the master-alpha packet. All use
+etDate(now). (3) The playbook's "today's catalysts" list (server/routes.ts) was ALWAYS empty, at any hour:
+it filtered calendar events on a `date` field they do not carry (an event has `when` in epoch seconds,
+`title`, `whenLabel`). It now reads the event's own time on New York's date (shared/playbookEvents.ts).
+This switches on a Trade Desk card that had never drawn, so the card was rewritten before it could: it
+used to pair each release with a direction under green BULL and red BEAR boxes ("Hot print", "Weak jobs
+(recession fear)", "Risk-on reaction"), which nothing here has measured. It now lists the day's
+HIGH-importance releases (kinds ECON and FED, one line per release: rows that share the calendar's family key are one
+line, the rows of one rate decision are one line, minutes and speeches keep their own titles; at most 4;
+when the list is empty and the BLS, BEA or Nasdaq release calendar failed, the card says the
+day's releases are not known; a failed Treasury auction read or one failed Nasdaq day does not trigger it) and states the call wall and put wall once, each with its signed distance, as context. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
+built on the server clock's date while the chain pricing for the same horizons was on New York's; in the
+evening the labels were a day ahead, and on monthly OPEX evening a month. They moved to
+server/horizonDates.ts with the clock as an argument and are tested to agree with horizonTargetIso.
+(5) The ten-day cone (server/multiDayProjection.ts) dated its bands by counting weekdays from the UTC day,
+so a band landed on Thanksgiving and every other holiday; it now walks the exchange calendar's sessions
+from the bar the cone starts from (band n is n sessions from that bar's close; before the open band 1 is
+today; the bar's date is read twelve hours after its midnight stamp, as server/dayChange.ts does). Checked and left: date helpers that format a date already built at noon UTC, and FRED/news id
+strings. Also fixed on the way: the calendar's family classifier (server/sources/parse.ts) read "ADP Nonfarm
+Employment Change" and "Nonfarm Productivity" as the jobs report, and the merge then dropped both rows
+as its duplicates; ADP is now its own row and productivity its own family. Known and not in this change:
+the computed CPI and jobs rows are graded MED, so they do not reach the releases card when the official
+read fails (the card then says the calendar was not fully read); server/econWeek.ts buckets events by UTC day; Heatseeker's expiry
+quick picks and Trade Desk's isOpexToday use the browser's date and ignore holidays; tickerCalendar's
+MACRO_2026 list ends 2026-07-29. Tests: tests/quant/ny-dates.test.ts (8), run under UTC, New York and
+Tokyo server clocks.

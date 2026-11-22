@@ -818,7 +818,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
   // --- Packet to Claude ---
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const packet = {
-    date: new Date().toISOString().split("T")[0],
+    date: etDate(Date.now()),
     horizon: h,
     symbol,
     spot: r2(spot),

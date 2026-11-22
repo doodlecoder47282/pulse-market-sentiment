@@ -107,6 +107,10 @@ test("classifyRelease and familyOfEventName join BLS/BEA titles with Nasdaq name
   assert.equal(familyOfEventName("Nonfarm Payrolls"), "NFP");
   assert.equal(familyOfEventName("Core CPI m/m"), "CPI");
   assert.equal(familyOfEventName("Initial Jobless Claims"), null);
+  assert.equal(familyOfEventName("ADP Nonfarm Employment Change"), null, "a private survey, not the jobs report");
+  assert.equal(familyOfEventName("Nonfarm Productivity (QoQ)"), "PRODUCTIVITY");
+  assert.equal(familyOfEventName("Unit Labor Costs"), "PRODUCTIVITY");
+  assert.equal(familyOfEventName("Unemployment Rate"), "NFP");
 });
 
 // ─── SEC EDGAR ─────────────────────────────────────────────────────────────

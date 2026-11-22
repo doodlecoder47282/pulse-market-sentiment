@@ -231,25 +231,25 @@ test("edge brief: verdict is filtered (SELL PREMIUM never reaches the chip)", ()
 import { buildNewsPlaybook } from "../../server/playbook";
 import { setSnapshotProvider, buildDailyPlaybook } from "../../server/dailyPlaybook";
 
-test("news playbook: levels as context, no BUY/SELL/stop/T1/T2", () => {
+test("news playbook: releases with the two walls as context; no reaction, no direction, no order words", () => {
   const out = buildNewsPlaybook(
-    [{ kind: "FOMC", label: "FOMC", timeLabel: "2pm" }, { kind: "ECON", label: "CPI" }, { kind: "ECON", label: "Treasury auction" }],
+    [{ kind: "FED", label: "FOMC", timeLabel: "2:00 PM ET" }, { kind: "ECON", label: "CPI" }, { kind: "ECON", label: "Payrolls" }],
     5800, 5850, 5750,
   )!;
   assert.equal(out.length, 3);
+  assert.equal(out[0].event, "FOMC · 2:00 PM ET");
+  assert.equal(out[1].event, "CPI");
   for (const np of out) {
-    for (const t of [np.bullScenario, np.bearScenario]) {
-      assert.match(t, /Context only, not an entry, stop or target\.$/);
-      const body = t.replace(/ Context only, not an entry, stop or target\.$/, "");
-      assert.doesNotMatch(body, /\b(BUY|SELL|buy|sell|stop|T1|T2|targets?|entry|R:R)\b/);
-    }
+    // hand: call wall 5850 is +50 pts, +0.86% from 5800; put wall 5750 is -50 pts, -0.86%
+    assert.equal(np.callWall, "call wall 5850 (+50 pts, +0.86% from spot 5800)");
+    assert.equal(np.putWall, "put wall 5750 (-50 pts, -0.86% from spot 5800)");
     assert.equal(np.kind, "context-levels");
+    assert.doesNotMatch(JSON.stringify(np), /BUY|SELL|buy|sell|stop|T1|T2|target|entry|R:R|Risk-o|recession|Hot|Cool|Dovish|Hawkish|read\b|bull|bear/);
   }
-  // hand: call wall 5850 is +50 pts, +0.86% from 5800; put wall 5750 is -50 pts, -0.86%
-  assert.match(out[0].bullScenario, /^Dovish read: nearest gamma level above is the call wall 5850 \(\+50 pts, \+0\.86% from spot 5800\)/);
-  assert.match(out[0].bearScenario, /^Hawkish read: nearest gamma level below is the put wall 5750 \(-50 pts, -0\.86% from spot 5800\)/);
-  assert.match(out[1].bullScenario, /^Cool print/);
-  assert.match(out[2].bullScenario, /^Risk-on reaction/);
+  // A call wall below the price is stated with its real sign, not called "above".
+  assert.equal(buildNewsPlaybook([{ kind: "ECON", label: "CPI" }], 5800, 5790, NaN)![0].callWall, "call wall 5790 (-10 pts, -0.17% from spot 5800)");
+  assert.equal(buildNewsPlaybook([{ kind: "ECON", label: "CPI" }], 5800, 5790, NaN)![0].putWall, "put wall unavailable");
+  assert.equal(buildNewsPlaybook([], 5800, 5850, 5750), undefined);
 });
 
 test("daily playbook: headline says '% wt, heuristic'; missing VIX9D/VIX3M is unavailable", async () => {
