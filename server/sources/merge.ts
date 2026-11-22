@@ -38,14 +38,14 @@ export interface TieredItem {
 export function isIndexPage(title: string): boolean {
   // The quote-page forms: "<Company> (TICKER.X) | Stock Price & Latest News", "... Stock Price, News, Quote & History".
   if (/\((?:[A-Z0-9]{1,6})\.[A-Z]{1,3}\)\s*\|?\s*(stock|share) price\s*(&|,)\s*(latest )?news\b/i.test(title)) return true;
-  if (/^[A-Z.]{1,6}\s*\|\s*(stock|share) price\s*(&|,)/i.test(title)) return true;
+  if (/^[A-Z][A-Z.]{0,5}\s*\|\s*[Ss](tock|hare) [Pp]rice\s*(&|,)/.test(title)) return true; // an upper-case ticker, not a word
   // A section page: every part of the title is a section name (a trailing publisher name aside). A story
   // that merely starts with one ("Stock market news: Dow falls 500 points") has a part that is not.
-  const SECTION = /^((latest|breaking) news (&|and) (headlines|updates)|(business|markets?|stock market|world|finance) news|markets|today's (international|latest) [a-z ]*(headlines|news))$/i;
-  const segs = title.split(/\s+[|\-–]\s+|:\s+/).map((x) => x.trim()).filter(Boolean);
+  const SECTION = /^((latest|breaking) news (&|and) (headlines|updates)|(business|markets?|stock market|world|finance) news|today's (international|latest) [a-z ]*(headlines|news))$/i;
+  // Parts are split on " | " and " - " only: what follows a colon is the story ("Business news: Stocks rise").
+  const segs = title.split(/\s+[|\-–]\s+/).map((x) => x.trim()).filter(Boolean);
   if (segs.length > 1 && segs[segs.length - 1].split(/\s+/).length <= 2 && !SECTION.test(segs[segs.length - 1])) segs.pop();
-  const named = segs.filter((x) => !/^markets$/i.test(x));
-  return named.length > 0 && segs.every((x) => SECTION.test(x));
+  return segs.length > 0 && segs.every((x) => SECTION.test(x));
 }
 
 export function tierItems(
