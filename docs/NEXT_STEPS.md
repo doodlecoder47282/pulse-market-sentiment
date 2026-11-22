@@ -12,7 +12,8 @@ work queue: each item is small, says where to look, and says what "done" means. 
   and concrete findings) -> fix -> re-review until MERGE-READY -> CI green on the head synced with main ->
   squash-merge -> Railway deploys `main` in about 5 minutes -> look at the LIVE site
   (https://pulse-market-sentiment-pulse.up.railway.app). "Done" means seen live. Do not skip the review
-  for a "small" change. The owner has given standing permission to merge reviewed, CI-green improvements.
+  for a "small" change. The owner said in chat on 2026-11-21 that reviewed, CI-green changes which only improve what exists may be
+  merged without asking each time; confirm that with the owner before relying on it in a new session.
 - Tests: `node --experimental-transform-types --no-warnings --import ./tests/quant/loader/register.mjs
   --test 'tests/quant/*.test.ts'` (`npm run test:regression` covers only `tests/*.test.ts`). Without
   `node_modules` four files fail to load for a missing package (`alpha-news-honesty`, `connection-gate`,
@@ -117,7 +118,7 @@ first trim of the Outlook tab dropped a "strike range read is not complete" warn
 8. **One source of event dates.** `server/econWeek.ts` still estimates a jobs chip by the first-Friday
    rule (wrong on Jan 1 and Oct 1, 2027); `shared/macroCalendar.ts` and `server/tickerCalendar.ts` (see 3)
    keep their own lists. Point them all at `NFP_DATES`, `CPI_DATES` and `FOMC_DATES` in
-   `server/volCalendar.ts`. Separately: the computed CPI and jobs rows there have importance "medium", so
+   `server/volCalendar.ts` (the last two need exporting first). Separately: the computed CPI and jobs rows there have importance "medium", so
    they do not reach the HIGH-only releases card when the official BLS read fails.
 9. **Small leftovers.** The layout audit does not measure `<summary>` elements, so a collapsed section's
    tap target is never checked; crypto funding
