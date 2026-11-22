@@ -152,8 +152,8 @@ test("the jobs report is on the BLS schedule's dates, not on every first Friday"
   // December 4, then January 8: January 1, 2027 is a first Friday and a holiday, and carries no release.
   assert.deepEqual(nfp, [["2026-12-04", "Dec Jobs Report (NFP)"], ["2027-01-08", "Jan Jobs Report (NFP)"], ["2027-02-05", "Feb Jobs Report (NFP)"]]);
   assert.ok(!cal.events.some((e) => e.date === "2027-01-01" && e.type === "nfp"));
-  // Second Fridays on the schedule that the old rule would have put a week early.
-  assert.ok(NFP_DATES.includes("2027-05-07") && !NFP_DATES.includes("2027-04-30"));
+  // The two 2027 releases the first-Friday rule had on the wrong day: January 1 and October 1.
+  assert.ok(NFP_DATES.includes("2027-01-08") && !NFP_DATES.includes("2027-01-01"));
   assert.ok(NFP_DATES.includes("2027-10-08") && !NFP_DATES.includes("2027-10-01"));
   assert.ok(NFP_DATES.every((d, i) => i === 0 || d > NFP_DATES[i - 1]), "ascending");
   // Past the end of the list the calendar says so and invents nothing.
