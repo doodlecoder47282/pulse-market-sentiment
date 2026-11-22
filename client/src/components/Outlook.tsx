@@ -240,7 +240,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               </div>
               {hiddenRows > 0 && (
                 <button type="button" onClick={() => setAllRows(true)} className="mt-2 min-h-[44px] rounded border border-border/60 px-2 text-[11px] text-muted-foreground hover:text-foreground" data-testid="outlook-expiries-all">
-                  Show all {ahead.length} expiries ({hiddenRows} more, each a smaller share of the open interest read)
+                  Show all {ahead.length} expiries ({hiddenRows} more, each 1% or less of the open interest read)
                 </button>
               )}
               <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
