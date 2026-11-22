@@ -75,7 +75,7 @@ function clauses(text: string): string[][] {
   for (const r of raw) {
     const ends = /[;:,!?]$/.test(r) || (/\.$/.test(r) && !/^([a-z]\.)+$/.test(r)); // "u.s." does not end a sentence
     // Possessives are the bare word ("Nasdaq's plunge"), straight or curly apostrophe.
-    const w = r.replace(/^[^a-z0-9&]+|[^a-z0-9&%'’]+$/g, "").replace(/['’]s$/, "");
+    const w = r.replace(/^[^a-z0-9&]+|[^a-z0-9&%'’]+$/g, "").replace(/['’]s?$/, "");
     if (JOINERS.has(w)) { out.push([]); continue; }
     if (w) out[out.length - 1].push(w);
     if (ends) out.push([]);
@@ -88,13 +88,21 @@ function moveNearMarket(text: string, moves: Set<string>, equityOnly: Set<string
     const mk: Array<{ i: number; equity: boolean }> = [];
     c.forEach((whole, i) => {
       // A joined word counts by its parts ("stock-market", "S&P/TSX", "Nasdaq-100"); it stays one word for distance.
-      const w = EQUITY.has(whole) || OTHER_MKT.has(whole) ? whole : whole.split(/[-/]/).find((p) => EQUITY.has(p) || OTHER_MKT.has(p)) ?? whole;
+      // The market part has to be the head of the join: its last part ("stock-market", not "gold-medal"), or
+      // any part when the rest are numbers or other market names ("nasdaq-100", "s&p/tsx").
+      const isMkt = (p: string) => EQUITY.has(p) || OTHER_MKT.has(p);
+      const parts = whole.split(/[-/]/);
+      const head = parts.length > 1
+        ? (isMkt(parts[parts.length - 1]) ? parts[parts.length - 1] : parts.every((p) => isMkt(p) || /^\d+$/.test(p) || p === "tsx" || p === "jones") ? parts.find(isMkt) : undefined)
+        : undefined;
+      const w = isMkt(whole) ? whole : head ?? whole;
+      const joinedBefore = head && parts.length > 1 ? parts[parts.length - 2] : null;
       // "tech" is a market only directly before a move word or a share word ("tech rout", "tech stocks").
       const techMove = whole === "tech" && (moves.has(c[i + 1] ?? "") || (equityOnly?.has(c[i + 1] ?? "") ?? false));
       const equity = EQUITY.has(w) || techMove;
       if (!equity && !OTHER_MKT.has(w)) return;
       const not = NOT_THIS_MARKET[w];
-      if (not?.before?.includes(c[i - 1] ?? "") || not?.after?.includes(c[i + 1] ?? "")) return;
+      if (not?.before?.includes(joinedBefore ?? c[i - 1] ?? "") || not?.after?.includes(c[i + 1] ?? "")) return;
       mk.push({ i, equity });
     });
     if (!mk.length) continue;

@@ -126,9 +126,9 @@ const TOPIC_KEYWORDS: Record<NewsTopic, RegExp[]> = {
   GEO: [/\bchina\b/i, /\brussia\b/i, /\bukraine\b/i, /\bisrael\b/i, /\bgaza\b/i, /\biran\b/i, /\btaiwan\b/i, /\btrade war\b/i, /\btariff/i, /\bwar\b/i, /\bsanction/i],
   // Phrases, not the bare verbs: "beat" alone is a tennis result. A macro print is not earnings: the word before the verb must not be one ("CPI tops forecasts").
   EARNINGS: [/\bearnings\b/i, /\beps\b/i, /\bguidance\b/i,
-    /(?<!\b(cpi|ppi|pce|gdp|inflation|payrolls?|claims|sales|report|ism|pmi|manufacturing|services|confidence|sentiment)\s)\b(beat|beats|tops?|topped|miss(es|ed)?)\b(?:\s+[\w'-]+){0,3}\s+(estimates|expectations|forecasts?|consensus)\b/i,
+    /(?<!\b(cpi|ppi|pce|gdp|inflation|payrolls?|claims|sales|report|ism|pmi|manufacturing|services|confidence|sentiment|data|index|starts|orders)\s)\b(beat|beats|tops?|topped|miss(es|ed)?)\b(?:\s+[\w'-]+){0,3}\s+(estimates|expectations|forecasts?|consensus)\b/i,
     /\b(beats?|miss(es)?) on (revenue|sales|profit|earnings|eps|(the )?top|(the )?bottom)\b/i,
-    /\b(profit|revenue|sales) (beats?|miss(es)?|rises?|falls?|jumps?|drops?)\b/i,
+    /(?<!\b(retail|home|existing-home|new-home|vehicle|auto)\s)\b(profit|revenue|sales) (beats?|miss(es)?|rises?|falls?|jumps?|drops?)\b/i,
     /\b(first|second|third|fourth)[- ]quarter (results|earnings|profit|revenue|sales)\b/i,
     /\bq[1-4] (results|report)\b/i, /\bquarterly\b/i],
   RATES: [/\btreasur(y|ies)\b/i, /\byield/i, /\b10[- ]?year\b/i, /\b2[- ]?year\b/i, /\bbond\b/i, /\bauction\b/i],
