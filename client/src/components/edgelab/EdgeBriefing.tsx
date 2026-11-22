@@ -349,6 +349,14 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                   <PathCard kind="base" p={d.playbook.paths.base} />
                   <PathCard kind="bear" p={d.playbook.paths.bear} />
                 </div>
+                {(() => {
+                  const off = [d.playbook.paths.bull, d.playbook.paths.bear].filter((p) => p.outOfReach).reduce((n, p) => n + p.probability, 0);
+                  return off > 0 ? (
+                    <div className="text-[11px] text-muted-foreground" data-testid="playbook-unassigned">
+                      {Math.round(off * 100)}% of the rule weight sits on a path that is not drawn (its wall is out of one day's range), so the weights shown do not add to 100%.
+                    </div>
+                  ) : null;
+                })()}
               </div>
             )}
 

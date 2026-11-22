@@ -272,7 +272,10 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     probability: pBase,
     trigger: {
       level: pinAnchor,
-      condition: isPositiveGamma
+      condition: isPositiveGamma && bullOut && bearOut ? `Gravitate to ${pinAnchor.toFixed(2)}. Both walls are out of one day's range.`
+        : isPositiveGamma && bullOut ? `No 15m close below the put wall ${putWall.toFixed(2)}; gravitate to ${pinAnchor.toFixed(2)}. The call wall ${callWall.toFixed(2)} is out of one day's range.`
+        : isPositiveGamma && bearOut ? `No 15m close above the call wall ${callWall.toFixed(2)}; gravitate to ${pinAnchor.toFixed(2)}. The put wall ${putWall.toFixed(2)} is out of one day's range.`
+        : isPositiveGamma
         ? `Hold inside ${below.toFixed(2)}–${above.toFixed(2)}; gravitate to ${pinAnchor.toFixed(2)}`
         : bullOut && bearOut ? "Both walls are out of one day's range"
         : bullOut ? `No 15m close below the put wall ${putWall.toFixed(2)}. The call wall ${callWall.toFixed(2)} is out of one day's range.`

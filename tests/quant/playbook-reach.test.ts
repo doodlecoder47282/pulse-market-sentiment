@@ -78,3 +78,17 @@ test("when the up wing would have been the heaviest it still is not the headline
   assert.ok(pb.paths.bull.probability > pb.paths.base.probability, "the rules put most weight on the up wing");
   assert.doesNotMatch(pb.headline, /lean up/);
 });
+
+test("positive gamma: the middle path does not name a far wall as a one-day bound", async () => {
+  const snap = (callWall: number, putWall: number) => async () => ({
+    capturedAt: 1_795_000_000, gammaAsOf: 1_795_000_000, spy: { price: 697.48 },
+    gamma: { spot: 697.48, callWall, putWall, zeroGamma: 690, maxPain: 700, totalGex: 1e9 },
+    term: { ratio30dOver3m: 1.03, ratio9dOver30d: 1.1, vix9d: 40, vix3m: 35 }, vol: { vix: { value: 35.89 } }, composite: { marketScore: 50 },
+  }) as any;
+  setSnapshotProvider(snap(775, 675));
+  assert.equal((await buildDailyPlaybook("SPY")).paths.base.trigger.condition, "No 15m close below the put wall 675.00; gravitate to 690.00. The call wall 775.00 is out of one day's range.");
+  setSnapshotProvider(snap(775, 620));
+  assert.equal((await buildDailyPlaybook("SPY")).paths.base.trigger.condition, "Gravitate to 690.00. Both walls are out of one day's range.");
+  setSnapshotProvider(snap(710, 685));
+  assert.match((await buildDailyPlaybook("SPY")).paths.base.trigger.condition, /^Hold inside 685\.00–710\.00/);
+});
