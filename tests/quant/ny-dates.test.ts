@@ -93,13 +93,18 @@ test("the playbook's releases are the HIGH ones on New York's date, read from th
   const jobsDay = ["Nonfarm Payrolls", "Unemployment Rate", "Average Hourly Earnings (MoM)"].map((title) => ({ kind: "ECON", title, family: "NFP", when: at("2026-12-04", 510), whenLabel: "8:30", importance: "HIGH" }));
   assert.deepEqual(eventsOnEtDate(jobsDay, "2026-12-04").map((e) => e.label), ["Jobs report (NFP)"]);
   // An empty list from a calendar that was not read is said to be unknown.
-  assert.equal(releaseCalendarNote("ok"), null);
-  assert.equal(releaseCalendarNote("empty"), null);
-  for (const st of ["partial", "stale", "failed", "unavailable", undefined]) assert.match(String(releaseCalendarNote(st)), /not known .*not a statement that nothing is scheduled/);
+  const st = (bls: string, bea: string, tsy: string, nq: string) => [{ id: "bls_calendar", state: bls }, { id: "bea_calendar", state: bea }, { id: "treasury_auctions", state: tsy }, { id: "nasdaq_econ", state: nq }];
+  assert.equal(releaseCalendarNote(st("ok", "ok", "ok", "ok")), null);
+  assert.equal(releaseCalendarNote(st("ok", "empty", "failed", "ok")), null, "auctions are not releases");
+  assert.equal(releaseCalendarNote(st("ok", "ok", "ok", "partial")), null, "one failed Nasdaq day of fourteen");
+  assert.equal(releaseCalendarNote(st("ok", "ok", "ok", "not_configured")), null);
+  assert.equal(releaseCalendarNote(st("failed", "ok", "ok", "ok")), "Scheduled releases today: not known (the BLS release calendar was not read). This is not a statement that nothing is scheduled.");
+  assert.match(String(releaseCalendarNote(st("stale", "failed", "ok", "failed"))), /the BLS, BEA and Nasdaq release calendars were not read/);
+  assert.match(String(releaseCalendarNote(null)), /could not be read\). This is not a statement that nothing is scheduled/);
   // The route reads the event's time, not a date field the events do not carry.
   const routes = src("server/routes.ts");
   assert.ok(routes.includes("eventsOnEtDate(news.calendar, etDate(Date.now()))"));
-  assert.ok(routes.includes("releaseCalendarNote: todaysEvents.length === 0 ? releaseCalendarNote(releaseCalendarState) : null"));
+  assert.ok(routes.includes("releaseCalendarNote: todaysEvents.length === 0 ? releaseCalendarNote(releaseSources) : null"));
   assert.ok(!routes.includes("e.date === todayIso"));
 });
 

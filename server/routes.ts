@@ -530,13 +530,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       // Pull today's catalyst events for news-aware playbook (best-effort)
       let todaysEvents: Array<{ kind: string; label: string; timeLabel?: string }> = [];
-      let releaseCalendarState: string = "failed"; // until the calendar is read
+      let releaseSources: Array<{ id: string; state: string }> | null = null; // null until the news snapshot is read
       try {
         const { buildNewsSnapshot } = await import("./news");
         const news = await buildNewsSnapshot();
         // Events on New York's date. A calendar event carries epoch seconds, not a date string.
         todaysEvents = eventsOnEtDate(news.calendar, etDate(Date.now()));
-        releaseCalendarState = news.calendarState;
+        releaseSources = news.sources;
       } catch (e) {
         // non-fatal
       }
@@ -566,7 +566,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         squeeze,
         playbook,
         // Why the releases list may be empty without the day being empty (null: the calendar was read).
-        releaseCalendarNote: todaysEvents.length === 0 ? releaseCalendarNote(releaseCalendarState) : null,
+        releaseCalendarNote: todaysEvents.length === 0 ? releaseCalendarNote(releaseSources) : null,
         dataState: snap.stale ? "stale" : "ok",
         composite: { score: snap.composite.score, label: snap.composite.label },
         voicesBias: voicesData?.voicesBias ?? null,
