@@ -151,7 +151,7 @@ export default function SkewPanel() {
           </div>
 
           <p className="text-[11px] text-muted-foreground leading-snug">
-            negative risk reversal = puts richer than calls (downside fear paid up). contango term = market expects calm now, vol later. backwardation = front-month panic. extremes mean-revert.
+            Risk reversal is the 25-delta call implied volatility minus the 25-delta put implied volatility; a percent here is vol points, and negative means the puts carry more. Contango: the later expiry's at-the-money implied volatility is above the front's. Backwardation: the front's is above the later one's. These describe option prices; they are not a forecast.
           </p>
         </>
       )}

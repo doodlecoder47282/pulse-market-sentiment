@@ -48,7 +48,7 @@ export function ivAtAbsDelta(
 export function riskReversalNote(rr: number, tenorDays: number): string {
   const pts = (Math.abs(rr) * 100).toFixed(1);
   const at = `at the ${tenorDays}-day expiry`;
-  if (Math.abs(rr) < 0.0005) return `25-delta calls and puts carry the same implied volatility ${at}`;
+  if (Math.abs(rr) < 0.0005) return `25-delta calls and puts are within 0.05 vol points of each other ${at}`;
   return rr < 0
     ? `25-delta puts carry ${pts} vol points more implied volatility than 25-delta calls ${at}`
     : `25-delta calls carry ${pts} vol points more implied volatility than 25-delta puts ${at}`;

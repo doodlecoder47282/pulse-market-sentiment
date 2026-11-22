@@ -228,7 +228,8 @@ export function ruleCounts(scored: ReadonlyArray<{ impact: number; direction: st
   const out: string[] = [];
   const bull = n((s) => s.direction === "Bullish" && s.impact >= 6);
   const bear = n((s) => s.direction === "Bearish" && s.impact >= 6);
-  out.push(`Headlines scored 6 or higher: ${bull} tagged bullish, ${bear} tagged bearish, of ${scored.length} scored.`);
+  const six = n((s) => s.impact >= 6);
+  out.push(`${six} of ${scored.length} scored headlines are at 6 or higher: ${bull} tagged bullish, ${bear} tagged bearish, ${six - bull - bear} tagged two-sided or mixed.`);
   const high = n((s) => s.impact >= 7);
   if (high > 0) out.push(`${high} headline${high === 1 ? "" : "s"} scored 7 or higher.`);
   const cats: Array<[string, string, number]> = [
@@ -237,20 +238,6 @@ export function ruleCounts(scored: ReadonlyArray<{ impact: number; direction: st
   for (const [cat, word, floor] of cats) {
     const c = n((s) => s.category === cat && s.impact >= floor);
     if (c > 0) out.push(`${c} ${word} headline${c === 1 ? "" : "s"} scored ${floor} or higher.`);
-  }
-  return out;
-}
-
-function watchList(scored: ScoredItem[]): string[] {
-  const out: string[] = [];
-  const catalysts = scored
-    .filter((s) => /fomc|cpi|nfp|earnings|opec|fed|treasury|auction/i.test(s.title))
-    .slice(0, 3);
-  for (const c of catalysts) {
-    out.push(`${c.time === "?" ? "Upcoming" : c.time} — ${c.title} (${c.category})`);
-  }
-  if (out.length === 0) {
-    out.push("No scheduled release is named in these headlines. The Calendar section of this tab lists the next ones.");
   }
   return out;
 }
@@ -282,7 +269,7 @@ export function buildDeterministicAlphaBrief(items: AlphaNewsItem[]): string {
   if (ranked.length > 0) {
     lines.push("## RANKED IMPACT");
     lines.push("");
-    lines.push("| Rank | Event | Category | Impact | Direction | Horizon | Tickers |");
+    lines.push("| Rank | Headline | Category | Rule score | Direction tag | Horizon tag | Tickers |");
     lines.push("|------|-------|----------|--------|-----------|---------|---------|");
     ranked.forEach((s, i) => {
       const title = s.title.replace(/\|/g, "\\|").slice(0, 90);
@@ -304,16 +291,9 @@ export function buildDeterministicAlphaBrief(items: AlphaNewsItem[]): string {
   }
   lines.push("");
 
-  lines.push("## SCHEDULED RELEASES NAMED IN THE FEED");
-  lines.push("");
-  for (const w of watchList(scored)) {
-    lines.push(`- ${w}`);
-  }
-  lines.push("");
-
   lines.push("## CAVEATS");
   lines.push("");
-  lines.push("Rules-based summary, no model wrote it. Keyword rules on each headline assign the category, the score and the direction tag; the scores are hand-set and have not been graded against what the market did afterward. A tag is a keyword match, not a forecast.");
+  lines.push("Rules-based summary, no model wrote it. Keyword rules on each headline assign the category, the score and the direction tag; the scores are hand-set and have not been graded against what the market did afterward. A tag is a keyword match, not a forecast; a headline that matches no direction keyword shows Two-sided and one that matches no horizon keyword shows Days.");
 
   return lines.join("\n");
 }

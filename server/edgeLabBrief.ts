@@ -493,7 +493,7 @@ async function buildSkewContext(symbol: string): Promise<any> {
   if ("error" in s) return { panel: "skew", error: s.error };
   return {
     panel: "skew",
-    description: "options skew — is the market paying up for downside protection (negative RR = puts richer than calls = fear) or upside (positive RR = greed). term structure: contango = calm front, vol expected later. backwardation = front-month panic.",
+    description: "options skew. Risk reversal (RR) is 25-delta call implied volatility minus 25-delta put implied volatility: negative means the puts carry more. Term structure: contango means the later expiry's at-the-money implied volatility is above the front's; backwardation means the front's is above. These describe option prices, not who is positioned how or what comes next.",
     symbol: s.symbol,
     spot: s.spot,
     termStructure: s.termStructure,
