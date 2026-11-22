@@ -3159,6 +3159,52 @@ NOT in it: a path or scenario lines (the friend's dashed lines read as forecasts
 anything beyond the 60 days of chain read, a VIX futures curve (not read at all), and the CURRENT JPM collar:
 the strikes on file expired and the collar live to 2026-12-31 was never entered for want of a reputable
 source, so the page says so instead of drawing it. Tests: tests/quant/outlook.test.ts (12).
+**Rules-written text that gave instructions or claimed positioning, rewritten as description (2026-11-21).**
+Found in a sweep of shipped strings for advice words. (1) News tab, ALPHA card: when no model key is set
+(the normal state here) the card shows the rules-based brief from server/alphaEngine.ts. Its "TRADE
+IMPLICATIONS" section told the reader to tighten stops, consider SPY put spreads, keep size light, range-trade
+and pair-trade, all from keyword matches on headlines; the watch list ended with hard-coded "key levels" (10Y
+4.20/4.50, VIX 15/18/22). The section is now "WHAT THE RULES COUNTED" (counts of scored headlines by tag and
+category, `ruleCounts`), the hard-coded levels are gone, the "watch list" is removed (it re-listed up to three headlines whose title contained fed, cpi, earnings and the like, "FedEx" included, under their publish time, as if they were upcoming events), the table column is "Rule score", the card's own description no longer says an AI agent ranks by market impact, and the caveat says the scores are hand-set, not
+graded, and that a tag is a keyword match. shared/alphaBrief.ts already stripped that section before handing
+the brief to a model; the reader got it unstripped. (2) Edge Lab, skew panel (server/skewEngine.ts): the notes
+said "sellers favored", "buyers favored", "melt-up positioning or single-name FOMO", "crash premium priced".
+They now state the term-structure relation and the risk reversal in vol points with the expiry it was read at
+(`riskReversalNote` in shared/vol.ts); the tile no longer says "~30d" (the engine falls back to the first
+expiry when none is near 30 days); the panel's footer and the skew description handed to a model lost "fear", "panic", "greed", "market expects" and "extremes mean-revert". No number changed. Tests: tests/quant/descriptive-rules-text.test.ts (3).
+**"Today" is New York's date; day counts and session dates fixed (2026-11-21).** Found in a sweep for dates
+taken from the server's clock zone. (1) The event calendar's days-away count (server/volCalendar.ts) compared
+noon UTC on the event date with LOCAL midnight today; on a UTC server that is always half a day more and the
+half rounded up, so an event today read "1 day away" and every count was one too many. It now counts
+calendar days between two dates, and "today" is New York's date. (2) From 7 or 8 PM New York time the UTC
+date is already tomorrow. Three places took today's date from UTC: the earnings calendar
+(server/earnings.ts, today's after-the-close reporters dropped from the list for the rest of the evening),
+the per-ticker calendar (server/tickerCalendar.ts) and the date in the master-alpha packet. All use
+etDate(now). (3) The playbook's "today's catalysts" list (server/routes.ts) was ALWAYS empty, at any hour:
+it filtered calendar events on a `date` field they do not carry (an event has `when` in epoch seconds,
+`title`, `whenLabel`). It now reads the event's own time on New York's date (shared/playbookEvents.ts).
+This switches on a Trade Desk card that had never drawn, so the card was rewritten before it could: it
+used to pair each release with a direction under green BULL and red BEAR boxes ("Hot print", "Weak jobs
+(recession fear)", "Risk-on reaction"), which nothing here has measured. It now lists the day's
+HIGH-importance releases (kinds ECON and FED, one line per release: rows that share the calendar's family key are one
+line, the rows of one rate decision are one line, minutes and speeches keep their own titles; at most 4;
+when the list is empty and the BLS, BEA or Nasdaq release calendar failed, the card says the
+day's releases are not known; a failed Treasury auction read or one failed Nasdaq day does not trigger it) and states the call wall and put wall once, each with its signed distance, as context. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
+built on the server clock's date while the chain pricing for the same horizons was on New York's; in the
+evening the labels were a day ahead, and on monthly OPEX evening a month. They moved to
+server/horizonDates.ts with the clock as an argument and are tested to agree with horizonTargetIso.
+(5) The ten-day cone (server/multiDayProjection.ts) dated its bands by counting weekdays from the UTC day,
+so a band landed on Thanksgiving and every other holiday; it now walks the exchange calendar's sessions
+from the bar the cone starts from (band n is n sessions from that bar's close; before the open band 1 is
+today; the bar's date is read twelve hours after its midnight stamp, as server/dayChange.ts does). Checked and left: date helpers that format a date already built at noon UTC, and FRED/news id
+strings. Also fixed on the way: the calendar's family classifier (server/sources/parse.ts) read "ADP Nonfarm
+Employment Change" and "Nonfarm Productivity" as the jobs report, and the merge then dropped both rows
+as its duplicates; ADP is now its own row and productivity its own family. Known and not in this change:
+the computed CPI and jobs rows are graded MED, so they do not reach the releases card when the official
+read fails (the card then says the calendar was not fully read); server/econWeek.ts buckets events by UTC day; Heatseeker's expiry
+quick picks and Trade Desk's isOpexToday use the browser's date and ignore holidays; tickerCalendar's
+MACRO_2026 list ends 2026-07-29. Tests: tests/quant/ny-dates.test.ts (8), run under UTC, New York and
+Tokyo server clocks.
 
 **Outlook tab: fewer words, same facts (2026-11-21).** Owner's rule: every line has to be useful and clear to
 read. Seen live on its first render, the tab said the same caveat five times and listed 28 expiries, most of
