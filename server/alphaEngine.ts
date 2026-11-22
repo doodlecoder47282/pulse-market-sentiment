@@ -194,7 +194,7 @@ function scoreItem(item: AlphaNewsItem): ScoredItem | null {
 
 function topTapeSummary(scored: ScoredItem[]): string {
   if (scored.length === 0) {
-    return "News feed is thin. No primary catalysts ranking above noise. Trade the tape, respect levels, and wait for the next print.";
+    return "No headline in the feed matched an impact rule.";
   }
   const top = scored[0];
   const catWord: Record<Category, string> = {
@@ -213,59 +213,32 @@ function topTapeSummary(scored: ScoredItem[]): string {
     : "two-sided";
   const highImpact = scored.filter((s) => s.impact >= 8).length;
   const addendum = highImpact > 1
-    ? ` ${highImpact} high-impact items stacking — expect follow-through.`
+    ? ` ${highImpact} headlines scored 8 or higher.`
     : "";
-  return `Dominant catalyst is ${catWord[top.category]} (${top.category}): "${top.title}" — impact ${top.impact}/10, ${dirWord} lean, ${top.horizon.toLowerCase()} horizon.${addendum}`;
+  return `Highest-scored headline is ${catWord[top.category]} (${top.category}): "${top.title}". Rule score ${top.impact}/10, tagged ${dirWord}, ${top.horizon.toLowerCase()} horizon.${addendum}`;
 }
 
-function tradeImplications(scored: ScoredItem[]): string[] {
+/**
+ * What the keyword rules counted in the feed. Counts only: this section used to be "TRADE IMPLICATIONS" and
+ * told the reader to tighten stops, buy put spreads and keep size light, from nothing but keyword matches on
+ * headlines. The desk does not give instructions; the counts are what the rules actually know.
+ */
+export function ruleCounts(scored: ReadonlyArray<{ impact: number; direction: string; category: string }>): string[] {
+  const n = (f: (s: { impact: number; direction: string; category: string }) => boolean) => scored.filter(f).length;
   const out: string[] = [];
-  const topHigh = scored.filter((s) => s.impact >= 7);
-  const bullHeavy = scored.filter((s) => s.direction === "Bullish" && s.impact >= 6).length;
-  const bearHeavy = scored.filter((s) => s.direction === "Bearish" && s.impact >= 6).length;
-  const hasFed = scored.some((s) => s.category === "RATES/FED" && s.impact >= 6);
-  const hasGeo = scored.some((s) => s.category === "GEOPOLITICS" && s.impact >= 6);
-  const hasEnergy = scored.some((s) => s.category === "ENERGY" && s.impact >= 5);
-  const hasMag7 = scored.some((s) => s.category === "CORPORATE" && s.impact >= 7);
-
-  if (bearHeavy > bullHeavy + 1) {
-    out.push("Tape bias bearish. Tighten stops on longs; defensive rotation (XLP, XLU) viable. Consider SPY put spreads if IV hasn't already crushed.");
-  } else if (bullHeavy > bearHeavy + 1) {
-    out.push("Tape bias bullish. Cyclicals (XLF, XLI, XLY) set up well. Beware of melt-up IV crush — spreads over calls for expressing upside.");
-  } else {
-    out.push("Crosscurrents. Keep size light. Range-trade SPY between nearest dealer gamma pivots until a catalyst breaks tie.");
+  const bull = n((s) => s.direction === "Bullish" && s.impact >= 6);
+  const bear = n((s) => s.direction === "Bearish" && s.impact >= 6);
+  const six = n((s) => s.impact >= 6);
+  out.push(`${six} of ${scored.length} scored headlines are at 6 or higher: ${bull} tagged bullish, ${bear} tagged bearish, ${six - bull - bear} tagged two-sided or mixed.`);
+  const high = n((s) => s.impact >= 7);
+  if (high > 0) out.push(`${high} headline${high === 1 ? "" : "s"} scored 7 or higher.`);
+  const cats: Array<[string, string, number]> = [
+    ["RATES/FED", "rates or Fed", 6], ["GEOPOLITICS", "geopolitics", 6], ["ENERGY", "energy", 5], ["CORPORATE", "single-company", 7],
+  ];
+  for (const [cat, word, floor] of cats) {
+    const c = n((s) => s.category === cat && s.impact >= floor);
+    if (c > 0) out.push(`${c} ${word} headline${c === 1 ? "" : "s"} scored ${floor} or higher.`);
   }
-
-  if (hasFed) {
-    out.push("Rates/Fed catalyst in play. Watch 2Y yield direction first — that's the cleanest read. TLT moves confirm duration bid/offer.");
-  }
-  if (hasGeo) {
-    out.push("Geopolitics live. Gold (GC=F) + DXY + crude (CL=F) should be on the screen. Risk-parity can get wrecked if all three move together.");
-  }
-  if (hasEnergy) {
-    out.push("Energy catalyst. XLE leads the tape on oil moves; watch USO divergences for exhaustion signals.");
-  }
-  if (hasMag7) {
-    out.push("Mega-cap catalyst. Index impact via QQQ. Pair trade: long/short the moving name vs. the sector ETF to hedge index beta.");
-  }
-  if (topHigh.length >= 3) {
-    out.push("Multiple high-impact items — expect elevated realized vol. Favor defined-risk structures over naked directional exposure.");
-  }
-  return out.slice(0, 5);
-}
-
-function watchList(scored: ScoredItem[]): string[] {
-  const out: string[] = [];
-  const catalysts = scored
-    .filter((s) => /fomc|cpi|nfp|earnings|opec|fed|treasury|auction/i.test(s.title))
-    .slice(0, 3);
-  for (const c of catalysts) {
-    out.push(`${c.time === "?" ? "Upcoming" : c.time} — ${c.title} (${c.category})`);
-  }
-  if (out.length === 0) {
-    out.push("No scheduled catalysts surfaced from feed. Monitor the economic calendar (News tab → Calendar) for next 48h.");
-  }
-  out.push("Key levels: nearest SPX dealer gamma pivot, 10Y yield 4.20/4.50 pivots, VIX 15/18/22 regime boundaries.");
   return out;
 }
 
@@ -296,7 +269,7 @@ export function buildDeterministicAlphaBrief(items: AlphaNewsItem[]): string {
   if (ranked.length > 0) {
     lines.push("## RANKED IMPACT");
     lines.push("");
-    lines.push("| Rank | Event | Category | Impact | Direction | Horizon | Tickers |");
+    lines.push("| Rank | Headline | Category | Rule score | Direction tag | Horizon tag | Tickers |");
     lines.push("|------|-------|----------|--------|-----------|---------|---------|");
     ranked.forEach((s, i) => {
       const title = s.title.replace(/\|/g, "\\|").slice(0, 90);
@@ -307,27 +280,20 @@ export function buildDeterministicAlphaBrief(items: AlphaNewsItem[]): string {
   } else {
     lines.push("## RANKED IMPACT");
     lines.push("");
-    lines.push("_No items in the feed matched ALPHA's impact rules. Either the feed is stale or nothing is moving the tape right now._");
+    lines.push("_No headline in the feed matched an impact rule._");
     lines.push("");
   }
 
-  lines.push("## TRADE IMPLICATIONS");
+  lines.push("## WHAT THE RULES COUNTED");
   lines.push("");
-  for (const b of tradeImplications(scored)) {
+  for (const b of ruleCounts(scored)) {
     lines.push(`- ${b}`);
-  }
-  lines.push("");
-
-  lines.push("## WATCH LIST");
-  lines.push("");
-  for (const w of watchList(scored)) {
-    lines.push(`- ${w}`);
   }
   lines.push("");
 
   lines.push("## CAVEATS");
   lines.push("");
-  lines.push("Deterministic rules-based brief — no LLM narrative attached. Impact scores are heuristic, not a trade signal. Confluence with price action + positioning required before sizing.");
+  lines.push("Rules-based summary, no model wrote it. Keyword rules on each headline assign the category, the score and the direction tag; the scores are hand-set and have not been graded against what the market did afterward. A tag is a keyword match, not a forecast; a headline that matches no direction keyword shows Two-sided and one that matches no horizon keyword shows Days.");
 
   return lines.join("\n");
 }

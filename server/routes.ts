@@ -2427,7 +2427,7 @@ RULES:
 NEWS FEED (${items.length} items, ranked by deterministic impact):
 ${itemLines || "(empty)"}
 
-DETERMINISTIC BASELINE BRIEF (rules engine; trade section removed):
+DETERMINISTIC BASELINE BRIEF (rules engine: keyword scores and counts):
 ${briefForPrompt(deterministic)}
 
 ${fusionBlock}

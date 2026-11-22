@@ -3159,3 +3159,16 @@ NOT in it: a path or scenario lines (the friend's dashed lines read as forecasts
 anything beyond the 60 days of chain read, a VIX futures curve (not read at all), and the CURRENT JPM collar:
 the strikes on file expired and the collar live to 2026-12-31 was never entered for want of a reputable
 source, so the page says so instead of drawing it. Tests: tests/quant/outlook.test.ts (12).
+**Rules-written text that gave instructions or claimed positioning, rewritten as description (2026-11-21).**
+Found in a sweep of shipped strings for advice words. (1) News tab, ALPHA card: when no model key is set
+(the normal state here) the card shows the rules-based brief from server/alphaEngine.ts. Its "TRADE
+IMPLICATIONS" section told the reader to tighten stops, consider SPY put spreads, keep size light, range-trade
+and pair-trade, all from keyword matches on headlines; the watch list ended with hard-coded "key levels" (10Y
+4.20/4.50, VIX 15/18/22). The section is now "WHAT THE RULES COUNTED" (counts of scored headlines by tag and
+category, `ruleCounts`), the hard-coded levels are gone, the "watch list" is removed (it re-listed up to three headlines whose title contained fed, cpi, earnings and the like, "FedEx" included, under their publish time, as if they were upcoming events), the table column is "Rule score", the card's own description no longer says an AI agent ranks by market impact, and the caveat says the scores are hand-set, not
+graded, and that a tag is a keyword match. shared/alphaBrief.ts already stripped that section before handing
+the brief to a model; the reader got it unstripped. (2) Edge Lab, skew panel (server/skewEngine.ts): the notes
+said "sellers favored", "buyers favored", "melt-up positioning or single-name FOMO", "crash premium priced".
+They now state the term-structure relation and the risk reversal in vol points with the expiry it was read at
+(`riskReversalNote` in shared/vol.ts); the tile no longer says "~30d" (the engine falls back to the first
+expiry when none is near 30 days); the panel's footer and the skew description handed to a model lost "fear", "panic", "greed", "market expects" and "extremes mean-revert". No number changed. Tests: tests/quant/descriptive-rules-text.test.ts (3).
