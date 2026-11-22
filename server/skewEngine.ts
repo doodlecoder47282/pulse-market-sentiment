@@ -3,7 +3,7 @@
 // from the live option chain. Pairs naturally with VIX9D inversion alert.
 
 import { getOptionChain } from "./schwab";
-import { ivAtAbsDelta } from "@shared/vol";
+import { ivAtAbsDelta, riskReversalNote } from "@shared/vol";
 import { tenorWindow, tenorWindowWide } from "./schwabDataPolicy";
 
 export interface SkewPoint {
@@ -171,21 +171,17 @@ export async function computeSkew(symbol: string): Promise<SkewSnapshot | { erro
   let slopeNote = "";
   if (front != null && second != null) {
     const diff = second - front;
-    if (diff > 0.005) { slope = "contango"; slopeNote = "back-month IV richer than front — calm regime, sellers favored"; }
-    else if (diff < -0.005) { slope = "backwardation"; slopeNote = "front IV richer than back — stress / event in next 30d, buyers favored"; }
-    else { slope = "flat"; slopeNote = "term flat — no event premium being priced"; }
+    if (diff > 0.005) { slope = "contango"; slopeNote = "the second expiry's at-the-money IV is above the front's (upward-sloping term structure)"; }
+    else if (diff < -0.005) { slope = "backwardation"; slopeNote = "the front expiry's at-the-money IV is above the second's (inverted term structure): the chain prices more movement per day near term than further out"; }
+    else { slope = "flat"; slopeNote = "front and second expiry at-the-money IV are within 0.5 vol points of each other"; }
   }
 
-  // 30d 25-delta risk reversal — single most actionable skew number
+  // 25-delta risk reversal at the expiry nearest 30 days (the first expiry read when none is within 10 days
+  // of 30). The note says what the number is and names the expiry it came from; it does not say who is
+  // positioned how, or what either side of the trade is "favored" to do.
   const rrPoint = points.find(p => Math.abs(p.tenorDays - 30) <= 10) ?? points[0];
   const rrNow = rrPoint?.riskReversal25d ?? null;
-  let rrNote = "";
-  if (rrNow != null) {
-    if (rrNow < -0.04) rrNote = "deep negative RR — heavy put-skew, downside crash premium priced";
-    else if (rrNow < -0.02) rrNote = "negative RR — typical put-heavy regime";
-    else if (rrNow > 0.01) rrNote = "positive RR — call-skew rare for indices, melt-up positioning or single-name FOMO";
-    else rrNote = "RR near zero — symmetric tail pricing, unusually calm";
-  }
+  const rrNote = rrNow != null && rrPoint ? riskReversalNote(rrNow, rrPoint.tenorDays) : "";
 
   return {
     symbol: symbol.toUpperCase(),

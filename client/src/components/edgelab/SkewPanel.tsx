@@ -105,7 +105,7 @@ export default function SkewPanel() {
           {/* risk reversal */}
           <div className="rounded border border-border p-3">
             <div className="flex items-center justify-between mb-1">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">25Δ risk reversal (~30d)</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">25Δ risk reversal (call IV minus put IV)</div>
               <span className={`text-sm font-mono font-semibold tabular-nums ${
                 (data.riskReversalNow ?? 0) < 0 ? "text-rose-500" : "text-emerald-500"
               }`} data-testid="text-risk-reversal">
@@ -151,7 +151,7 @@ export default function SkewPanel() {
           </div>
 
           <p className="text-[11px] text-muted-foreground leading-snug">
-            negative risk reversal = puts richer than calls (downside fear paid up). contango term = market expects calm now, vol later. backwardation = front-month panic. extremes mean-revert.
+            Risk reversal is the 25-delta call implied volatility minus the 25-delta put implied volatility; a percent here is vol points, and negative means the puts carry more. Contango: the later expiry's at-the-money implied volatility is above the front's. Backwardation: the front's is above the later one's. These describe option prices; they are not a forecast.
           </p>
         </>
       )}

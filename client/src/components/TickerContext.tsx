@@ -19,6 +19,7 @@ export type WatchlistEntry = {
 // Top-level dashboard tabs — keep in sync with Dashboard.tsx <Tabs>.
 export type TabKey =
   | "signals"
+  | "outlook"
   | "chart"
   | "models"
   | "heatseeker"
