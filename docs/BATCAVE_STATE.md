@@ -3205,3 +3205,15 @@ read fails (the card then says the calendar was not fully read); server/econWeek
 quick picks and Trade Desk's isOpexToday use the browser's date and ignore holidays; tickerCalendar's
 MACRO_2026 list ends 2026-07-29. Tests: tests/quant/ny-dates.test.ts (8), run under UTC, New York and
 Tokyo server clocks.
+
+**Jobs report dates come from the BLS schedule (2026-11-21).** Seen on the Outlook tab's first live render:
+"Jan Jobs Report (NFP) Jan 1", a holiday. server/volCalendar.ts put the jobs report on every first Friday.
+The BLS schedule (bls.gov/schedule/news_release/empsit.htm, read 2026-11-21) has it on Jan 8, 2027, and on
+second Fridays in May and October 2027. The rule also placed the report's expected move and its alert-gate
+actions (SUPPRESS_VRP_GATE, ANNOTATE_WHALE_EVENT_DAY) on a day with no release. `NFP_DATES` now lists the
+official dates from 2026-11-06 to 2027-12-03, with the same stale and end-of-list warnings as FOMC and CPI;
+past the list nothing is invented. In server/news.ts the row's source reads "BLS schedule (hardcoded copy)"
+and the calendar notes lost their direction claims ("Hot read = bond selloff + risk-off; cool = rally",
+"Largest single-day vol catalyst", "dealer hedging unwinds", "Historically the highest-volume day").
+server/econWeek.ts still estimates its own synthetic jobs chip by the first-Friday rule (labelled an
+estimate there). Test: tests/quant/ny-dates.test.ts.
