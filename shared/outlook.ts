@@ -166,19 +166,34 @@ export function outlookWindows(today: string, expiries: ExpiryRow[], events: Out
 export const sharePct = (f: number) => (f > 0 && f < 0.005 ? "under 1%" : `${(f * 100).toFixed(0)}%`);
 
 /** The window's facts as one or two sentences. Counts, dates and prices only. */
-export function windowSentence(w: OutlookWindow): string {
+/**
+ * One window as short labelled lines, each a fact with its number. A line is left out when it has nothing
+ * to say; a window with no line is not shown (see windowHasContent).
+ */
+export function windowLines(w: OutlookWindow): Array<{ label: string; text: string }> {
   const px = (n: number) => Math.round(n).toLocaleString("en-US");
-  const parts: string[] = [];
-  if (w.events.length) parts.push(`Scheduled: ${w.events.map((e) => `${e.label} (${shortDate(e.date)})`).join(", ")}.`);
-  else parts.push("Nothing on the event calendar.");
-  if (!w.expiries.length) parts.push("No option expiry in the chain that was read.");
-  else if (w.largest && w.largest.oiShare != null) {
-    // A share is never said without its count: N of the M open contracts in the chain that was read.
-    const total = w.largest.oiShare > 0 ? Math.round(w.largest.oi / w.largest.oiShare) : 0;
-    parts.push(`${w.expiries.length} expir${w.expiries.length === 1 ? "y" : "ies"}; the largest by open interest is ${shortDate(w.largest.expiry)} with ${sharePct(w.largest.oiShare)} of the open contracts in the chain that was read (${px(w.largest.oi)} of ${px(total)})${w.largest.maxPain != null ? `, max pain ${px(w.largest.maxPain)}` : ""}.`);
-  } else parts.push(`${w.expiries.length} expir${w.expiries.length === 1 ? "y" : "ies"}, none with open interest in this read.`);
-  if (w.range) parts.push(`Option prices imply about plus or minus ${px(w.range.sigmaPts)} points by ${shortDate(w.range.expiry)} (one standard deviation, ${px(w.range.lo)} to ${px(w.range.hi)}): a priced-in range, not a forecast.`);
-  return parts.join(" ");
+  const out: Array<{ label: string; text: string }> = [];
+  if (w.events.length) out.push({ label: "Events", text: w.events.map((e) => `${e.label} ${shortDate(e.date)}`).join(", ") });
+  if (w.expiries.length && w.largest && w.largest.oiShare != null) {
+    // A share is never said without its count.
+    out.push({ label: "Largest expiry", text: `${shortDate(w.largest.expiry)}, ${sharePct(w.largest.oiShare)} of open interest read (${px(w.largest.oi)} contracts)${w.largest.maxPain != null ? `, max pain ${px(w.largest.maxPain)}` : ""}` });
+  } else if (w.expiries.length) out.push({ label: "Expiries", text: `${w.expiries.length}, none with open interest in this read` });
+  if (w.range) out.push({ label: `Implied range by ${shortDate(w.range.expiry)}`, text: `${px(w.range.lo)} to ${px(w.range.hi)} (±${px(w.range.sigmaPts)})` });
+  return out;
+}
+/** A window with no event and no expiry says nothing and is not drawn. */
+export const windowHasContent = (w: OutlookWindow): boolean => w.events.length > 0 || w.expiries.length > 0;
+/** Said once under the windows, not in each. */
+export const WINDOW_RANGE_NOTE = "Implied range: one standard deviation from option prices. Priced in, not a forecast.";
+
+/** Expiry rows shown before "show all": the nearest one, the largest, and every expiry whose share shows as
+ *  2% or more (the same rounding the table prints, so no row printed "2%" is hidden). */
+export const EXPIRY_ROW_MIN_SHARE = 0.015;
+export function mainExpiryRows<T extends { oiShare: number | null }>(rows: readonly T[]): T[] {
+  // With no open interest in the read there is nothing to rank by: every row stays.
+  if (!rows.some((r) => r.oiShare != null)) return [...rows];
+  const max = rows.reduce((m, r) => Math.max(m, r.oiShare ?? 0), 0);
+  return rows.filter((r, i) => i === 0 || (r.oiShare ?? 0) >= EXPIRY_ROW_MIN_SHARE || (max > 0 && r.oiShare === max));
 }
 
 /** What the chart draws, as fractions of its box (0..1; y measured from the top). */

@@ -4,12 +4,12 @@
 // its share of open interest and max pain, the range option prices imply to each expiry, and the scheduled
 // events, on one time axis. It reads four existing endpoints and asks for nothing from the user. Nothing on
 // it is a forecast, and the page says so where a reader could take it for one.
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import DataStateChip from "@/components/DataStateChip";
 import {
-  rankLevels, outlookWindows, windowSentence, outlookChart, collarLevels, boardOutlookLevels, spreadLabels, sharePct, shortDate,
+  rankLevels, outlookWindows, windowLines, windowHasContent, WINDOW_RANGE_NOTE, mainExpiryRows, outlookChart, collarLevels, boardOutlookLevels, spreadLabels, sharePct, shortDate,
   type ExpiryRow, type OutlookEvent, type OutlookLevelIn, type CollarIn, type BoardLine,
 } from "@shared/outlook";
 import { etDate } from "@shared/exchangeCalendar";
@@ -85,6 +85,9 @@ export default function Outlook({ active = true }: { active?: boolean }) {
   const chart = useMemo(() => outlookChart(today, spot, expiries, levels, events), [today, spot, expiries, levels, events]);
   const ahead = expiries.filter((e) => e.expiry >= today);
   const maxShare = ahead.reduce((m, e) => Math.max(m, e.oiShare ?? 0), 0);
+  const [allRows, setAllRows] = useState(false);
+  const shownRows = allRows ? ahead : mainExpiryRows(ahead);
+  const hiddenRows = ahead.length - shownRows.length;
   const noOi = ahead.length > 0 && ahead.every((e) => e.oiShare == null);
 
   const auditState = audit.isError ? "unavailable" : !audit.data ? "loading" : audit.data.stale || audit.data.chainStale ? "stale" : "ok";
@@ -102,7 +105,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
           <div>
             <h2 className="text-base font-semibold tracking-tight">Outlook · SPX{ahead.length ? ` · now to ${shortDate(ahead[ahead.length - 1].expiry)}` : ""}</h2>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-              Everything the terminal has mapped between the price and the last option expiry it reads, on one page: levels with their distance, each expiry's share of open interest, the range option prices imply, and what is scheduled. Nothing here is a forecast.
+              Mapped levels, option expiries, the range option prices imply and scheduled events, from now to the last expiry read. Not a forecast.
             </p>
           </div>
           <DataStateChip state={auditState} reason={audit.data?.staleReason ?? null} asOf={audit.data?.chainAsOfMs ?? audit.data?.asOf ?? null} stale={audit.data?.chainStale ?? null} lastSession={audit.data?.chainLastSession ?? null} source="option chain" testId="outlook-chain-state" />
@@ -153,16 +156,16 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               ))}
             </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-              <span><span className="mr-1 inline-block h-2 w-3 rounded-sm bg-sky-400/40 align-middle" />range option prices imply to each expiry (one standard deviation; priced in, not a forecast)</span>
-              <span><span className="mr-1 inline-block h-2 w-1 bg-yellow-400/80 align-middle" />each expiry, taller for a larger share of open interest</span>
+              <span><span className="mr-1 inline-block h-2 w-3 rounded-sm bg-sky-400/40 align-middle" />range option prices imply (one standard deviation; not a forecast)</span>
+              <span><span className="mr-1 inline-block h-2 w-1 bg-yellow-400/80 align-middle" />expiry: taller, more open interest</span>
               <span><span className="mr-1 inline-block h-3 w-px bg-violet-400/70 align-middle" />scheduled event</span>
-              <span>left edge today, right edge {shortDate(chart.to)}; price axis {px(chart.lo)} to {px(chart.hi)}</span>
+              <span>time: today to {shortDate(chart.to)} · price axis: {px(chart.lo)} to {px(chart.hi)}</span>
             </div>
             {chart.levelsNotDrawn > 0 && (
-              <p className="mt-1 text-[11px] text-muted-foreground" data-testid="outlook-not-drawn">{chart.levelsNotDrawn} more level{chart.levelsNotDrawn === 1 ? " is" : "s are"} in the list below but not drawn: only the nearest few on each side that fit the price axis are lines.</p>
+              <p className="mt-1 text-[11px] text-muted-foreground" data-testid="outlook-not-drawn">{chart.levelsNotDrawn} more level{chart.levelsNotDrawn === 1 ? "" : "s"} in the list below, not drawn.</p>
             )}
             {chart.events.length > 0 && (
-              <p className="mt-1 text-[11px] text-muted-foreground">Events, left to right: {chart.events.map((e) => `${e.label} ${shortDate(e.date)}`).join(" · ")}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">Events: {chart.events.map((e) => `${e.label} ${shortDate(e.date)}`).join(" · ")}</p>
             )}
           </>
         )}
@@ -194,7 +197,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               })}
             </ul>
           )}
-          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">Green is above the price, red below, amber within a tenth of a percent of it. Distances are from SPX {spot != null ? px(spot) : "n/a"}. A level is a mapped price, not a target.</p>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">Distances are from SPX {spot != null ? px(spot) : "n/a"}. A level is a mapped price, not a target.</p>
         </div>
 
         {/* ── expiries ── */}
@@ -215,7 +218,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {ahead.map((e) => (
+                    {shownRows.map((e) => (
                       <tr key={e.expiry} className="border-t border-border/30">
                         <td className="py-1 pr-2 font-mono">{shortDate(e.expiry)}</td>
                         <td className="pr-2 font-mono tabular-nums text-muted-foreground">{e.dte}</td>
@@ -235,8 +238,13 @@ export default function Outlook({ active = true }: { active?: boolean }) {
                   </tbody>
                 </table>
               </div>
+              {hiddenRows > 0 && (
+                <button type="button" onClick={() => setAllRows(true)} className="mt-2 min-h-[44px] rounded border border-border/60 px-2 text-[11px] text-muted-foreground hover:text-foreground" data-testid="outlook-expiries-all">
+                  Show all {ahead.length} expiries ({hiddenRows} more, each 1% or less of the open interest read)
+                </button>
+              )}
               <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                Share is of the {px(ahead.reduce((n, e) => n + e.oi, 0))} open contracts in the expiries listed here (the next {dteRead ?? 60} days that were read), not of all SPX options. Max pain is the strike where that expiry's options would pay holders least, from open interest and the strikes that were read{audit.data?.audit?.chainCoverage && !audit.data.audit.chainCoverage.complete ? " (the strike range read is not complete, so it can sit at the edge of what was read)" : ""}; it is not a target. Implied move is one standard deviation from at-the-money implied volatility: priced in, not a forecast.
+                Share: of the {px(ahead.reduce((n, e) => n + e.oi, 0))} open contracts in the {ahead.length} expiries read (next {dteRead ?? 60} days), not of all SPX options. Max pain: the strike where that expiry's options pay holders least, from the strikes read{audit.data?.audit?.chainCoverage && !audit.data.audit.chainCoverage.complete ? " (the strike range read is not complete, so it can sit at the edge of what was read)" : ""}; not a target. Implied move: one standard deviation from at-the-money implied volatility; priced in, not a forecast.
               </p>
             </>
           )}
@@ -244,16 +252,27 @@ export default function Outlook({ active = true }: { active?: boolean }) {
       </div>
 
       {/* ── dated summaries ── */}
-      {windows.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-testid="outlook-windows">
-          {windows.map((w) => (
-            <div key={w.from} className="rounded-md border border-border/60 bg-card/40 p-3">
-              <div className="mb-1 text-[11px] font-mono font-bold uppercase tracking-widest text-foreground">{w.title}</div>
-              <p className="text-xs leading-relaxed text-muted-foreground">{windowSentence(w)}</p>
-            </div>
-          ))}
+      {windows.some(windowHasContent) && (
+        <div data-testid="outlook-windows">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {windows.filter(windowHasContent).map((w) => (
+              <div key={w.from} className="rounded-md border border-border/60 bg-card/40 p-3">
+                <div className="mb-1 text-[11px] font-mono font-bold uppercase tracking-widest text-foreground">{w.title}</div>
+                <dl className="space-y-1 text-xs">
+                  {windowLines(w).map((ln) => (
+                    <div key={ln.label}>
+                      <dt className="inline text-muted-foreground">{ln.label}: </dt>
+                      <dd className="inline text-foreground">{ln.text}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            ))}
+          </div>
+          {windows.some((w) => w.range) && <p className="mt-2 text-[11px] text-muted-foreground">{WINDOW_RANGE_NOTE}</p>}
         </div>
       )}
+      {cal.isLoading && <p className="text-[11px] text-muted-foreground">Reading the event calendar.</p>}
       {cal.isError && <p className="text-[11px] text-amber-300">The event calendar could not be read (the request failed), so no events are shown. This is not a calendar with nothing on it.</p>}
       {(cal.data?.warnings ?? []).map((wn) => <p key={wn} className="text-[11px] text-amber-300">{wn}</p>)}
     </div>

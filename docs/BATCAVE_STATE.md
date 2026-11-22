@@ -3206,6 +3206,13 @@ quick picks and Trade Desk's isOpexToday use the browser's date and ignore holid
 MACRO_2026 list ends 2026-07-29. Tests: tests/quant/ny-dates.test.ts (8), run under UTC, New York and
 Tokyo server clocks.
 
+**Outlook tab: fewer words, same facts (2026-11-21).** Owner's rule: every line has to be useful and clear to
+read. Seen live on its first render, the tab said the same caveat five times and listed 28 expiries, most of
+them under 1% of the open interest. Now: each dated window is two or three labelled lines (Events, Largest
+expiry, Implied range by a date) and the "not a forecast" note is said once under them; a window with no
+event and no expiry is not drawn; the expiry table opens on the nearest expiry and those holding 2% or more
+of the open interest read (as printed, after rounding) plus the largest, with one button for the rest (the count hidden is stated); captions are shorter. The partial-strike-read warning on max pain is kept, shown only when the read is partial.
+No number or state changed. shared/outlook.ts `windowLines`, `windowHasContent`, `mainExpiryRows`.
 **Jobs report dates come from the BLS schedule (2026-11-21).** Seen on the Outlook tab's first live render:
 "Jan Jobs Report (NFP) Jan 1", a holiday. server/volCalendar.ts put the jobs report on every first Friday.
 The BLS schedule (bls.gov/schedule/news_release/empsit.htm, read 2026-11-21) has it on Jan 8, 2027 and on
