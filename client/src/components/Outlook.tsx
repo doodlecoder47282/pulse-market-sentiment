@@ -159,7 +159,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               <span><span className="mr-1 inline-block h-2 w-3 rounded-sm bg-sky-400/40 align-middle" />range option prices imply (one standard deviation; not a forecast)</span>
               <span><span className="mr-1 inline-block h-2 w-1 bg-yellow-400/80 align-middle" />expiry: taller, more open interest</span>
               <span><span className="mr-1 inline-block h-3 w-px bg-violet-400/70 align-middle" />scheduled event</span>
-              <span>today to {shortDate(chart.to)} · {px(chart.lo)} to {px(chart.hi)}</span>
+              <span>time: today to {shortDate(chart.to)} · price axis: {px(chart.lo)} to {px(chart.hi)}</span>
             </div>
             {chart.levelsNotDrawn > 0 && (
               <p className="mt-1 text-[11px] text-muted-foreground" data-testid="outlook-not-drawn">{chart.levelsNotDrawn} more level{chart.levelsNotDrawn === 1 ? "" : "s"} in the list below, not drawn.</p>
@@ -239,12 +239,12 @@ export default function Outlook({ active = true }: { active?: boolean }) {
                 </table>
               </div>
               {hiddenRows > 0 && (
-                <button type="button" onClick={() => setAllRows(true)} className="mt-2 min-h-[28px] rounded border border-border/60 px-2 text-[11px] text-muted-foreground hover:text-foreground" data-testid="outlook-expiries-all">
-                  Show all {ahead.length} expiries ({hiddenRows} more, each under 2% of the open interest read)
+                <button type="button" onClick={() => setAllRows(true)} className="mt-2 min-h-[44px] rounded border border-border/60 px-2 text-[11px] text-muted-foreground hover:text-foreground" data-testid="outlook-expiries-all">
+                  Show all {ahead.length} expiries ({hiddenRows} more, each a smaller share of the open interest read)
                 </button>
               )}
               <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                Share: of the {px(ahead.reduce((n, e) => n + e.oi, 0))} open contracts in the {ahead.length} expiries read (next {dteRead ?? 60} days), not of all SPX options. Max pain: the strike where that expiry's options pay holders least, from the strikes read (it can sit at the edge of what was read); not a target. Implied move: one standard deviation from at-the-money implied volatility; priced in, not a forecast.
+                Share: of the {px(ahead.reduce((n, e) => n + e.oi, 0))} open contracts in the {ahead.length} expiries read (next {dteRead ?? 60} days), not of all SPX options. Max pain: the strike where that expiry's options pay holders least, from the strikes read{audit.data?.audit?.chainCoverage && !audit.data.audit.chainCoverage.complete ? " (the strike range read is not complete, so it can sit at the edge of what was read)" : ""}; not a target. Implied move: one standard deviation from at-the-money implied volatility; priced in, not a forecast.
               </p>
             </>
           )}
@@ -269,9 +269,10 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               </div>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">{WINDOW_RANGE_NOTE}</p>
+          {windows.some((w) => w.range) && <p className="mt-2 text-[11px] text-muted-foreground">{WINDOW_RANGE_NOTE}</p>}
         </div>
       )}
+      {cal.isLoading && <p className="text-[11px] text-muted-foreground">Reading the event calendar.</p>}
       {cal.isError && <p className="text-[11px] text-amber-300">The event calendar could not be read (the request failed), so no events are shown. This is not a calendar with nothing on it.</p>}
       {(cal.data?.warnings ?? []).map((wn) => <p key={wn} className="text-[11px] text-amber-300">{wn}</p>)}
     </div>

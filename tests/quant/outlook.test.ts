@@ -93,8 +93,16 @@ test("the stretch ahead is cut into this week, the next two weeks, then month pi
   assert.equal(windowHasContent(w[0]), false);
   assert.equal(windowHasContent(w[3]), true);
   // The expiry table opens on the nearest expiry and the ones that hold 2% or more; the rest are one tap away.
-  const rows = [{ oiShare: 0.004 }, { oiShare: 0.019 }, { oiShare: 0.02 }, { oiShare: 0.48 }, { oiShare: null }];
+  const rows = [{ oiShare: 0.004 }, { oiShare: 0.0149 }, { oiShare: 0.015 }, { oiShare: 0.48 }, { oiShare: 0.01 }];
   assert.deepEqual(mainExpiryRows(rows), [rows[0], rows[2], rows[3]]);
+  assert.equal(sharePct(0.015), "2%", "a row printed as 2% is never hidden");
+  // A flat chain: the largest row stays even when nothing reaches the cut.
+  const flat = [{ oiShare: 0.01 }, { oiShare: 0.012 }, { oiShare: 0.011 }];
+  assert.deepEqual(mainExpiryRows(flat), [flat[0], flat[1]]);
+  // The partial strike read is still said, and only then.
+  const tsx = readFileSync("client/src/components/Outlook.tsx", "utf8");
+  assert.match(tsx, /chainCoverage && !audit\.data\.audit\.chainCoverage\.complete \? " \(the strike range read is not complete/);
+  assert.match(tsx, /windows\.some\(\(w\) => w\.range\) &&/);
   assert.deepEqual(mainExpiryRows([{ oiShare: null }, { oiShare: null }]).length, 2, "no open interest read: nothing to rank by");
   assert.equal(shortDate("2027-01-05"), "Jan 5");
 });

@@ -186,12 +186,14 @@ export const windowHasContent = (w: OutlookWindow): boolean => w.events.length >
 /** Said once under the windows, not in each. */
 export const WINDOW_RANGE_NOTE = "Implied range: one standard deviation from option prices. Priced in, not a forecast.";
 
-/** Expiry rows shown before "show all": the nearest one, and every expiry holding at least this share. */
-export const EXPIRY_ROW_MIN_SHARE = 0.02;
+/** Expiry rows shown before "show all": the nearest one, the largest, and every expiry whose share shows as
+ *  2% or more (the same rounding the table prints, so no row printed "2%" is hidden). */
+export const EXPIRY_ROW_MIN_SHARE = 0.015;
 export function mainExpiryRows<T extends { oiShare: number | null }>(rows: readonly T[]): T[] {
   // With no open interest in the read there is nothing to rank by: every row stays.
   if (!rows.some((r) => r.oiShare != null)) return [...rows];
-  return rows.filter((r, i) => i === 0 || (r.oiShare ?? 0) >= EXPIRY_ROW_MIN_SHARE);
+  const max = rows.reduce((m, r) => Math.max(m, r.oiShare ?? 0), 0);
+  return rows.filter((r, i) => i === 0 || (r.oiShare ?? 0) >= EXPIRY_ROW_MIN_SHARE || (max > 0 && r.oiShare === max));
 }
 
 /** What the chart draws, as fractions of its box (0..1; y measured from the top). */
