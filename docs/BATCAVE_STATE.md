@@ -3147,8 +3147,9 @@ it filtered calendar events on a `date` field they do not carry (an event has `w
 This switches on a Trade Desk card that had never drawn, so the card was rewritten before it could: it
 used to pair each release with a direction under green BULL and red BEAR boxes ("Hot print", "Weak jobs
 (recession fear)", "Risk-on reaction"), which nothing here has measured. It now lists the day's
-HIGH-importance releases (kinds ECON and FED, one line per release: several vendor rows of one CPI are one
-line; at most 4) and states the call wall and put wall once, each with its signed distance, as context. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
+HIGH-importance releases (kinds ECON and FED, one line per release: rows that share the calendar's family key are one
+line, the rows of one rate decision are one line, minutes and speeches keep their own titles; at most 4;
+when the calendar was not fully read and the list is empty the card says the day's releases are not known) and states the call wall and put wall once, each with its signed distance, as context. (4) The model horizon labels (daily, weekly, monthly, quarterly) were
 built on the server clock's date while the chain pricing for the same horizons was on New York's; in the
 evening the labels were a day ahead, and on monthly OPEX evening a month. They moved to
 server/horizonDates.ts with the clock as an argument and are tested to agree with horizonTargetIso.
@@ -3156,7 +3157,11 @@ server/horizonDates.ts with the clock as an argument and are tested to agree wit
 so a band landed on Thanksgiving and every other holiday; it now walks the exchange calendar's sessions
 from the bar the cone starts from (band n is n sessions from that bar's close; before the open band 1 is
 today; the bar's date is read twelve hours after its midnight stamp, as server/dayChange.ts does). Checked and left: date helpers that format a date already built at noon UTC, and FRED/news id
-strings. Known and not in this change: server/econWeek.ts buckets events by UTC day; Heatseeker's expiry
+strings. Also fixed on the way: the calendar's family classifier (server/sources/parse.ts) read "ADP Nonfarm
+Employment Change" and "Nonfarm Productivity" as the jobs report, and the merge then dropped both rows
+as its duplicates; ADP is now its own row and productivity its own family. Known and not in this change:
+the computed CPI and jobs rows are graded MED, so they do not reach the releases card when the official
+read fails (the card then says the calendar was not fully read); server/econWeek.ts buckets events by UTC day; Heatseeker's expiry
 quick picks and Trade Desk's isOpexToday use the browser's date and ignore holidays; tickerCalendar's
 MACRO_2026 list ends 2026-07-29. Tests: tests/quant/ny-dates.test.ts (8), run under UTC, New York and
 Tokyo server clocks.

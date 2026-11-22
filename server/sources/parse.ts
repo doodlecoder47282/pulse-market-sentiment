@@ -342,6 +342,11 @@ export function familyOfEventName(name: string): string | null {
   const n = name.toLowerCase();
   if (/\bcpi\b|consumer price/.test(n)) return "CPI";
   if (/\bppi\b|producer price/.test(n)) return "PPI";
+  // Before the payrolls test: "Nonfarm Productivity" is the productivity release, and the ADP employment
+  // report is a private survey out two days earlier. Both used to be read as the jobs report, and the merge
+  // then dropped them as duplicates of it.
+  if (/productivity|unit labor/.test(n)) return "PRODUCTIVITY";
+  if (/\badp\b/.test(n)) return null;
   if (/nonfarm|non-farm|payrolls|unemployment rate|average hourly/.test(n)) return "NFP";
   if (/jolts|job openings/.test(n)) return "JOLTS";
   if (/employment cost/.test(n)) return "ECI";
@@ -349,7 +354,6 @@ export function familyOfEventName(name: string): string | null {
   if (/\bpce\b|personal (income|spending|consumption)/.test(n)) return "PCE";
   if (/trade balance|international trade/.test(n)) return "TRADE";
   if (/import price|export price/.test(n)) return "IMPORT_PRICES";
-  if (/productivity|unit labor/.test(n)) return "PRODUCTIVITY";
   if (/real earnings/.test(n)) return "REAL_EARNINGS";
   return null;
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildVolCalendar, daysAway } from "../../server/volCalendar";
 import { etDate, etWallToEpochMs, isTradingDay, nextTradingDay } from "../../shared/exchangeCalendar";
-import { eventsOnEtDate, PLAYBOOK_EVENTS_MAX, releaseFamily } from "../../shared/playbookEvents";
+import { eventsOnEtDate, PLAYBOOK_EVENTS_MAX, releaseCalendarNote, releaseGroup } from "../../shared/playbookEvents";
 import { buildHorizonDates } from "../../server/horizonDates";
 import { horizonTargetIso } from "../../server/impliedScenario";
 
@@ -60,10 +60,10 @@ test("the playbook's releases are the HIGH ones on New York's date, read from th
   const cal = [
     { kind: "ECON", title: "MBA Mortgage Applications", when: at("2026-11-23", 7 * 60), whenLabel: "7:00 AM ET", importance: "LOW" },
     // One CPI release as the calendar can carry it when the official read fails: three vendor rows and a computed one.
-    { kind: "ECON", title: "CPI MoM", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
-    { kind: "ECON", title: "Core CPI MoM", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
-    { kind: "ECON", title: "CPI YoY", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
-    { kind: "ECON", title: "CPI Release (CPI)", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "ECON", title: "CPI MoM", family: "CPI", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "ECON", title: "Core CPI MoM", family: "CPI", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "ECON", title: "CPI YoY", family: "CPI", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
+    { kind: "ECON", title: "CPI Release (CPI)", family: "CPI", when: at("2026-11-23", 8 * 60 + 30), whenLabel: "Mon 11/23 · 8:30 AM ET", importance: "HIGH" },
     { kind: "FED", title: "FOMC Rate Decision", when: at("2026-11-23", 14 * 60), whenLabel: "Mon 11/23 · 2:00 PM ET", importance: "HIGH" },
     // 7:30 PM New York time: already the 24th in UTC, still today's event.
     { kind: "ECON", title: "Some evening release", when: at("2026-11-23", 19 * 60 + 30), whenLabel: "Mon 11/23 · 7:30 PM ET", importance: "HIGH" },
@@ -74,7 +74,7 @@ test("the playbook's releases are the HIGH ones on New York's date, read from th
     { kind: "ECON", title: "no time", importance: "HIGH" },
   ];
   const got = eventsOnEtDate(cal, "2026-11-23");
-  assert.deepEqual(got.map((e) => e.label), ["CPI", "FOMC", "Some evening release"]);
+  assert.deepEqual(got.map((e) => e.label), ["CPI", "FOMC decision", "Some evening release"]);
   assert.equal(got[0].timeLabel, "Mon 11/23 · 8:30 AM ET");
   assert.doesNotMatch(JSON.stringify(got), /recession|Risk-on|Mortgage/);
   assert.deepEqual(eventsOnEtDate(cal, "2026-11-24").map((e) => e.label), ["GDP"]);
@@ -82,13 +82,24 @@ test("the playbook's releases are the HIGH ones on New York's date, read from th
   const many = Array.from({ length: 9 }, (_, i) => ({ kind: "ECON", title: `e${i}`, when: at("2026-11-23", 480 + i), whenLabel: "", importance: "HIGH" }));
   assert.deepEqual(eventsOnEtDate(many, "2026-11-23").map((e) => e.label), ["e0", "e1", "e2", "e3"]);
   assert.equal(PLAYBOOK_EVENTS_MAX, 4);
-  assert.equal(releaseFamily("Nonfarm Payrolls"), "Payrolls");
-  assert.equal(releaseFamily("Initial Jobless Claims"), "Jobless claims");
-  assert.equal(releaseFamily("Core PCE Price Index MoM"), "PCE");
-  assert.equal(releaseFamily("Retail Sales MoM"), null);
+  // Grouping: the calendar's own family key first; one rate decision is one line; everything else is itself.
+  assert.deepEqual(releaseGroup("Unemployment Rate", "NFP"), { key: "family:NFP", label: "Jobs report (NFP)" });
+  assert.equal(releaseGroup("Fed Interest Rate Decision", null).label, "FOMC decision");
+  assert.equal(releaseGroup("FOMC Press Conference", undefined).key, releaseGroup("FOMC Decision", null).key);
+  assert.equal(releaseGroup("FOMC Meeting Minutes", null).label, "FOMC Meeting Minutes", "minutes are not a decision");
+  assert.equal(releaseGroup("FOMC Member Waller Speaks", null).label, "FOMC Member Waller Speaks");
+  assert.equal(releaseGroup("ADP Nonfarm Employment Change", null).label, "ADP Nonfarm Employment Change", "not the jobs report");
+  assert.equal(releaseGroup("Nonfarm Productivity (QoQ)", "PRODUCTIVITY").label, "Productivity and costs");
+  const jobsDay = ["Nonfarm Payrolls", "Unemployment Rate", "Average Hourly Earnings (MoM)"].map((title) => ({ kind: "ECON", title, family: "NFP", when: at("2026-12-04", 510), whenLabel: "8:30", importance: "HIGH" }));
+  assert.deepEqual(eventsOnEtDate(jobsDay, "2026-12-04").map((e) => e.label), ["Jobs report (NFP)"]);
+  // An empty list from a calendar that was not read is said to be unknown.
+  assert.equal(releaseCalendarNote("ok"), null);
+  assert.equal(releaseCalendarNote("empty"), null);
+  for (const st of ["partial", "stale", "failed", "unavailable", undefined]) assert.match(String(releaseCalendarNote(st)), /not known .*not a statement that nothing is scheduled/);
   // The route reads the event's time, not a date field the events do not carry.
   const routes = src("server/routes.ts");
   assert.ok(routes.includes("eventsOnEtDate(news.calendar, etDate(Date.now()))"));
+  assert.ok(routes.includes("releaseCalendarNote: todaysEvents.length === 0 ? releaseCalendarNote(releaseCalendarState) : null"));
   assert.ok(!routes.includes("e.date === todayIso"));
 });
 

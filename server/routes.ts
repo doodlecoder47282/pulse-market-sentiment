@@ -1,4 +1,4 @@
-import { eventsOnEtDate } from "../shared/playbookEvents";
+import { eventsOnEtDate, releaseCalendarNote } from "../shared/playbookEvents";
 import { levelsSourceFor, INDEX_NOT_WIRED_REASON } from "../shared/chartLevels";
 import { EMPTY_RETRY_CAP_MS, EMPTY_RETRY_SESSION_CAP_MS, emptyRetryDelayMs, modelsCacheGate, modelsPeekReason } from "./modelsBackoff";
 import { briefForPrompt, sanitizeBrief, renderBriefMarkdown } from "../shared/alphaBrief";
@@ -530,11 +530,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       // Pull today's catalyst events for news-aware playbook (best-effort)
       let todaysEvents: Array<{ kind: string; label: string; timeLabel?: string }> = [];
+      let releaseCalendarState: string = "failed"; // until the calendar is read
       try {
         const { buildNewsSnapshot } = await import("./news");
         const news = await buildNewsSnapshot();
         // Events on New York's date. A calendar event carries epoch seconds, not a date string.
         todaysEvents = eventsOnEtDate(news.calendar, etDate(Date.now()));
+        releaseCalendarState = news.calendarState;
       } catch (e) {
         // non-fatal
       }
@@ -563,6 +565,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         gammaMaxAgeMs: maxServeAgeMs("chains"),
         squeeze,
         playbook,
+        // Why the releases list may be empty without the day being empty (null: the calendar was read).
+        releaseCalendarNote: todaysEvents.length === 0 ? releaseCalendarNote(releaseCalendarState) : null,
         dataState: snap.stale ? "stale" : "ok",
         composite: { score: snap.composite.score, label: snap.composite.label },
         voicesBias: voicesData?.voicesBias ?? null,

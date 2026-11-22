@@ -301,7 +301,7 @@ function TradeDeskFeed({
       {/* Playbook + Squeeze header */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="lg:col-span-8">
-          {data.playbook ? <PlaybookCard playbook={data.playbook} /> : (
+          {data.playbook ? <PlaybookCard playbook={data.playbook} releaseCalendarNote={(data as any).releaseCalendarNote ?? null} /> : (
             <UnavailablePanel title="Playbook" state="unavailable" reason={secReason("playbook")} testId="unavailable-playbook" />
           )}
         </div>
@@ -393,7 +393,7 @@ function ToggleGroup({
 }
 
 // Playbook Card
-function PlaybookCard({ playbook }: { playbook: Playbook }) {
+function PlaybookCard({ playbook, releaseCalendarNote = null }: { playbook: Playbook; releaseCalendarNote?: string | null }) {
   const biasColor =
     playbook.bias === "bullish" ? "text-emerald-500 border-emerald-500/40 bg-emerald-500/10"
     : playbook.bias === "bearish" ? "text-red-500 border-red-500/40 bg-red-500/10"
@@ -493,6 +493,13 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
             ))}
           </div>
         </div>
+
+        {/* The calendar was not read: an empty list is not "nothing scheduled" */}
+        {!(playbook.newsPlaybook && playbook.newsPlaybook.length > 0) && releaseCalendarNote && (
+          <div className="mt-4 rounded-sm border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] leading-snug text-amber-200" data-testid="news-playbook-unread">
+            {releaseCalendarNote}
+          </div>
+        )}
 
         {/* Scheduled releases today, with the option map's two walls as context (descriptive, no reaction, no orders) */}
         {playbook.newsPlaybook && playbook.newsPlaybook.length > 0 && (
