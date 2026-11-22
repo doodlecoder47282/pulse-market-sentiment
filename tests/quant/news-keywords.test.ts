@@ -5,7 +5,7 @@ import { MARKET_UP, MARKET_DOWN, buildDeterministicAlphaBrief } from "../../serv
 
 test("a move word is a market move only next to a market", () => {
   for (const t of ["Stocks rally to record after Fed signals cuts", "Wall Street surges as yields fall", "Rally in tech shares lifts Nasdaq", "Oil jumps 4%", "Rally in U.S. stocks fizzles", "Chipmakers rally", "Tech rally fades"]) assert.match(t, MARKET_UP, t);
-  for (const t of ["Croatians rally in Zagreb demanding justice over psychiatric hospital death", "Campaign rally draws thousands", "Surge in flu cases worries hospitals", "Lakers rip Celtics", "10-year yield jumps after hot CPI", "Dollar index jumps to two-year high", "Bonds rally as growth fears mount"]) assert.doesNotMatch(t, MARKET_UP, t);
+  for (const t of ["Croatians rally in Zagreb demanding justice over psychiatric hospital death", "Campaign rally draws thousands", "Surge in flu cases worries hospitals", "Lakers rip Celtics", "10-year yield jumps after hot CPI", "Dollar index jumps to two-year high", "Consumer price index jumps 0.4%", "Bonds rally as growth fears mount"]) assert.doesNotMatch(t, MARKET_UP, t);
   for (const t of ["Nasdaq has its worst week since 2020; Dow, S&P 500 in correction", "Stocks plunge as war escalates", "Bitcoin crashes below 60,000", "Crash in U.S. stocks wipes out gains", "Nikkei crash: worst day since 1987", "Tech rout deepens", "Stocks sink", "Tech stocks sell off"]) assert.match(t, MARKET_DOWN, t);
   for (const t of ["Newspaper issues correction to Sunday story", "Two hurt in highway crash", "Rout in the semifinal", "Yields tumble after weak jobs report", "Dollar plunges after Fed cut"]) assert.doesNotMatch(t, MARKET_DOWN, t);
 });
