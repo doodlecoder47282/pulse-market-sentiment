@@ -231,8 +231,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone: "neutral",
-        topLine: "Market-relevant headlines and macro events.",
-        subLine: "Filter: SPX-relevant, Fed/Treasury, geopolitics, OpEx/FOMC calendar.",
+        topLine: "Headlines from the listed sources, and scheduled macro events.",
+        subLine: "Topic chips sort the headlines by keyword; OTHER holds everything the rules did not place, market story or not.",
         bullets: [
           "Official sources first (SEC, Fed, BLS, BEA, Treasury, CFTC), then established newswires; the source line shows which are live.",
           "Reddit and anonymous blogs are filtered out.",

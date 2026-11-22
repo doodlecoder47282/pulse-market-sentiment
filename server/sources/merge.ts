@@ -30,6 +30,15 @@ export interface TieredItem {
  * stamped in the future (beyond FUTURE_SKEW_MS) are dropped and counted:
  * the feed never invents a publish time.
  */
+/**
+ * A search feed returns site pages beside stories: a quote page ("Tesla Inc (TSLA.O) | Stock Price & Latest
+ * News - Reuters") or a topic page. They carry a date but no news, and the headline rules scored the Tesla
+ * quote page 8 of 10 as the day's top story.
+ */
+export function isIndexPage(title: string): boolean {
+  return /\|\s*(stock price|share price|quote)\b[^|]*\b(news|quote|chart)s?\b/i.test(title) || /\b(latest|breaking) news (&|and) (headlines|updates)\b/i.test(title);
+}
+
 export function tierItems(
   sourceId: string,
   items: FeedItem[],
@@ -42,6 +51,7 @@ export function tierItems(
   const out: TieredItem[] = [];
   for (const it of items) {
     if (it.publishedMs == null || it.publishedMs > nowMs + FUTURE_SKEW_MS) { undatedDropped++; continue; }
+    if (isIndexPage(it.title)) continue; // a quote or topic page, not a story
     out.push({
       sourceId,
       source: spec?.name ?? sourceId,
