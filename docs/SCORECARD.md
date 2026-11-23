@@ -75,6 +75,47 @@ Verdicts: KEEP (expand it), FIX (worth having, wrong today), LAB (move out of th
 - **Heatseeker is the clearest tool**: one model, a plain paragraph that says what it is and is not.
 - **Trade Desk's level board is useful** but repeats one three-line caveat under each of five symbols.
 
+## Second pass, every tab read to the bottom (2026-11-23, 17:00 ET, window 978 px wide)
+
+Measured on the Signals tab: 73% of the visible characters are set at 11px; the tools start 215 px down a
+697 px window; at 978 px wide the terminal still shows the phone layout (bottom bar).
+
+- **Edge Lab said "STRONG BEAR, score 75/100" at 5 PM on a day SPY rose 4.8%.** One of its inputs is "SPY
+  week -8.56%", last week's figure. This is the clearest case of a hand-set score reading stale inputs.
+- **Models is stale after the close.** Its ten-day cone and pivot projection still start from Friday's
+  6,910 ("Broke below call wall 7,300") with the index at 7,237, because Schwab's daily bar for the day is
+  not posted. The Trade Desk level board handles the same gap correctly from intraday bars.
+- **Six gamma flips, two of them on one tab.** Heatseeker's map says walls 7,200 to 7,350 and flip 7,328;
+  the Heatseeker card under it, same expiry, says call wall 7,400, put wall 7,180, flip 7,437. Models'
+  pivot projection adds 7,357.
+- **The flip follows the price.** The Trade Desk log shows the gamma flip at 7,219, 7,229, 7,235, 7,238 and
+  7,240 through the session, then 7,329 at the close. A level that moves with the price is not a level.
+- **Mapped levels are broken more often than they hold.** 39 touches over 11 sessions: 9 closed 10 points
+  back first, 29 closed 10 points through first. Presenting levels as support and resistance is not what
+  the record shows.
+- **An oversold read for the index existed too, buried.** Models, far down: "RSI(14) 24.7 below 30", shown
+  as "MAGNET DRIFT, score 50/100 hand-set".
+- **A bullish flow read existed today, buried.** Bottom of Signals: calls bought at the ask $719M against
+  $112M sold at the bid; "last-print net premium +$955M".
+- **Flow alerts are noise on a trend day.** Fifteen "unusual volume" alerts, thirteen marked high, one per
+  5-point strike from 7,175 to 7,230. The rule (volume at least 3 times open interest) is always true on a
+  next-day chain. One line would say it: "call volume 3 to 15 times open interest across 7,175 to 7,230".
+- **Heatseeker's pivot bands**: seven "ACCEL, FRESH 100" bands ten points apart, each with the same sentence.
+- **Trade Desk's "levels crossed" log**: about 35 lines for one session, mostly VIX crossing its open.
+- **Chart's AI Outlook** carries a third hand-set playbook (30/40/30), counts "gamma flip" and "zero gamma"
+  as two agreeing sources when they are one number, and prints raw StockTwits posts ("is it impeachment
+  time yet?", "Please give me a follow lol").
+- **The record store on this service is four sessions old** ("4/20 sessions", "0 closed in the last 7
+  days"), so most records cannot be judged yet. If the database does not survive a redeploy or a new
+  service, they never will be.
+- **Heatseeker's level odds table is the best thing in the terminal**: each level with its distance in
+  one-day moves and the random-walk odds of touching it, and a scorecard that already beats the base rate
+  (Brier 0.165 against 0.239, 5 scored days of the 50 it asks for).
+- **Crypto's own record**: 4,158 coins tracked; of 1,342 graded, 1,035 rugged; 172 reached a $5M cap and 36
+  doubled; the desk has never issued an Enter. It is honest and inert.
+- **Regime's pullback list was seen live with the 2026-11-23 fix**: three names, real dollars per day
+  ($419M, $316M, $1.1B), one thinner name left out.
+
 ## Tool by tool
 
 | Tab | What it is | Verdict | Why | Seen live |
@@ -100,21 +141,20 @@ window, or checked against the owner's Excel formulas yet.
 
 | Tab | Looked at | When | What is still unread |
 |---|---|---|---|
-| Signals | top, plus the scoreboard summary | 2026-11-23 after the close | tracked positions detail, flow alerts, put/call, the collapsed detail section |
+| Signals | full | 2026-11-23 17:00 ET | the collapsed detail section |
 | Outlook | full | 2026-11-22 (closed market) | a live chain |
-| Chart | top | 2026-11-23 | the chart itself and everything under AI Outlook |
-| Models | top | 2026-11-23 | the pivot ladder, weekly, monthly and 3M views |
-| Heatseeker | top | 2026-11-23 | the map picture, level odds, strike table |
-| Trade Desk | top (level board) | 2026-11-23 | playbook, releases card, tools, records |
-| Regime | top two thirds | 2026-11-23 | the pullback list with data, rotation tables |
-| Edge Lab | briefing and skew | 2026-11-21 and 22 | the other sub-panels |
+| Chart | full text; the chart picture not judged | 2026-11-23 | the chart drawing itself |
+| Models | daily view full | 2026-11-23 | weekly, monthly, 3M views; the chain audit (still loading) |
+| Heatseeker | first half | 2026-11-23 | the strike table below the first rows, the map picture |
+| Trade Desk | first 12,500 of 25,800 characters | 2026-11-23 | the lower half (tools, records, playbook) |
+| Regime | full except the first sector rows | 2026-11-23 | none of note |
+| Edge Lab | briefing top and skew | 2026-11-21 to 23 | the other sub-panels |
 | News | feed, brief, header | 2026-11-21 | calendar and earnings lists |
-| Crypto | first card only | 2026-11-23 | everything below it |
-| Cosmos | not opened | | all of it (judged from its own description) |
-| Take Five | not opened | | all of it (judged from its own description) |
+| Crypto | summary card and desk text | 2026-11-23 | the coin lists and the detail section |
+| Cosmos | top | 2026-11-23 | the reference sub-tabs |
+| Take Five | top | 2026-11-23 | none of note |
 
-Width: the checking window is 800 pixels wide, which shows the phone-style bottom bar. No tab has been
-judged at laptop or desktop width.
+Width: read at 978 pixels, which still shows the phone layout. Not yet judged at 1,280 or wider.
 
 ## What this points to
 
