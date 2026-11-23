@@ -1,3 +1,4 @@
+import { emptyListLine, dollarsPerDay, type BounceCounts } from "@shared/bounceList";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -34,6 +35,7 @@ type Resp = {
   notes: string;
   leftOut?: { thin: number; noVolume: number };
   fallingKnives?: number;
+  counts?: BounceCounts;
 };
 
 function setupColor(s: Row["setup"]) {
@@ -119,9 +121,7 @@ export default function UnderperformerWatcher() {
 
         {data && data.rows.length === 0 && (
           <div className="rounded border border-border/40 bg-black/20 p-4 text-center text-[11px] text-muted-foreground">
-            {mode === "bounce" && (data.fallingKnives ?? 0) > 0
-              ? `No bounce setups: ${data.fallingKnives} name${data.fallingKnives === 1 ? " is" : "s are"} down today but below both their 20- and 50-day averages, which this list leaves out. "All dumps" shows them.`
-              : "No name on the list is down today."}
+            {data.counts ? emptyListLine(data.counts, mode) : "Nothing to list."}
           </div>
         )}
 
@@ -201,7 +201,7 @@ export default function UnderperformerWatcher() {
                       )}
                     </td>
                     <td className="px-2 py-1.5 text-right text-muted-foreground">
-                      {r.advUsd == null ? "not read" : r.advUsd >= 1e9 ? `$${(r.advUsd / 1e9).toFixed(1)}B` : `$${Math.round(r.advUsd / 1e6)}M`}
+                      {dollarsPerDay(r.advUsd)}
                     </td>
                     <td className="px-2 py-1.5">
                       <Badge
@@ -216,9 +216,9 @@ export default function UnderperformerWatcher() {
               </tbody>
             </table>
             <div className="mt-2 text-[11px] text-muted-foreground">
-              setups: <span className="text-green-300">pullback / uptrend</span> = price &gt; 50d SMA but below 5d (best mean-reversion candidates) ·{" "}
+              setups: <span className="text-green-300">pullback / uptrend</span> = price &gt; 50d SMA but below 5d ·{" "}
               <span className="text-amber-300">stretched</span> = down &gt;1.5σ below mean ·{" "}
-              <span className="text-red-300">falling knife</span> = below 20d AND 50d (skip in bounce mode). R:R = reclaim 5d / break 20d.
+              <span className="text-red-300">falling knife</span> = below 20d AND 50d (left out of this list; "all dumps" shows them). R:R = distance up to the 5d average divided by distance down to the 20d average. $/day = average of close × volume over the last 30 completed sessions (at least 20 needed).
             </div>
           </div>
         )}

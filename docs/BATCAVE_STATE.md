@@ -3285,7 +3285,9 @@ stocks. server/underperformers.ts documented "30d avg dollar volume > $200M", bu
 volume: the figure was price x 1,000,000 and the cut was never applied. Now server/sector-web.ts keeps each
 bar's volume, `avgDollarVolume` is the mean of close x volume over the last 30 sessions (unknown below 20
 sessions with volume), and the bounce list drops names under $200M a day or with no volume read, counting
-both in the note. The table shows the figure. The empty state used to say "all leaders holding up" even when
-every name was excluded for being below its 20- and 50-day averages; it now says that. NOT changed: the
+both in the note. The table shows the figure. While the session is open today's partial bar is left out of the
+average. The empty state used to say "all leaders holding up" even when
+every name was excluded for being below its 20- and 50-day averages; it now says how many names were read,
+how many are down, and why none is listed (shared/bounceList.ts), or that nothing was read. NOT changed: the
 ranking is by how unusual the day's drop is for that stock (favours quiet names), and the list still skips
 the index and ETFs. Tests: tests/quant/bounce-liquidity.test.ts (3).
