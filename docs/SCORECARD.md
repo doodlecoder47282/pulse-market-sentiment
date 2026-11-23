@@ -90,7 +90,31 @@ Verdicts: KEEP (expand it), FIX (worth having, wrong today), LAB (move out of th
 | News | Headlines, event calendar, earnings, rules brief | FIX | The calendar is the valuable part. The feed is mostly off-topic. The keyword brief adds little. | yes |
 | Cosmos | Astronomy and financial astrology | LAB | Its own header says "for entertainment, not a trading signal". Fails question 1. | not this pass |
 | Take Five | Breathing pacer and the owner's rules | KEEP, not as a tab | A personal tool with no data. A button, not a place in the tab bar. | not this pass |
-| Crypto | Crypto prices, funding, narrative | CUT from this product (or its own app) | A new-coin scanner, nothing to do with index options. Owner's call. | yes |
+| Crypto | Solana new-coin scanner: pools tracked, fixed ENTER rules, a record of graded entries | KEEP and refine (owner's decision 2026-11-23) | The owner wants it. Its own record is 0 of 50 graded, so the first job is to let the record fill and show it, then judge each rule by it. Runs through the same questions as every other tool. | yes |
+
+## What has and has not been looked at (so the review itself can be checked)
+
+"Top" means the first screen or two of the tab (about the first 3,000 characters of its text). "Full" means
+every card on the tab was read. Nothing below has been seen during a live session, on a wide desktop
+window, or checked against the owner's Excel formulas yet.
+
+| Tab | Looked at | When | What is still unread |
+|---|---|---|---|
+| Signals | top, plus the scoreboard summary | 2026-11-23 after the close | tracked positions detail, flow alerts, put/call, the collapsed detail section |
+| Outlook | full | 2026-11-22 (closed market) | a live chain |
+| Chart | top | 2026-11-23 | the chart itself and everything under AI Outlook |
+| Models | top | 2026-11-23 | the pivot ladder, weekly, monthly and 3M views |
+| Heatseeker | top | 2026-11-23 | the map picture, level odds, strike table |
+| Trade Desk | top (level board) | 2026-11-23 | playbook, releases card, tools, records |
+| Regime | top two thirds | 2026-11-23 | the pullback list with data, rotation tables |
+| Edge Lab | briefing and skew | 2026-11-21 and 22 | the other sub-panels |
+| News | feed, brief, header | 2026-11-21 | calendar and earnings lists |
+| Crypto | first card only | 2026-11-23 | everything below it |
+| Cosmos | not opened | | all of it (judged from its own description) |
+| Take Five | not opened | | all of it (judged from its own description) |
+
+Width: the checking window is 800 pixels wide, which shows the phone-style bottom bar. No tab has been
+judged at laptop or desktop width.
 
 ## What this points to
 
