@@ -5,7 +5,10 @@
 // not falling knives.
 //
 // Filter logic (all must pass):
-//   1. Liquid:        30d avg dollar volume > $200M
+//   1. Liquid:        average dollar volume over the last 30 sessions > $200M, from the bars' own volume.
+//                     (Until 2026-11-23 no volume was loaded: the figure was price x 1,000,000 and the
+//                     cut was never applied, so thin names passed.) A name with no volume is left out
+//                     and counted, never passed.
 //   2. Pullback-in-uptrend:  price > 50d SMA  AND  price < 5d SMA
 //      (still in macro uptrend, but pulled below short-term momentum)
 //   3. Stretched:     today's % drop > 1.5 standard deviations of 60d daily returns
@@ -38,7 +41,7 @@ export type UnderperformerRow = {
   distSma20Pct: number;
   distSma50Pct: number;
   rsi2: number | null;
-  advUsd: number;            // 30d avg dollar volume
+  advUsd: number | null;     // average daily dollar volume, last 30 sessions (null: fewer than 20 sessions with volume)
   bounceRR: number | null;   // R:R to 5d reclaim vs 20d break
   setup: "pullback-in-uptrend" | "stretched-below" | "falling-knife";
 };
@@ -47,7 +50,22 @@ export type UnderperformerResponse = {
   asOf: string;
   rows: UnderperformerRow[];
   notes: string;
+  /** Names that met the price rules but were left out of the bounce list. */
+  leftOut: { thin: number; noVolume: number };
+  /** Names dropped as falling knives (below the 20- and 50-day averages): why a list can be empty on a hard down day. */
+  fallingKnives: number;
 };
+
+export const MIN_ADV_USD = 200_000_000;
+export const ADV_SESSIONS = 30;
+export const ADV_MIN_SESSIONS = 20;
+
+/** Average daily dollar volume over the last ADV_SESSIONS bars; null when fewer than ADV_MIN_SESSIONS carry a volume. */
+export function avgDollarVolume(bars: ReadonlyArray<{ close: number; volume?: number }>): number | null {
+  const dv = bars.slice(-ADV_SESSIONS).filter((b) => typeof b.volume === "number" && isFinite(b.volume) && b.volume > 0 && isFinite(b.close)).map((b) => b.close * (b.volume as number));
+  if (dv.length < ADV_MIN_SESSIONS) return null;
+  return dv.reduce((a, b) => a + b, 0) / dv.length;
+}
 
 function sma(vals: number[], n: number): number {
   if (vals.length < n) return NaN;
@@ -105,7 +123,8 @@ export function buildUnderperformers(
   daily: Map<string, DailyBar[]>,
   opts?: { minAdvUsd?: number; maxRows?: number; mode?: "bounce" | "all" },
 ): UnderperformerResponse {
-  const minAdv = opts?.minAdvUsd ?? 200_000_000;
+  const minAdv = opts?.minAdvUsd ?? MIN_ADV_USD;
+  let thin = 0, noVolume = 0, fallingKnives = 0;
   const maxRows = opts?.maxRows ?? 25;
   const mode = opts?.mode ?? "bounce";
 
@@ -138,12 +157,7 @@ export function buildUnderperformers(
     const todayRet = (last - prev) / prev;
     const z = sd > 0 ? (todayRet - meanR) / sd : 0;
 
-    // Liquidity proxy: use the most recent volume we have (sector-web bars
-    // only include close, no volume — so we use a rough ADV proxy = last close
-    // × 1M (assumption: anything in the sector leader list trades >1M shares/day
-    // on average → ADV proxy ≥ $X million). For a stricter filter we'd add
-    // volume to fetchDaily. For now we approximate.
-    const advUsd = last * 1_000_000; // crude proxy — overrides only filter out illiquid microcaps
+    const advUsd = avgDollarVolume(bars);
 
     // Setup classification
     let setup: UnderperformerRow["setup"];
@@ -153,8 +167,11 @@ export function buildUnderperformers(
 
     // In bounce mode, only keep pullback-in-uptrend or stretched-below with z<-1
     if (mode === "bounce") {
-      if (setup === "falling-knife") continue;
+      if (setup === "falling-knife") { fallingKnives++; continue; }
       if (z > -1.5) continue;
+      // Liquidity is applied last, so the counts are of names that otherwise qualified.
+      if (advUsd == null) { noVolume++; continue; }
+      if (advUsd < minAdv) { thin++; continue; }
     }
 
     // R:R = (5d reclaim) / (20d break)
@@ -190,7 +207,10 @@ export function buildUnderperformers(
     rows: rows.slice(0, maxRows),
     notes:
       mode === "bounce"
-        ? "pullback bounce candidates only · z < -1.5 · price > 50d SMA · sorted by depth"
-        : "all negative-day candidates · sorted by z-score",
+        ? `down more than 1.5 of its own usual daily moves · not below both its 20- and 50-day averages · over $${Math.round(minAdv / 1e6)}M traded a day`
+          + (thin + noVolume > 0 ? ` (${thin} thinner name${thin === 1 ? "" : "s"}${noVolume ? ` and ${noVolume} with no volume read` : ""} left out)` : "")
+        : "every name down today · most unusual drop first",
+    leftOut: { thin, noVolume },
+    fallingKnives,
   };
 }

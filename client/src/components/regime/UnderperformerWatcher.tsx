@@ -23,7 +23,7 @@ type Row = {
   distSma20Pct: number;
   distSma50Pct: number;
   rsi2: number | null;
-  advUsd: number;
+  advUsd: number | null;
   bounceRR: number | null;
   setup: "pullback-in-uptrend" | "stretched-below" | "falling-knife";
 };
@@ -32,6 +32,8 @@ type Resp = {
   asOf: string;
   rows: Row[];
   notes: string;
+  leftOut?: { thin: number; noVolume: number };
+  fallingKnives?: number;
 };
 
 function setupColor(s: Row["setup"]) {
@@ -117,7 +119,9 @@ export default function UnderperformerWatcher() {
 
         {data && data.rows.length === 0 && (
           <div className="rounded border border-border/40 bg-black/20 p-4 text-center text-[11px] text-muted-foreground">
-            no qualifying bounce candidates · all leaders holding up
+            {mode === "bounce" && (data.fallingKnives ?? 0) > 0
+              ? `No bounce setups: ${data.fallingKnives} name${data.fallingKnives === 1 ? " is" : "s are"} down today but below both their 20- and 50-day averages, which this list leaves out. "All dumps" shows them.`
+              : "No name on the list is down today."}
           </div>
         )}
 
@@ -136,6 +140,7 @@ export default function UnderperformerWatcher() {
                   <th className="px-2 py-1.5 text-right" title="trend filter">vs 50d</th>
                   <th className="px-2 py-1.5 text-right" title="Wilder RSI 2-period">RSI(2)</th>
                   <th className="px-2 py-1.5 text-right" title="reclaim 5d / break 20d">R:R</th>
+                  <th className="px-2 py-1.5 text-right" title="average dollars traded a day, last 30 sessions">$/day</th>
                   <th className="px-2 py-1.5 text-left">setup</th>
                 </tr>
               </thead>
@@ -194,6 +199,9 @@ export default function UnderperformerWatcher() {
                       ) : (
                         "—"
                       )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-muted-foreground">
+                      {r.advUsd == null ? "not read" : r.advUsd >= 1e9 ? `$${(r.advUsd / 1e9).toFixed(1)}B` : `$${Math.round(r.advUsd / 1e6)}M`}
                     </td>
                     <td className="px-2 py-1.5">
                       <Badge
