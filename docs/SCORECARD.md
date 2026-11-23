@@ -4,9 +4,8 @@ Started 2026-11-23 at the owner's request: judge every tool as a professional fu
 trader would, and as a product developer who cares what the customer sees. This file is the measure of
 progress. A tool is "accepted" only when the owner has looked at it and said yes.
 
-Status of this version: PROVISIONAL. It is written from the code and from the screens seen live up to
-2026-11-23. Chart, Heatseeker, Trade Desk, Cosmos, Take Five and Crypto have not been looked at live in this
-pass (the address used for checking was removed and the live one needs the owner's access key).
+Status of this version: every tab except Cosmos and Take Five was opened on the live terminal on
+2026-11-23 after the close (SPX 7,237, +4.7% on the day; VIX 26.6). The verdicts below include what was seen.
 
 ## The questions
 
@@ -48,22 +47,50 @@ Verdicts: KEEP (expand it), FIX (worth having, wrong today), LAB (move out of th
 - **Fear is read as bearish everywhere.** Nothing reads a washout (index stretch, VIX curve inversion,
   expiration roll-off). Friday 2026-11-20 showed the gap.
 
+## Seen live on 2026-11-23 (the day the index rose 4.7%)
+
+- **The terminal contradicts itself on one screen.** Header: "Trend continuation, dealers short gamma,
+  hedging adds to moves". Every tab's summary strip: "Heavy chop regime". Models: "POS gamma, hedging damps
+  moves", "PATH: grind down into pin". Chart's AI Outlook: "NEUTRAL 32/100, a no lean stuck sideways call. No
+  edge, pass."
+- **Four different gamma flips and wall sets**: Signals 7,328 (nearest expiry), Models 7,047 (expiries within
+  2 days), Regime's thermal map 7,440, Chart (SPY) 735.90. A note explains why they differ; a trader still
+  cannot tell which one to use.
+- **Three different one-day moves**: Signals "about plus or minus 95", Heatseeker "plus or minus 118.5",
+  Models "plus or minus 58.2 (VIX fallback)".
+- **The page furniture takes the screen.** Brand bar, read line, score bar, ticker tape, summary strip and a
+  warning banner fill about 270 of 744 pixels before any tool starts, on every tab. On the Chart tab the
+  chart comes after Mag 7, put/call, tick volume and the watchlist.
+- **The header overflows** when the SPY and VIX quotes carry STALE badges: the bell and settings buttons are
+  pushed off the right edge.
+- **The scoreboard has two rows with a real sample.** 139 of 276 regime calls matched (50%: a coin flip).
+  38 of 161 option signals finished up 30% or more (24%). Every other row has 0 to 9 graded cases.
+- **A washout read did exist, buried.** The bottom of Regime lists "largest relative drawdowns": XLK and SMH
+  at 100/100 with RSI 25 and 26, 14% and 19% below their 20-day averages. It is a hand-set score on sector
+  funds, far down one tab, with no alert, and nothing like it for the index.
+- **Numbers to check:** NVDA shown +31.59% on the day; GLD shown +6.58% at 344 on Regime after 372.52 on
+  Edge Lab the day before. One of each pair is wrong.
+- **Crypto is a Solana new-coin scanner** (pump.fun launches, market caps in the tens of thousands of
+  dollars, "ENTER rules", 0 of 50 graded). It is a different product for a different user.
+- **Heatseeker is the clearest tool**: one model, a plain paragraph that says what it is and is not.
+- **Trade Desk's level board is useful** but repeats one three-line caveat under each of five symbols.
+
 ## Tool by tool
 
 | Tab | What it is | Verdict | Why | Seen live |
 |---|---|---|---|---|
-| Signals | Whale flow, flow alerts, put/call ratio, ticker scan | FIX | The first thing shown is whale alerts, whose own record says they lose. Lead with the state of the index; keep ticker scan and put/call; show whale alerts with their record, lower down. | yes |
+| Signals | The index card (price, wall, flip, range), then whale flow, flow alerts, put/call, ticker scan | FIX | The index card at the top is right and should become the Today screen. Below it the tab is a long stack; whale alerts need their record beside them. | yes |
 | Outlook | Levels, expiries, implied range, events to the last expiry read | KEEP | One job, real inputs, clear after the trim. Add the index stretch read and what each expiration removes. | yes |
-| Chart | SPX chart with dealer levels | KEEP | The core of a levels terminal. Show each level type's own record (turned back of touched). | not this pass |
-| Heatseeker | 0DTE strikes, Greeks, the random-walk map | KEEP | Physics from measured inputs. | not this pass |
-| Models | Composite score, "ML forward path", daily/weekly/monthly ranges | FIX, mostly CUT | Its own description says "hand-set weights, not a probability". The daily range seen was plus or minus 5.7% beside a one-day move of 2%. Keep the option-implied ranges; cut the composite. | partly |
-| Trade Desk | Playbook, levels, releases today, tools | FIX | Releases card is sound. The playbook is the hand-set layer. Levels repeat Chart. | partly |
-| Regime | Regime label, sector rotation, pullback list | FIX | The label read "Value-led leadership, mid-cycle" in a week the index fell 8.6% with VIX at 36. Sector rotation is useful. Pullback list fixed 2026-11-23. | partly |
+| Chart | SPX chart with dealer levels | KEEP | The core of a levels terminal. Show each level type's own record (turned back of touched). | yes |
+| Heatseeker | 0DTE strikes, Greeks, the random-walk map | KEEP | Physics from measured inputs, explained in plain words. The model for the rest. | yes |
+| Models | Composite score, "ML forward path", daily/weekly/monthly ranges | FIX, mostly CUT | A wall of unexplained terms (double zero zone, zomma, dom mag, decel 6.50). It said hedging damps moves while the header said it adds to them. Keep the option-implied odds and ranges; cut the rest. | yes |
+| Trade Desk | Playbook, levels, releases today, tools | FIX | Releases card is sound. The playbook is the hand-set layer. The level board is useful; trim its repeated caveats. | yes |
+| Regime | Regime label, sector rotation, pullback list | FIX | The label read "Value-led leadership, mid-cycle" in a week the index fell 8.6% with VIX at 36. Its calls match 139 of 276 times. The canary and sector tables are useful raw data. | yes |
 | Edge Lab | Ticker briefing, skew, experiments | FIX | Skew is sound. The briefing's playbook is the hand-set layer again. | yes |
 | News | Headlines, event calendar, earnings, rules brief | FIX | The calendar is the valuable part. The feed is mostly off-topic. The keyword brief adds little. | yes |
 | Cosmos | Astronomy and financial astrology | LAB | Its own header says "for entertainment, not a trading signal". Fails question 1. | not this pass |
 | Take Five | Breathing pacer and the owner's rules | KEEP, not as a tab | A personal tool with no data. A button, not a place in the tab bar. | not this pass |
-| Crypto | Crypto prices, funding, narrative | LAB or its own app | A different market with different users. Owner's call. | not this pass |
+| Crypto | Crypto prices, funding, narrative | CUT from this product (or its own app) | A new-coin scanner, nothing to do with index options. Owner's call. | yes |
 
 ## What this points to
 
