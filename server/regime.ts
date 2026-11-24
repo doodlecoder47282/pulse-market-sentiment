@@ -17,7 +17,7 @@
 // Stage: early (<=2w consistent) / mid (3-6w) / mature (8w+)
 
 import { storage } from "./storage";
-import { refreshSettledDailyBars, settledEndDateMs, type FetchedBars, settledThrough } from "./dailyBarsSettled";
+import { refreshSettledDailyBars, settledEndDateMs, type FetchedBars, type RefreshResult, settledThrough } from "./dailyBarsSettled";
 import { regimeZTest, seedFromString, regimeFdrFlags } from "./macroStats";
 
 // Null-test thresholds (finding 5.4): two-sided 5% under the bootstrap null.
@@ -200,7 +200,7 @@ async function fetchSymbol2Y(symbol: string, retry = false): Promise<FetchedBars
   try {
     const { getPriceHistory } = await import("./schwab");
     const resp = await getPriceHistory(schwabSym, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()), skipCache: retry });
-    if (!resp.candles.length) return NO_BARS;
+    if (!resp.candles.length) return { ...NO_BARS, reason: resp.reason ?? `no candles (${resp.dataState})` };
     const rows: DailyRow[] = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))
       .map((c) => ({ date: etDateString(Math.floor(c.datetime / 1000)), close: c.close, t: Math.floor(c.datetime / 1000) }));
@@ -212,7 +212,8 @@ async function fetchSymbol2Y(symbol: string, retry = false): Promise<FetchedBars
       seen.add(r.date);
       dedup.push(r);
     }
-    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true };
+    const noClose = resp.candles.slice(-8).filter((c) => !(c.close != null && isFinite(c.close))).map((c) => etDateString(Math.floor(c.datetime / 1000)));
+    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true, reason: resp.reason ?? null, noClose };
   } catch {
     return NO_BARS;
   }
@@ -223,7 +224,7 @@ async function fetchSymbol2Y(symbol: string, retry = false): Promise<FetchedBars
  * recent cached date to skip symbols that already have today's data, minimizing
  * Schwab calls. Caller should invoke this before computing regime.
  */
-export async function ensureUniverseCached(): Promise<{ fetched: string[]; cached: string[]; failed: string[]; behind: string[]; expected: string }> {
+export async function ensureUniverseCached(): Promise<RefreshResult> {
   // Completed sessions only, and current only once a post-close fetch returned the session (dailyBarsSettled.ts).
   return refreshSettledDailyBars(REGIME_UNIVERSE, fetchSymbol2Y, storage, Date.now());
 }
@@ -914,14 +915,14 @@ export async function buildRegimeSnapshot(window: WindowKey = "w4"): Promise<Reg
   const warnings: string[] = [];
   const refresh = await ensureUniverseCached().catch((e) => {
     warnings.push(`Universe refresh error: ${e?.message ?? e}`);
-    return { fetched: [], cached: [], failed: REGIME_UNIVERSE, behind: [] as string[], expected: settledThrough(Date.now()) };
+    return { fetched: [], cached: [], failed: REGIME_UNIVERSE, behind: [] as string[], expected: settledThrough(Date.now()), why: {} as Record<string, string> };
   });
   const notCurrent = [...refresh.failed, ...refresh.behind];
   if (notCurrent.length) {
     const none = notCurrent.filter((s) => !storage.getLatestBarDate(s));
     const old = notCurrent.filter((s) => { const d = storage.getLatestBarDate(s); return !!d && d < refresh.expected; });
     if (none.length) warnings.push(`Symbols with no data: ${none.join(", ")}`);
-    if (old.length) warnings.push(`Not refreshed this read (older stored bars used, expected ${refresh.expected}): ${old.map((s) => `${s} ${storage.getLatestBarDate(s)}`).join(", ")}`);
+    if (old.length) warnings.push(`Not refreshed this read (older stored bars used, expected ${refresh.expected}): ${old.map((s) => `${s} ${storage.getLatestBarDate(s)}${refresh.why[s] ? ` [${refresh.why[s]}]` : ""}`).join(", ")}`);
   }
 
   // Load all cached data into memory

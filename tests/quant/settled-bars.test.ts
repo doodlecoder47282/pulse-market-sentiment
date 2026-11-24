@@ -100,6 +100,7 @@ test("an answer without the expected session is 'behind': kept, reported, and as
   const fetchRows = async (_s: string, retry: boolean) => { calls++; retries.push(retry); return { rows: rowsTo("2026-11-20"), asOfMs: TUE_MID }; }; // Monday's bar not posted
   const r = await refreshSettledDailyBars(["TLT"], fetchRows, store, TUE_MID);
   assert.deepEqual(r.behind, ["TLT"]);
+  assert.equal(r.why.TLT, "answer from Nov 24, 13:28 ET: completed sessions to 2026-11-20, newest row 2026-11-20, no 2026-11-23 row");
   assert.deepEqual(r.fetched, []);
   assert.deepEqual(r.failed, []);
   assert.equal(marks.get("TLT")!.through, "2026-11-20");
@@ -127,8 +128,10 @@ test("a copy fetched while the session was open is not stored as the close when 
   assert.deepEqual(r.behind, ["SPY"]);
   assert.equal(bars.get("SPY")!.has("2026-11-24"), false);
   assert.equal(marks.get("SPY")!.through, "2026-11-23");
+  assert.equal(r.why.SPY, "answer from Nov 24, 11:00 ET: completed sessions to 2026-11-23, newest row 2026-11-24, 2026-11-24 present but the answer predates its settle");
   const stale = await refreshSettledDailyBars(["QQQ"], async () => ({ rows: rowsTo("2026-11-24"), asOfMs: TUE_1625, stale: true }), store, TUE_1625);
   assert.deepEqual(stale.failed, ["QQQ"], "an old copy served after a failed refresh is a failed read");
+  assert.match(stale.why.QQQ, /^old copy served \(from Nov 24, 16:25 ET\): refresh failed$/);
   const noTime = await refreshSettledDailyBars(["IWM"], async () => ({ rows: rowsTo("2026-11-24"), asOfMs: null }), store, TUE_1625);
   assert.deepEqual(noTime.failed, ["IWM"]);
 });

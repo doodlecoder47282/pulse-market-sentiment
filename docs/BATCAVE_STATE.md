@@ -3317,3 +3317,9 @@ runs every 15 minutes (no request when nothing is due) so the evening close is n
 the Edge Lab "not read" text gives the right reason for bars that stop early.
 Not changed: the five-vote verdict itself (package 3), the Models tab's starting price (next part).
 Tests: `tests/quant/settled-bars.test.ts`.
+
+**Why a symbol's bars are not current (2026-11-24).** Seen live after the settled-bars deploy: SPY, XLE and
+XLC stayed at 2026-11-20 through two regime reads while UUP corrected on its retry, and the warning gave no
+cause. `refreshSettledDailyBars` now returns `why` per symbol (old copy served and the vendor layer's reason,
+the answer's own time and newest bar, or the wait until the next ask) and the Regime warning prints it.
+Diagnostic only: no change to what is stored.
