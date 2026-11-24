@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { closesThroughLine, shortDate } from "@shared/barDates";
 import { ChevronDown, ChevronUp, RefreshCw, ExternalLink, AlertCircle } from "lucide-react";
 
 type VerdictColor = "emerald" | "rose" | "amber" | "neutral";
@@ -34,7 +35,8 @@ interface Briefing {
     notes: string[];
   } | null;
   crossAsset: {
-    rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string }[];
+    rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string; barDate?: string | null; stale?: boolean }[];
+    expectedBarDate?: string | null;
     vix: number | null;
     vixChangePct: number | null;
   } | null;
@@ -307,12 +309,13 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                       <span className="text-[11px] font-mono">vix {d.crossAsset.vix.toFixed(2)}</span>
                     )}
                   </div>
+                  <div className="text-xs text-muted-foreground leading-snug" data-testid="text-briefing-cross-asof">{closesThroughLine(d.crossAsset.expectedBarDate, d.crossAsset.rows)}</div>
                   <div className="hscroll-contain">
                     <table className="w-full text-[11px]">
                       <thead>
                         <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground border-b border-border/30">
                           <th className="pb-1 pr-2">sym</th>
-                          <th className="pb-1 pr-2 text-right">last</th>
+                          <th className="pb-1 pr-2 text-right">close</th>
                           <th className="pb-1 pr-2 text-right">1d</th>
                           <th className="pb-1 pr-2 text-right">1w</th>
                           <th className="pb-1 text-right">1m</th>
@@ -323,7 +326,10 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                           const lastUsable = r.last != null && Number.isFinite(r.last) && r.last > 0;
                           return (
                             <tr key={r.symbol} className="border-b border-border/10 last:border-b-0">
-                              <td className="py-1 pr-2 font-semibold">{r.symbol}</td>
+                              <td className="py-1 pr-2 font-semibold">
+                                {r.symbol}
+                                {r.stale && r.barDate && <span className="ml-1 font-normal text-amber-500" title="These bars stop before the last completed session.">{shortDate(r.barDate)}</span>}
+                              </td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? (r.last as number).toFixed(2) : "—"}</td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.d1Pct} /> : "—"}</td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.w1Pct} /> : "—"}</td>

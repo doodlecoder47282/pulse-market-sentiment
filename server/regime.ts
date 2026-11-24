@@ -17,7 +17,7 @@
 // Stage: early (<=2w consistent) / mid (3-6w) / mature (8w+)
 
 import { storage } from "./storage";
-import { lastCompletedSession } from "./breadthMath";
+import { refreshSettledDailyBars, settledThrough } from "./dailyBarsSettled";
 import { regimeZTest, seedFromString, regimeFdrFlags } from "./macroStats";
 
 // Null-test thresholds (finding 5.4): two-sided 5% under the bootstrap null.
@@ -222,34 +222,9 @@ async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
  * recent cached date to skip symbols that already have today's data, minimizing
  * Schwab calls. Caller should invoke this before computing regime.
  */
-export async function ensureUniverseCached(): Promise<{ fetched: string[]; cached: string[]; failed: string[] }> {
-  // Current = holds the last completed session's bar. Today's daily bar does
-  // not exist until the close, so requiring it re-fetched the whole universe
-  // on every load during the session and tripped the 100/min budget.
-  const expected = lastCompletedSession(Date.now());
-  const needFetch: string[] = [];
-  const stillCached: string[] = [];
-  for (const sym of REGIME_UNIVERSE) {
-    const latest = storage.getLatestBarDate(sym);
-    if (latest && latest >= expected) {
-      stillCached.push(sym);
-    } else {
-      needFetch.push(sym);
-    }
-  }
-
-  const failed: string[] = [];
-  // Batches of 6 parallel fetches to stay inside the Schwab rate budget.
-  const BATCH = 6;
-  for (let i = 0; i < needFetch.length; i += BATCH) {
-    const slice = needFetch.slice(i, i + BATCH);
-    await Promise.all(slice.map(async (sym) => {
-      const rows = await fetchSymbol2Y(sym);
-      if (rows.length < 30) { failed.push(sym); return; }
-      storage.upsertDailyBars(sym, rows);
-    }));
-  }
-  return { fetched: needFetch.filter((s) => !failed.includes(s)), cached: stillCached, failed };
+export async function ensureUniverseCached(): Promise<{ fetched: string[]; cached: string[]; failed: string[]; behind: string[]; expected: string }> {
+  // Completed sessions only, and current only once a post-close fetch returned the session (dailyBarsSettled.ts).
+  return refreshSettledDailyBars(REGIME_UNIVERSE, fetchSymbol2Y, storage, Date.now());
 }
 
 // ----- Ratio + stats -----
@@ -936,15 +911,16 @@ export function applyRegimeFdr(readings: AxisReading[]): AxisReading[] {
 
 export async function buildRegimeSnapshot(window: WindowKey = "w4"): Promise<RegimeResponse> {
   const warnings: string[] = [];
-  const { failed } = await ensureUniverseCached().catch((e) => {
+  const refresh = await ensureUniverseCached().catch((e) => {
     warnings.push(`Universe refresh error: ${e?.message ?? e}`);
-    return { fetched: [], cached: [], failed: REGIME_UNIVERSE };
+    return { fetched: [], cached: [], failed: REGIME_UNIVERSE, behind: [] as string[], expected: settledThrough(Date.now()) };
   });
-  if (failed.length) {
-    const none = failed.filter((s) => !storage.getLatestBarDate(s));
-    const old = failed.filter((s) => !!storage.getLatestBarDate(s));
+  const notCurrent = [...refresh.failed, ...refresh.behind];
+  if (notCurrent.length) {
+    const none = notCurrent.filter((s) => !storage.getLatestBarDate(s));
+    const old = notCurrent.filter((s) => { const d = storage.getLatestBarDate(s); return !!d && d < refresh.expected; });
     if (none.length) warnings.push(`Symbols with no data: ${none.join(", ")}`);
-    if (old.length) warnings.push(`Not refreshed this read (older stored bars used, expected ${lastCompletedSession(Date.now())}): ${old.map((s) => `${s} ${storage.getLatestBarDate(s)}`).join(", ")}`);
+    if (old.length) warnings.push(`Not refreshed this read (older stored bars used, expected ${refresh.expected}): ${old.map((s) => `${s} ${storage.getLatestBarDate(s)}`).join(", ")}`);
   }
 
   // Load all cached data into memory

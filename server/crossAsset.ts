@@ -3,6 +3,7 @@
 // compute % changes 1d/1w/1m + rolling 20d correlations vs SPY, classify regime.
 
 import { sqlite } from "./storage";
+import { settledThrough } from "./dailyBarsSettled";
 
 type Sym = "SPY" | "TLT" | "HYG" | "LQD" | "UUP" | "GLD" | "TIP";
 
@@ -10,7 +11,7 @@ const TICKERS: Sym[] = ["SPY", "TLT", "HYG", "LQD", "UUP", "GLD", "TIP"];
 
 interface DailyBar { date: string; close: number; }
 
-function loadBars(symbol: string, n: number): DailyBar[] {
+function loadStoredBars(symbol: string, n: number): DailyBar[] {
   const rows = sqlite.prepare(
     `SELECT date, close FROM daily_bars WHERE symbol = ? ORDER BY date DESC LIMIT ?`
   ).all(symbol, n) as DailyBar[];
@@ -67,6 +68,10 @@ function pearson(a: number[], b: number[]): number | null {
 
 export interface CrossAssetTickerRow {
   symbol: string;
+  /** New York date of the newest stored bar: every figure in the row is as of that close. */
+  barDate: string | null;
+  /** The newest bar is older than the last completed session. */
+  stale: boolean;
   last: number | null;
   d1Pct: number | null;
   w1Pct: number | null;
@@ -78,6 +83,10 @@ export interface CrossAssetTickerRow {
 
 export interface CrossAssetMatrix {
   asOf: number;
+  /** The last completed session: the date every row's bars should reach. */
+  expectedBarDate: string;
+  /** Symbols whose bars stop before it. */
+  staleSymbols: string[];
   rows: CrossAssetTickerRow[];
   regimeVerdict: {
     label: string;
@@ -90,7 +99,10 @@ export interface CrossAssetMatrix {
 const CORR_TIGHT = 0.5;
 const CORR_LOOSE = 0.2;
 
-export function buildCrossAssetMatrix(): CrossAssetMatrix {
+export function buildCrossAssetMatrix(nowMs: number = Date.now()): CrossAssetMatrix {
+  const expectedBarDate = settledThrough(nowMs);
+  // Completed sessions only: a bar for the session still open is a mid-session price, not a close.
+  const loadBars = (symbol: string, n: number) => loadStoredBars(symbol, n + 1).filter((b) => b.date <= expectedBarDate).slice(-n);
   const spyBars = loadBars("SPY", 90);
   const spyRets = logReturnsByDate(spyBars);
   const rows: CrossAssetTickerRow[] = [];
@@ -98,6 +110,7 @@ export function buildCrossAssetMatrix(): CrossAssetMatrix {
   for (const sym of TICKERS) {
     const bars = loadBars(sym, 90);
     const last = bars[bars.length - 1]?.close ?? null;
+    const barDate = bars[bars.length - 1]?.date ?? null;
     const d1 = pctChange(bars, 1);
     const w1 = pctChange(bars, 5);
     const m1 = pctChange(bars, 21);
@@ -117,7 +130,7 @@ export function buildCrossAssetMatrix(): CrossAssetMatrix {
       }
     }
     rows.push({
-      symbol: sym, last,
+      symbol: sym, barDate, stale: barDate != null && barDate < expectedBarDate, last,
       d1Pct: d1, w1Pct: w1, m1Pct: m1,
       corr20d: corr20, corr60dRolling: corr60,
       corrRegime: regime,
@@ -176,11 +189,26 @@ export function buildCrossAssetMatrix(): CrossAssetMatrix {
     notes.push(`no day change for ${missingLegs.join(", ")}: the cross-asset pattern needs SPY, TLT, HYG and UUP, so none is named`);
   }
 
-  if (gldD > 0.5 && tipD > 0.2) notes.push("gold + TIPS bid → inflation re-pricing input");
-  if (Math.abs(dxyD) > 0.5) notes.push(`dollar moved ${dxyD > 0 ? "+" : ""}${dxyD.toFixed(2)}% — global liquidity input`);
+  // Bars that stop before the last completed session describe an older day. A pattern named from them
+  // would be read as today's, and legs on different dates are not one day's pattern at all.
+  const staleSymbols = rows.filter((r) => r.stale).map((r) => r.symbol);
+  const staleLegs = ["SPY", "TLT", "HYG", "UUP"].filter((s) => map[s]?.stale);
+  if (missingLegs.length === 0 && staleLegs.length > 0) {
+    risk = "mixed";
+    label = "not read: bars not current";
+    confidence = "low";
+    notes.length = 0;
+    notes.push(`bars for ${staleLegs.map((s) => `${s} stop at ${map[s].barDate}`).join(", ")}; the last completed session is ${expectedBarDate}, so no pattern is named`);
+  }
+  const patternRead = missingLegs.length === 0 && staleLegs.length === 0;
+
+  if (patternRead && !map.GLD?.stale && !map.TIP?.stale && gldD > 0.5 && tipD > 0.2) notes.push("gold + TIPS bid → inflation re-pricing input");
+  if (patternRead && Math.abs(dxyD) > 0.5) notes.push(`dollar moved ${dxyD > 0 ? "+" : ""}${dxyD.toFixed(2)}% — global liquidity input`);
 
   return {
-    asOf: Date.now(),
+    asOf: nowMs,
+    expectedBarDate,
+    staleSymbols,
     rows,
     regimeVerdict: { label, confidence, notes, risk },
   };

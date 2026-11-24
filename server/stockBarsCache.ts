@@ -6,7 +6,7 @@
 // Target universe = whale watchlist + priority symbols from flowConfig.
 
 import { storage } from "./storage";
-import { lastCompletedSession } from "./breadthMath";
+import { refreshSettledDailyBars } from "./dailyBarsSettled";
 
 interface DailyRow { date: string; close: number; t: number }
 
@@ -78,49 +78,19 @@ export interface StockBarsBackfillResult {
   fetched: string[];
   cached: string[];
   failed: string[];
+  /** Answered without the last completed session: older bars kept, tried again shortly. */
+  behind: string[];
+  expected: string;
   ranAt: number;
 }
 
 /**
- * Populate daily_bars for the stock universe. Skips symbols already current
- * (latest bar date >= today). Uses 6-symbol parallel batches to be polite.
+ * Populate daily_bars for the stock universe with completed sessions. Skips symbols a post-close fetch
+ * already brought to the last completed session. 6-symbol parallel batches.
  */
 export async function ensureStockBarsCached(): Promise<StockBarsBackfillResult> {
-  // Current = holds the last completed session's bar (today's bar exists only after the close).
-  const expected = lastCompletedSession(Date.now());
-  const needFetch: string[] = [];
-  const stillCached: string[] = [];
-
-  for (const sym of STOCK_BARS_UNIVERSE) {
-    const latest = storage.getLatestBarDate(sym);
-    if (latest && latest >= expected) {
-      stillCached.push(sym);
-    } else {
-      needFetch.push(sym);
-    }
-  }
-
-  const failed: string[] = [];
-  const BATCH = 6;
-  for (let i = 0; i < needFetch.length; i += BATCH) {
-    const slice = needFetch.slice(i, i + BATCH);
-    await Promise.all(slice.map(async (sym) => {
-      try {
-        const rows = await fetchStockSymbol2Y(sym);
-        if (rows.length < 30) { failed.push(sym); return; }
-        storage.upsertDailyBars(sym, rows);
-      } catch {
-        failed.push(sym);
-      }
-    }));
-  }
-
-  return {
-    fetched: needFetch.filter((s) => !failed.includes(s)),
-    cached: stillCached,
-    failed,
-    ranAt: Date.now(),
-  };
+  const r = await refreshSettledDailyBars(STOCK_BARS_UNIVERSE, fetchStockSymbol2Y, storage, Date.now());
+  return { ...r, ranAt: Date.now() };
 }
 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
@@ -140,15 +110,16 @@ export function startStockBarsRefresher(): void {
   const tick = async () => {
     try {
       const r = await ensureStockBarsCached();
-      if (r.fetched.length > 0 || r.failed.length > 0) {
+      if (r.fetched.length > 0 || r.failed.length > 0 || r.behind.length > 0) {
         console.log(
-          `[stockBars] refresh — fetched=${r.fetched.length} cached=${r.cached.length} failed=${r.failed.length}` +
-          (r.failed.length > 0 ? ` (failed: ${r.failed.join(",")})` : ""),
+          `[stockBars] refresh, expected ${r.expected}: fetched=${r.fetched.length} cached=${r.cached.length} failed=${r.failed.length} behind=${r.behind.length}` +
+          (r.failed.length > 0 ? ` (failed: ${r.failed.join(",")})` : "") +
+          (r.behind.length > 0 ? ` (no ${r.expected} bar yet: ${r.behind.join(",")})` : ""),
         );
       }
       // A failed refresh (Schwab disconnected or throttled) retries in 10 min
       // instead of waiting the 6 h cadence with stale bars.
-      if (r.failed.length > 0) setTimeout(() => void tick(), STOCK_BARS_RETRY_MS).unref?.();
+      if (r.failed.length > 0 || r.behind.length > 0) setTimeout(() => void tick(), STOCK_BARS_RETRY_MS).unref?.();
     } catch (e: any) {
       console.warn(`[stockBars] tick failed: ${e?.message ?? e}`);
     }

@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
+import { closesThroughLine, shortDate } from "@shared/barDates";
 
 interface CrossAssetTickerRow {
   symbol: string;
+  barDate?: string | null;
+  stale?: boolean;
   last: number | null;
   d1Pct: number | null;
   w1Pct: number | null;
@@ -14,6 +17,7 @@ interface CrossAssetTickerRow {
 
 interface CrossAssetMatrix {
   asOf: number;
+  expectedBarDate?: string;
   rows: CrossAssetTickerRow[];
   regimeVerdict: {
     label: string;
@@ -83,12 +87,13 @@ export default function CrossAssetPanel() {
 
           {/* table */}
           <div className="rounded border border-border p-3 hscroll-contain">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">cross-asset matrix</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">cross-asset matrix</div>
+            <div className="text-xs text-muted-foreground mb-2" data-testid="text-cross-asset-asof">{closesThroughLine(d.expectedBarDate, d.rows)}</div>
             <table className="w-full text-xs">
               <thead className="text-muted-foreground">
                 <tr className="border-b border-border">
                   <th className="text-left py-1 pr-2">ticker</th>
-                  <th className="text-right py-1 pr-2">last</th>
+                  <th className="text-right py-1 pr-2">close</th>
                   <th className="text-right py-1 pr-2">1d</th>
                   <th className="text-right py-1 pr-2">1w</th>
                   <th className="text-right py-1 pr-2">1m</th>
@@ -100,7 +105,10 @@ export default function CrossAssetPanel() {
               <tbody>
                 {d.rows.map(r => (
                   <tr key={r.symbol} className="border-b border-border/40" data-testid={`row-cross-${r.symbol}`}>
-                    <td className="py-1 pr-2 font-mono font-semibold">{r.symbol}</td>
+                    <td className="py-1 pr-2 font-mono font-semibold">
+                      {r.symbol}
+                      {r.stale && r.barDate && <span className="ml-1 font-normal text-amber-500" title="These bars stop before the last completed session.">{shortDate(r.barDate)}</span>}
+                    </td>
                     <td className="py-1 pr-2 text-right font-mono">{r.last?.toFixed(2) ?? "—"}</td>
                     <td className={`py-1 pr-2 text-right font-mono ${cellColor(r.d1Pct)}`}>{pct(r.d1Pct)}</td>
                     <td className={`py-1 pr-2 text-right font-mono ${cellColor(r.w1Pct)}`}>{pct(r.w1Pct)}</td>

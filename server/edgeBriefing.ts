@@ -11,6 +11,7 @@
 
 import type express from "express";
 import { internalJson, isInternalRoute } from "./internalApi";
+import { shortDate } from "../shared/barDates";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,11 @@ export interface BriefingRegime {
 }
 
 export interface BriefingCrossAsset {
-  rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string }[];
+  rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string;
+    /** New York date of the close the row is as of; `stale` when that is before the last completed session. */
+    barDate?: string | null; stale?: boolean }[];
+  /** The last completed session: the close every row should be as of. */
+  expectedBarDate?: string | null;
   vix: number | null;
   vixChangePct: number | null;
 }
@@ -214,7 +219,10 @@ function buildCrossAsset(cross: any, quotes: any): BriefingCrossAsset | null {
       m1Pct: safe(r.last) != null && r.last > 0 ? safe(r.m1Pct) : null,
       corr20d: safe(r.corr20d),
       corrRegime: String(r.corrRegime ?? "n/a"),
+      barDate: typeof r.barDate === "string" ? r.barDate : null,
+      stale: r.stale === true,
     })),
+    expectedBarDate: typeof cross.expectedBarDate === "string" ? cross.expectedBarDate : null,
     vix: safe(quotes?.vix?.price),
     vixChangePct: safe(quotes?.vix?.changePct),
   };
@@ -307,7 +315,10 @@ export function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictC
 
   // Cross-asset SPY w1
   const spyRow = b.crossAsset?.rows.find((r) => r.symbol === "SPY");
-  const spy = spyRow && spyRow.w1Pct != null && Number.isFinite(spyRow.w1Pct) ? { ...spyRow, w1Pct: spyRow.w1Pct } : null;
+  const spyRead = spyRow && spyRow.w1Pct != null && Number.isFinite(spyRow.w1Pct) ? { ...spyRow, w1Pct: spyRow.w1Pct } : null;
+  // Bars that stop before the last completed session measure an older week: not counted, and said so.
+  const spyStale = !!spyRead && spyRead.stale === true;
+  const spy = spyStale ? null : spyRead;
   if (spy) {
     signals++;
     if (spy.w1Pct > 1) bull++;
@@ -379,7 +390,8 @@ export function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictC
   const drivers: string[] = [];
   if (b.regime?.headline) drivers.push(b.regime.headline.toLowerCase());
   if (b.crossAsset?.vix != null) drivers.push(`vix ${b.crossAsset.vix.toFixed(1)}`);
-  if (spy) drivers.push(`spy w1 ${spy.w1Pct >= 0 ? "+" : ""}${spy.w1Pct.toFixed(2)}%`);
+  if (spy) drivers.push(`spy 5 sessions${spy.barDate ? ` to ${shortDate(spy.barDate)}` : ""} ${spy.w1Pct >= 0 ? "+" : ""}${spy.w1Pct.toFixed(2)}%`);
+  const notCounted = spyStale && spyRead ? ` · not counted: spy weekly change (bars stop at ${shortDate(spyRead.barDate)})` : "";
   if (b.playbook && pbUsable) {
     const dom = b.playbook.paths.base.probability >= b.playbook.paths.bull.probability && b.playbook.paths.base.probability >= b.playbook.paths.bear.probability
       ? "base"
@@ -389,7 +401,7 @@ export function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictC
 
   const oneLiner = signals < 2
     ? `insufficient data · ${signals} of 5 inputs available · no read until Schwab data arrives`
-    : `${verdict} · ${signals} of 5 inputs · ${drivers.slice(0, 3).join(" · ")}`;
+    : `${verdict} · ${signals} of 5 inputs · ${drivers.slice(0, 3).join(" · ")}${notCounted}`;
   return { verdict, verdictColor, confidence, oneLiner };
 }
 
