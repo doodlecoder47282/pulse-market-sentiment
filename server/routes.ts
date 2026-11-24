@@ -5365,7 +5365,7 @@ Describe the above in the JSON schema specified in the system prompt: what the n
     console.warn(`[ml-service] autostart failed: ${e?.message ?? e}`);
   }
 
-  // Kick off stock daily-bars refresher (6h cadence). Extends daily_bars beyond
+  // Kick off stock daily-bars refresher (15 min passes; a pass with nothing due makes no request). Extends daily_bars beyond
   // the regime ETF universe so the closed-loop grader can score whale alerts on
   // individual names (TSLA/NVDA/AAPL/META/GOOGL/etc.).
   try {

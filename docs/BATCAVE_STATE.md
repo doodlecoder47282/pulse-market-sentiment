@@ -3291,3 +3291,29 @@ every name was excluded for being below its 20- and 50-day averages; it now says
 how many are down, and why none is listed (shared/bounceList.ts), or that nothing was read. NOT changed: the
 ranking is by how unusual the day's drop is for that stock (favours quiet names), and the list still skips
 the index and ETFs. Tests: tests/quant/bounce-liquidity.test.ts (3).
+
+**Stored daily bars are completed sessions (2026-11-24, fix plan package 1, part 1).** Two defects in both
+bar refreshers (`regime.ts`, `stockBarsCache.ts`): a fetch made while the session was open stored that day's
+bar at the mid-session price, and from the next day the store "had" the date so the price stayed as the
+close; and a fetch that answered without the newest session counted as done until the next 6-hour pass.
+Now `server/dailyBarsSettled.ts`: a bar is stored only for a session closed at least 20 minutes
+(`settledThrough`), a symbol is current only when a post-close fetch returned that session (table
+`daily_bars_mark`), an answer without it is "behind" (kept, reported, retried after 20 minutes), and rows
+dated after the settled session are removed on store. Schwab's daily history without an end time stops at
+the previous business day's close, so from the close to midnight ET the finished session was missing (seen
+live 2026-11-23 evening: newest bar still Friday); the two bar stores now send a fixed end time on that
+evening (`settledEndDateMs`). Other daily-history callers are unchanged and still lag on that evening. The first run after deploy re-reads every symbol once
+(no marks yet), which repairs frozen partial bars. Cross-asset rows carry `barDate` and `stale`; the matrix
+names no pattern when SPY, TLT, HYG or UUP stop before the last completed session ("not read: bars not
+current") and reads completed sessions only. The Edge Lab briefing does not count SPY's weekly change from
+stale bars and says so; both tables say "Closes through <date>" and the column is "close", not "last".
+After review: settled rows are judged at the time the vendor produced the answer (a cached mid-session copy
+served after the close is "behind", an old copy after a failed refresh is a failed read), a lagging answer
+does not delete stored sessions or move the mark back, retries skip the request cache, breadth uses the
+same settled session, the Edge Lab summaries treat every "not read" label as not read, and UUP and TIP
+(cross-asset legs nothing fetched) are in the stock bar list. Second review: overlapping refreshes share
+one request per symbol, only a second ask for the same session skips the request cache, the stock bar pass
+runs every 15 minutes (no request when nothing is due) so the evening close is not up to 6 hours late, and
+the Edge Lab "not read" text gives the right reason for bars that stop early.
+Not changed: the five-vote verdict itself (package 3), the Models tab's starting price (next part).
+Tests: `tests/quant/settled-bars.test.ts`.
