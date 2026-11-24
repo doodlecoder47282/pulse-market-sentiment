@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { closesThroughLine, shortDate } from "@shared/barDates";
 import { ChevronDown, ChevronUp, RefreshCw, ExternalLink, AlertCircle } from "lucide-react";
 
 type VerdictColor = "emerald" | "rose" | "amber" | "neutral";
@@ -34,16 +35,17 @@ interface Briefing {
     notes: string[];
   } | null;
   crossAsset: {
-    rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string }[];
+    rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string; barDate?: string | null; stale?: boolean }[];
+    expectedBarDate?: string | null;
     vix: number | null;
     vixChangePct: number | null;
   } | null;
   playbook: {
     marketSession: string;
     paths: {
-      bull: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
-      base: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
-      bear: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] };
+      bull: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
+      base: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
+      bear: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean };
     };
     levels: { support: number | null; resistance: number | null };
   } | null;
@@ -106,22 +108,26 @@ function LevelChip({ label, value, hint }: { label: string; value: number | null
   );
 }
 
-function PathCard({ kind, p }: { kind: "bull" | "base" | "bear"; p: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[] } }) {
+function PathCard({ kind, p }: { kind: "bull" | "base" | "bear"; p: { label: string; probability: number; trigger: string; targetLow: number; targetHigh: number; oneLiner: string; drivers: string[]; outOfReach?: boolean } }) {
   const color = kind === "bull" ? "border-emerald-500/30 bg-emerald-500/5" : kind === "bear" ? "border-rose-500/30 bg-rose-500/5" : "border-amber-500/30 bg-amber-500/5";
   const accent = kind === "bull" ? "text-emerald-400" : kind === "bear" ? "text-rose-400" : "text-amber-400";
   return (
     <div className={`rounded-md border ${color} p-3 space-y-2`}>
       <div className="flex items-center justify-between">
         <span className={`text-[11px] uppercase tracking-wider font-bold ${accent}`}>{kind} · {p.label}</span>
-        <span className="font-mono font-bold">{fmtProb(p.probability)}</span>
+        <span className="font-mono font-bold">{p.outOfReach ? "not a one-day path" : fmtProb(p.probability)}</span>
       </div>
       <div className="text-[11px] text-muted-foreground leading-snug">{p.oneLiner}</div>
-      <div className="text-[11px]">
-        <span className="text-muted-foreground">trigger:</span> <span className="font-mono">{p.trigger}</span>
-      </div>
-      <div className="text-[11px]">
-        <span className="text-muted-foreground">target:</span> <span className="font-mono">{p.targetLow.toFixed(2)} – {p.targetHigh.toFixed(2)}</span>
-      </div>
+      {!p.outOfReach && (
+        <>
+          <div className="text-[11px]">
+            <span className="text-muted-foreground">trigger:</span> <span className="font-mono">{p.trigger}</span>
+          </div>
+          <div className="text-[11px]">
+            <span className="text-muted-foreground">target:</span> <span className="font-mono">{p.targetLow.toFixed(2)} – {p.targetHigh.toFixed(2)}</span>
+          </div>
+        </>
+      )}
       {p.drivers.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {p.drivers.map((d, i) => (
@@ -303,12 +309,13 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                       <span className="text-[11px] font-mono">vix {d.crossAsset.vix.toFixed(2)}</span>
                     )}
                   </div>
+                  <div className="text-xs text-muted-foreground leading-snug" data-testid="text-briefing-cross-asof">{closesThroughLine(d.crossAsset.expectedBarDate, d.crossAsset.rows)}</div>
                   <div className="hscroll-contain">
                     <table className="w-full text-[11px]">
                       <thead>
                         <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground border-b border-border/30">
                           <th className="pb-1 pr-2">sym</th>
-                          <th className="pb-1 pr-2 text-right">last</th>
+                          <th className="pb-1 pr-2 text-right">close</th>
                           <th className="pb-1 pr-2 text-right">1d</th>
                           <th className="pb-1 pr-2 text-right">1w</th>
                           <th className="pb-1 text-right">1m</th>
@@ -319,7 +326,10 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                           const lastUsable = r.last != null && Number.isFinite(r.last) && r.last > 0;
                           return (
                             <tr key={r.symbol} className="border-b border-border/10 last:border-b-0">
-                              <td className="py-1 pr-2 font-semibold">{r.symbol}</td>
+                              <td className="py-1 pr-2 font-semibold">
+                                {r.symbol}
+                                {r.stale && r.barDate && <span className="ml-1 font-normal text-amber-500" title="These bars stop before the last completed session.">{shortDate(r.barDate)}</span>}
+                              </td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? (r.last as number).toFixed(2) : "—"}</td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.d1Pct} /> : "—"}</td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.w1Pct} /> : "—"}</td>
@@ -338,13 +348,21 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {d.playbook && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">playbook · 3 paths · {d.playbook.marketSession}</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">playbook · one day · {d.playbook.marketSession} · weights are rule tilts, not measured odds</div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <PathCard kind="bull" p={d.playbook.paths.bull} />
                   <PathCard kind="base" p={d.playbook.paths.base} />
                   <PathCard kind="bear" p={d.playbook.paths.bear} />
                 </div>
+                {(() => {
+                  const off = [d.playbook.paths.bull, d.playbook.paths.bear].filter((p) => p.outOfReach).reduce((n, p) => n + p.probability, 0);
+                  return off > 0 ? (
+                    <div className="text-[11px] text-muted-foreground" data-testid="playbook-unassigned">
+                      {Math.round(off * 100)}% of the rule weight sits on a path that is not drawn (its wall is out of one day's range), so the weights shown do not add to 100%.
+                    </div>
+                  ) : null;
+                })()}
               </div>
             )}
 

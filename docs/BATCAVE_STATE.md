@@ -3256,3 +3256,70 @@ starts with such a phrase is kept. The News tab's top line and explainer said "M
 "Filter: SPX-relevant..."; no such filter exists (160 of 200 stories were topic OTHER, with advice columns and
 sports among them). They now say what the feed is (tagged by topic, not filtered); CFTC is no longer listed as a source read
 for headlines (its feed is off). Not done: hiding OTHER by default (owner's choice).
+
+**Daily playbook: a wall out of one day's range is not a one-day path (2026-11-22).** Reported by the owner
+from the Edge Lab on a phone: SPY 697.48, "BULL · SQUEEZE HIGHER, 19% wt, target 775.00 - 788.76". The
+playbook (server/dailyPlaybook.ts) sizes everything for ONE session (its sigma is a one-day move from VIX,
+13.76 here) but ties its up and down paths to the call wall and put wall, which come from gamma across every
+expiry read and can sit anywhere. After the month's fall the call wall was 77.5 points above the price, 5.6
+one-day moves; the put wall 22.5 below, 1.6. The up path was drawn anyway, with a target and a weight. Now
+(shared/playbookReach.ts): a wall more than 2 one-day moves from the price is not a path. The card says how
+far the wall is in points and one-day moves and why no path is drawn from it; no weight, trigger or target is
+shown for it. Its weight is NOT moved to another path (a first version did, which made the middle path read
+"100% wt" when both walls were far): the rule weights stay as set and the wing's share is simply not
+assigned. The Daily Playbook chart draws no band, mid line or trigger line for it and no health pill; the
+Edge Lab verdict takes no vote from the playbook while a wing is out of range (the comparison would be decided
+by how far a wall is); the headline names the heaviest path that is drawn; the middle path's condition no
+longer speaks of a break of the far wall; the email follows. The Edge Lab header now says the
+card is for one day and that the weights are rule tilts, not measured odds (they start at 30/40/30 and are
+nudged by gamma sign, VIX curve, composite score and price against the flip; nothing has graded them).
+Also: the "daily model" target was dated on the calendar day ("SUN NOV 22"); on a weekend or holiday it is now the next
+session (server/horizonDates.ts). Known gap: on a trading day outside regular hours the pricing already uses
+the following session's expiry while the label says today. NOT changed, still open on this card: the
+remaining instruction-style wording ("Targets", "trigger", "cascading sells", "last line", BULL/BEAR), and
+whether the walls for a one-day card should come from near expiries only. Tests:
+tests/quant/playbook-reach.test.ts (5), using the reported numbers.
+
+**Regime bounce list: the liquidity cut is real now (2026-11-23).** The owner asked why the list picks thin
+stocks. server/underperformers.ts documented "30d avg dollar volume > $200M", but the list's bars carried no
+volume: the figure was price x 1,000,000 and the cut was never applied. Now server/sector-web.ts keeps each
+bar's volume, `avgDollarVolume` is the mean of close x volume over the last 30 sessions (unknown below 20
+sessions with volume), and the bounce list drops names under $200M a day or with no volume read, counting
+both in the note. The table shows the figure. While the session is open today's partial bar is left out of the
+average. The empty state used to say "all leaders holding up" even when
+every name was excluded for being below its 20- and 50-day averages; it now says how many names were read,
+how many are down, and why none is listed (shared/bounceList.ts), or that nothing was read. NOT changed: the
+ranking is by how unusual the day's drop is for that stock (favours quiet names), and the list still skips
+the index and ETFs. Tests: tests/quant/bounce-liquidity.test.ts (3).
+
+**Stored daily bars are completed sessions (2026-11-24, fix plan package 1, part 1).** Two defects in both
+bar refreshers (`regime.ts`, `stockBarsCache.ts`): a fetch made while the session was open stored that day's
+bar at the mid-session price, and from the next day the store "had" the date so the price stayed as the
+close; and a fetch that answered without the newest session counted as done until the next 6-hour pass.
+Now `server/dailyBarsSettled.ts`: a bar is stored only for a session closed at least 20 minutes
+(`settledThrough`), a symbol is current only when a post-close fetch returned that session (table
+`daily_bars_mark`), an answer without it is "behind" (kept, reported, retried after 20 minutes), and rows
+dated after the settled session are removed on store. Schwab's daily history without an end time stops at
+the previous business day's close, so from the close to midnight ET the finished session was missing (seen
+live 2026-11-23 evening: newest bar still Friday); the two bar stores now send a fixed end time on that
+evening (`settledEndDateMs`). Other daily-history callers are unchanged and still lag on that evening. The first run after deploy re-reads every symbol once
+(no marks yet), which repairs frozen partial bars. Cross-asset rows carry `barDate` and `stale`; the matrix
+names no pattern when SPY, TLT, HYG or UUP stop before the last completed session ("not read: bars not
+current") and reads completed sessions only. The Edge Lab briefing does not count SPY's weekly change from
+stale bars and says so; both tables say "Closes through <date>" and the column is "close", not "last".
+After review: settled rows are judged at the time the vendor produced the answer (a cached mid-session copy
+served after the close is "behind", an old copy after a failed refresh is a failed read), a lagging answer
+does not delete stored sessions or move the mark back, retries skip the request cache, breadth uses the
+same settled session, the Edge Lab summaries treat every "not read" label as not read, and UUP and TIP
+(cross-asset legs nothing fetched) are in the stock bar list. Second review: overlapping refreshes share
+one request per symbol, only a second ask for the same session skips the request cache, the stock bar pass
+runs every 15 minutes (no request when nothing is due) so the evening close is not up to 6 hours late, and
+the Edge Lab "not read" text gives the right reason for bars that stop early.
+Not changed: the five-vote verdict itself (package 3), the Models tab's starting price (next part).
+Tests: `tests/quant/settled-bars.test.ts`.
+
+**Why a symbol's bars are not current (2026-11-24).** Seen live after the settled-bars deploy: SPY, XLE and
+XLC stayed at 2026-11-20 through two regime reads while UUP corrected on its retry, and the warning gave no
+cause. `refreshSettledDailyBars` now returns `why` per symbol (old copy served and the vendor layer's reason,
+the answer's own time and newest bar, or the wait until the next ask) and the Regime warning prints it.
+Diagnostic only: no change to what is stored.

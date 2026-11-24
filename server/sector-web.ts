@@ -55,7 +55,7 @@ export function allSectorTickers(): string[] {
   return Array.from(set);
 }
 
-type DailyBar = { t: number; close: number };
+type DailyBar = { t: number; close: number; volume?: number };
 
 /** Pull ~90 days of daily closes for one symbol via Schwab. Logs failures (don't silent-swallow). */
 async function fetchDaily(symbol: string): Promise<DailyBar[]> {
@@ -66,7 +66,7 @@ async function fetchDaily(symbol: string): Promise<DailyBar[]> {
     const resp = await getPriceHistory(schwabSym, "month", 3, "daily", 1);
     const bars = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))
-      .map((c) => ({ t: Math.floor(c.datetime / 1000), close: c.close }));
+      .map((c) => ({ t: Math.floor(c.datetime / 1000), close: c.close, volume: typeof c.volume === "number" && isFinite(c.volume) ? c.volume : undefined }));
     if (bars.length === 0) {
       console.warn(`[sector-web] no bars for ${symbol} (schwab returned empty candles)`);
     }

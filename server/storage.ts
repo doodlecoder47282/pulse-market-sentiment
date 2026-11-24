@@ -47,6 +47,12 @@ sqlite.exec(`
     PRIMARY KEY (symbol, date)
   );
   CREATE INDEX IF NOT EXISTS idx_daily_bars_symbol_date ON daily_bars(symbol, date DESC);
+  -- Per symbol: the newest session a fetch made after that session's close returned, and when it was asked.
+  CREATE TABLE IF NOT EXISTS daily_bars_mark (
+    symbol TEXT PRIMARY KEY,
+    through TEXT NOT NULL,
+    checked_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS schwab_tokens (
     id INTEGER PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -390,6 +396,27 @@ export class DatabaseStorage implements IStorage {
        LIMIT ?`,
     ).all(symbol, limit) as { date: string; close: number; t: number }[];
     return rows.reverse();
+  }
+
+  getBarsMark(symbol: string): { through: string; checkedAt: number } | null {
+    const row = sqlite.prepare(
+      `SELECT through, checked_at FROM daily_bars_mark WHERE symbol = ?`,
+    ).get(symbol) as { through: string; checked_at: number } | undefined;
+    return row ? { through: row.through, checkedAt: row.checked_at } : null;
+  }
+
+  /** Completed-session rows only (dailyBarsSettled.ts): rows dated after `removeAfter` are removed, so a
+   *  partial bar stored while a session was open does not stay as that day's close. */
+  storeSettledDailyBars(symbol: string, rows: { date: string; close: number; t: number }[], through: string, checkedAt: number, removeAfter: string): void {
+    const tx = sqlite.transaction(() => {
+      sqlite.prepare(`DELETE FROM daily_bars WHERE symbol = ? AND date > ?`).run(symbol, removeAfter);
+      this.upsertDailyBars(symbol, rows);
+      sqlite.prepare(
+        `INSERT INTO daily_bars_mark (symbol, through, checked_at) VALUES (?, ?, ?)
+         ON CONFLICT(symbol) DO UPDATE SET through = excluded.through, checked_at = excluded.checked_at`,
+      ).run(symbol, through, checkedAt);
+    });
+    tx();
   }
 
   getLatestBarDate(symbol: string): string | null {

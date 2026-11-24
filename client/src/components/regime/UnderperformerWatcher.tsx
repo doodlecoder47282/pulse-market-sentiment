@@ -1,3 +1,4 @@
+import { emptyListLine, dollarsPerDay, type BounceCounts } from "@shared/bounceList";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -23,7 +24,7 @@ type Row = {
   distSma20Pct: number;
   distSma50Pct: number;
   rsi2: number | null;
-  advUsd: number;
+  advUsd: number | null;
   bounceRR: number | null;
   setup: "pullback-in-uptrend" | "stretched-below" | "falling-knife";
 };
@@ -32,6 +33,9 @@ type Resp = {
   asOf: string;
   rows: Row[];
   notes: string;
+  leftOut?: { thin: number; noVolume: number };
+  fallingKnives?: number;
+  counts?: BounceCounts;
 };
 
 function setupColor(s: Row["setup"]) {
@@ -117,7 +121,7 @@ export default function UnderperformerWatcher() {
 
         {data && data.rows.length === 0 && (
           <div className="rounded border border-border/40 bg-black/20 p-4 text-center text-[11px] text-muted-foreground">
-            no qualifying bounce candidates · all leaders holding up
+            {data.counts ? emptyListLine(data.counts, mode) : "Nothing to list."}
           </div>
         )}
 
@@ -136,6 +140,7 @@ export default function UnderperformerWatcher() {
                   <th className="px-2 py-1.5 text-right" title="trend filter">vs 50d</th>
                   <th className="px-2 py-1.5 text-right" title="Wilder RSI 2-period">RSI(2)</th>
                   <th className="px-2 py-1.5 text-right" title="reclaim 5d / break 20d">R:R</th>
+                  <th className="px-2 py-1.5 text-right" title="average dollars traded a day, last 30 sessions">$/day</th>
                   <th className="px-2 py-1.5 text-left">setup</th>
                 </tr>
               </thead>
@@ -195,6 +200,9 @@ export default function UnderperformerWatcher() {
                         "—"
                       )}
                     </td>
+                    <td className="px-2 py-1.5 text-right text-muted-foreground">
+                      {dollarsPerDay(r.advUsd)}
+                    </td>
                     <td className="px-2 py-1.5">
                       <Badge
                         variant="outline"
@@ -208,9 +216,9 @@ export default function UnderperformerWatcher() {
               </tbody>
             </table>
             <div className="mt-2 text-[11px] text-muted-foreground">
-              setups: <span className="text-green-300">pullback / uptrend</span> = price &gt; 50d SMA but below 5d (best mean-reversion candidates) ·{" "}
+              setups: <span className="text-green-300">pullback / uptrend</span> = price &gt; 50d SMA but below 5d ·{" "}
               <span className="text-amber-300">stretched</span> = down &gt;1.5σ below mean ·{" "}
-              <span className="text-red-300">falling knife</span> = below 20d AND 50d (skip in bounce mode). R:R = reclaim 5d / break 20d.
+              <span className="text-red-300">falling knife</span> = below 20d AND 50d (left out of this list; "all dumps" shows them). R:R = distance up to the 5d average divided by distance down to the 20d average. $/day = average of close × volume over the last 30 completed sessions (at least 20 needed).
             </div>
           </div>
         )}
