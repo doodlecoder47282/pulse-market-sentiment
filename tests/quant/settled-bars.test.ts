@@ -143,6 +143,22 @@ test("a lagging answer does not remove a session already stored or move the mark
   assert.equal(marks.get("HYG")!.through, "2026-11-23");
 });
 
+test("overlapping refreshes share one request per symbol, and a first ask after the close is not a retry", async () => {
+  const a = fakeStore();
+  await refreshSettledDailyBars(["XLK"], async () => ({ rows: rowsTo("2026-11-23"), asOfMs: TUE_MID }), a.store, TUE_MID);
+  let calls = 0;
+  const retries: boolean[] = [];
+  const slow = async (_s: string, retry: boolean) => {
+    calls++; retries.push(retry);
+    await new Promise((r) => setTimeout(r, 20));
+    return { rows: rowsTo("2026-11-24"), asOfMs: TUE_1625 };
+  };
+  const [x, y, z] = await Promise.all([1, 2, 3].map(() => refreshSettledDailyBars(["XLK"], slow, a.store, TUE_1625)));
+  assert.equal(calls, 1, "three screens asking at once make one request");
+  assert.deepEqual([x.fetched, y.fetched, z.fetched], [["XLK"], ["XLK"], ["XLK"]]);
+  assert.deepEqual(retries, [false], "the mark was checked for Monday, so the first ask for Tuesday uses the request cache");
+});
+
 test("both refreshers store through the completed-session path only", () => {
   for (const f of ["server/regime.ts", "server/stockBarsCache.ts"]) {
     const src = readFileSync(f, "utf8");
@@ -153,11 +169,13 @@ test("both refreshers store through the completed-session path only", () => {
   const cross = readFileSync("server/crossAsset.ts", "utf8");
   assert.match(cross, /label = "not read: bars not current";/);
   assert.match(cross, /filter\(\(b\) => b\.date <= expectedBarDate\)/);
+  const stock = readFileSync("server/stockBarsCache.ts", "utf8");
   // Every "not read" label is treated as not read by the Edge Lab summaries, and the legs are fetched by someone.
   const brief = readFileSync("server/edgeLabBrief.ts", "utf8");
   assert.equal((brief.match(/\/\^not read\/i\.test\(verdictLabel\)/g) ?? []).length, 2);
   assert.doesNotMatch(brief, /\/missing data\/i\.test/);
-  const stock = readFileSync("server/stockBarsCache.ts", "utf8");
+  assert.match(brief, /notCurrent\s*\? "cross-asset matrix not read: the bars for at least one of SPY, TLT, HYG, UUP stop before the last settled session\."/);
+  assert.match(stock, /STOCK_BARS_TICK_MS = 15 \* 60 \* 1000/);
   assert.match(stock, /"UUP", "TIP",/);
   assert.match(readFileSync("server/breadthMath.ts", "utf8"), /const expected = settledThrough\(nowMs\);/);
 });

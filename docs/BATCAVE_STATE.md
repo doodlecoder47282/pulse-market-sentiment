@@ -3311,6 +3311,9 @@ After review: settled rows are judged at the time the vendor produced the answer
 served after the close is "behind", an old copy after a failed refresh is a failed read), a lagging answer
 does not delete stored sessions or move the mark back, retries skip the request cache, breadth uses the
 same settled session, the Edge Lab summaries treat every "not read" label as not read, and UUP and TIP
-(cross-asset legs nothing fetched) are in the stock bar list.
+(cross-asset legs nothing fetched) are in the stock bar list. Second review: overlapping refreshes share
+one request per symbol, only a second ask for the same session skips the request cache, the stock bar pass
+runs every 15 minutes (no request when nothing is due) so the evening close is not up to 6 hours late, and
+the Edge Lab "not read" text gives the right reason for bars that stop early.
 Not changed: the five-vote verdict itself (package 3), the Models tab's starting price (next part).
 Tests: `tests/quant/settled-bars.test.ts`.

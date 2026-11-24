@@ -74,6 +74,8 @@ export interface RefreshResult {
   expected: string;
 }
 
+const inFlight = new Map<string, Promise<FetchedBars>>();
+
 /** One vendor answer: the rows, when the vendor produced them, and whether it is an old copy served after a failed refresh. */
 export interface FetchedBars { rows: BarRow[]; asOfMs: number | null; stale?: boolean }
 
@@ -107,8 +109,17 @@ export async function refreshSettledDailyBars(
   for (let i = 0; i < need.length; i += batch) {
     await Promise.all(need.slice(i, i + batch).map(async (sym) => {
       const mark = store.getBarsMark(sym);
+      // A retry is a second ask for the same session: the last check already wanted `expected` and did not get it.
+      const retry = mark != null && mark.through < expected && settledThrough(mark.checkedAt) === expected;
+      // Callers that overlap (several screens asking for the regime at once) share one request per symbol.
+      const key = `${sym}|${retry ? 1 : 0}`;
+      let pending = inFlight.get(key);
+      if (!pending) {
+        pending = fetchRows(sym, retry).finally(() => inFlight.delete(key));
+        inFlight.set(key, pending);
+      }
       let got: FetchedBars;
-      try { got = await fetchRows(sym, mark != null); } catch { failed.push(sym); return; }
+      try { got = await pending; } catch { failed.push(sym); return; }
       // An old copy served because the refresh failed is a failed read, and an answer with no known time cannot be judged.
       if (got.stale || got.asOfMs == null || !Number.isFinite(got.asOfMs) || got.rows.length < MIN_ROWS) { failed.push(sym); return; }
       const asOfSession = settledThrough(Math.min(got.asOfMs, nowMs));

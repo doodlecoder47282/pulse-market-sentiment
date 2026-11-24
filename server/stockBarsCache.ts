@@ -98,47 +98,41 @@ export async function ensureStockBarsCached(): Promise<StockBarsBackfillResult> 
 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
 
-export const STOCK_BARS_RETRY_MS = 10 * 60 * 1000;
+/** A pass costs no request when every symbol is current, so it runs often: a symbol that failed or came
+ *  back without the last session is asked again on the next pass, and the evening's close is picked up
+ *  soon after it settles instead of up to six hours later. */
+export const STOCK_BARS_TICK_MS = 15 * 60 * 1000;
 let started = false;
-let retryPending = false;
+let running = false;
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
-/**
- * Start the daily refresher. Runs immediately, then once every 6 hours.
- * Idempotent: silently skips symbols that already have today's bar.
- */
+/** Start the refresher. Runs immediately, then every 15 minutes. Idempotent. */
 export function startStockBarsRefresher(): void {
   if (started) return;
   started = true;
 
   const tick = async () => {
+    if (running) return;
+    running = true;
     try {
       const r = await ensureStockBarsCached();
-      if (r.fetched.length > 0 || r.failed.length > 0 || r.behind.length > 0) {
+      if (r.fetched.length > 0 || r.failed.length > 0) {
         console.log(
           `[stockBars] refresh, expected ${r.expected}: fetched=${r.fetched.length} cached=${r.cached.length} failed=${r.failed.length} behind=${r.behind.length}` +
           (r.failed.length > 0 ? ` (failed: ${r.failed.join(",")})` : "") +
           (r.behind.length > 0 ? ` (no ${r.expected} bar yet: ${r.behind.join(",")})` : ""),
         );
       }
-      // A failed refresh (Schwab disconnected or throttled) retries in 10 min
-      // instead of waiting the 6 h cadence with stale bars.
-      // One retry pending at a time: each pass would otherwise add another chain of timers.
-      if ((r.failed.length > 0 || r.behind.length > 0) && !retryPending) {
-        retryPending = true;
-        setTimeout(() => { retryPending = false; void tick(); }, STOCK_BARS_RETRY_MS).unref?.();
-      }
     } catch (e: any) {
       console.warn(`[stockBars] tick failed: ${e?.message ?? e}`);
+    } finally {
+      running = false;
     }
   };
 
-  // Kick immediately so first-time install gets coverage right away
   void tick();
-
-  // 6h cadence — daily bars don't change intraday
-  intervalHandle = setInterval(tick, 6 * 60 * 60 * 1000);
-  console.log(`[stockBars] started: 6h cadence, ${STOCK_BARS_UNIVERSE.length} symbols`);
+  intervalHandle = setInterval(tick, STOCK_BARS_TICK_MS);
+  console.log(`[stockBars] started: 15 min passes, ${STOCK_BARS_UNIVERSE.length} symbols`);
 }
 
 export function stopStockBarsRefresher(): void {

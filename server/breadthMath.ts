@@ -139,7 +139,6 @@ export function sma(values: number[], n: number, endIdx: number): number | null 
   return s / n;
 }
 
-/** Last completed regular session at `nowMs` (ET): today after the close, else the prior trading day. */
 /** After the close, wait this long before the day's bar is taken as the session's bar. */
 export const SETTLE_MARGIN_MS = 20 * 60_000;
 /** The newest session (New York date) whose daily bar is final enough to store: closed, plus the margin. */
@@ -147,6 +146,7 @@ export function settledThrough(nowMs: number): string {
   return lastCompletedSession(nowMs - SETTLE_MARGIN_MS);
 }
 
+/** Last completed regular session at `nowMs` (ET): today after the close, else the prior trading day. */
 export function lastCompletedSession(nowMs: number): string {
   const today = etDate(nowMs);
   const close = sessionCloseMinutes(today);
