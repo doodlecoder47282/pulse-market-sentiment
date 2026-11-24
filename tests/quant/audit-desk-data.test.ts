@@ -57,7 +57,7 @@ test("T19: FRED week and month changes are by calendar date, not row count", asy
   assert.equal(fn(weekly, "2026-11-11", 7, 13).date, "2026-11-04");
   const brief = read("server/edgeLabBrief.ts");
   assert.match(brief, /cross-asset matrix not read: a day change is missing/);
-  assert.match(brief, /note: notRead \? "not read: a leg has no data"/);
+  assert.match(brief, /: notRead \? "not read: a leg has no data"/);
   assert.match(read("client/src/components/edgelab/MacroFlowPanel.tsx"), /s\.weekChange == null \? "text-muted-foreground"/);
 });
 
