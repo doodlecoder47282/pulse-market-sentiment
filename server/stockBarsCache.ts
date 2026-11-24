@@ -69,7 +69,8 @@ export async function fetchStockSymbol2Y(symbol: string, retry = false): Promise
       seen.add(r.date);
       dedup.push(r);
     }
-    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true, reason: resp.reason ?? null };
+    const noClose = resp.candles.slice(-8).filter((c) => !(c.close != null && isFinite(c.close))).map((c) => etDateString(Math.floor(c.datetime / 1000)));
+    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true, reason: resp.reason ?? null, noClose };
   } catch (e: any) {
     // Was a silent catch: a symbol could stop backfilling forever with no trace.
     console.warn(`[stockBars] daily-bar fetch failed: ${e?.message ?? e}`);

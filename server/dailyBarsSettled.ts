@@ -79,7 +79,8 @@ export interface RefreshResult {
 const inFlight = new Map<string, Promise<FetchedBars>>();
 
 /** One vendor answer: the rows, when the vendor produced them, and whether it is an old copy served after a failed refresh. */
-export interface FetchedBars { rows: BarRow[]; asOfMs: number | null; stale?: boolean; /** Why there are no rows, or why the copy is old, in the vendor layer's words. */ reason?: string | null }
+export interface FetchedBars { rows: BarRow[]; asOfMs: number | null; stale?: boolean; /** Why there are no rows, or why the copy is old, in the vendor layer's words. */ reason?: string | null;
+  /** Dates of recent candles the vendor returned without a usable close (dropped before `rows`). */ noClose?: string[] }
 
 /**
  * Bring each symbol's stored daily bars up to the last completed session.
@@ -142,7 +143,10 @@ export async function refreshSettledDailyBars(
       if (through >= expected) { fetched.push(sym); return; }
       behind.push(sym);
       const rawNewest = got.rows.reduce((m, r) => (r.date > m ? r.date : m), got.rows[0].date);
-      why[sym] = `answer from ${hhmm(got.asOfMs)} ET${retry ? " (cache skipped)" : ""} has bars to ${rawNewest}`;
+      const hasExpected = got.rows.some((r) => r.date === expected);
+      why[sym] = `answer from ${hhmm(got.asOfMs)} ET${retry ? " (cache skipped)" : ""}: completed sessions to ${newest}, newest row ${rawNewest}, ` +
+        (hasExpected ? `${expected} present but the answer predates its settle` : `no ${expected} row`) +
+        (got.noClose?.length ? `, no close on ${got.noClose.join(" ")}` : "");
     }));
   }
   return { fetched, cached, failed, behind, expected, why };
