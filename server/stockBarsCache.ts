@@ -58,7 +58,7 @@ export async function fetchStockSymbol2Y(symbol: string, retry = false): Promise
   try {
     const { getPriceHistory } = await import("./schwab");
     const resp = await getPriceHistory(symbol, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()), skipCache: retry });
-    if (!resp.candles.length) return NO_BARS;
+    if (!resp.candles.length) return { ...NO_BARS, reason: resp.reason ?? `no candles (${resp.dataState})` };
     const rows: DailyRow[] = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))
       .map((c) => ({ date: etDateString(Math.floor(c.datetime / 1000)), close: c.close, t: Math.floor(c.datetime / 1000) }));
@@ -69,7 +69,7 @@ export async function fetchStockSymbol2Y(symbol: string, retry = false): Promise
       seen.add(r.date);
       dedup.push(r);
     }
-    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true };
+    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true, reason: resp.reason ?? null };
   } catch (e: any) {
     // Was a silent catch: a symbol could stop backfilling forever with no trace.
     console.warn(`[stockBars] daily-bar fetch failed: ${e?.message ?? e}`);
@@ -84,6 +84,7 @@ export interface StockBarsBackfillResult {
   /** Answered without the last completed session: older bars kept, tried again shortly. */
   behind: string[];
   expected: string;
+  why: Record<string, string>;
   ranAt: number;
 }
 
@@ -120,7 +121,8 @@ export function startStockBarsRefresher(): void {
         console.log(
           `[stockBars] refresh, expected ${r.expected}: fetched=${r.fetched.length} cached=${r.cached.length} failed=${r.failed.length} behind=${r.behind.length}` +
           (r.failed.length > 0 ? ` (failed: ${r.failed.join(",")})` : "") +
-          (r.behind.length > 0 ? ` (no ${r.expected} bar yet: ${r.behind.join(",")})` : ""),
+          (r.behind.length > 0 ? ` (no ${r.expected} bar yet: ${r.behind.join(",")})` : "") +
+          Object.entries(r.why).slice(0, 8).map(([s, w]) => ` | ${s}: ${w}`).join(""),
         );
       }
     } catch (e: any) {

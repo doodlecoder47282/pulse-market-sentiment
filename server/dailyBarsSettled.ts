@@ -72,12 +72,14 @@ export interface RefreshResult {
   /** The request answered, but without the expected session; older bars are kept and labelled. */
   behind: string[];
   expected: string;
+  /** For each symbol in `failed` or `behind`: what the last answer was, in plain words. */
+  why: Record<string, string>;
 }
 
 const inFlight = new Map<string, Promise<FetchedBars>>();
 
 /** One vendor answer: the rows, when the vendor produced them, and whether it is an old copy served after a failed refresh. */
-export interface FetchedBars { rows: BarRow[]; asOfMs: number | null; stale?: boolean }
+export interface FetchedBars { rows: BarRow[]; asOfMs: number | null; stale?: boolean; /** Why there are no rows, or why the copy is old, in the vendor layer's words. */ reason?: string | null }
 
 /**
  * Bring each symbol's stored daily bars up to the last completed session.
@@ -97,10 +99,12 @@ export async function refreshSettledDailyBars(
   const cached: string[] = [];
   const behind: string[] = [];
   const need: string[] = [];
+  const why: Record<string, string> = {};
+  const hhmm = (ms: number) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
   for (const sym of symbols) {
     const mark = store.getBarsMark(sym);
     if (mark && mark.through >= expected) cached.push(sym);
-    else if (mark && nowMs - mark.checkedAt < BEHIND_RETRY_MS) behind.push(sym);
+    else if (mark && nowMs - mark.checkedAt < BEHIND_RETRY_MS) { behind.push(sym); why[sym] = `bars to ${mark.through}; asked ${Math.round((nowMs - mark.checkedAt) / 60_000)} min ago, next ask after ${BEHIND_RETRY_MS / 60_000} min`; }
     else need.push(sym);
   }
 
@@ -119,12 +123,14 @@ export async function refreshSettledDailyBars(
         inFlight.set(key, pending);
       }
       let got: FetchedBars;
-      try { got = await pending; } catch { failed.push(sym); return; }
+      try { got = await pending; } catch (e: any) { failed.push(sym); why[sym] = `request failed: ${String(e?.message ?? e).slice(0, 80)}`; return; }
       // An old copy served because the refresh failed is a failed read, and an answer with no known time cannot be judged.
-      if (got.stale || got.asOfMs == null || !Number.isFinite(got.asOfMs) || got.rows.length < MIN_ROWS) { failed.push(sym); return; }
+      if (got.stale) { failed.push(sym); why[sym] = `old copy served${got.asOfMs != null ? ` (from ${hhmm(got.asOfMs)} ET)` : ""}: ${got.reason ?? "refresh failed"}`; return; }
+      if (got.asOfMs == null || !Number.isFinite(got.asOfMs)) { failed.push(sym); why[sym] = got.reason ?? (got.rows.length ? "answer without a time" : "no answer"); return; }
+      if (got.rows.length < MIN_ROWS) { failed.push(sym); why[sym] = `${got.rows.length} rows returned`; return; }
       const asOfSession = settledThrough(Math.min(got.asOfMs, nowMs));
       const settled = settledRows(got.rows, asOfSession < expected ? asOfSession : expected);
-      if (settled.length < MIN_ROWS) { failed.push(sym); return; }
+      if (settled.length < MIN_ROWS) { failed.push(sym); why[sym] = `${settled.length} completed sessions returned`; return; }
       const newest = settled.reduce((m, r) => (r.date > m ? r.date : m), settled[0].date);
       // Read the mark again: a caller that started after this one may already have stored a later session.
       const latest = store.getBarsMark(sym);
@@ -133,8 +139,11 @@ export async function refreshSettledDailyBars(
       const through = latest && latest.through > newest ? latest.through : newest;
       // Rows after `expected` are an open session's partial bar. Rows up to it are kept even when this answer lacks them.
       store.storeSettledDailyBars(sym, settled, through, nowMs, expected);
-      (through >= expected ? fetched : behind).push(sym);
+      if (through >= expected) { fetched.push(sym); return; }
+      behind.push(sym);
+      const rawNewest = got.rows.reduce((m, r) => (r.date > m ? r.date : m), got.rows[0].date);
+      why[sym] = `answer from ${hhmm(got.asOfMs)} ET${retry ? " (cache skipped)" : ""} has bars to ${rawNewest}`;
     }));
   }
-  return { fetched, cached, failed, behind, expected };
+  return { fetched, cached, failed, behind, expected, why };
 }
