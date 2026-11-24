@@ -675,7 +675,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
             {ticker.streamSide
               ? `${ticker.streamSide.contracts} contract${ticker.streamSide.contracts === 1 ? "" : "s"} · covers ${ticker.streamSide.coveragePct == null ? "—" : ticker.streamSide.coveragePct.toFixed(1)}% of chain day vol · quote rule ${ticker.streamSide.quoteRulePct?.toFixed(0) ?? "—"}%${ticker.streamSideState === "stream_down" ? " · stream down, totals to last block" : ""}`
               : ticker.streamSideState === "none_streamed" ? "no contract of this chain is streamed: not classified"
-              : ticker.streamSideState === "stream_down" ? "Not available: Schwab's live trade feed is switched off for this app (see Settings), so trades cannot be marked buy or sell one by one"
+              : ticker.streamSideState === "stream_down" ? "Not available: Schwab's live trade feed is not connected (Settings says why), so trades cannot be marked buy or sell one by one"
               : "no fresh chain this poll: coverage unknown"}
           </span>
         </div>

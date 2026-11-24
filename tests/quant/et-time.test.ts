@@ -31,6 +31,7 @@ test("after the close the top card reads last session, the stream row says why i
   assert.match(read("client/src/components/TodayCard.tsx"), /m\.dataState === "stale_session" \? "last_session" : m\.dataState === "stale" \? "stale" : "ok"/);
   const flow = read("client/src/components/FlowPanel.tsx");
   assert.doesNotMatch(flow, /Schwab stream not connected: not classified/);
-  assert.match(flow, /Schwab's live trade feed is switched off for this app/);
+  assert.match(flow, /Schwab's live trade feed is not connected \(Settings says why\)/);
+  assert.doesNotMatch(flow, /switched off for this app/, "the same state covers a dropped connection, so the line does not name one cause");
   assert.match(read("client/src/index.css"), /\.batcave-shell \[class~="text-\[10px\]"\],\s*\.batcave-shell \[class~="text-\[11px\]"\] \{ font-size: 13px;/);
 });
