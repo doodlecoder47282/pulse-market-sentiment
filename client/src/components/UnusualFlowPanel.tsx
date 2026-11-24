@@ -36,6 +36,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChevronDown, ChevronRight, Flame, TrendingUp, TrendingDown, Zap, HelpCircle, X, ArrowDown, ArrowUp, ChevronsUpDown, Clock, Activity, Layers } from "lucide-react";
 import TrackButton from "@/components/signals/TrackButton";
+import { etTimeLabel } from "@shared/etTime";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -739,7 +740,7 @@ function UnusualFlowModal({
   const open = clicked !== null;
   // API returns asOf in epoch seconds (some older payloads in ms) — detect and normalize
   const asOfMs = asOf < 1e12 ? asOf * 1000 : asOf;
-  const tsFmt = new Date(asOfMs).toLocaleString("en-US", { hour12: false, timeZoneName: "short" });
+  const tsFmt = `${new Date(asOfMs).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" })}, ${etTimeLabel(asOfMs, { seconds: true })}`;
 
   // Totals across the full visible flow list
   const totalNotional = allContracts.reduce((s, c) => s + c.notional, 0);
@@ -801,7 +802,7 @@ function UnusualFlowModal({
                     data-testid={`flow-modal-row-${c.occ}`}
                   >
                     <td className="px-3 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
-                      {new Date(asOfMs).toLocaleTimeString("en-US", { hour12: false })}
+                      {etTimeLabel(asOfMs, { seconds: true })}
                     </td>
                     <td className="px-2 py-1.5">
                       <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-semibold ${typeStyle(c.type)}`}>
@@ -990,12 +991,12 @@ export default function UnusualFlowPanel({ symbol }: Props) {
           <CardTitle className="flex items-center gap-2 text-sm">
             <Flame className="h-4 w-4 text-amber-400" /> Unusual Options Flow — {sym}
             <Badge variant="outline" className="ml-1 border-amber-500/40 text-[11px] text-amber-300">
-              SCHWAB · chain as of {new Date(data.asOf * 1000).toLocaleTimeString()}
+              SCHWAB · chain as of {etTimeLabel(data.asOf * 1000)}
             </Badge>
           </CardTitle>
           <div className="text-[11px] text-muted-foreground">
             {data.spot != null && <>Spot {data.spot.toFixed(2)} · </>}
-            {new Date(data.asOf * 1000).toLocaleTimeString()}
+            {etTimeLabel(data.asOf * 1000)}
           </div>
         </div>
       </CardHeader>

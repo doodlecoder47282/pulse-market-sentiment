@@ -781,7 +781,7 @@
   html { font-size: 17px; }
   .batcave-shell [class~="text-[8px]"],
   .batcave-shell [class~="text-[9px]"],
-  .batcave-shell [class~="text-[10px]"] { font-size: 12px; line-height: 1.45; }
+  .batcave-shell [class~="text-[10px]"],
   .batcave-shell [class~="text-[11px]"] { font-size: 13px; line-height: 1.5; }
   .batcave-shell [class~="text-[12px]"],
   .batcave-shell .text-xs { font-size: 0.764706rem; line-height: 1.5; }

@@ -3323,3 +3323,10 @@ XLC stayed at 2026-11-20 through two regime reads while UUP corrected on its ret
 cause. `refreshSettledDailyBars` now returns `why` per symbol (old copy served and the vendor layer's reason,
 the answer's own time and newest bar, or the wait until the next ask) and the Regime warning prints it.
 Diagnostic only: no change to what is stored.
+
+**Signals S0: quick wins (2026-11-24, framework tab 1).** Plan and scope check in `docs/tabs/SIGNALS.md`.
+Times on the flow alerts, unusual-flow panel, flow panel and the server-built flow chart labels are
+h:mm AM/PM in New York (`shared/etTime.ts`); three of them had used the viewer's own time zone. After the
+close the top card's chip reads last session instead of STALE. The trade-level row says the live trade feed
+is switched off for the app instead of "stream not connected". On a computer, 10px and 11px labels render at
+13px. Not changed: other tabs' 24-hour strings (done in their turn). Tests: `tests/quant/et-time.test.ts`.

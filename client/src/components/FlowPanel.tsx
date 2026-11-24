@@ -28,6 +28,7 @@ import LivenessBadge from "./LivenessBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { livePoll } from "@/lib/pollInterval";
+import { etTimeLabel } from "@shared/etTime";
 // Zone vs the symbol's OWN history (server/pcrHistory.ts): z-score of
 // ln((puts+0.5)/(calls+0.5)) over its last 60 completed Schwab sessions.
 // No fixed cut-offs; without 20 sessions the zone is "insufficient_history".
@@ -485,7 +486,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
   );
 
   const volNote = ticker.volumeState === "last_sample" && ticker.volumeAsOf
-    ? ` · as of ${new Date(ticker.volumeAsOf * 1000).toLocaleTimeString()}`
+    ? ` · as of ${etTimeLabel(ticker.volumeAsOf * 1000)}`
     : ticker.volumeState === "unavailable" ? " · unavailable" : "";
   const maxDelta = Math.max(...deltaSeries.map((s) => Math.max(s.callDelta, s.putDelta)), 1);
   const maxVol = Math.max(...series.map((s) => Math.max(s.callVolume, s.putVolume)), 1);
@@ -674,7 +675,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
             {ticker.streamSide
               ? `${ticker.streamSide.contracts} contract${ticker.streamSide.contracts === 1 ? "" : "s"} · covers ${ticker.streamSide.coveragePct == null ? "—" : ticker.streamSide.coveragePct.toFixed(1)}% of chain day vol · quote rule ${ticker.streamSide.quoteRulePct?.toFixed(0) ?? "—"}%${ticker.streamSideState === "stream_down" ? " · stream down, totals to last block" : ""}`
               : ticker.streamSideState === "none_streamed" ? "no contract of this chain is streamed: not classified"
-              : ticker.streamSideState === "stream_down" ? "Schwab stream not connected: not classified"
+              : ticker.streamSideState === "stream_down" ? "Not available: Schwab's live trade feed is switched off for this app (see Settings), so trades cannot be marked buy or sell one by one"
               : "no fresh chain this poll: coverage unknown"}
           </span>
         </div>
@@ -1049,7 +1050,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
             <EdgeInfo id="pc-flow" />
           </CardTitle>
           <div className="text-[11px] text-muted-foreground">
-            <span title={data.coverage}>Schwab chains 0-7 DTE</span> · {new Date(data.asOf * 1000).toLocaleTimeString()}
+            <span title={data.coverage}>Schwab chains 0-7 DTE</span> · {etTimeLabel(data.asOf * 1000)}
           </div>
         </div>
       </CardHeader>

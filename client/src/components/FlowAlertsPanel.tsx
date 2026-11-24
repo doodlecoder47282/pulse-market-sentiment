@@ -46,6 +46,7 @@ interface OptionContract {
 // ─── Alert computation ────────────────────────────────────────────────────────
 // Pure helpers (deterministic ids, merge-on-poll) live in shared/flowAlerts.ts so they are unit-tested.
 import { alertKey, mergeAlerts, afterDismissal } from "@shared/flowAlerts";
+import { etTime } from "@shared/etTime";
 
 function computeAlerts(
   prevChainRef: Record<string, Record<string, OptionContract[]>> | null,
@@ -212,13 +213,7 @@ const TYPE_LABELS: Record<FlowAlertType, string> = {
 
 function AlertRow({ alert, onDismiss, trackedIds }: { alert: FlowAlert; onDismiss: (id: string) => void; trackedIds: Set<string> }) {
   const s = SEVERITY_CLASSES[alert.severity];
-  const time = new Date(alert.ts).toLocaleTimeString("en-US", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZone: "America/New_York",
-  });
+  const time = etTime(alert.ts);
 
   // Build deterministic tracking id matching server signalTracker.makeId format:
   // ${source}:${symbol}:${type?}:${strike?}:${expiration?}

@@ -76,7 +76,8 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
   const belowIsPin = m.landmarks.magnetBelow == null && below != null;
   const flip = m.landmarks.flip;
   const priced = m.dataState !== "no_gex";
-  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" || m.dataState === "stale" ? "stale" : "ok";
+  // After the close the map is the last session's, read after it finished: that is "last session", not stale.
+  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "last_session" : m.dataState === "stale" ? "stale" : "ok";
   const aboveOi = m.strikes.find((s) => s.strike === above);
   const belowOi = m.strikes.find((s) => s.strike === below);
   const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of map` : "");
