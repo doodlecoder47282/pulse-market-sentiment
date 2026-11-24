@@ -2841,6 +2841,18 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   }));
 
   // ---- Cross-asset confirmation matrix ----
+  // Unusual volume per contract with its five-minute build (Signals flow alerts).
+  app.get("/api/flow/contract-alerts", async (req, res) => {
+    try {
+      const raw = String(req.query.symbol ?? "$SPX").toUpperCase();
+      const INDEX: Record<string, string> = { SPX: "$SPX", "^GSPC": "$SPX", "^SPX": "$SPX", NDX: "$NDX", RUT: "$RUT", VIX: "$VIX" };
+      const { contractAlerts } = await import("./contractVolume");
+      res.json(contractAlerts(INDEX[raw] ?? raw));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "contract alerts failed" });
+    }
+  });
+
   app.get("/api/cross-asset", internalRoute("/api/cross-asset", async (_req, res) => {
     try {
       const { buildCrossAssetMatrix } = await import("./crossAsset");
@@ -5303,6 +5315,10 @@ Describe the above in the JSON schema specified in the system prompt: what the n
   // Free public APIs, no keys, independent of the Schwab data path.
   try { startCryptoEngines(); } catch (e: any) { console.warn(`[crypto] failed to start: ${e?.message ?? e}`); }
   try { startPcrRecorder(); } catch (e: any) { console.warn(`[flow] P/C recorder failed to start: ${e?.message ?? e}`); }
+  // Volume per option contract in five-minute steps, from every fresh chain already being read.
+  void Promise.all([import("./schwab"), import("./contractVolume")])
+    .then(([sch, cv]) => sch.setChainObserver(cv.recordChainVolumes))
+    .catch((e: any) => console.warn(`[contractVolume] not started: ${e?.message ?? e}`));
   try { startCommunityEngine(); } catch (e: any) { console.warn(`[community] failed to start: ${e?.message ?? e}`); }
   try { startSetupEngine(); } catch (e: any) { console.warn(`[setups] failed to start: ${e?.message ?? e}`); }
   try { const { startProtocolEngine } = await import("./protocolEngine"); startProtocolEngine(); } catch (e: any) { console.warn(`[protocols] failed to start: ${e?.message ?? e}`); }

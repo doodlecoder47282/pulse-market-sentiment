@@ -3335,3 +3335,16 @@ h:mm AM/PM in New York (`shared/etTime.ts`); three of them had used the viewer's
 close the top card's chip reads last session instead of STALE. The trade-level row says the live trade feed
 is switched off for the app instead of "stream not connected". On a computer, 10px and 11px labels render at
 13px. Not changed: other tabs' 24-hour strings (done in their turn). Tests: `tests/quant/et-time.test.ts`.
+
+**Signals S2 part 1: unusual volume per contract with a five-minute build (2026-11-24).** The flow alert
+"Unusual call volume at 7185 — 48,000 contracts vs 623 OI" was computed in the browser per strike across
+every expiry within 7 days, so it could be several contracts, and only while the tab was open. Now:
+`shared/contractBuild.ts` turns successive chain reads into volume per five-minute step per contract (OCC
+symbol), `server/contractVolume.ts` records it from every fresh chain `getOptionChain` receives (observer
+in `schwab.ts`; no request of its own; table `contract_vol_5m`, contracts from 250 day volume, about 20
+calendar days kept) and serves `/api/flow/contract-alerts`: contracts whose own day volume is at least 3
+times their own open interest and at least 500, with the steps, the dollar amount since the first read and
+a plain sentence (still building, steady, slowing, one burst, quiet). `ContractBuildList` shows them at the
+top of the flow alerts; the per-strike unusual-volume rows are removed. Limits shown on screen: steps are as
+fine as the gap between reads, volume before the first read has no timing, a chain total has no buy/sell
+side. History starts at deploy. Tests: `tests/quant/contract-build.test.ts`.
