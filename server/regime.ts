@@ -17,7 +17,7 @@
 // Stage: early (<=2w consistent) / mid (3-6w) / mature (8w+)
 
 import { storage } from "./storage";
-import { refreshSettledDailyBars, settledThrough } from "./dailyBarsSettled";
+import { refreshSettledDailyBars, settledEndDateMs, settledThrough } from "./dailyBarsSettled";
 import { regimeZTest, seedFromString, regimeFdrFlags } from "./macroStats";
 
 // Null-test thresholds (finding 5.4): two-sided 5% under the bootstrap null.
@@ -198,7 +198,7 @@ async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
   const schwabSym = schwabSymMap[symbol] ?? symbol;
   try {
     const { getPriceHistory } = await import("./schwab");
-    const resp = await getPriceHistory(schwabSym, "year", 2, "daily", 1);
+    const resp = await getPriceHistory(schwabSym, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()) });
     if (!resp.candles.length) return [];
     const rows: DailyRow[] = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))

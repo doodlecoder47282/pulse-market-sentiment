@@ -6,7 +6,7 @@
 // Target universe = whale watchlist + priority symbols from flowConfig.
 
 import { storage } from "./storage";
-import { refreshSettledDailyBars } from "./dailyBarsSettled";
+import { refreshSettledDailyBars, settledEndDateMs } from "./dailyBarsSettled";
 
 interface DailyRow { date: string; close: number; t: number }
 
@@ -54,7 +54,7 @@ function etDateString(epochSec: number): string {
 export async function fetchStockSymbol2Y(symbol: string): Promise<DailyRow[]> {
   try {
     const { getPriceHistory } = await import("./schwab");
-    const resp = await getPriceHistory(symbol, "year", 2, "daily", 1);
+    const resp = await getPriceHistory(symbol, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()) });
     if (!resp.candles.length) return [];
     const rows: DailyRow[] = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))
@@ -97,6 +97,7 @@ export async function ensureStockBarsCached(): Promise<StockBarsBackfillResult> 
 
 export const STOCK_BARS_RETRY_MS = 10 * 60 * 1000;
 let started = false;
+let retryPending = false;
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -119,7 +120,11 @@ export function startStockBarsRefresher(): void {
       }
       // A failed refresh (Schwab disconnected or throttled) retries in 10 min
       // instead of waiting the 6 h cadence with stale bars.
-      if (r.failed.length > 0 || r.behind.length > 0) setTimeout(() => void tick(), STOCK_BARS_RETRY_MS).unref?.();
+      // One retry pending at a time: each pass would otherwise add another chain of timers.
+      if ((r.failed.length > 0 || r.behind.length > 0) && !retryPending) {
+        retryPending = true;
+        setTimeout(() => { retryPending = false; void tick(); }, STOCK_BARS_RETRY_MS).unref?.();
+      }
     } catch (e: any) {
       console.warn(`[stockBars] tick failed: ${e?.message ?? e}`);
     }

@@ -11,11 +11,12 @@
 // post it), and a symbol is current only when a fetch made after that close has returned that session.
 
 import { lastCompletedSession } from "./breadthMath";
+import { etClock, etDate, sessionCloseMinutes } from "./exchangeCalendar";
 
 /** After the close, wait this long before the day's bar is taken as the session's bar. */
 export const SETTLE_MARGIN_MS = 20 * 60_000;
 /** A symbol whose fetch came back without the expected session is not asked again sooner than this. */
-export const BEHIND_RETRY_MS = 9 * 60_000;
+export const BEHIND_RETRY_MS = 20 * 60_000;
 /** Fewer rows than this from a 2-year daily request is a failed read, not a short history. */
 export const MIN_ROWS = 30;
 
@@ -32,6 +33,26 @@ export interface SettledBarsStore {
 /** The newest session (New York date) whose daily bar is final enough to store. */
 export function settledThrough(nowMs: number): string {
   return lastCompletedSession(nowMs - SETTLE_MARGIN_MS);
+}
+
+/**
+ * The end time to send with a daily-history request on the evening of a session.
+ *
+ * Without an end time the vendor's daily history stops at the previous business day's close, so from the
+ * close until midnight New York the session that just finished is missing (seen live on 2026-11-23: after
+ * the close the newest daily bar was still Friday's). On that evening this returns one fixed instant, the
+ * close plus the margin, so the request is the same all evening and is cached once. At any other time the
+ * default already reaches the last completed session and this returns null.
+ */
+export function settledEndDateMs(nowMs: number): number | null {
+  const today = etDate(nowMs);
+  if (settledThrough(nowMs) !== today) return null;
+  const close = sessionCloseMinutes(today);
+  if (close == null) return null;
+  const clock = etClock(nowMs);
+  const sinceSettle = clock.minutes - (close + SETTLE_MARGIN_MS / 60_000);
+  if (sinceSettle < 0) return null;
+  return Math.floor(nowMs / 60_000) * 60_000 - sinceSettle * 60_000;
 }
 
 export type BarsState = "current" | "behind" | "missing";

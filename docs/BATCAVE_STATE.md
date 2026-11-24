@@ -3298,8 +3298,11 @@ bar at the mid-session price, and from the next day the store "had" the date so 
 close; and a fetch that answered without the newest session counted as done until the next 6-hour pass.
 Now `server/dailyBarsSettled.ts`: a bar is stored only for a session closed at least 20 minutes
 (`settledThrough`), a symbol is current only when a post-close fetch returned that session (table
-`daily_bars_mark`), an answer without it is "behind" (kept, reported, retried after 9 minutes), and rows
-dated after the settled session are removed on store. The first run after deploy re-reads every symbol once
+`daily_bars_mark`), an answer without it is "behind" (kept, reported, retried after 20 minutes), and rows
+dated after the settled session are removed on store. Schwab's daily history without an end time stops at
+the previous business day's close, so from the close to midnight ET the finished session was missing (seen
+live 2026-11-23 evening: newest bar still Friday); the two bar stores now send a fixed end time on that
+evening (`settledEndDateMs`). Other daily-history callers are unchanged and still lag on that evening. The first run after deploy re-reads every symbol once
 (no marks yet), which repairs frozen partial bars. Cross-asset rows carry `barDate` and `stale`; the matrix
 names no pattern when SPY, TLT, HYG or UUP stop before the last completed session ("not read: bars not
 current") and reads completed sessions only. The Edge Lab briefing does not count SPY's weekly change from

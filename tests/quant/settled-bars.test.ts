@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  settledThrough, settledRows, barsState, refreshSettledDailyBars, BEHIND_RETRY_MS, SETTLE_MARGIN_MS,
+  settledThrough, settledRows, barsState, refreshSettledDailyBars, settledEndDateMs, BEHIND_RETRY_MS, SETTLE_MARGIN_MS,
   type BarRow, type BarsMark, type SettledBarsStore,
 } from "../../server/dailyBarsSettled";
 import { synthesizeVerdict } from "../../server/edgeBriefing";
@@ -53,6 +53,18 @@ test("the session a bar may be stored for: closed, plus the margin", () => {
   assert.equal(barsState("2026-11-20", "2026-11-23"), "behind");
   assert.equal(barsState("2026-11-23", "2026-11-23"), "current");
   assert.deepEqual(settledRows([{ date: "2026-11-23" }, { date: "2026-11-24" }], "2026-11-23"), [{ date: "2026-11-23" }]);
+});
+
+test("on the evening of a session the request names an end time; otherwise the vendor default is used", () => {
+  assert.equal(settledEndDateMs(TUE_MID), null, "session open: the default ends at Monday's close, which is the last completed session");
+  assert.equal(settledEndDateMs(TUE_1605), null, "inside the margin");
+  const end = Date.parse("2026-11-24T21:20:00Z"); // 16:20 ET, the close plus the margin
+  assert.equal(settledEndDateMs(TUE_1625), end);
+  assert.equal(settledEndDateMs(Date.parse("2026-11-25T03:30:40Z")), end, "22:30 ET: the same instant all evening, so one cached request");
+  assert.equal(settledEndDateMs(Date.parse("2026-11-25T05:10:00Z")), null, "after midnight the default reaches Tuesday");
+  assert.equal(settledEndDateMs(SAT), null);
+  const halfDay = Date.parse("2026-11-27T18:30:00Z"); // 13:30 ET on the day after Thanksgiving, closed at 13:00
+  assert.equal(settledEndDateMs(halfDay), Date.parse("2026-11-27T18:20:00Z"));
 });
 
 test("a fetch made while the session is open does not store the open session's bar", async () => {
@@ -110,6 +122,7 @@ test("both refreshers store through the completed-session path only", () => {
     const src = readFileSync(f, "utf8");
     assert.match(src, /refreshSettledDailyBars\(/, f);
     assert.doesNotMatch(src, /storage\.upsertDailyBars\(/, `${f} must not write bars directly`);
+    assert.match(src, /endDateMs: settledEndDateMs\(Date\.now\(\)\)/, `${f} asks for this evening's session`);
   }
   const cross = readFileSync("server/crossAsset.ts", "utf8");
   assert.match(cross, /label = "not read: bars not current";/);

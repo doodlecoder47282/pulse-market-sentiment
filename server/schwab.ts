@@ -1047,6 +1047,8 @@ export async function getPriceHistory(
   frequencyType: "minute" | "daily" | "weekly" | "monthly" = "daily",
   frequency: number = 1,
   needExtendedHours: boolean = false,
+  /** Daily and longer bars only: an explicit end time. Default (none) ends at the previous business day's close. */
+  opts?: { endDateMs?: number | null },
 ): Promise<PriceHistoryResponse> {
   // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
   const wireSymbol = _normalizeIndexSymbol(symbol);
@@ -1077,6 +1079,9 @@ export async function getPriceHistory(
     // and we don't bypass _cache on every call.
     if (frequencyType === "minute") {
       params.endDate = Math.floor(Date.now() / 20_000) * 20_000;
+    } else if (opts?.endDateMs != null && Number.isFinite(opts.endDateMs)) {
+      // The bar stores ask for the session that closed this evening (dailyBarsSettled.settledEndDateMs).
+      params.endDate = opts.endDateMs;
     }
     const r = await schwabFetchMeta("marketdata/v1/pricehistory", params);
     if (r.data == null || !r.freshness) return unavailable(r.reason ?? "Schwab price history unavailable");
