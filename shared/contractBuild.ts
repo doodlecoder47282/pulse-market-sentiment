@@ -51,7 +51,7 @@ export function stepStart(ms: number): number {
  * One chain read against what was last seen. `seen` maps OCC symbol to the last running volume and is
  * updated in place. Returns the steps to add: only contracts at or above the keep floor, and only when the
  * running volume rose (or the contract is seen for the first time today, which stores its baseline).
- * A running volume that falls is a vendor correction or a new day: the contract is re-based, nothing is added.
+ * A running volume lower than the last one seen is ignored (the caller clears `seen` at each new day).
  */
 export function applyRead(seen: Map<string, number>, rows: readonly ContractRead[], asOfMs: number): StepDelta[] {
   const out: StepDelta[] = [];
@@ -67,8 +67,9 @@ export function applyRead(seen: Map<string, number>, rows: readonly ContractRead
       out.push({ occ: r.occ, side: r.side, expiry: r.expiry, strike: r.strike, step, volume: 0, cum: r.volume, baseline: r.volume, openInterest: r.openInterest, last: r.last });
       continue;
     }
-    if (r.volume < prev) { seen.set(r.occ, r.volume); continue; }
-    if (r.volume === prev) continue;
+    // The running total only rises within a day. A lower read is another request's slightly older view of the
+    // same contract (several modules read overlapping chains): it is ignored, so the dip is not counted twice.
+    if (r.volume <= prev) continue;
     seen.set(r.occ, r.volume);
     out.push({ occ: r.occ, side: r.side, expiry: r.expiry, strike: r.strike, step, volume: r.volume - prev, cum: r.volume, baseline: 0, openInterest: r.openInterest, last: r.last });
   }
@@ -114,10 +115,12 @@ export function describeBuild(steps: readonly BuildStep[], baseline: number, now
   const peakShare = timed > 0 ? peak.volume / timed : null;
   const nowStep = stepStart(nowMs);
   const quietSteps = Math.max(0, Math.round((nowStep - lastActive.step) / STEP_MS));
-  // The last three steps up to now against the three before them, counting empty steps as zero.
+  // The last three COMPLETED steps against the three before them, counting empty steps as zero. The step
+  // still in progress is left out: a part-filled step against full ones would read as slowing every time.
   const vol = new Map(active.map((s) => [s.step, s.volume]));
   const sum = (from: number) => [0, 1, 2].reduce((a, i) => a + (vol.get(from - i * STEP_MS) ?? 0), 0);
-  const recent = sum(nowStep), earlier = sum(nowStep - 3 * STEP_MS);
+  const lastDone = nowStep - STEP_MS;
+  const recent = sum(lastDone), earlier = sum(lastDone - 3 * STEP_MS);
   let shape: BuildShape;
   if (active.length === 1) shape = quietSteps >= 3 ? "one_burst" : "too_short";
   else if (quietSteps >= 3) shape = "quiet";
@@ -127,9 +130,9 @@ export function describeBuild(steps: readonly BuildStep[], baseline: number, now
   const tail =
     shape === "one_burst" ? `All of it came in one five-minute step at ${fmt(peak.step)}; nothing since.`
     : shape === "quiet" ? `Last added at ${fmt(lastActive.step)}; nothing in the ${quietSteps * 5} minutes since.`
-    : shape === "building" ? `Still building: ${n(recent)} in the last 15 minutes against ${n(earlier)} in the 15 before.`
-    : shape === "steady" ? `Steady: ${n(recent)} in the last 15 minutes against ${n(earlier)} in the 15 before.`
-    : shape === "tailing_off" ? `Slowing: ${n(recent)} in the last 15 minutes against ${n(earlier)} in the 15 before.`
+    : shape === "building" ? `Still building: ${n(recent)} in the last three full five-minute steps against ${n(earlier)} in the three before.`
+    : shape === "steady" ? `Steady: ${n(recent)} in the last three full five-minute steps against ${n(earlier)} in the three before.`
+    : shape === "tailing_off" ? `Slowing: ${n(recent)} in the last three full five-minute steps against ${n(earlier)} in the three before.`
     : `Too early to call a shape.`;
   const line = `${base}${n(timed)} since ${fmt(first.step)}, biggest five minutes ${n(peak.volume)} at ${fmt(peak.step)}. ${tail}`;
   return { timed, baseline, total, firstStep: first.step, lastActiveStep: lastActive.step, peak, peakShare, shape, line };

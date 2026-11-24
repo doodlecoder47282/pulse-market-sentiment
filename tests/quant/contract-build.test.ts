@@ -31,8 +31,11 @@ test("the owner's example: 3,000 a step, then tailing off", () => {
   assert.equal(b.timed, 12500);
   assert.equal(b.total, 12800);
   assert.equal(b.peak!.volume, 3000);
-  assert.equal(b.shape, "tailing_off");
-  assert.equal(b.line, "300 traded before the first read (timing not recorded). 12,500 since 10:00 AM, biggest five minutes 3,000 at 10:00 AM. Slowing: 3,500 in the last 15 minutes against 9,000 in the 15 before.");
+  // At 10:31 the 10:30 step is still filling, so the comparison is 10:15-10:25 against 10:00-10:10.
+  const b31 = describeBuild(out, baseline, at(31), fmt);
+  assert.equal(b31.shape, "tailing_off");
+  assert.equal(b31.line, "300 traded before the first read (timing not recorded). 12,500 since 10:00 AM, biggest five minutes 3,000 at 10:00 AM. Slowing: 3,500 in the last three full five-minute steps against 9,000 in the three before.");
+  void b;
 });
 
 test("a contract below the floor is not kept; crossing it stores what came before as baseline", () => {
@@ -45,13 +48,21 @@ test("a contract below the floor is not kept; crossing it stores what came befor
   assert.equal(s[0].volume, 0);
 });
 
-test("no change adds nothing, a missing volume is skipped, a falling volume re-bases without a negative step", () => {
+test("no change adds nothing, a missing volume is skipped, and a lower read between two higher ones is not counted twice", () => {
   const seen = new Map<string, number>([["SPXW261124C07180000", 1000]]);
   assert.deepEqual(applyRead(seen, [row(1000)], at(3)), []);
   assert.deepEqual(applyRead(seen, [row(null)], at(4)), []);
-  assert.deepEqual(applyRead(seen, [row(400)], at(5)), []);
-  assert.equal(seen.get("SPXW261124C07180000"), 400);
-  assert.equal(applyRead(seen, [row(700)], at(6))[0].volume, 300);
+  let added = 0;
+  for (const v of [1020, 1000, 1030]) for (const s of applyRead(seen, [row(v)], at(5))) added += s.volume;
+  assert.equal(added, 30, "1,000 to 1,030 is 30 contracts, whatever order overlapping reads arrive in");
+  assert.equal(seen.get("SPXW261124C07180000"), 1030);
+});
+
+test("a steady contract does not read as slowing because the current step has only just begun", () => {
+  const steps = [0, 5, 10, 15, 20, 25].map((m) => ({ step: at(m), volume: 1000 })).concat([{ step: at(30), volume: 150 }]);
+  const r = describeBuild(steps, 0, at(30) + 30_000, fmt);
+  assert.equal(r.shape, "steady");
+  assert.match(r.line, /Steady: 3,000 in the last three full five-minute steps against 3,000 in the three before\./);
 });
 
 test("shapes: one burst, quiet, building, too early", () => {
@@ -61,7 +72,7 @@ test("shapes: one burst, quiet, building, too early", () => {
   const quiet = describeBuild([{ step: at(0), volume: 500 }, { step: at(5), volume: 700 }], 0, at(45), fmt);
   assert.equal(quiet.shape, "quiet");
   assert.match(quiet.line, /Last added at 10:05 AM; nothing in the 40 minutes since\./);
-  const building = describeBuild([{ step: at(0), volume: 100 }, { step: at(15), volume: 900 }, { step: at(20), volume: 1500 }], 0, at(24), fmt);
+  const building = describeBuild([{ step: at(0), volume: 100 }, { step: at(15), volume: 900 }, { step: at(20), volume: 1500 }], 0, at(26), fmt);
   assert.equal(building.shape, "building");
   assert.equal(describeBuild([{ step: at(0), volume: 100 }], 0, at(4), fmt).shape, "too_short");
   assert.equal(describeBuild([], 500, at(4), fmt).line, "500 traded before the first read (timing not recorded). No volume has been added since the terminal started watching this contract.");
@@ -78,6 +89,7 @@ test("the alert rule is applied to one contract's own numbers", () => {
 test("wiring: every fresh chain is recorded, per contract, without a request of its own", () => {
   const sch = readFileSync("server/schwab.ts", "utf8");
   assert.match(sch, /if \(_chainObserver && !r\.freshness\.servedFromCache && !r\.freshness\.stale\) \{/);
+  assert.ok(sch.indexOf("const oiState = applyOiHold(wireSymbol") < sch.indexOf("if (_chainObserver && !r.freshness.servedFromCache"), "the recorder sees open interest after the hold");
   const cv = readFileSync("server/contractVolume.ts", "utf8");
   assert.match(cv, /PRIMARY KEY \(day, occ, step\)/);
   assert.doesNotMatch(cv, /getOptionChain|schwabFetch/, "the recorder makes no request");

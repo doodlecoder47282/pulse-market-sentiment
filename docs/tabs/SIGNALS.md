@@ -122,3 +122,8 @@ current account; check against the live product before treating any line as exac
 
 - S0: pull request #158 opened 2026-11-24.
 - S2 part 1: recorder, rule per contract, build list on the flow alerts panel. History starts at deploy.
+  After review: a lower read between two higher ones is ignored (overlapping chain requests), open interest
+  is taken after the hold and 0 is "not known", the shape compares completed steps only, reads are recorded
+  from the open to 30 minutes after the close.
+  To check live at the next open: whether Schwab's per-contract day volume has already reset by 9:30 (if
+  not, the first read's baseline would hold yesterday's volume and could raise a false alert).

@@ -13,7 +13,7 @@ interface Alert {
   steps: Step[];
   build: { line: string; baseline: number; timed: number; shape: string };
 }
-interface Resp { symbol: string; day: string; asOfMs: number | null; watchingSinceMs: number | null; rule: string; alerts: Alert[]; note: string }
+interface Resp { symbol: string; day: string; asOfMs: number | null; oiUnknown?: number; watchingSinceMs: number | null; rule: string; alerts: Alert[]; note: string }
 
 const num = (v: number) => Math.round(v).toLocaleString("en-US");
 const money = (v: number) => (v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${Math.round(v)}`);
@@ -63,7 +63,7 @@ export default function ContractBuildList({ symbol, enabled }: { symbol: string;
     <div className="rounded-md border border-border/50 p-3" data-testid="contract-build-list">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <div className="text-sm font-semibold">Unusual volume, contract by contract</div>
-        {d?.asOfMs != null && <div className="text-xs text-muted-foreground">read {etTime(d.asOfMs)} ET</div>}
+        {d?.asOfMs != null && <div className="text-xs text-muted-foreground">last recorded {etTime(d.asOfMs)} ET</div>}
       </div>
       <div className="text-xs text-muted-foreground">
         A contract is listed when {d?.rule ?? "its day volume is at least 3 times its own open interest and at least 500 contracts"}. Largest dollar amount first.
@@ -96,6 +96,11 @@ export default function ContractBuildList({ symbol, enabled }: { symbol: string;
             </li>
           ))}
         </ul>
+      )}
+      {d && (d.oiUnknown ?? 0) > 0 && (
+        <div className="mt-2 text-sm text-amber-400" data-testid="contract-build-oi-unknown">
+          {d.oiUnknown} contract{d.oiUnknown === 1 ? "" : "s"} with 500 or more traded could not be checked: open interest is not posted for {d.oiUnknown === 1 ? "it" : "them"} yet.
+        </div>
       )}
       {d && <div className="mt-2 text-xs text-muted-foreground">{d.note}</div>}
     </div>
