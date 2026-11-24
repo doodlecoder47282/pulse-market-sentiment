@@ -4,7 +4,7 @@ User default: conserve Computer credits without skipping necessary correctness o
 
 ## Start
 
-1. Read this file and `docs/BATCAVE_STATE.md`. Do not reread the entire chat.
+1. Read this file, then `docs/OPERATING_FRAMEWORK.md` (owner's standing framework, 2026-11-24: the reader, the nine steps, the tab order, the checklist, the four checks), then `docs/BATCAVE_STATE.md`. Do not reread the entire chat.
 2. Run `git status --short` and inspect the latest relevant commit. Check the remote head before changing shared code.
 3. Follow the newest user request. Verify only the facts needed for that request; a checkpoint is not proof of live health.
 4. Search specific symbols and read bounded file ranges. Load older discussions only to resolve a concrete missing decision.
@@ -12,6 +12,7 @@ User default: conserve Computer credits without skipping necessary correctness o
 ## Work within bounds
 
 - One small, reviewable objective at a time. No full audit, rewrite, model council, background AI loop, or subagent by default.
+  Exception set by the owner (2026-11-24): the scope check, code review and acceptance check in `docs/OPERATING_FRAMEWORK.md` section 3 are independent read-only agents and are required for tab work.
 - Use deterministic scripts for polling, calculations, source health, and data validation. Do not ask an LLM to supervise every normal poll.
 - Reuse verified work and cached evidence. Recheck time-sensitive claims when they affect today's decision.
 - Stop repeated attempts after two failures of the same approach. Diagnose once, then report a blocker or propose a different approach.

@@ -3323,3 +3323,9 @@ XLC stayed at 2026-11-20 through two regime reads while UUP corrected on its ret
 cause. `refreshSettledDailyBars` now returns `why` per symbol (old copy served and the vendor layer's reason,
 the answer's own time and newest bar, or the wait until the next ask) and the Regime warning prints it.
 Diagnostic only: no change to what is stored.
+
+**Operating framework (2026-11-24).** The owner's standing framework is `docs/OPERATING_FRAMEWORK.md`: the
+reader (can buy a call, does not know the Greeks), nine steps per request, tab order Signals to Crypto, one
+checklist per tab, and four checks (scope, code review, acceptance, owner). Direction, levels and entry/exit
+points are now allowed on screen when they come from stated rules and carry their record. `AGENTS.md`
+points to it first. Work proceeds one tab at a time, starting with Signals.
