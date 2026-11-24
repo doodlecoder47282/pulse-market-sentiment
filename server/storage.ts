@@ -405,11 +405,11 @@ export class DatabaseStorage implements IStorage {
     return row ? { through: row.through, checkedAt: row.checked_at } : null;
   }
 
-  /** Completed-session rows only (dailyBarsSettled.ts): rows dated after `through` are removed, so a
+  /** Completed-session rows only (dailyBarsSettled.ts): rows dated after `removeAfter` are removed, so a
    *  partial bar stored while a session was open does not stay as that day's close. */
-  storeSettledDailyBars(symbol: string, rows: { date: string; close: number; t: number }[], through: string, checkedAt: number): void {
+  storeSettledDailyBars(symbol: string, rows: { date: string; close: number; t: number }[], through: string, checkedAt: number, removeAfter: string): void {
     const tx = sqlite.transaction(() => {
-      sqlite.prepare(`DELETE FROM daily_bars WHERE symbol = ? AND date > ?`).run(symbol, through);
+      sqlite.prepare(`DELETE FROM daily_bars WHERE symbol = ? AND date > ?`).run(symbol, removeAfter);
       this.upsertDailyBars(symbol, rows);
       sqlite.prepare(
         `INSERT INTO daily_bars_mark (symbol, through, checked_at) VALUES (?, ?, ?)

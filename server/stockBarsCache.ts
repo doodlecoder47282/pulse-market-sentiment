@@ -6,7 +6,7 @@
 // Target universe = whale watchlist + priority symbols from flowConfig.
 
 import { storage } from "./storage";
-import { refreshSettledDailyBars, settledEndDateMs } from "./dailyBarsSettled";
+import { refreshSettledDailyBars, settledEndDateMs, type FetchedBars } from "./dailyBarsSettled";
 
 interface DailyRow { date: string; close: number; t: number }
 
@@ -20,6 +20,8 @@ export const STOCK_BARS_UNIVERSE = [
   // Canary module proxies (AUDJPY = FXA/FXY, copper/gold = CPER/GLD, crude, DXY)
   // GLD/TLT/HYG/UUP/SPY already covered by the regime ETF universe.
   "CPER", "USO", "FXA", "FXY",
+  // Cross-asset matrix legs no other list fetched: without them the pattern was never read.
+  "UUP", "TIP",
   // MISSION FIX #6 — breadth sample widening: mega/large caps across sectors so
   // the breadth engine isn't just a tech-flow echo. Daily-cached, cheap.
   "LLY", "XOM", "UNH", "WMT", "JNJ", "V", "MA", "PG", "HD", "CVX",
@@ -51,11 +53,12 @@ function etDateString(epochSec: number): string {
  * Mirrors the shape produced by regime.ts so daily_bars stays homogeneous.
  * // TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
  */
-export async function fetchStockSymbol2Y(symbol: string): Promise<DailyRow[]> {
+const NO_BARS: FetchedBars = { rows: [], asOfMs: null };
+export async function fetchStockSymbol2Y(symbol: string, retry = false): Promise<FetchedBars> {
   try {
     const { getPriceHistory } = await import("./schwab");
-    const resp = await getPriceHistory(symbol, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()) });
-    if (!resp.candles.length) return [];
+    const resp = await getPriceHistory(symbol, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()), skipCache: retry });
+    if (!resp.candles.length) return NO_BARS;
     const rows: DailyRow[] = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))
       .map((c) => ({ date: etDateString(Math.floor(c.datetime / 1000)), close: c.close, t: Math.floor(c.datetime / 1000) }));
@@ -66,11 +69,11 @@ export async function fetchStockSymbol2Y(symbol: string): Promise<DailyRow[]> {
       seen.add(r.date);
       dedup.push(r);
     }
-    return dedup;
+    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true };
   } catch (e: any) {
     // Was a silent catch: a symbol could stop backfilling forever with no trace.
     console.warn(`[stockBars] daily-bar fetch failed: ${e?.message ?? e}`);
-    return [];
+    return NO_BARS;
   }
 }
 
@@ -135,7 +138,7 @@ export function startStockBarsRefresher(): void {
 
   // 6h cadence — daily bars don't change intraday
   intervalHandle = setInterval(tick, 6 * 60 * 60 * 1000);
-  console.log("[stockBars] started — 6h cadence, 16 stock symbols");
+  console.log(`[stockBars] started: 6h cadence, ${STOCK_BARS_UNIVERSE.length} symbols`);
 }
 
 export function stopStockBarsRefresher(): void {

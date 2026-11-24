@@ -10,12 +10,11 @@
 // The rule now: a bar is stored only for a session that has closed (plus a short margin for the vendor to
 // post it), and a symbol is current only when a fetch made after that close has returned that session.
 
-import { lastCompletedSession } from "./breadthMath";
+import { SETTLE_MARGIN_MS, settledThrough } from "./breadthMath";
+export { SETTLE_MARGIN_MS, settledThrough };
 import { etClock, etDate, sessionCloseMinutes } from "./exchangeCalendar";
 
-/** After the close, wait this long before the day's bar is taken as the session's bar. */
-export const SETTLE_MARGIN_MS = 20 * 60_000;
-/** A symbol whose fetch came back without the expected session is not asked again sooner than this. */
+/** A symbol whose fetch came back without the expected session is not asked again sooner than this (the retry skips the request cache). */
 export const BEHIND_RETRY_MS = 20 * 60_000;
 /** Fewer rows than this from a 2-year daily request is a failed read, not a short history. */
 export const MIN_ROWS = 30;
@@ -26,13 +25,8 @@ export interface BarsMark { through: string; checkedAt: number }
 
 export interface SettledBarsStore {
   getBarsMark(symbol: string): BarsMark | null;
-  /** Replace the symbol's rows with `rows`, remove any row dated after `through`, and record the mark. */
-  storeSettledDailyBars(symbol: string, rows: BarRow[], through: string, checkedAt: number): void;
-}
-
-/** The newest session (New York date) whose daily bar is final enough to store. */
-export function settledThrough(nowMs: number): string {
-  return lastCompletedSession(nowMs - SETTLE_MARGIN_MS);
+  /** Upsert `rows`, remove any row dated after `removeAfter`, and record the mark (`through`, `checkedAt`). */
+  storeSettledDailyBars(symbol: string, rows: BarRow[], through: string, checkedAt: number, removeAfter: string): void;
 }
 
 /**
@@ -80,13 +74,19 @@ export interface RefreshResult {
   expected: string;
 }
 
+/** One vendor answer: the rows, when the vendor produced them, and whether it is an old copy served after a failed refresh. */
+export interface FetchedBars { rows: BarRow[]; asOfMs: number | null; stale?: boolean }
+
 /**
  * Bring each symbol's stored daily bars up to the last completed session.
- * `fetchRows` returns the vendor's daily history (it may include the open session's partial bar).
+ * `fetchRows` returns the vendor's daily history (it may include the open session's partial bar). `retry` is
+ * true when the last answer lacked the expected session, so the caller can skip its cache.
+ * Which rows are settled is judged at the time the vendor produced the answer, not at the time it is stored:
+ * a copy fetched at 11:00 and served from a cache at 16:30 holds an 11:00 price for today.
  */
 export async function refreshSettledDailyBars(
   symbols: readonly string[],
-  fetchRows: (symbol: string) => Promise<BarRow[]>,
+  fetchRows: (symbol: string, retry: boolean) => Promise<FetchedBars>,
   store: SettledBarsStore,
   nowMs: number,
   batch = 6,
@@ -106,14 +106,20 @@ export async function refreshSettledDailyBars(
   const fetched: string[] = [];
   for (let i = 0; i < need.length; i += batch) {
     await Promise.all(need.slice(i, i + batch).map(async (sym) => {
-      let rows: BarRow[];
-      try { rows = await fetchRows(sym); } catch { failed.push(sym); return; }
-      if (rows.length < MIN_ROWS) { failed.push(sym); return; }
-      const settled = settledRows(rows, expected);
+      const mark = store.getBarsMark(sym);
+      let got: FetchedBars;
+      try { got = await fetchRows(sym, mark != null); } catch { failed.push(sym); return; }
+      // An old copy served because the refresh failed is a failed read, and an answer with no known time cannot be judged.
+      if (got.stale || got.asOfMs == null || !Number.isFinite(got.asOfMs) || got.rows.length < MIN_ROWS) { failed.push(sym); return; }
+      const asOfSession = settledThrough(Math.min(got.asOfMs, nowMs));
+      const settled = settledRows(got.rows, asOfSession < expected ? asOfSession : expected);
       if (settled.length < MIN_ROWS) { failed.push(sym); return; }
       const newest = settled.reduce((m, r) => (r.date > m ? r.date : m), settled[0].date);
-      store.storeSettledDailyBars(sym, settled, newest, nowMs);
-      (newest >= expected ? fetched : behind).push(sym);
+      // The mark never moves back: a lagging answer does not undo a session already read after its close.
+      const through = mark && mark.through > newest ? mark.through : newest;
+      // Rows after `expected` are an open session's partial bar. Rows up to it are kept even when this answer lacks them.
+      store.storeSettledDailyBars(sym, settled, through, nowMs, expected);
+      (through >= expected ? fetched : behind).push(sym);
     }));
   }
   return { fetched, cached, failed, behind, expected };

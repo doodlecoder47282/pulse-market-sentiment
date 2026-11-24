@@ -17,7 +17,7 @@
 // Stage: early (<=2w consistent) / mid (3-6w) / mature (8w+)
 
 import { storage } from "./storage";
-import { refreshSettledDailyBars, settledEndDateMs, settledThrough } from "./dailyBarsSettled";
+import { refreshSettledDailyBars, settledEndDateMs, type FetchedBars, settledThrough } from "./dailyBarsSettled";
 import { regimeZTest, seedFromString, regimeFdrFlags } from "./macroStats";
 
 // Null-test thresholds (finding 5.4): two-sided 5% under the bootstrap null.
@@ -189,7 +189,8 @@ function etDateString(epochSec: number): string {
  * Fetch 2Y of daily closes for one symbol via Schwab. Returns ALL rows
  * (not merged with cache).
  */
-async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
+const NO_BARS: FetchedBars = { rows: [], asOfMs: null };
+async function fetchSymbol2Y(symbol: string, retry = false): Promise<FetchedBars> {
   // Schwab-only mode — all daily history via Schwab getPriceHistory.
   const schwabSymMap: Record<string, string> = {
     "^VIX": "$VIX.X", "^GSPC": "$SPX.X", "^SPX": "$SPX.X",
@@ -198,8 +199,8 @@ async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
   const schwabSym = schwabSymMap[symbol] ?? symbol;
   try {
     const { getPriceHistory } = await import("./schwab");
-    const resp = await getPriceHistory(schwabSym, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()) });
-    if (!resp.candles.length) return [];
+    const resp = await getPriceHistory(schwabSym, "year", 2, "daily", 1, false, { endDateMs: settledEndDateMs(Date.now()), skipCache: retry });
+    if (!resp.candles.length) return NO_BARS;
     const rows: DailyRow[] = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))
       .map((c) => ({ date: etDateString(Math.floor(c.datetime / 1000)), close: c.close, t: Math.floor(c.datetime / 1000) }));
@@ -211,9 +212,9 @@ async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
       seen.add(r.date);
       dedup.push(r);
     }
-    return dedup;
+    return { rows: dedup, asOfMs: resp.asOfMs ?? null, stale: resp.stale === true };
   } catch {
-    return [];
+    return NO_BARS;
   }
 }
 

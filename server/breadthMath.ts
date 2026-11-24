@@ -140,6 +140,13 @@ export function sma(values: number[], n: number, endIdx: number): number | null 
 }
 
 /** Last completed regular session at `nowMs` (ET): today after the close, else the prior trading day. */
+/** After the close, wait this long before the day's bar is taken as the session's bar. */
+export const SETTLE_MARGIN_MS = 20 * 60_000;
+/** The newest session (New York date) whose daily bar is final enough to store: closed, plus the margin. */
+export function settledThrough(nowMs: number): string {
+  return lastCompletedSession(nowMs - SETTLE_MARGIN_MS);
+}
+
 export function lastCompletedSession(nowMs: number): string {
   const today = etDate(nowMs);
   const close = sessionCloseMinutes(today);
@@ -192,7 +199,8 @@ export function computeBreadth(input: {
   nowMs: number;
 }): BreadthSnapshot {
   const { rows, etfRows, stockSymbols, nowMs } = input;
-  const expected = lastCompletedSession(nowMs);
+  // The same session the bar stores aim for: they do not hold today's bar until the close plus the margin.
+  const expected = settledThrough(nowMs);
   const bySym = new Map<string, BarRow[]>();
   for (const r of rows.concat(etfRows)) {
     const a = bySym.get(r.symbol) ?? [];

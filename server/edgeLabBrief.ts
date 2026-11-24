@@ -308,7 +308,7 @@ function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
       const isRisk = /risk-?on/i.test(verdictLabel);
       const isOff = /risk-?off/i.test(verdictLabel);
       // A leg without data: nothing was read, so no regime sentence is written about it.
-      const notRead = /missing data/i.test(verdictLabel);
+      const notRead = /^not read/i.test(verdictLabel);
       base.verdict = verdictLabel;
       base.verdictColor = isRisk ? "emerald" : isOff ? "rose" : "amber";
       base.edgeType = "environmental";
@@ -583,7 +583,7 @@ async function buildEdgeSynthesisContext(symbol: string): Promise<any> {
     const isRisk = /risk-?on/i.test(verdictLabel);
     const isOff = /risk-?off/i.test(verdictLabel);
     const bias = isRisk ? "risk-on" : isOff ? "risk-off" : "mixed";
-    const notRead = /missing data/i.test(verdictLabel);
+    const notRead = /^not read/i.test(verdictLabel);
     signals.push({ key: "cross-asset", label: "cross-asset", bias, value: verdictLabel, note: notRead ? "not read: a leg has no data" : isRisk ? "stocks/credit/cyclicals confirming" : isOff ? "safe-haven bid, equities lagging" : "correlations decoupled — regime in transition" });
   } catch {}
 

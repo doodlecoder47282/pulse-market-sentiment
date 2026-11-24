@@ -14,13 +14,13 @@ export interface DatedRow { symbol: string; barDate?: string | null; stale?: boo
 
 /**
  * One line saying which close a table of daily figures is as of, and which rows are older.
- * `expected` is the last completed session.
+ * `expected` is the newest session whose close is stored (closed at least 20 minutes).
  */
 export function closesThroughLine(expected: string | null | undefined, rows: DatedRow[]): string {
   if (!expected) return "";
   const old = rows.filter((r) => r.stale && r.barDate);
   const none = rows.filter((r) => !r.barDate);
-  const parts = [`Closes through ${shortDate(expected)}, the last completed session.`];
+  const parts = [`Closes through ${shortDate(expected)}.`];
   if (old.length) parts.push(`Older: ${old.map((r) => `${r.symbol} stops at ${shortDate(r.barDate)}`).join(", ")}.`);
   if (none.length) parts.push(`No bars: ${none.map((r) => r.symbol).join(", ")}.`);
   return parts.join(" ");

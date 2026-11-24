@@ -3307,5 +3307,10 @@ evening (`settledEndDateMs`). Other daily-history callers are unchanged and stil
 names no pattern when SPY, TLT, HYG or UUP stop before the last completed session ("not read: bars not
 current") and reads completed sessions only. The Edge Lab briefing does not count SPY's weekly change from
 stale bars and says so; both tables say "Closes through <date>" and the column is "close", not "last".
+After review: settled rows are judged at the time the vendor produced the answer (a cached mid-session copy
+served after the close is "behind", an old copy after a failed refresh is a failed read), a lagging answer
+does not delete stored sessions or move the mark back, retries skip the request cache, breadth uses the
+same settled session, the Edge Lab summaries treat every "not read" label as not read, and UUP and TIP
+(cross-asset legs nothing fetched) are in the stock bar list.
 Not changed: the five-vote verdict itself (package 3), the Models tab's starting price (next part).
 Tests: `tests/quant/settled-bars.test.ts`.
