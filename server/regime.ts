@@ -17,7 +17,7 @@
 // Stage: early (<=2w consistent) / mid (3-6w) / mature (8w+)
 
 import { storage } from "./storage";
-import { refreshSettledDailyBars, settledEndDateMs, type FetchedBars, settledThrough } from "./dailyBarsSettled";
+import { refreshSettledDailyBars, settledEndDateMs, type FetchedBars, type RefreshResult, settledThrough } from "./dailyBarsSettled";
 import { regimeZTest, seedFromString, regimeFdrFlags } from "./macroStats";
 
 // Null-test thresholds (finding 5.4): two-sided 5% under the bootstrap null.
@@ -224,7 +224,7 @@ async function fetchSymbol2Y(symbol: string, retry = false): Promise<FetchedBars
  * recent cached date to skip symbols that already have today's data, minimizing
  * Schwab calls. Caller should invoke this before computing regime.
  */
-export async function ensureUniverseCached(): Promise<{ fetched: string[]; cached: string[]; failed: string[]; behind: string[]; expected: string }> {
+export async function ensureUniverseCached(): Promise<RefreshResult> {
   // Completed sessions only, and current only once a post-close fetch returned the session (dailyBarsSettled.ts).
   return refreshSettledDailyBars(REGIME_UNIVERSE, fetchSymbol2Y, storage, Date.now());
 }
