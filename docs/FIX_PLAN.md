@@ -65,6 +65,28 @@ Each package is finished when its test passes on the live terminal.
 Crypto runs beside this as its own track: first its record (it has never issued an Enter; 1,035 of 1,342
 graded coins rugged), then its rules judged against that record.
 
+## How counts become estimates: hierarchical Bayes (owner's suggestion, 2026-11-24)
+
+Every record here is small: 39 level touches, 5 scored days, 2 graded protocol arms. A raw rate from a
+handful of cases swings wildly; a hand-set weight ignores the data altogether. A Bayesian hierarchical model
+sits between the two. Each group (a level type, a ticker, a rule) gets its own rate, and the groups share a
+common prior learned from all of them, so a group with 3 cases leans on the others and a group with 300
+speaks for itself. The output is a rate with a range that is honest about the sample: "put walls: turned
+back 3 of 7; estimate 31%, plausible range 12% to 55%".
+
+Use it as an input to a read, never as a signal by itself. Where it goes, in order of fit:
+1. **Level record** (Trade Desk, Chart, Heatseeker): turned-back rate by level type, pooled across types.
+2. **Level odds** (Heatseeker): a correction to the random-walk touch odds by time of day, learned from
+   the scorecard.
+3. **Stretch** (Today): the chance of an up week given the stretch values, with a range, in place of any
+   weights.
+4. **Flow** (whale alerts): hit rate by ticker and by rule, pooled.
+5. **Crypto**: outcome rates by rule and by coin age.
+
+The first version is a beta-binomial with the prior fitted from the data, which needs no sampling library
+and can be checked by hand. It comes after packages 0 to 2: it needs records that survive and one
+definition of each quantity. Rule 4 still holds: the count is always shown beside the estimate.
+
 ## What will not be done while this plan runs
 
 No new tabs, no new scores, no new alert types except the stretch read in package 4. No wording passes on
