@@ -99,7 +99,7 @@ export async function ensureStockBarsCached(): Promise<StockBarsBackfillResult> 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
 
 /** A pass costs no request when every symbol is current, so it runs often: a symbol that failed or came
- *  back without the last session is asked again on the next pass, and the evening's close is picked up
+ *  back without the last session is asked again within two passes, and the evening's close is picked up
  *  soon after it settles instead of up to six hours later. */
 export const STOCK_BARS_TICK_MS = 15 * 60 * 1000;
 let started = false;

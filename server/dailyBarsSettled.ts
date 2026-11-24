@@ -126,8 +126,11 @@ export async function refreshSettledDailyBars(
       const settled = settledRows(got.rows, asOfSession < expected ? asOfSession : expected);
       if (settled.length < MIN_ROWS) { failed.push(sym); return; }
       const newest = settled.reduce((m, r) => (r.date > m ? r.date : m), settled[0].date);
+      // Read the mark again: a caller that started after this one may already have stored a later session.
+      const latest = store.getBarsMark(sym);
+      if (latest && latest.through > expected) { cached.push(sym); return; }
       // The mark never moves back: a lagging answer does not undo a session already read after its close.
-      const through = mark && mark.through > newest ? mark.through : newest;
+      const through = latest && latest.through > newest ? latest.through : newest;
       // Rows after `expected` are an open session's partial bar. Rows up to it are kept even when this answer lacks them.
       store.storeSettledDailyBars(sym, settled, through, nowMs, expected);
       (through >= expected ? fetched : behind).push(sym);
