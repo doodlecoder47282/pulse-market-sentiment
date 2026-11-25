@@ -149,7 +149,6 @@ export function isTradingDay(date: IsoDate): boolean {
   return !isWeekend(date) && !isHoliday(date);
 }
 
-/** First trading day strictly after `date`. */
 /**
  * The last trading day of the Monday-to-Friday week that holds `date` (a Friday, or earlier when Friday is a
  * holiday). Null when that week has no trading day on or after `date`.
@@ -165,6 +164,7 @@ export function weekLastTradingDay(date: IsoDate): IsoDate | null {
   return null;
 }
 
+/** First trading day strictly after `date`. */
 export function nextTradingDay(date: IsoDate): IsoDate {
   let d = addDays(date, 1);
   for (let i = 0; i < 15 && !isTradingDay(d); i++) d = addDays(d, 1);

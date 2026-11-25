@@ -71,9 +71,15 @@ export function todayPlan(m: TodayPlanInput): TodayPlan {
     ? ` Options are priced for a move of about ${n0(m.straddle)} points either way ${byWhen}: roughly ${n0(m.low)} to ${n0(m.high)}.`
     : "";
   const here: Side = m.atSpot === "short" ? "bigger" : m.atSpot === "long" ? "calmer" : null;
-  const mood = here === "bigger" ? `Bigger swings are the setup ${when}: at this price, the option map has the hedging of big option dealers leaning with moves, which tends to push ${sym} further in whichever direction it is already going.`
+  // The week's map counts ONE expiry. Its read is said as that expiry's alone, never as the whole market's:
+  // today's options usually carry more of the hedging, and the two reads can differ.
+  const weekMood = week == null ? null
+    : here === "bigger" ? `For the options that expire ${week} alone, the map has dealer hedging leaning with moves at this price (bigger swings in this model).`
+    : here === "calmer" ? `For the options that expire ${week} alone, the map has dealer hedging leaning against moves at this price (smaller swings in this model).`
+    : `For the options that expire ${week} alone, the map does not say whether dealer hedging leans with moves or against them.`;
+  const mood = weekMood ?? (here === "bigger" ? `Bigger swings are the setup ${when}: at this price, the option map has the hedging of big option dealers leaning with moves, which tends to push ${sym} further in whichever direction it is already going.`
     : here === "calmer" ? `Smaller swings are the setup ${when}: at this price, the option map has the hedging of big option dealers leaning against moves, which tends to pull ${sym} back toward the middle.`
-    : `The option map does not say ${when} whether dealer hedging leans with moves or against them.`;
+    : `The option map does not say ${when} whether dealer hedging leans with moves or against them.`);
   // After the close the map is for the next expiry, read after the close: say when it was read.
   const readAt = week ? "" : closed ? ` Market closed: these are levels for the next session${fin(m.readAtMs) ? `, read at ${etTime(m.readAtMs)} ET` : ""}.` : "";
   const headline = `${mood}${move}${readAt}`;

@@ -32,7 +32,8 @@ test("the chain window reaches the week's last expiry", () => {
 test("the week's wording names the expiry day and makes no next-session statement", () => {
   assert.equal(expiryDayLabel("2026-11-27"), "Fri Nov 27");
   const p = todayPlan({ symbol: "$SPX", spot: 7201, sessionState: "closed", dataState: "stale_session", atSpot: "short", straddle: 140, low: 7061, high: 7341, above: 7300, below: 7100, flip: 7250, weekExpiryLabel: "Fri Nov 27" });
-  assert.equal(p.headline, "Bigger swings are the setup through Fri Nov 27: at this price, the option map has the hedging of big option dealers leaning with moves, which tends to push SPX further in whichever direction it is already going. Options are priced for a move of about 140 points either way by the close on Fri Nov 27: roughly 7,061 to 7,341.");
+  assert.equal(p.headline, "For the options that expire Fri Nov 27 alone, the map has dealer hedging leaning with moves at this price (bigger swings in this model). Options are priced for a move of about 140 points either way by the close on Fri Nov 27: roughly 7,061 to 7,341.");
+  assert.doesNotMatch(p.headline, /are the setup/, "one expiry is not the whole market's setup");
   assert.doesNotMatch(p.headline, /next session|Market closed/);
 });
 
@@ -40,5 +41,7 @@ test("wiring: one route option, the same compose rules, shown on the card for th
   const routes = readFileSync("server/routes.ts", "utf8");
   assert.match(routes, /if \(String\(req\.query\.expiry \|\| ""\) === "week"\) \{/);
   assert.match(routes, /composeOdteMap\(b, \{ edition: editionFromEnv\(\) \}\)/);
+  const fwd = readFileSync("server/odteForward.ts", "utf8");
+  assert.match(fwd, /const takeQuote = isPm \|\| !rowQuotePm\.get\(styleKey\);/, "a row's quote comes from one settlement style");
   assert.match(readFileSync("client/src/components/TodayCard.tsx", "utf8"), /\{priced && symbol === "\$SPX" && <TodayWeek symbol=\{symbol\} active=\{active\} \/>\}/);
 });

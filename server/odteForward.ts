@@ -185,6 +185,8 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   // SPXW (PM) contracts, and a density needs call and put of the SAME settle.
   // The style with more two-sided contracts wins; the other is left out.
   const twoSidedByStyle = new Map<string, Map<number, { callMid: number | null; putMid: number | null }>>();
+  // Strike and side whose row quote already comes from a close-settled contract.
+  const rowQuotePm = new Map<string, boolean>();
   for (const { side, map } of passes) {
     const strikes = map?.[nearestKey] || {};
     for (const sk of Object.keys(strikes)) {
@@ -218,8 +220,16 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
           bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
         });
         const ivPct = sigmaClock > 0 ? sigmaClock * 100 : 0; // calendar-clock IV, %
-        if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; row.T = T; }
-        else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; row.T = T; }
+        // One date key can hold two contracts per strike and side (a monthly Friday: the index option that
+        // settles at the open and the weekly that settles at the close). The row's quote, volatility and time
+        // are taken from ONE of them, the close-settled one when both are there, so a straddle is never one
+        // style's call plus the other's put. Open interest is summed across both.
+        const styleKey = `${strike}|${side}`;
+        const isPm = String(contractStyle(c)) === "PM";
+        const takeQuote = isPm || !rowQuotePm.get(styleKey);
+        if (isPm) rowQuotePm.set(styleKey, true);
+        if (side === "C") { row.callOI += oi; if (takeQuote) { row.callMid = mid; row.callIV = ivPct; row.T = T; } }
+        else { row.putOI += oi; if (takeQuote) { row.putMid = mid; row.putIV = ivPct; row.T = T; } }
         const weight = oi + vol * HYBRID_VOLUME_WEIGHT; // hybrid: 0DTE OI is stale by design, volume carries intraday info
         if (weight <= 0) continue;
         const sigma = sigmaClock;
