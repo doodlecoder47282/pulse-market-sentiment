@@ -9,7 +9,7 @@
 //   - Presidential cycle analysis
 //   - Lookback selector support (?lookback=5|10|20)
 //
-// Cache: 24hr TTL (disk-backed via sessionCache). Cache key: seasonality-v3.
+// Cache: 24hr TTL (disk-backed via sessionCache). Cache key: seasonality-v4.
 
 import { readCache, writeCache } from "./sessionCache";
 import { tradingDayToDateLabel } from "@shared/chartLabels";
@@ -244,7 +244,9 @@ function presidentialCycleYear(year: number): 1 | 2 | 3 | 4 {
 export function dayOfYearToDate(doy: number, year = new Date().getFullYear()): string {
   const label = tradingDayToDateLabel(doy + 1, year, isTradingDay);
   // "Fri, Jul 17" -> "Jul 17". A year with fewer sessions than the step falls back to its last session.
-  return label ? label.replace(/^[A-Za-z]{3}, /, "") : "Dec 31";
+  if (label) return label.replace(/^[A-Za-z]{3}, /, "");
+  for (let n = doy; n >= 1; n--) { const l = tradingDayToDateLabel(n, year, isTradingDay); if (l) return l.replace(/^[A-Za-z]{3}, /, ""); }
+  return "";
 }
 
 function confidenceLabel(winRate: number): OptimalWindow["confidenceLabel"] {
@@ -769,7 +771,7 @@ export function computeSeasonality(
 
 // ─── Cache ────────────────────────────────────────────────────────────────
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_KEY = "seasonality-v3"; // v3: optimal window carries the data-snooping test
+const CACHE_KEY = "seasonality-v4"; // v4: window dates from this year's exchange calendar (v3: data-snooping test)
 
 interface CachedSeasonality { at: number; data: SeasonalityResponse }
 let memCache: CachedSeasonality | null = null;
