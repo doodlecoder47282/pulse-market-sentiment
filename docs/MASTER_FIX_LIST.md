@@ -27,7 +27,7 @@ These are done once and every tab gets them. They come first within the tab that
 | # | Fix | Why | Status |
 |---|---|---|---|
 | X1 | One server source for price, ceiling, floor, turning point and expected move, with two named views: Today (nearest expiry) and This week (week's last expiry). Every tab reads it. | Six different turning points and three different one-day moves were on screen on 2026-11-23. Tonight the strip said "dealers short gamma: hedging adds to moves" while the line under the tabs said "calmer side (smaller swings)". | PART: Signals top card has both views; other tabs still compute their own |
-| X2 | Hold levels still when no new option data has arrived. | With the same option data, the top card read ceiling 7,300 / turning point 7,224 / no floor at 6:09 PM, 7,310 / 7,238 / 7,150 at 9:19 PM and 7,250 / 7,208 / 7,150 at 3:16 AM, and went from "bigger-swing side" to "calmer side" overnight. | OPEN |
+| X2 | Hold levels still when no new option data has arrived. | With the same option data, the top card read ceiling 7,300 / turning point 7,224 / no floor at 6:09 PM, 7,310 / 7,238 / 7,150 at 9:19 PM and 7,250 / 7,208 / 7,150 at 3:16 AM, and went from "bigger-swing side" to "calmer side" overnight. | Built (`server/odteMapHold.ts`), not yet merged or seen live: outside the session the map is held while expiry, price, priced move and open interest are unchanged. Held in memory, so the first map after a restart is the one kept. Other tabs that compute their own levels are not held until they read the shared source. |
 | X3 | One regime label, from stated rules, used by the strip, every tab's summary line, Regime and Edge Lab. | Strip "Volatility expansion", Signals "Rotation: value-led", Edge Lab "Strong bear 75/100", summary line "heavy chop" or "strong trend". | OPEN |
 | X4 | The strip above the tabs in plain words. | Reads "Volatility expansion — VIX backwardation (26.7/28.3/25.5) + dealers short gamma", "NET GEX -16%", "RULE TIER: HIGH", "read 03:17 AM". | OPEN |
 | X5 | One set of names everywhere: ceiling, turning point, floor, expected move. | Signals and the line under the tabs use them; Outlook says "wall above" and "gamma flip"; Edge Lab "CALL WALL / PUT WALL / ZERO Γ"; Models "DOM MAG", "0-Γ FLIP"; Heatseeker "PIN · WALLS · FLIP". | PART |
@@ -309,7 +309,7 @@ Results are written here as they come in.
 | L10 | session | Each tab at 1,440px with live data: overlaps, empty panels, anything labelled stale that should not be. | |
 | L11 | 4:25 PM | Today's daily bars arrive the same evening (did on 2026-11-24). | |
 | L12 | 4:30 PM | Models starting price after the close. | |
-| L13 | 4:30 PM | Top card chip turns to "last session"; levels then hold still (after X2). | |
+| L13 | 4:30 PM, 8 PM, next 8 AM | Top card chip turns to "last session"; levels then hold still across the evening and overnight unless the priced move or open interest changes. Note the priced move each time: it read 81 at 6:09 PM and 86 at 9:19 PM on 2026-11-24 from what the chip called one read, which is not yet explained. | |
 | L14 | session | Charts behind a click or a search: seasonality, Edge Lab panels, News, Crypto. | |
 
 ## 6. Records to beat (2026-11-24)

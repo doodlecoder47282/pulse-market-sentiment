@@ -3400,3 +3400,12 @@ twelve tabs at 1,440px before the open plus the earlier reviews. It is the worki
 and is updated as checks come back. Found on that look: before the open the top card's chip reads "OK" on
 ten-hour-old data; the read went from "bigger-swing side" to "calmer side" overnight with no new option
 data while the strip said "dealers short gamma"; Trade Desk has 36 input boxes and 45 24-hour times.
+
+**Option map held while the market is shut and the data is unchanged (2026-11-25, master list X2).** On one
+option read the top card's levels slid through the evening and the read flipped sides overnight, because the
+model is re-priced with the time left to expiry on every request. `server/odteMapHold.ts`: outside the
+regular session `/api/odte/map` (both the nearest and the week view) serves the first map computed on a
+given set of data (expiry, price, at-the-money straddle, open interest by strike) until that data changes or
+the session opens; the session, data state, times and gap are always the current ones. In memory only.
+Unexplained and to watch: the priced move read 81 then 86 on what the chip called one read.
+Tests: `tests/quant/hold-levels.test.ts`.
