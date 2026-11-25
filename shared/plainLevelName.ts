@@ -17,9 +17,9 @@ const NAMES: Array<[RegExp, string]> = [
   [/\bput wall\b/gi, "floor"],
   [/\bpocket above\b/gi, "thin spot above"],
   [/\bpocket below\b/gi, "thin spot below"],
-  [/\bpivot R1\b/g, "resistance from yesterday's range (R1)"],
-  [/\bpivot S1\b/g, "support from yesterday's range (S1)"],
-  [/\bpivot\b(?! (?:R|S)\d)/g, "middle of yesterday's range"],
+  [/\bpivot R1\b/g, "resistance from yesterday's pivot (R1)"],
+  [/\bpivot S1\b/g, "support from yesterday's pivot (S1)"],
+  [/\bpivot\b(?! (?:R|S)\d)/g, "yesterday's pivot (average of high, low and close)"],
   [/\bpin\b(?! level)/g, "pin level"],
 ];
 

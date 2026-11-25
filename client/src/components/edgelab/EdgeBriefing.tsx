@@ -283,11 +283,11 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                 <LevelChip label="ceiling above" value={d.levels.callWall} hint="the strike with the most call positioning above the price" />
                 <LevelChip label="floor below" value={d.levels.putWall} hint="the strike with the most put positioning below the price" />
                 <LevelChip label="turning point" value={d.levels.zeroGamma} hint="above it hedging calms moves, below it hedging adds to them" />
-                <LevelChip label="upside target" value={d.levels.upside} hint="upside target" />
-                <LevelChip label="downside target" value={d.levels.downside} hint="downside target" />
-                <LevelChip label="far level above" value={d.levels.vomma.up} hint="the largest far strike above" />
-                <LevelChip label="far level below" value={d.levels.vomma.down} hint="the largest far strike below" />
-                <LevelChip label="top level above" value={d.levels.charm} hint="the largest strike just above the price" />
+                <LevelChip label="your upside target" value={d.levels.upside} hint="typed in by you on Heatseeker (weekly targets)" />
+                <LevelChip label="your downside target" value={d.levels.downside} hint="typed in by you on Heatseeker (weekly targets)" />
+                <LevelChip label="your upper level" value={d.levels.vomma.up} hint="typed in by you on Heatseeker (weekly targets); entered there as upper vomma" />
+                <LevelChip label="your lower level" value={d.levels.vomma.down} hint="typed in by you on Heatseeker (weekly targets); entered there as lower vomma" />
+                <LevelChip label="your pin level" value={d.levels.charm} hint="typed in by you on Heatseeker (weekly targets); entered there as charm" />
               </div>
               {(() => {
                 const missing = ([["ceiling above", d.levels.callWall], ["floor below", d.levels.putWall], ["turning point", d.levels.zeroGamma]] as Array<[string, number | null]>).filter(([, v]) => v == null).map(([n]) => n);
@@ -295,7 +295,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
               })()}
               {d.levels.targets && (
                 <div className="text-[11px] text-muted-foreground" data-testid="briefing-targets-note">
-                  Targets and far levels: {d.levels.targets.note}
+                  Your own levels: {d.levels.targets.note}
                 </div>
               )}
             </div>

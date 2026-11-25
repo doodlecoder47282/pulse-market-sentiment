@@ -8,8 +8,8 @@ test("stored labels read with the names the top card uses", () => {
   assert.equal(plainLevelName("wall above"), TODAY_LABELS.above);
   assert.equal(plainLevelName("magnet below"), TODAY_LABELS.below);
   assert.equal(plainLevelName("gamma flip"), TODAY_LABELS.flip);
-  assert.equal(plainLevelName("pivot S1 + pin + wall above"), "support from yesterday's range (S1) + pin level + ceiling above");
-  assert.equal(plainLevelName("pivot"), "middle of yesterday's range");
+  assert.equal(plainLevelName("pivot S1 + pin + wall above"), "support from yesterday's pivot (S1) + pin level + ceiling above");
+  assert.equal(plainLevelName("pivot"), "yesterday's pivot (average of high, low and close)");
   assert.equal(plainLevelName("prior-day high"), "prior-day high");
   assert.equal(plainLevelName("straddle high"), "top of the priced move");
   assert.equal(plainLevelName(null), "");
