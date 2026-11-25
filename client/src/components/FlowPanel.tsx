@@ -205,7 +205,8 @@ function zoneLabel(zone: PcrZone): string {
 function zDetail(r: PcrRead | undefined): string {
   if (!r) return "";
   if (r.z != null) return `z ${r.z >= 0 ? "+" : ""}${r.z.toFixed(1)} · ${r.n}d`;
-  if (r.zone === "insufficient_history") return `${r.n}/20 sessions`;
+  // Said once above the tiles (master list S9), not on every tile.
+  if (r.zone === "insufficient_history") return "";
   return "";
 }
 
@@ -1092,9 +1093,9 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
                 {agg.zone === "bearish" ? <TrendingDown className="mr-1 h-2.5 w-2.5" /> : agg.zone === "bullish" ? <TrendingUp className="mr-1 h-2.5 w-2.5" /> : <Minus className="mr-1 h-2.5 w-2.5" />}
                 {zoneLabel(agg.zone)}
               </Badge>
-              {agg.pcrRead && (
-                <div className="text-[11px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{zDetail(agg.pcrRead)}</div>
-              )}
+              {agg.pcrRead && (agg.pcrRead.zone === "insufficient_history"
+                ? <div className="text-[11px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{agg.pcrRead.n} of 20 sessions recorded</div>
+                : zDetail(agg.pcrRead) ? <div className="text-[11px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{zDetail(agg.pcrRead)}</div> : null)}
               <div className="flex gap-3 text-[11px] text-muted-foreground">
                 <span>Idx <span className="font-mono text-foreground">{fmtPcr(agg.indexPcr)}</span></span>
                 <span>Mag7 <span className="font-mono text-foreground">{fmtPcr(agg.mag7Pcr)}</span></span>
@@ -1126,6 +1127,13 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
             <div className="text-muted-foreground">vs own last 60 sessions at this clock time · descriptive, not a forecast</div>
           </div>
         </div>
+
+        {(() => {
+          const short = [...data.indexGroup, ...data.mag7Group].filter((t) => t.pcrRead?.zone === "insufficient_history");
+          if (!short.length) return null;
+          const n = Math.min(...short.map((t) => t.pcrRead?.n ?? 0));
+          return <p className="text-[11px] text-amber-300" data-testid="flow-no-baseline">No baseline yet for {short.length === data.indexGroup.length + data.mag7Group.length ? "these symbols" : short.map((t) => t.label).join(", ")}: {n} of the 20 sessions needed are recorded, so a ratio is shown without saying whether it is high or low for that symbol.</p>;
+        })()}
 
         {/* Index row */}
         <div>

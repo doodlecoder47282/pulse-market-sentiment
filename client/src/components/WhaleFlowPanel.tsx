@@ -3,6 +3,7 @@ import EdgeInfo from "@/components/EdgeInfo";
 // Ticker rows roll up by default; click to expand for full contract context.
 // Backend gate is the source of truth — NO adjusters in this panel.
 
+import { etDayTimeLabel } from "@shared/etTime";
 import PlainRead from "@/components/PlainRead";
 import { readWhalePerformance } from "@shared/plainReads";
 import { daySpreadAnswer, type DaySpread } from "@shared/whaleDays";
@@ -386,10 +387,12 @@ function freshnessBadgeClass(t: FreshnessTier): string {
 function freshnessLabel(t: FreshnessTier, pos: FollowPosition): string {
   if (t === "SOLD") return `SOLD · fade×${pos.live.fadeStreak}`;
   const bumpMs = new Date(pos.live.lastVolumeBumpAt).getTime();
-  if (!isFinite(bumpMs) || bumpMs <= 0) return t.toLowerCase();
+  // Plain words (master list S14): "no new trades for 3 hours", and overnight "no new trades since Nov 24, 3:58 PM ET",
+  // never "STALE · 11.3H".
+  if (!isFinite(bumpMs) || bumpMs <= 0) return t === "STALE" ? "no new trades seen" : t.toLowerCase();
   const ageMin = (Date.now() - bumpMs) / 60_000;
-  if (ageMin < 60) return `${t} · ${Math.max(1, Math.round(ageMin))}m`;
-  return `${t} · ${(ageMin / 60).toFixed(1)}h`;
+  if (t !== "STALE") return ageMin < 60 ? `${t} · ${Math.max(1, Math.round(ageMin))} min ago` : `${t} · ${(ageMin / 60).toFixed(1)} hours ago`;
+  return ageMin < 6 * 60 ? `no new trades for over ${Math.floor(ageMin / 60)} hours` : `no new trades since ${etDayTimeLabel(bumpMs)}`;
 }
 
 function TrackingRow({ pos }: { pos: FollowPosition }) {
