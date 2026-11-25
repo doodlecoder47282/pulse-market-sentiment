@@ -20,6 +20,10 @@ export interface SharedLevels {
   ceiling: number | null;
   floor: number | null;
   turningPoint: number | null;
+  /** Which side of the turning point the price is on, from the same map. */
+  atSpot: "long" | "short" | "indeterminate";
+  /** When the option data behind the map was read (epoch ms). */
+  readAtMs: number | null;
 }
 
 export interface SharedLevelsDeps {
@@ -38,7 +42,7 @@ export async function sharedLevels(symbol: string, view: SharedView, nowMs: numb
   const held = holdWhileUnchanged(`${symbol}|${pick}`, fwd.body, map, nowMs).body;
   if (held.dataState === "no_gex") return null;
   const lm = held.landmarks;
-  return { view, expiry: held.expiry ?? null, ceiling: lm.wallAbove ?? null, floor: lm.magnetBelow ?? null, turningPoint: lm.flip ?? null };
+  return { view, expiry: held.expiry ?? null, ceiling: lm.wallAbove ?? null, floor: lm.magnetBelow ?? null, turningPoint: lm.flip ?? null, atSpot: held.band?.atSpot ?? "indeterminate", readAtMs: held.chainAsOfMs ?? (Date.parse(held.asOf) || null) };
 }
 
 /** Which of the three a model took from the shared map, for the line under the Models header. */
@@ -48,6 +52,7 @@ export interface LevelSource {
   shared: Array<"ceiling" | "floor" | "turning point">;
   /** Levels the shared map does not read right now, where the model's own value is kept. */
   own: Array<"ceiling" | "floor" | "turning point">;
+  readAtMs: number | null;
 }
 
 export function levelSourceOf(s: SharedLevels): LevelSource {
@@ -55,7 +60,7 @@ export function levelSourceOf(s: SharedLevels): LevelSource {
   (s.ceiling != null ? shared : own).push("ceiling");
   (s.floor != null ? shared : own).push("floor");
   (s.turningPoint != null ? shared : own).push("turning point");
-  return { view: s.view, expiry: s.expiry, shared, own };
+  return { view: s.view, expiry: s.expiry, shared, own, readAtMs: s.readAtMs };
 }
 
 /**

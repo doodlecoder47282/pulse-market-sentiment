@@ -17,7 +17,7 @@ export function levelScopeText(panel: LevelPanel, horizon?: ModelHorizonKey | st
   switch (panel) {
     case "today":
     case "odteMap":
-      return "These levels use the nearest expiry only. Models and the chain audit add up more expiries, so their walls and flip are different numbers.";
+      return "These levels use the nearest expiry only. The daily and weekly SPX models on the Models tab use the same ceiling, floor and turning point (the weekly one for the week's last expiry). The monthly model and the chain audit add up more expiries, so their walls and flip are different numbers.";
     case "models": {
       const d = horizon && horizon in MODEL_DTE_MAX ? MODEL_DTE_MAX[horizon as ModelHorizonKey] : null;
       return `These levels add up every expiry ${d != null ? `within ${d} days` : "inside this view's limit"}, so they differ from other tabs. ${TODAY_REF}`;

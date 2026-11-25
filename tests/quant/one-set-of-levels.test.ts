@@ -55,7 +55,7 @@ test("each panel states which expiries its levels add up, and the Models limits 
   assert.match(levelScopeText("models", "quarterly"), /within 100 days/);
   assert.match(levelScopeText("models", "unknown"), /inside this view's limit/);
   assert.equal(levelScopeText("today"), levelScopeText("odteMap"));
-  assert.match(levelScopeText("today"), /nearest expiry only\. Models and the chain audit add up more expiries/);
+  assert.match(levelScopeText("today"), /nearest expiry only\. The daily and weekly SPX models on the Models tab use the same ceiling, floor and turning point[\s\S]*The monthly model and the chain audit add up more expiries/);
   assert.match(levelScopeText("chainAudit"), /Each column adds up its own group of expiries/);
   assert.match(levelScopeText("pivotProjection"), /main gamma snapshot \(the SPY chain, expiries within 45 days\), not the nearest-expiry map/);
   const models = readFileSync(new URL("../../server/models.ts", import.meta.url), "utf8");

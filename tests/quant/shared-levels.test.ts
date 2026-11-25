@@ -16,8 +16,8 @@ test("a wall sits on the shared strike when there is one, else on the model's ow
 });
 
 test("the level source says which levels are shared and which are the model's own", () => {
-  assert.deepEqual(levelSourceOf({ view: "today", expiry: "2026-11-25", ceiling: 7100, floor: null, turningPoint: 7045 }),
-    { view: "today", expiry: "2026-11-25", shared: ["ceiling", "turning point"], own: ["floor"] });
+  assert.deepEqual(levelSourceOf({ view: "today", expiry: "2026-11-25", ceiling: 7100, floor: null, turningPoint: 7045, atSpot: "long", readAtMs: null }),
+    { view: "today", expiry: "2026-11-25", shared: ["ceiling", "turning point"], own: ["floor"], readAtMs: null });
 });
 
 test("no map, or a map with no dealer-gamma levels, gives null: the caller keeps its own", async () => {
@@ -44,4 +44,12 @@ test("Models: daily reads Today, weekly reads This week, monthly keeps its own; 
   assert.match(r, /holdWhileUnchanged\(`\$\{symbol\}\|week`/);
   assert.match(r, /holdWhileUnchanged\(`\$\{symbol\}\|nearest`/);
   assert.match(read("server/sharedLevels.ts"), /holdWhileUnchanged\(`\$\{symbol\}\|\$\{pick\}`/);
+});
+
+test("the side of the turning point comes from the same map; graded alerts keep the model's own definitions", () => {
+  const m = read("server/models.ts");
+  assert.match(m, /extras\.gammaAtSpot === "long" \? "positive"/);
+  assert.match(m, /auditOf\(scaledProfile, levels, shared\?\.turningPoint != null \? shared\.atSpot : null\)/);
+  assert.match(m, /zeroGamma: ownProfile\.zeroGammaSpot/);
+  assert.match(read("server/discordScheduler.ts"), /daily\.own\?\.levels \?\? daily\.levels/);
 });

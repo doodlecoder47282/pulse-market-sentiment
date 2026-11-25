@@ -462,8 +462,9 @@ async function pollOdteBangerAlerts(): Promise<void> {
   const daily = models.horizons?.daily;
   if (!daily) return;
 
-  const audit = daily.audit ?? {};
-  const levels = (daily.levels ?? []) as any[];
+  // Graded alerts stay on the model's own level definitions (server/sharedLevels.ts keeps them in `own`).
+  const audit = daily.own?.audit ?? daily.audit ?? {};
+  const levels = (daily.own?.levels ?? daily.levels ?? []) as any[];
   const spot = odte.spot ?? daily.spot ?? 0;
   // EM lives at audit.scenarioTargets.oneDayEM in the live model output;
   // top-level expectedMove / oneDayEM are not populated on the daily horizon.
@@ -630,8 +631,9 @@ async function maybePreOpenOdteScan(): Promise<void> {
 
   const daily = models.horizons?.daily;
   if (!daily) return;
-  const audit = daily.audit ?? {};
-  const levels = (daily.levels ?? []) as any[];
+  // Graded alerts stay on the model's own level definitions (server/sharedLevels.ts keeps them in `own`).
+  const audit = daily.own?.audit ?? daily.audit ?? {};
+  const levels = (daily.own?.levels ?? daily.levels ?? []) as any[];
   const spot = odte.spot ?? daily.spot ?? 0;
   const oneDayEM =
     daily.expectedMove ??

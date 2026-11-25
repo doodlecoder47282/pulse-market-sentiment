@@ -260,6 +260,8 @@ export interface ModelHorizon {
   horizon: Horizon;
   /** Where ceiling, floor and turning point come from when they are the shared map's (server/sharedLevels.ts); null = the model's own. */
   levelSource?: LevelSource | null;
+  /** The model's own levels and audit when `levels` carry the shared map's ceiling, floor and turning point. Graded alerts read these. */
+  own?: { levels: ModelLevel[]; audit: ModelAudit } | null;
   label: string;                           // "SPX DAILY MODEL" etc.
   symbol: string;                          // "^GSPC" | "SPY"
   displaySymbol: string;                   // "SPX" | "SPY"
@@ -444,7 +446,7 @@ function extractLevels(
       name: "CALL WALL",
       price: callWall.strike,
       kind: "callWall",
-      gex: callWall.callGex,
+      gex: shared?.ceiling != null ? undefined : callWall.callGex,
       tag: "CEILING",
     });
   }
@@ -459,7 +461,7 @@ function extractLevels(
       name: "PUT WALL",
       price: putWall.strike,
       kind: "putWall",
-      gex: -putWall.putGex,
+      gex: shared?.floor != null ? undefined : -putWall.putGex,
       tag: "FLOOR",
     });
   }
@@ -946,6 +948,8 @@ function buildAudit(
     charmPrev: number | null;
     lastRecal: { at: number; dfi: number; dfiDeltaSinceOpen: number | null } | null;
     vixTermRatio?: number | null;
+    /** From the shared option map when the turning point is its flip: the side the price is on. Null = read the profile. */
+    gammaAtSpot?: "long" | "short" | "indeterminate" | null;
     vixForEM?: number | null;
     vix9d?: number | null;
     straddleEM?: StraddleExpectedMove | null;
@@ -962,7 +966,7 @@ function buildAudit(
   const slopeDeg = Math.min(2.0, Math.abs(cur.charm) / 1e9 * 0.5).toFixed(2);
   // Regime only from material gamma at spot (round 3, N3-3): missing, an
   // exact 0 or sub-floor noise is UNKNOWN, not positive or negative.
-  const regimeA = profileGexRegime(profile);
+  const regimeA = extras.gammaAtSpot === "long" ? "positive" : extras.gammaAtSpot === "short" ? "negative" : extras.gammaAtSpot === "indeterminate" ? "unknown" : profileGexRegime(profile);
   const gammaZone: "y+" | "y-" | "y?" = regimeA === "positive" ? "y+" : regimeA === "negative" ? "y-" : "y?";
   const gammaZoneLabel = regimeA === "positive" ? "DAMPENING" : regimeA === "negative" ? "AMPLIFYING" : "UNKNOWN";
 
@@ -1290,6 +1294,10 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   // (to 45 days: the "Structure" view). SPX only: the shared map is read for $SPX.
   const sharedView = symbol === "^GSPC" && chainSymbol === "SPX" ? (horizon === "daily" ? "today" : horizon === "weekly" ? "week" : null) : null;
   const shared = sharedView ? await (input.sharedLevels ?? sharedLevels)("$SPX", sharedView) : null;
+  // The model's own definitions are kept beside the shared ones (`own`): the graded 0DTE alerts and the
+  // recalibration rows stay on the definitions their records were built with, so one tally never mixes two.
+  const ownProfile: ExposureProfile = { ...scaledProfile };
+  const ownLevels = shared ? extractLevels(displayBuckets, ownProfile, displaySpot, displayRows, horizon, vix, input.experimental ?? false) : null;
   if (shared?.turningPoint != null) scaledProfile.zeroGammaSpot = shared.turningPoint;
   const levelSource: LevelSource | null = shared ? levelSourceOf(shared) : null;
 
@@ -1371,7 +1379,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
         charmPerDay: scaledProfile.current.charm / 1e9,
         iv1d: iv1dNow,
         charmZero: scaledProfile.zeroCharmSpot,
-        zeroGamma: scaledProfile.zeroGammaSpot,
+        zeroGamma: ownProfile.zeroGammaSpot,
       });
     } catch { /* table may not exist in legacy DB — swallow */ }
   }
@@ -1389,8 +1397,9 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   // #5: VIX term ratio fed into scenario weighting
   const vixTermRatioForAudit = vix && vix3m ? vix3m / vix : null;
 
-  const audit = buildAudit(scaledProfile, levels, displaySpot, intradayChange ?? { change: null, windowMin: null }, {
+  const auditOf = (prof: ExposureProfile, lv: ModelLevel[], gammaAtSpot: "long" | "short" | "indeterminate" | null) => buildAudit(prof, lv, displaySpot, intradayChange ?? { change: null, windowMin: null }, {
     paths,
+    gammaAtSpot,
     iv1d: iv1dNow,
     iv1dPrev: prevDay?.iv1d ?? null,
     charmPrev: prevDay?.charmPerDay ?? null,
@@ -1415,6 +1424,9 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
         }
       : null,
   });
+  // Which side of the turning point the price is on comes from the same map as the turning point itself.
+  const audit = auditOf(scaledProfile, levels, shared?.turningPoint != null ? shared.atSpot : null);
+  const own = ownLevels ? { levels: ownLevels, audit: auditOf(ownProfile, ownLevels, null) } : null;
   // One probability set per scenario: in the heuristic fallback the paths
   // carry the same numbers the audit shows (they used to differ).
   if (scenarioProbSource === "hand-set-heuristic") {
@@ -1510,6 +1522,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const horizonOut: ModelHorizon = {
     horizon,
     levelSource,
+    own,
     label: `${symbol === "^GSPC" ? "SPX" : "SPY"} ${horizon.toUpperCase()} MODEL`,
     symbol,
     displaySymbol: symbol === "^GSPC" ? "SPX" : "SPY",
