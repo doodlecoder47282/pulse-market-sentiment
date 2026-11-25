@@ -143,7 +143,7 @@ export function computeSqueezeIndicator(inp: SqueezeInputs): SqueezeIndicator {
   // 2. Gamma regime & zero-gamma proximity
   if (gamma.regime === "negative") {
     downFuel += 20;
-    triggers.push(`Net negative gamma (${(gamma.totalGex / 1e9).toFixed(2)}B/1%) — dealers sell into weakness, buy into strength = trend amplification`);
+    triggers.push(`Net negative gamma (${(gamma.totalGex / 1e9).toFixed(2)}B/1%) — in the model, dealer hedging leans with moves (bigger swings)`);
   } else if (gamma.regime === "positive") {
     upFuel += 10;
     triggers.push(`Net positive gamma (${(gamma.totalGex / 1e9).toFixed(2)}B/1%) — dealers stabilize; grind-up regime favored`);
@@ -197,10 +197,10 @@ export function computeSqueezeIndicator(inp: SqueezeInputs): SqueezeIndicator {
   // 5. PCR skew
   if (gamma.pcrOi < 0.85) {
     upFuel += 8;
-    triggers.push(`PCR OI ${gamma.pcrOi.toFixed(2)} (call-heavy) — crowded upside positioning can accelerate into call walls`);
+    triggers.push(`PCR OI ${gamma.pcrOi.toFixed(2)} (more calls than puts open)`);
   } else if (gamma.pcrOi > 1.8) {
     downFuel += 8;
-    triggers.push(`PCR OI ${gamma.pcrOi.toFixed(2)} (put-heavy) — defensive positioning extends room for bear squeeze if hedges unwind`);
+    triggers.push(`PCR OI ${gamma.pcrOi.toFixed(2)} (more puts than calls open)`);
   }
 
   // 6. SKEW (tail risk)

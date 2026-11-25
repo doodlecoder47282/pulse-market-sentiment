@@ -3424,3 +3424,11 @@ given set of data (expiry, price, at-the-money straddle, open interest by strike
 the session opens; only the model-derived levels (landmarks, side, strike exposures, zones) are held; the session, data state, times, gap, priced range and ladders are always current, and an unpriced or stale map is never kept. In memory only, at most 24 views.
 Unexplained and to watch: the priced move read 81 then 86 on what the chip called one read.
 Tests: `tests/quant/hold-levels.test.ts`.
+
+**Hand-set tallies shown as tallies (2026-11-25, master list E1 and T1 in part).** Edge Lab's briefing badge
+read "STRONG BEAR · score 75/100" for five fixed yes/no rules. The badge now reads "Rule tally leans down"
+(or up, mixed, not enough inputs) with no score, and the line reads "Rule tally: 3 of 5 inputs lean down, 0
+lean up (3 of 5 inputs counted) · ...". Trade Desk's squeeze card no longer shows "intensity 63/100 ·
+NEUTRAL · 0-2 sessions (imminent)"; it says it is a hand-set tally, not odds. Three trigger lines that
+claimed what dealers or positioning will do are reworded. The rules themselves are unchanged: removing or
+replacing them is still open. Tests: `tests/quant/demo-labels.test.ts`.

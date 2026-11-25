@@ -401,7 +401,8 @@ export function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictC
 
   const oneLiner = signals < 2
     ? `insufficient data · ${signals} of 5 inputs available · no read until Schwab data arrives`
-    : `${verdict} · ${signals} of 5 inputs · ${drivers.slice(0, 3).join(" · ")}${notCounted}`;
+    // What was counted, not a verdict: how many of the five rule inputs lean each way.
+    : `Rule tally: ${bear} of 5 inputs lean down, ${bull} lean up (${signals} of 5 inputs counted) · ${drivers.slice(0, 3).join(" · ")}${notCounted}`;
   return { verdict, verdictColor, confidence, oneLiner };
 }
 
