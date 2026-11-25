@@ -3424,3 +3424,14 @@ given set of data (expiry, price, at-the-money straddle, open interest by strike
 the session opens; only the model-derived levels (landmarks, side, strike exposures, zones) are held; the session, data state, times, gap, priced range and ladders are always current, and an unpriced or stale map is never kept. In memory only, at most 24 views.
 Unexplained and to watch: the priced move read 81 then 86 on what the chip called one read.
 Tests: `tests/quant/hold-levels.test.ts`.
+
+## 2026-11-25: Models in plain words (first pass, M3)
+
+The Models side panel, its header lines and the chart's level tags no longer use the Greek names: turning
+point (was gamma zero), strongest pin (dominant magnet), thin zone (extreme vacuum), upside and downside
+target (pivots), volatility flip, time-decay flip, flip zone, accel zone above and below, shelf below. The
+close-range heading says whether the odds are priced by options or hand-set. Target odds read "closes at or
+above the target 23% · touches it at some point 41%", and the reason a touch figure is withheld is in plain
+words (`server/impliedScenario.ts`). "MAIN PIVOT" is kept because it falls back to the strongest pin when
+there is no turning point. Not done: the cards below the main chart. The purpose line (0DTE, weekly swings,
+longer-term forecast) is now in `docs/OPERATING_FRAMEWORK.md` section 1.

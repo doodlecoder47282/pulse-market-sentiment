@@ -187,8 +187,8 @@ export function scenarioOddsFromCdf(
   const pTouchBull = touch(bull, beyondBull, bull <= spot);
   const pTouchBear = touch(bear, beyondBear, bear >= spot);
   const touchWithheld = (pTouchBull != null && pTouchBear != null) ? null
-    : !centred ? `implied distribution not centred on spot (spot sits at its ${Math.round(spotQuantile * 100)}% quantile; the 2x reflection rule needs about 50%)`
-    : "implied median is past the target; the 2x reflection rule does not apply";
+    : !centred ? `option prices lean to one side of the current price (${Math.round(spotQuantile * 100)}% of the priced outcomes sit below it; the touch estimate needs about 50%)`
+    : "option prices already put the middle outcome past this target, so the touch estimate does not apply";
   return {
     measure: "risk-neutral",
     bull: pBull,
