@@ -69,6 +69,15 @@ interface Briefing {
   panelHealth: { name: string; ok: boolean }[];
 }
 
+/** The server's verdict word as what it is: the direction of a five-rule tally. */
+export function tallyLabel(verdict: string): string {
+  const v = String(verdict || "").toLowerCase();
+  if (v.includes("bull")) return "Rule tally leans up";
+  if (v.includes("bear")) return "Rule tally leans down";
+  if (v.includes("insufficient")) return "Not enough inputs read";
+  return "Rule tally is mixed";
+}
+
 const verdictPill = (c: VerdictColor) => {
   switch (c) {
     case "emerald": return "bg-emerald-500/15 text-emerald-400 border-emerald-500/40";
@@ -168,12 +177,12 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             <CardTitle className="text-sm font-semibold tracking-tight">Daily / Weekly Briefing</CardTitle>
             {d && (
               <>
-                <Badge variant="outline" className={`text-[11px] uppercase tracking-wider font-bold ${verdictPill(d.verdictColor)}`}>
-                  {d.verdict}
+                {/* The tally's direction only. "STRONG BEAR, score 75/100" read as a graded call; it is five
+                    hand-set yes/no rules (it said strong bear on a day SPY rose 4.7%). The line below says
+                    how many inputs lean each way. */}
+                <Badge variant="outline" className={`text-[11px] font-semibold ${verdictPill(d.verdictColor)}`} title="Five fixed yes/no rules counted. Not a forecast and not graded.">
+                  {tallyLabel(d.verdict)}
                 </Badge>
-                {d.confidence != null && (
-                  <Badge variant="outline" className="text-[11px]" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</Badge>
-                )}
               </>
             )}
           </div>
