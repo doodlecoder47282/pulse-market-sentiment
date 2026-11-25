@@ -1,5 +1,6 @@
 // Closed-loop edge stats — rolling hit-rates by symbol/type/premium/vol-oi/delta,
 // regime calibration, threshold suggestions. Data: GET /api/edge/stats.
+import { etTimeLabel } from "@shared/etTime";
 import PlainRead from "@/components/PlainRead";
 import { readEdgeWhale } from "@shared/plainReads";
 import { useState } from "react";
@@ -498,7 +499,7 @@ export default function EdgeStatsPanel() {
         </Tabs>
 
         <div className="text-[11px] text-muted-foreground text-center pt-1">
-          last grade: {new Date(data.asOf).toLocaleTimeString()} · auto-refreshes every 60s
+          last grade: {etTimeLabel(data.asOf)} · auto-refreshes every 60s
         </div>
       </CardContent>
     </Card>

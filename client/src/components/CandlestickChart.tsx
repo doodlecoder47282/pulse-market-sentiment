@@ -158,7 +158,7 @@ export function CandlestickChart({
     const span = candles[candles.length - 1].t - candles[0].t;
     if (span < 3 * 86400) {
       // Exchange time, not the viewer's: bars are stamped to the New York session.
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "America/New_York" });
+      return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" });
     }
     return d.toLocaleDateString([], { month: "short", day: "numeric", timeZone: "America/New_York" });
   };

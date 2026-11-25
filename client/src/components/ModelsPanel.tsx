@@ -19,6 +19,7 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
+import { etTime as sharedEtTime, etTimeLabel } from "@shared/etTime";
 import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import { READ_MM_MATRIX, readModel, readVixTerm } from "@shared/plainReads";
@@ -343,12 +344,7 @@ function fmtSignedB(n: number): string {
 }
 
 function etTime(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString("en-US", {
-    timeZone: "America/New_York",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return sharedEtTime(ts * 1000);
 }
 
 // ─── Color palette ────────────────────────────────────────────────────────────
@@ -1635,7 +1631,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
   const lineData = useMemo(() =>
     candles.map(c => ({
       t: c.t,
-      label: new Date(c.t * 1000).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }),
+      label: sharedEtTime(c.t * 1000),
       price: c.c,
     })),
   [candles]);

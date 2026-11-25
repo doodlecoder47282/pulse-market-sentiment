@@ -5,6 +5,7 @@
 //
 // Both pull /api/macro. Quotes auto-refresh every 60s.
 
+import { etTimeLabel } from "@shared/etTime";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -363,7 +364,7 @@ export function MacroCarousel() {
         <div className="hidden shrink-0 text-right text-[11px] uppercase leading-tight tracking-wider text-muted-foreground sm:block">
           Auto-rotating
           <div className="font-mono normal-case tracking-normal" title="When this snapshot was built. Each price carries its own time (hover a row).">
-            built {new Date(data.asOf * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            built {etTimeLabel(data.asOf * 1000)}
           </div>
         </div>
       </div>

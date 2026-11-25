@@ -13,6 +13,7 @@
  * Data source: /api/killbox/forward returns latest snapshot per strike per greek
  * plus key levels + stability metric, computed server-side from chain-audit DB.
  */
+import { etTimeLabel } from "@shared/etTime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -82,7 +83,7 @@ function fmtMoney(v: number): string {
 }
 
 function fmtTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return etTimeLabel(ts);
 }
 
 function fmtDate(ts: number): string {

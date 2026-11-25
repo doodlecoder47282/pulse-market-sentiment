@@ -6,6 +6,7 @@
 // running counts. The text block is the same plan as a paste-able note.
 // Composition is shared/odteMap.ts, served by /api/odte/map.
 
+import { etTimeLabel } from "@shared/etTime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -125,7 +126,7 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
         )}
         {stale && m && (
           <div className="text-[11px] text-amber-300" data-testid="odte-map-stale">
-            showing the last map, chain from {new Date(m.chainAsOfMs ?? m.asOf).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })} ET; the refresh failed
+            showing the last map, chain from {etTimeLabel(m.chainAsOfMs ?? m.asOf)}; the refresh failed
           </div>
         )}
         {m && (

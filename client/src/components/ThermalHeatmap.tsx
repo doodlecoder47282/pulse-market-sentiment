@@ -1,4 +1,5 @@
 import EdgeInfo from "@/components/EdgeInfo";
+import { etTimeLabel } from "@shared/etTime";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -540,7 +541,7 @@ export default function ThermalHeatmap() {
               {data.chain && data.chain.asOfMs != null ? (
                 <DataStateChip state={data.chain.lastSession ? "last_session" : data.chain.stale ? "stale" : "ok"} reason={data.chain.staleReason} asOf={data.chain.asOfMs} source="Schwab" showAge testId="thermal-chain-age" />
               ) : (
-                <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> {new Date(data.asOf).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> {etTimeLabel(data.asOf)}</span>
               )}
             </div>
           </div>

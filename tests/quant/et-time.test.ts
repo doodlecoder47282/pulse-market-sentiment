@@ -1,7 +1,7 @@
 // Times read the normal way in Eastern time on the Signals flow panels.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { etTime, etTimeLabel } from "../../shared/etTime";
 
 const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
@@ -35,4 +35,20 @@ test("after the close the top card reads last session, the stream row says why i
   assert.match(flow, /Schwab's live trade feed is not connected \(Settings says why\)/);
   assert.doesNotMatch(flow, /switched off for this app/, "the same state covers a dropped connection, so the line does not name one cause");
   assert.match(read("client/src/index.css"), /\.batcave-shell \[class~="text-\[10px\]"\],\s*\.batcave-shell \[class~="text-\[11px\]"\] \{ font-size: 13px;/);
+});
+
+test("no screen formats a clock time on its own: the shared helper is the one place", () => {
+  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const p = `${d}/${n}`; return statSync(p).isDirectory() ? walk(p) : /\.tsx?$/.test(n) ? [p] : []; });
+  // Allowed: hour-of-day arithmetic (not shown) and chart libraries that need their own formatter with hour12 true.
+  const allowed = /pollInterval\.ts$|MLProjectionPanel\.tsx$/;
+  for (const f of walk("client/src")) {
+    const src = readFileSync(f, "utf8");
+    if (!allowed.test(f)) assert.doesNotMatch(src, /hour12: false|hourCycle: "h23"/, f);
+    assert.doesNotMatch(src, /new Date\([^)\n]*\)\.toLocale(Time)?String\(\)/, `${f}: a bare toLocaleString is the viewer's own time zone`);
+  }
+});
+
+test("the helper takes an ISO string as well as milliseconds", () => {
+  assert.equal(etTime("2026-11-25T18:07:00Z"), "1:07 PM");
+  assert.equal(etTime("not a time"), "");
 });

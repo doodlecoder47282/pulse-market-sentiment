@@ -2,6 +2,7 @@
  * Reusable AI brief card for Edge Lab sub-panels.
  * Hits /api/edgelab/brief?panel=<name>[&symbol=X], renders a peer-trader brief.
  */
+import { etTimeLabel } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -194,7 +195,7 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
                   </div>
 
                   <div className="text-[11px] text-muted-foreground pt-1">
-                    source: {d.source} · {new Date(d.asOf).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                    source: {d.source} · {etTimeLabel(d.asOf)}
                     {" · descriptive only: no probabilities, trade or size advice"}
                     {d.removedSentences ? ` · ${d.removedSentences} sentence${d.removedSentences === 1 ? "" : "s"} removed by the filter` : ""}
                   </div>
