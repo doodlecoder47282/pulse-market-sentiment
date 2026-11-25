@@ -1438,7 +1438,7 @@ function GexCell({ callGex, putGex, max, symbol, strike, expiry }: { callGex: nu
   return (
     <div
       className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[11px] tabular-nums"
-      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% since first view ${arrow.since} ET` : ""}`}
+      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% since first view ${arrow.since}` : ""}`}
       data-testid={symbol && strike != null ? `gex-cell-${strike}` : undefined}
     >
       <div
