@@ -6,6 +6,7 @@
 const NAMES: Array<[RegExp, string]> = [
   [/\bwall above\b/gi, "ceiling above"],
   [/\bmagnet below\b/gi, "floor below"],
+  [/\bzero[- ]gamma flip\b/gi, "turning point"],
   [/\bgamma flip\b/gi, "turning point"],
   [/\bzero[- ]gamma\b/gi, "turning point"],
   [/\bstraddle high\b/gi, "top of the priced move"],
@@ -28,15 +29,18 @@ export function plainLevelName(label: string | null | undefined): string {
   if (label == null) return "";
   // One pass over the original text: a rule never rewrites another rule's output.
   const src = String(label);
-  const hits: Array<{ at: number; len: number; to: string }> = [];
+  const found: Array<{ at: number; len: number; to: string }> = [];
   for (const [re, to] of NAMES) {
     const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
     for (let m = g.exec(src); m; m = g.exec(src)) {
-      const at = m.index, len = m[0].length;
-      if (len && !hits.some((h) => at < h.at + h.len && h.at < at + len)) hits.push({ at, len, to: m[0].replace(new RegExp(re.source, re.flags.replace("g", "")), to) });
-      if (!len) g.lastIndex++;
+      if (m[0].length) found.push({ at: m.index, len: m[0].length, to: m[0].replace(new RegExp(re.source, re.flags.replace("g", "")), to) });
+      else g.lastIndex++;
     }
   }
+  // Where two matches overlap the longer phrase wins ("zero-gamma flip" is one name, not "zero-" plus a flip).
+  found.sort((a, b) => b.len - a.len);
+  const hits: typeof found = [];
+  for (const f of found) if (!hits.some((h) => f.at < h.at + h.len && h.at < f.at + f.len)) hits.push(f);
   hits.sort((a, b) => b.at - a.at);
   let out = src;
   for (const h of hits) out = out.slice(0, h.at) + h.to + out.slice(h.at + h.len);

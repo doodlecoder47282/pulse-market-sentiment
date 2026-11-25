@@ -826,7 +826,7 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
         <div className="text-cyan-400">
           {basePath.name === "MAGNET"
             ? <>{lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} (close {basePath.region ? `${fmtK(basePath.region.lo ?? spot)}-${fmtK(basePath.region.hi ?? spot)}` : "around spot"}) · MAGNET path to <span className="text-cyan-300">{fmtK(basePath.target)}</span>, outside the bull/bear range (no probability of its own)</>
-            : <>BASE path · {lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} → chops {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} under the turning point
+            : <>BASE path · {lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} → chops {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)}{zg == null ? "" : spot * 1.003 <= zg ? ` under the turning point ${fmtK(zg)}` : spot * 0.997 >= zg ? ` above the turning point ${fmtK(zg)}` : ` around the turning point ${fmtK(zg)}`}
               {" → closes "}
               <span className="text-cyan-300">{fmtK(basePath.target * 0.999)}-{fmtK(basePath.target * 1.001)}</span></>}
         </div>
