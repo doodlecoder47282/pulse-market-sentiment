@@ -27,14 +27,14 @@ These are done once and every tab gets them. They come first within the tab that
 | # | Fix | Why | Status |
 |---|---|---|---|
 | X1 | One server source for price, ceiling, floor, turning point and expected move, with two named views: Today (nearest expiry) and This week (week's last expiry). Every tab reads it. | Six different turning points and three different one-day moves were on screen on 2026-11-23. Tonight the strip said "dealers short gamma: hedging adds to moves" while the line under the tabs said "calmer side (smaller swings)". | PART: Signals top card has both views; other tabs still compute their own |
-| X2 | Hold levels still when no new option data has arrived. | With the same option data, the top card read ceiling 7,300 / turning point 7,224 / no floor at 6:09 PM, 7,310 / 7,238 / 7,150 at 9:19 PM and 7,250 / 7,208 / 7,150 at 3:16 AM, and went from "bigger-swing side" to "calmer side" overnight. | Built (`server/odteMapHold.ts`), not yet merged or seen live: outside the session the map is held while expiry, price, priced move and open interest are unchanged. Held in memory, so the first map after a restart is the one kept. Other tabs that compute their own levels are not held until they read the shared source. |
+| X2 | Hold levels still when no new option data has arrived. | With the same option data, the top card read ceiling 7,300 / turning point 7,224 / no floor at 6:09 PM, 7,310 / 7,238 / 7,150 at 9:19 PM and 7,250 / 7,208 / 7,150 at 3:16 AM, and went from "bigger-swing side" to "calmer side" overnight. | DONE in code (#170), merged; market-closed behaviour still to be seen live (evening check) |
 | X3 | One regime label, from stated rules, used by the strip, every tab's summary line, Regime and Edge Lab. | Strip "Volatility expansion", Signals "Rotation: value-led", Edge Lab "Strong bear 75/100", summary line "heavy chop" or "strong trend". | OPEN |
-| X4 | The strip above the tabs in plain words. | Reads "Volatility expansion — VIX backwardation (26.7/28.3/25.5) + dealers short gamma", "NET GEX -16%", "RULE TIER: HIGH", "read 03:17 AM". | Built (`shared/stripRead.ts`), not yet merged or seen live. It now says it counts SPX options out to 30 days, which is why it can differ from the top card (today's expiry only). The six states are still fixed rules: X3 decides whether they stay. |
-| X5 | One set of names everywhere: ceiling, turning point, floor, expected move. | Signals and the line under the tabs use them; Outlook says "wall above" and "gamma flip"; Edge Lab "CALL WALL / PUT WALL / ZERO Γ"; Models "DOM MAG", "0-Γ FLIP"; Heatseeker "PIN · WALLS · FLIP". | PART |
-| X6 | Times the normal way in Eastern time on every tab, no leading zero. | Trade Desk shows 45 24-hour times, Models 22, Crypto 8; the strip says "03:17 AM". | PART: Signals done; every "read at" note on every tab is Eastern time with no leading zero (built, not yet seen live) |
+| X4 | The strip above the tabs in plain words. | Reads "Volatility expansion — VIX backwardation (26.7/28.3/25.5) + dealers short gamma", "NET GEX -16%", "RULE TIER: HIGH", "read 03:17 AM". | DONE: seen live 2026-11-25 noon ("Stress rising: VIX 32.7, up 24.0% today ..."). X3 still decides the label rules |
+| X5 | One set of names everywhere: ceiling, turning point, floor, expected move. | Signals and the line under the tabs use them; Outlook says "wall above" and "gamma flip"; Edge Lab "CALL WALL / PUT WALL / ZERO Γ"; Models "DOM MAG", "0-Γ FLIP"; Heatseeker "PIN · WALLS · FLIP". | PART: Signals, the strip, Models side panel and paths, Outlook, Trade Desk board/log/record and Edge Lab tiles use the shared names through `shared/plainLevelName.ts` (#173 seen live; #175 built). Heatseeker, Chart and Regime not done |
+| X6 | Times the normal way in Eastern time on every tab, no leading zero. | Trade Desk shows 45 24-hour times, Models 22, Crypto 8; the strip says "03:17 AM". | DONE in code (#174): one helper formats every clock time; a test forbids screen-level formatters. Seen live before: Trade Desk 69, Models 28 24-hour times. To be confirmed live after deploy |
 | X7 | A record for option levels (how often a ceiling, floor or turning point held or broke), shown beside every read that uses them. | The existing level record counts calendar levels only. No option-level read has a record. | OPEN |
-| X8 | Remove hand-set scores, or show the measured inputs they were built from. | "x/100" scores on screen tonight: Regime 16, Trade Desk 9, Edge Lab 3, Signals 2. None is graded. | OPEN |
-| X9 | Before the open, the data chip says how old the data is in words. | At 3:16 AM the top card's chip read "OK · Schwab 10h 21m": ten-hour-old data labelled OK. | PART: before the open, the top card and Chart's level card read "last session" when the option data is more than 30 minutes old and "ok" for a fresh pre-market read; the sentence says when the data was read (not yet seen live); other tabs' chips not checked |
+| X8 | Remove hand-set scores, or show the measured inputs they were built from. | "x/100" scores on screen tonight: Regime 16, Trade Desk 9, Edge Lab 3, Signals 2. None is graded. | PART: Edge Lab "STRONG BEAR 75/100" replaced by the rule tally and the Trade Desk squeeze number labelled as a hand-set tally (#172, seen live). Regime 16, other Trade Desk and Chart scores remain |
+| X9 | Before the open, the data chip says how old the data is in words. | At 3:16 AM the top card's chip read "OK · Schwab 10h 21m": ten-hour-old data labelled OK. | PART: top card and Chart level card done (#168), seen live at noon as "OK · Schwab 27s"; pre-open and overnight wording still to be seen live; other tabs' chips not changed |
 | X10 | Less page furniture: tools start 220px down a 900px window on every tab, and the top card plus stock search repeat above every tab. | Measured tonight on all twelve tabs. | OPEN |
 | X11 | Desktop layout from 1,024px. | Below that the phone layout shows. Text size on a computer is fixed (0% under 13px on ten tabs; Cosmos 21%, Take Five 14%). | PART |
 | X12 | Live prices from Schwab's stream. | Trade-by-trade buy/sell marking and live quotes depend on it. The client exists; Schwab refuses the sign-in. | OWNER (section 4) |
@@ -60,8 +60,8 @@ seen yet); the page reloads to the new version after a deploy.
 | S1 | The strip and one regime label (X3, X4). | OPEN |
 | S2 | Record for option levels beside the top read (X7). Decide how "held" is scored. | OPEN, needs owner's view |
 | S3 | Hold levels still without new data (X2). | OPEN |
-| S4 | Remove "Why levels differ" and the "Projected path · three reads of the centre" card (it ends "None of these lines is a forecast"). | PART: path card removed (merged, not yet seen live); "Why levels differ" stays until the other tabs read the shared source (X1), because until then it is true |
-| S5 | A plain line for the case where the week's ceiling sits below its turning point (seen: 7,250 under 7,278). | Merged, not yet seen live |
+| S4 | Remove "Why levels differ" and the "Projected path · three reads of the centre" card (it ends "None of these lines is a forecast"). | PART: path card removed (live); "Why levels differ" stays until the other tabs read the shared source (X1) |
+| S5 | A plain line for the case where the week's ceiling sits below its turning point (seen: 7,250 under 7,278). | Merged (#161); not yet seen live because the case has not recurred |
 | S6 | One "worth a look" flow list in place of Fresh whales, UOA clusters and Tracking. Plain words for "CONFLUX", "vol/OI", "gate: $2.5M • 15x • 1-3DTE • AT_ASK", "BURN". | OPEN |
 | S7 | Decide the whale list: its record is 1 of 5 after costs, average -76%, all from one day. Fix the rule or remove the list. | OPEN, needs owner's view |
 | S8 | Flow alerts: the remaining kinds (heavy strike, put/call shift, wall) still repeat one line per strike. Group them. | OPEN |
@@ -72,6 +72,7 @@ seen yet); the page reloads to the new version after a deploy.
 | S13 | Move stock search and "scan any ticker" below the reads. | OPEN |
 | S14 | "STALE · 11.3H" on tracked positions overnight: say "last price from yesterday's close". | OPEN |
 | S15 | Acceptance check against the framework checklist, then the owner's sign-off. | OPEN |
+| S16 | A same-day contract is unusual only for a burst (one five-minute step at least 5 times its usual step and at least 1,000 contracts); other same-day rows go under "Expiring today: where the activity is". Found at noon 2026-11-25: every listed row was a same-day contract, where volume over open interest means nothing. | DONE: #171, seen live |
 
 ### 2.2 Outlook
 
@@ -83,7 +84,7 @@ ahead in five windows. One chart, no overlaps, no scores, no inputs.
 
 | # | Fix | Status |
 |---|---|---|
-| O1 | Same names as Signals (X5): "wall above", "gamma flip", "straddle high", "pivot R1" in plain words. | OPEN |
+| O1 | Same names as Signals (X5): "wall above", "gamma flip", "straddle high", "pivot R1" in plain words. | DONE in code (#175), to be confirmed live |
 | O2 | Lead with the read and the if-then path, then the ladder. Today it opens with a description of itself. | OPEN |
 | O3 | Levels from the shared source (X1), each marked Today or This week. | OPEN |
 | O4 | The stretch read (index washout: how far below its averages, how the VIX curve sits, what expires) with a count of what followed such days. Missing on Friday 2026-11-20. | OPEN, needs the owner's Friday factors |
@@ -105,7 +106,7 @@ sources, raw StockTwits posts.
 | C1 | The chart first; the other panels below or moved. | OPEN |
 | C2 | Pivot magnet labels ("A+", "Q-S1", "VN2") in plain words (owner). | OPEN |
 | C3 | Levels from the shared source with the shared names (X1, X5). | OPEN |
-| C4 | Its data chip maps "last session" correctly (same fix as the Signals card). | Merged, not yet seen live |
+| C4 | Its data chip maps "last session" correctly (same fix as the Signals card). | Merged (#168); to be seen live after the close |
 | C5 | AI Outlook card: remove the hand-set playbook and score; stop counting one number as two sources; drop raw social posts. | OPEN |
 | C6 | "FEED OFFLINE": say what is missing and why, or fix it. | OPEN, check at open |
 | C7 | Each level type shows its own record (X7). | OPEN |
@@ -125,8 +126,8 @@ quantile; the 2x reflection rule needs about 50%)". Chip "LAST SESSION · SPY ch
 |---|---|---|
 | M1 | Levels from the shared source (X1). It builds SPX levels from a SPY chain; the pivot card multiplies SPY walls by 10. No fixed multiplier. | OPEN |
 | M2 | Evening starting price: live or dated, never yesterday's bar shown as now. | OPEN, check at 4:30 PM |
-| M3 | Plain words for every level name and the side panel; or the term goes. | OPEN |
-| M4 | Times the normal way (X6). | OPEN |
+| M3 | Plain words for every level name and the side panel; or the term goes. | PART: side panel, header, chart tags (#173, seen live), path sentences and backtest names (#175); the specialist chain audit is closed by default behind "For options specialists". Still Greek: the dealer matrix card, the weekly trajectory card |
+| M4 | Times the normal way (X6). | DONE in code (#174), to be confirmed live |
 | M5 | Path percentages: say where they come from; remove if hand-set (X8). | OPEN |
 | M6 | The buried oversold read (index RSI under 30, shown as "MAGNET DRIFT 50/100") moves to the stretch read (O4). | OPEN |
 | M7 | Label fixes from 2026-11-25 are live (three overlaps gone). | DONE |
@@ -165,12 +166,12 @@ negative-gamma zone", "intensity 63/100 · NEUTRAL · 0-2 sessions (imminent)".
 
 | # | Fix | Status |
 |---|---|---|
-| T1 | Remove or relabel the trigger card's hand-set "intensity" and its claims ("dealers sell into weakness", "bear squeeze if hedges unwind"). | OPEN |
+| T1 | Remove or relabel the trigger card's hand-set "intensity" and its claims ("dealers sell into weakness", "bear squeeze if hedges unwind"). | PART: squeeze card labelled "hand-set tally ... not odds, not graded" (#172, seen live); its trigger sentences still make hedging claims |
 | T2 | No inputs needed for a read (X14): 36 boxes. Find which are needed at all. | OPEN |
-| T3 | Times the normal way (X6): 45. | OPEN |
+| T3 | Times the normal way (X6): 45. | DONE in code (#174), to be confirmed live |
 | T4 | "Levels crossed" log: about 35 lines a session, mostly VIX crossing its open. Keep what matters. | OPEN |
 | T5 | The level board repeats one three-line caveat under each of five symbols. Say it once. | OPEN |
-| T6 | Shared names and source (X1, X5): "wall above", "magnet below", SPY 735.9 zero-gamma. | OPEN |
+| T6 | Shared names and source (X1, X5): "wall above", "magnet below", SPY 735.9 zero-gamma. | PART: board, log, record and option-map card print the shared names (#175); source still not shared (X1) |
 | T7 | Two places use the browser's clock for the date (expiry day and quick picks). | OPEN |
 | T8 | Lower half of the tab has never been read in full. | OPEN |
 | T9 | "Prev" label moved clear of "PP" on the price charts. | DONE |
@@ -222,9 +223,9 @@ three-path playbook with weights. No chart on first view.
 
 | # | Fix | Status |
 |---|---|---|
-| E1 | Replace "STRONG BEAR 75/100" (five hand-set votes; it said strong bear on a day SPY rose 4.7%) with the measured inputs. | OPEN |
+| E1 | Replace "STRONG BEAR 75/100" (five hand-set votes; it said strong bear on a day SPY rose 4.7%) with the measured inputs. | DONE: "Rule tally leans down · 4 of 5 inputs lean down, 0 lean up" seen live 2026-11-25 |
 | E2 | Daily and weekly levels from the shared source (X1), with the path. | OPEN |
-| E3 | Remove the empty tiles: a dash is not information. | OPEN |
+| E3 | Remove the empty tiles: a dash is not information. | DONE in code (#175): a tile with no value is not drawn; a missing option level is named once |
 | E4 | The playbook's weights are hand-set: say so or remove (X8). | OPEN |
 | E5 | Cross-asset table carries its close date. | DONE |
 | E6 | Other panels (skew, experiments) not yet read at desktop width. | OPEN |
@@ -245,7 +246,7 @@ first-ENTER coins needed." 12 input boxes. 8 24-hour times. Earlier: of 1,342 co
 | K3 | For each coin shown: entry, what to see first, target market cap, exit, with the record beside it. | OPEN |
 | K4 | Narrow the intake and state the reason for each cut. | OPEN |
 | K5 | Confirm the data sources are the best available. | OPEN |
-| K6 | Times the normal way (X6). | OPEN |
+| K6 | Times the normal way (X6). | DONE in code (#174), to be confirmed live |
 | K7 | The owner's friends' entry rules as a comparison. | OWNER |
 | K8 | Full live read, plan and scope check. | OPEN |
 
