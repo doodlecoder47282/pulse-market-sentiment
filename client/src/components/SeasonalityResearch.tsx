@@ -200,7 +200,8 @@ function toEquityClockSlug(symbol: string): string {
 function seasonDayLabel(day: unknown): string {
   const n = Number(day);
   const date = tradingDayToDateLabel(n, new Date().getFullYear(), isTradingDay);
-  return date ? `${date} · trading day ${Math.round(n)} of the year` : `Trading day ${String(day)} of the year`;
+  // "around": the average line is each past year fitted to 252 steps, so a step is that date give or take a day or two.
+  return date ? `around ${date} (this year's calendar) · trading day ${Math.round(n)} of 252` : `Trading day ${String(day)} of 252`;
 }
 
 function YearlyTooltip({ active, payload, label }: any) {

@@ -857,7 +857,10 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   // so "DOWNSIDE" and "DN VOMMA" are stacked instead of printed over each other. The price label is one of them.
   const topLanes = (() => {
     const span = maxStrike - minStrike;
-    const lanes = labelLanes([spot, ...visibleLevels.map((l) => l.value)], span > 0 ? span * 0.085 : 1);
+    // The gap is a label's width in strike points: about 80px of text over the plot's width in pixels. The
+    // plot is roughly the window less the page gutters and the two axes, so a phone gets a wider gap than a desk.
+    const plotPx = Math.max(240, Math.min(typeof window !== "undefined" ? window.innerWidth : 1200, 1500) - 150);
+    const lanes = labelLanes([spot, ...visibleLevels.map((l) => l.value)], span > 0 ? span * (80 / plotPx) : 1);
     return { spot: lanes[0] ?? 0, levels: lanes.slice(1), rows: Math.max(0, ...lanes) };
   })();
 
@@ -1236,7 +1239,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                   yAxisId="left"
                   stroke="hsl(var(--primary))"
                   strokeWidth={2}
-                  label={{ value: `PRICE ${spot.toFixed(0)}`, fill: "hsl(var(--primary))", fontSize: 11, fontWeight: 600, position: "top", offset: 4 + topLanes.spot * 13 }}
+                  label={{ value: `SPOT ${spot.toFixed(0)}`, fill: "hsl(var(--primary))", fontSize: 11, fontWeight: 600, position: "top", offset: 4 + topLanes.spot * 13 }}
                 />
                 {visibleLevels.map((l, li) => (
                   <ReferenceLine
