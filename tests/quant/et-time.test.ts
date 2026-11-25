@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { etTime, etTimeLabel } from "../../shared/etTime";
+import { clock12, etTime, etTimeLabel } from "../../shared/etTime";
 
 const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
 
@@ -51,4 +51,12 @@ test("no screen formats a clock time on its own: the shared helper is the one pl
 test("the helper takes an ISO string as well as milliseconds", () => {
   assert.equal(etTime("2026-11-25T18:07:00Z"), "1:07 PM");
   assert.equal(etTime("not a time"), "");
+});
+
+test("a stored wall-clock time reads the normal way", () => {
+  assert.equal(clock12("08:30"), "8:30 AM");
+  assert.equal(clock12("14:00"), "2:00 PM");
+  assert.equal(clock12("12:00"), "12:00 PM");
+  assert.equal(clock12("00:05"), "12:05 AM");
+  assert.equal(clock12("at the open"), "at the open");
 });

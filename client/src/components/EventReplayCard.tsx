@@ -7,6 +7,7 @@
  * store's snapshot count so the reader can see the desk's own history
  * accumulating. Reads the record; does not forecast.
  */
+import { clock12 } from "@shared/etTime";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,7 +76,7 @@ export default function EventReplayCard({ symbol = "$SPX" }: { symbol?: string }
                   {past.slice(0, 14).map((r) => (
                     <tr key={`${r.date}-${r.name}`} className="border-t border-border/30" data-testid={`event-row-${r.date}`}>
                       <td className="py-0.5">{r.date}</td>
-                      <td>{r.name} <span className="text-muted-foreground">{r.time}{r.note ? ` · ${r.note}` : ""}</span></td>
+                      <td>{r.name} <span className="text-muted-foreground">{clock12(r.time)}{r.note ? ` · ${r.note}` : ""}</span></td>
                       <td className={`text-right ${cls(r.gapPct)}`}>{pct(r.gapPct)}</td>
                       <td className={`text-right ${cls(r.closeMovePct)}`}>{pct(r.closeMovePct)}</td>
                       <td className="text-right">{pct(r.rangePct)}</td>
@@ -90,7 +91,7 @@ export default function EventReplayCard({ symbol = "$SPX" }: { symbol?: string }
             <details className="text-[11px]">
               <summary className="flex min-h-[44px] cursor-pointer select-none list-none items-center gap-1.5 text-muted-foreground lg:min-h-0"><ChevronRight className="h-3 w-3" /> coming up ({future.length}) · coverage</summary>
               <div className="mt-1 space-y-0.5 text-muted-foreground" data-testid="event-replay-coverage">
-                {future.slice(0, 8).map((r) => <div key={`${r.date}-${r.name}`} className="font-mono">{r.date} {r.time} ET · {r.name}{r.note ? ` · ${r.note}` : ""}</div>)}
+                {future.slice(0, 8).map((r) => <div key={`${r.date}-${r.name}`} className="font-mono">{r.date} {clock12(r.time)} ET · {r.name}{r.note ? ` · ${r.note}` : ""}</div>)}
                 {Object.entries(d.coverage).map(([k, v]) => <div key={k}><span className="font-mono text-foreground">{k}</span>: {v}</div>)}
                 <div>calendar valid through {d.validThrough}; unknown after that.</div>
               </div>

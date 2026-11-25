@@ -286,7 +286,7 @@ test("build: when the source refuses daily bars, the copy kept from the last goo
   const spx = b.tickers.find((x) => x.symbol === "$SPX")!;
   assert.ok(spx.levels.some((l) => l.key.split("+").includes("pdl")), "levels come from the kept copy");
   assert.equal(spx.levelsState, "partial");
-  assert.match(spx.levelsReason ?? "", /daily bars are the copy kept from 2026-11-11 \d\d:\d\d ET; the fresh read failed \(.*self-throttle/);
+  assert.match(spx.levelsReason ?? "", /daily bars are the copy kept from 2026-11-11 \d{1,2}:\d\d [AP]M ET; the fresh read failed \(.*self-throttle/);
   assert.equal(spx.priorSession, "2026-11-10");
   // The same answer while the refusal is remembered (no second request, still the kept copy).
   const again = await buildDeskBoard(NOON + 30_000, refused);
