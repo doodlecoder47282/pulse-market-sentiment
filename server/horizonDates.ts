@@ -28,7 +28,7 @@ export function buildHorizonDates(h: HorizonKey, nowMs: number = Date.now()): {
   const spotAnchorDate = fmt(now);
 
   if (h === "daily") {
-    const labels = ["OPEN", "10:30", "12:00", "14:00", "CLOSE"];
+    const labels = ["OPEN", "10:30 AM", "12:00 PM", "2:00 PM", "CLOSE"];
     // The daily target is a session's close: on a weekend or holiday, the next session's (the label said
     // "SUN NOV 22"). Known gap: on a trading day outside regular hours the pricing (server/models.ts) already
     // uses the following session's expiry while this label still says today.

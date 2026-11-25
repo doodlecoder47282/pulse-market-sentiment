@@ -9,6 +9,7 @@
 // reason it gave. Futures symbols are asked for as Schwab names them (/ES, /NQ); whether an account's
 // market-data entitlement serves them is only known from the answer.
 
+import { etTime } from "@shared/etTime";
 import type { NormalizedQuote, PriceHistoryResponse } from "./schwab";
 import { etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
 import { dailyBarEtDate } from "../shared/macroCalendar";
@@ -100,7 +101,7 @@ const BUILT_RETRY_MS = 15 * 60_000;
 let boardCache: { at: number; board: DeskBoard } | null = null;
 let inFlight: Promise<DeskBoard> | null = null;
 
-const hhmmEt = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const hhmmEt = (ms: number) => etTime(ms);
 const src = (deps: DeskBoardDeps) => (deps.edition() === "demo" ? "the sample feed" : "Schwab");
 
 async function dailyBars(deps: DeskBoardDeps, symbol: string, forSession: string, nowMs: number): Promise<DailyRead> {
