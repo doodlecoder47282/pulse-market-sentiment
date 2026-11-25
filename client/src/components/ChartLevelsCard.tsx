@@ -76,7 +76,7 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
     [m, levels],
   );
   const tol = m?.spot ? defaultTolerancePts(m.spot) : null;
-  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" || m.dataState === "stale" ? "stale" : "ok";
+  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale" ? "stale" : m.dataState === "stale_session" || m.session?.state === "preopen" ? "last_session" : "ok";
 
   const add = () => {
     const parsed = parseLevels(draft);

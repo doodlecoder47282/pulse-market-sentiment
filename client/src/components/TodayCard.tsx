@@ -21,7 +21,6 @@ import { Map as MapIcon } from "lucide-react";
 import type { OdteMap } from "@shared/odteMap";
 import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
-import TodayPath from "@/components/TodayPath";
 import TodayWeek from "@/components/TodayWeek";
 import { readToday } from "@shared/plainReads";
 import { todayPlan } from "@shared/todayPlan";
@@ -78,7 +77,9 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
   const flip = m.landmarks.flip;
   const priced = m.dataState !== "no_gex";
   // After the close the map is the last session's, read after it finished: that is "last session", not stale.
-  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "last_session" : m.dataState === "stale" ? "stale" : "ok";
+  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "last_session" : m.dataState === "stale" ? "stale"
+    // Before the open the option data is the last session's: "ok" on ten-hour-old data would read as live.
+    : m.session.state === "preopen" ? "last_session" : "ok";
   const aboveOi = m.strikes.find((s) => s.strike === above);
   const belowOi = m.strikes.find((s) => s.strike === below);
   const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of the option map nearby` : "");
@@ -190,8 +191,14 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
 
         {priced && <LevelScopeNote panel="today" />}
 
-        {/* the projected path to the close: the Wiener map's three centres, small (index only) */}
-        {symbol === "$SPX" && <TodayPath onOpenMap={onOpenMap} active={active} />}
+        {/* The projected-path card ("three reads of the centre", ending "None of these lines is a forecast")
+            is no longer on this card: it gave the reader nothing to act on. The Models and Heatseeker tabs
+            own projection. */}
+        {symbol === "$SPX" && onOpenMap && (
+          <button type="button" onClick={onOpenMap} className="text-sm text-primary underline-offset-2 hover:underline" data-testid="today-open-map">
+            See the full option map on Heatseeker
+          </button>
+        )}
       </CardContent>
     </Card>
   );
