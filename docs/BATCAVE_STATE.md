@@ -3348,3 +3348,11 @@ a plain sentence (still building, steady, slowing, one burst, quiet). `ContractB
 top of the flow alerts; the per-strike unusual-volume rows are removed. Limits shown on screen: steps are as
 fine as the gap between reads, volume before the first read has no timing, a chain total has no buy/sell
 side. History starts at deploy. Tests: `tests/quant/contract-build.test.ts`.
+
+**Signals S1a: the top read in plain words with an if-then path (2026-11-24).** `shared/todayPlan.ts` turns
+the nearest-expiry map already on the Today card into: what is happening ("Bigger swings are the setup...",
+"Smaller swings..."), the priced move as points and a range, and steps of the form "If SPX gets back above
+7,224, swings should calm down, because..." with the next level each way. Tile labels are "ceiling above",
+"turning point", "floor below"; "% of map" reads "% of nearby option positions". The model's own wording
+stays under "more". The rules are stated at the top of the file. No week levels yet and no record for
+option levels yet (the level record counts calendar levels). Tests: `tests/quant/today-plan.test.ts`.

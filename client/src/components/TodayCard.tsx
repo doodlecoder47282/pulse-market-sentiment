@@ -23,6 +23,7 @@ import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import TodayPath from "@/components/TodayPath";
 import { readToday } from "@shared/plainReads";
+import { todayPlan } from "@shared/todayPlan";
 
 type MapResp = OdteMap & { forwardAsOf: string; source: string };
 
@@ -31,7 +32,6 @@ type MapResp = OdteMap & { forwardAsOf: string; source: string };
 const LEVEL_TILE = "flex items-center justify-between gap-3 rounded-md border bg-muted/10 px-3 py-2 sm:block sm:p-2.5";
 
 const lvl = (n: number | null | undefined) => (n == null ? "n/a" : Math.round(n).toLocaleString("en-US"));
-const pct = (a: number | null | undefined, spot: number) => (a == null ? "" : `${a >= spot ? "+" : ""}${(((a - spot) / spot) * 100).toFixed(2)}%`);
 
 export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, active = true }: { symbol?: string; onOpenDesk?: () => void; onOpenMap?: () => void; active?: boolean }) {
   const q = useQuery<MapResp>({
@@ -80,7 +80,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
   const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "last_session" : m.dataState === "stale" ? "stale" : "ok";
   const aboveOi = m.strikes.find((s) => s.strike === above);
   const belowOi = m.strikes.find((s) => s.strike === below);
-  const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of map` : "");
+  const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of nearby option positions` : "");
 
   // Position of the three levels and spot on one line, as fractions of [lo, hi].
   const lo = Math.min(...[below, flip, spot, m.range.low ?? spot].filter((x): x is number => x != null)) - 5;
@@ -91,6 +91,11 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
     : m.band.atSpot === "short"
       ? "Short gamma at spot: dealer hedging adds to moves."
       : "Gamma sign at spot not determined.";
+
+  const plan = todayPlan({
+    symbol, spot, sessionState: m.session.state, dataState: m.dataState, atSpot: m.band.atSpot,
+    straddle: m.range.straddle, low: m.range.low, high: m.range.high, above, below, flip,
+  });
 
   return (
     <Card data-testid="today-card">
@@ -105,11 +110,12 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
         </div>
 
         {/* the answer first, in ordinary words (shared/plainReads.ts) */}
-        <PlainRead testId="today-plain" read={readToday({
+        {/* The answer is the plain plan (shared/todayPlan.ts); "more" keeps the model's own wording and limits. */}
+        <PlainRead testId="today-plain" read={{ answer: plan.headline, detail: readToday({
           spot, sessionState: m.session.state, dataState: m.dataState, atSpot: m.band.atSpot,
           straddle: m.range.straddle, low: m.range.low, high: m.range.high,
           above, below, aboveIsPin, belowIsPin, flip,
-        })} />
+        }).detail }} />
 
         {!priced ? (
           <div className="min-h-[96px] rounded-md border border-dashed border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-amber-300" data-testid="today-no-gex">
@@ -120,42 +126,51 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="today-levels">
               <div className={LEVEL_TILE + " border-border/60"}>
                 <div className="min-w-0">
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{aboveIsPin ? "pin (above)" : "wall above"}</div>
-                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{above != null ? `${pct(above, spot)} · ${share(aboveOi)}` : "none in band"}</div>
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{plan.labels.above}</div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{plan.notes.above}{above != null && share(aboveOi) ? ` · ${share(aboveOi)}` : ""}</div>
                 </div>
                 <div className="font-mono text-xl font-semibold tabular-nums text-rose-300 sm:text-2xl" data-testid="today-wall-above">{lvl(above)}</div>
-                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{above != null ? `${pct(above, spot)} · ${share(aboveOi)}` : "none in band"}</div>
+                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{plan.notes.above}{above != null && share(aboveOi) ? ` · ${share(aboveOi)}` : ""}</div>
               </div>
               <div className={LEVEL_TILE + " border-amber-500/50"}>
                 <div className="min-w-0">
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-amber-300">gamma flip</div>
-                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{flip != null ? `spot ${spot >= flip ? "above" : "below"} · ${m.band.atSpot} γ` : "no crossing in band"}</div>
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-amber-300">{plan.labels.flip}</div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{plan.notes.flip}</div>
                 </div>
                 <div className="font-mono text-xl font-semibold tabular-nums text-amber-200 sm:text-2xl" data-testid="today-flip">{lvl(flip)}</div>
-                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{flip != null ? `spot ${spot >= flip ? "above" : "below"} · ${m.band.atSpot} γ` : "no crossing in band"}</div>
+                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{plan.notes.flip}</div>
               </div>
               <div className={LEVEL_TILE + " border-border/60"}>
                 <div className="min-w-0">
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{belowIsPin ? "pin (below)" : "magnet below"}</div>
-                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{below != null ? `${pct(below, spot)} · ${share(belowOi)}` : "none in band"}</div>
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{plan.labels.below}</div>
+                  <div className="truncate font-mono text-[10px] text-muted-foreground sm:hidden">{plan.notes.below}{below != null && share(belowOi) ? ` · ${share(belowOi)}` : ""}</div>
                 </div>
                 <div className="font-mono text-xl font-semibold tabular-nums text-emerald-300 sm:text-2xl" data-testid="today-magnet-below">{lvl(below)}</div>
-                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{below != null ? `${pct(below, spot)} · ${share(belowOi)}` : "none in band"}</div>
+                <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{plan.notes.below}{below != null && share(belowOi) ? ` · ${share(belowOi)}` : ""}</div>
               </div>
             </div>
+
+            {plan.path.length > 0 && (
+              <div data-testid="today-path-steps">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">What to watch, step by step</div>
+                <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm leading-snug">
+                  {plan.path.map((line, i) => <li key={i}>{line}</li>)}
+                </ol>
+              </div>
+            )}
 
             {/* the position bar repeats the tiles: from 640 px only, so the phone gets to the path sooner */}
             <div className="hidden space-y-1 sm:block">
               <div className="relative h-2.5 rounded-full bg-gradient-to-r from-emerald-500/30 via-muted/40 to-rose-500/30">
-                {pos(flip) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-amber-400" style={{ left: pos(flip)! }} title={`flip ${lvl(flip)}`} />}
-                {pos(spot) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-foreground" style={{ left: pos(spot)! }} title={`spot ${lvl(spot)}`} />}
+                {pos(flip) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-amber-400" style={{ left: pos(flip)! }} title={`turning point ${lvl(flip)}`} />}
+                {pos(spot) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-foreground" style={{ left: pos(spot)! }} title={`price ${lvl(spot)}`} />}
               </div>
               <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
                 <span title="bar extent: the lower of the magnet, flip and straddle low">{lvl(lo + 5)}</span>
                 {/* the two labels in price order, so each sits on the side of the bar its mark is on */}
-                {flip != null && flip <= spot && <span className="text-amber-300">flip {lvl(flip)}</span>}
-                <span className="text-foreground">spot {lvl(spot)}</span>
-                {flip != null && flip > spot && <span className="text-amber-300">flip {lvl(flip)}</span>}
+                {flip != null && flip <= spot && <span className="text-amber-300">turning point {lvl(flip)}</span>}
+                <span className="text-foreground">price {lvl(spot)}</span>
+                {flip != null && flip > spot && <span className="text-amber-300">turning point {lvl(flip)}</span>}
                 <span title="bar extent: the higher of the wall, flip and straddle high">{lvl(hi - 5)}</span>
               </div>
             </div>
