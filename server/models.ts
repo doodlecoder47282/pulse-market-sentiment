@@ -1291,8 +1291,11 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
 
   // One source for ceiling, floor and turning point (framework section 7): the daily model reads the Today
   // map and the weekly model the This-week map, the ones the top card shows. The monthly model keeps its own
-  // (to 45 days: the "Structure" view). SPX only: the shared map is read for $SPX.
-  const sharedView = symbol === "^GSPC" && chainSymbol === "SPX" ? (horizon === "daily" ? "today" : horizon === "weekly" ? "week" : null) : null;
+  // (to 45 days: the "Structure" view). The SPX view only, whichever chain feeds it: the shared map is read
+  // for $SPX and these levels are shown in SPX points. (The first version also required chainSymbol "SPX";
+  // the SPX view is built from the SPY chain rescaled, so the shared levels were never applied: seen live
+  // 2026-11-25, Models 7,201 beside the top card's 7,208 and no source line.)
+  const sharedView = symbol === "^GSPC" ? (horizon === "daily" ? "today" : horizon === "weekly" ? "week" : null) : null;
   const shared = sharedView ? await (input.sharedLevels ?? sharedLevels)("$SPX", sharedView) : null;
   // The model's own definitions are kept beside the shared ones (`own`): the graded 0DTE alerts and the
   // recalibration rows stay on the definitions their records were built with, so one tally never mixes two.
