@@ -26,3 +26,11 @@ test("the screens no longer show a graded call for a hand-set tally", () => {
   const pb = read("server/playbook.ts");
   assert.doesNotMatch(pb, /dealers sell into weakness|bear squeeze if hedges unwind|crowded upside positioning/);
 });
+
+test("the Alpha email prints the baseline as a tally, never a label with a score", async () => {
+  const { composeAlphaEmail } = await import("../../server/alphaEmailComposer.ts");
+  const e = composeAlphaEmail({ structured: null, fusion: { baseline: { verdict: "strong bear", confidence: 75, oneLiner: "Rule tally: 4 of 5 inputs lean down" }, levels: { spot: 712 } } as any, provider: "deterministic" } as any);
+  assert.match(e.subject, /Rule tally leans down/);
+  assert.doesNotMatch(e.subject + e.body, /STRONG BEAR|75%|75\/100/);
+  assert.match(e.body, /hand-set rules, not odds, not graded/);
+});

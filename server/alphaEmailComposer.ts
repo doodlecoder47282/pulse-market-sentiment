@@ -98,6 +98,15 @@ function formatTrade(t: TradeIdea, idx: number): string[] {
  * Compose the full email body. Mobile-clean monospaced layout that renders
  * well in both plain-text and HTML-fallback email clients.
  */
+/** The Edge Lab baseline as a tally, in the words its badge uses (client `tallyLabel`). */
+export function baselineTally(verdict: string): string {
+  const v = String(verdict || "").toLowerCase();
+  if (v.includes("bull")) return "Rule tally leans up";
+  if (v.includes("bear")) return "Rule tally leans down";
+  if (v.includes("insufficient")) return "Not enough inputs read";
+  return "Rule tally is mixed";
+}
+
 export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string; body: string } {
   const lines: string[] = [];
   const s = payload.structured ?? null;
@@ -122,7 +131,7 @@ export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string
     : s
       ? `Alpha Brief: descriptive read${spotTag}`
       : baselineVerdict
-        ? `Alpha Brief: ${verdictLabel}${confidence != null ? ` \u00b7 ${confidence}%` : ""}${spotTag} (baseline)`
+        ? `Alpha Brief: ${baselineTally(baselineVerdict)}${spotTag} (baseline)`
         : `Alpha Brief: deterministic baseline (no LLM key)`;
 
   // HEADER
@@ -138,7 +147,8 @@ export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string
     lines.push("");
   } else if (baselineVerdict) {
     lines.push(bar("edge lab baseline (heuristic, not the model's read)"));
-    lines.push(`[ ${verdictLabel} ]  heuristic score ${confidence != null ? confidence + "/100" : "n/a"}`);
+    // The same words as the Edge Lab badge: a count of hand-set rules, never a "strong bear" label with a score.
+    lines.push(`[ ${baselineTally(baselineVerdict)} ]  hand-set rules, not odds, not graded`);
     if (oneLiner) lines.push(oneLiner);
     lines.push("");
   }
