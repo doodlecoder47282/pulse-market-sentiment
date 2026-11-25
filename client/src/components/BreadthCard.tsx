@@ -4,6 +4,7 @@
 // Honest about being a 36-stock hand-picked large-cap sample, not full NYSE
 // internals and not the median stock; sector-ETF participation sits beside it.
 
+import { etTimeLabel } from "@shared/etTime";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import UnavailablePanel from "./UnavailablePanel";
@@ -96,7 +97,7 @@ export default function BreadthCard() {
                     ? `${b.internals.advancers} advancing / ${b.internals.decliners} declining (${Math.round((b.internals.advanceShare ?? 0) * 100)}%)`
                     : "advance/decline unavailable"}
                   {b.internals.upVolumeShare != null ? ` · up volume ${Math.round(b.internals.upVolumeShare * 100)}%` : ""}
-                  {b.internals.asOf ? ` · as of ${new Date(b.internals.asOf).toLocaleTimeString()}` : ""}
+                  {b.internals.asOf ? ` · as of ${etTimeLabel(b.internals.asOf)}` : ""}
                   {b.internals.state === "partial" && b.internals.reason ? ` · partial: ${b.internals.reason}` : ""}
                 </>
               ) : (

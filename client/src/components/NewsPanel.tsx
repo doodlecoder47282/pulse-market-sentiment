@@ -6,6 +6,7 @@
 // source, tier and age; each source shows ok / empty / stale / failed /
 // not configured.
 
+import { etTime, etTimeLabel } from "@shared/etTime";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -435,11 +436,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
       const newsItems = headlines.slice(0, 30).map((h) => ({
         title: h.title,
         source: h.source,
-        time: new Date(h.published * 1000).toLocaleTimeString("en-US", {
-          timeZone: "America/New_York",
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+        time: etTime(h.published * 1000),
         summary: h.summary || undefined,
         url: h.url || undefined,
       }));
@@ -693,7 +690,7 @@ export default function NewsPanel() {
               </Badge>
             </CardTitle>
             <div className="text-[11px] text-muted-foreground">
-              {new Date(data.asOf * 1000).toLocaleTimeString()}
+              {etTimeLabel(data.asOf * 1000)}
             </div>
           </div>
 
@@ -1381,7 +1378,7 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
             </div>
           </div>
           <div className="text-[11px] text-[#e6d388]/60">
-            {new Date(asOf * 1000).toLocaleTimeString()}
+            {etTimeLabel(asOf * 1000)}
           </div>
         </div>
 

@@ -3,6 +3,7 @@
 // The protocol book on the Trade Desk (server/protocolEngine.ts, shared/protocols.ts): each if-then rule with
 // its trigger, the outcome its author states, what cancels it, a structure type, which conditions are met right
 // now, and a counts-only record. Below it, the log of board levels each ticker crossed today.
+import { etTimeLabel, etTime } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -37,7 +38,7 @@ interface Replay {
 }
 
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
-const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const hhmm = (ms: number) => etTime(ms);
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 const STATUS: Record<string, string> = { expected: "reached the rule's outcome price", cancelled: "cancelled", neither: "neither", open: "open", ungraded: "could not be graded", not_graded: "not graded" };
 

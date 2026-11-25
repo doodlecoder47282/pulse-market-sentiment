@@ -1,4 +1,5 @@
 import type { TradeBrief } from "@shared/tradeBrief";
+import { etDayTimeLabel } from "@shared/etTime";
 import type { EvidenceAcquisition } from "@shared/evidenceAcquisition";
 
 const labels: Record<EvidenceAcquisition["read_provenance"], string> = {
@@ -8,7 +9,7 @@ const labels: Record<EvidenceAcquisition["read_provenance"], string> = {
   unverified_adapter_return: "Adapter path unverified",
   brief_read_cache: "Brief-service cache",
 };
-const date = (value: string) => new Date(value).toLocaleString();
+const date = (value: string) => etDayTimeLabel(value);
 
 /** Disclosure only. No fetch, clock-based promotion, provider inference or model request. */
 export function EvidenceTiming({ brief, testId }: {

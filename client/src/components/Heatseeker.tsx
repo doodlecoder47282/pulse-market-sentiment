@@ -1,4 +1,5 @@
 import { SlowNote } from "@/components/ui/panel-skeleton";
+import { etTimeLabel } from "@shared/etTime";
 import { labelLanes } from "@shared/chartLabels";
 import EdgeInfo from "@/components/EdgeInfo";
 /**
@@ -842,7 +843,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
     [strikes],
   );
 
-  const tickTime = new Date(asOf).toLocaleTimeString("en-US", { hour12: false });
+  const tickTime = etTimeLabel(asOf);
 
   // Filter locked levels to those visible in the strike window.
   // Locked weekly targets are SPX-specific — skip them for any other symbol.
@@ -1423,7 +1424,7 @@ function GexCell({ callGex, putGex, max, symbol, strike, expiry }: { callGex: nu
   if (symbol && strike != null) {
     const base = getOrSeedBaseline(symbol, strike, net, expiry);
     const baseline = base.net;
-    const since = new Date(base.atMs).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" });
+    const since = etTimeLabel(base.atMs);
     const delta = net - baseline;
     const refMag = Math.max(Math.abs(baseline), Math.abs(net), 1);
     const pct = (Math.abs(delta) / refMag) * 100;
@@ -1437,7 +1438,7 @@ function GexCell({ callGex, putGex, max, symbol, strike, expiry }: { callGex: nu
   return (
     <div
       className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[11px] tabular-nums"
-      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% since first view ${arrow.since} ET` : ""}`}
+      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% since first view ${arrow.since}` : ""}`}
       data-testid={symbol && strike != null ? `gex-cell-${strike}` : undefined}
     >
       <div

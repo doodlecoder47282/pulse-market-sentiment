@@ -2,6 +2,7 @@
 //
 // The scoreboard (server/scoreboard.ts, shared/scoreboard.ts): every graded record the desk keeps in one list,
 // with its own counts and its own floor. Collapsed to one sentence; the rows open on tap.
+import { etTimeLabel } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -51,7 +52,7 @@ export default function ScoreboardCard() {
               ))}
             </ul>
             {v.unread.length > 0 && <p className="break-words text-[11px] text-amber-400">Not read: {v.unread.map((u) => `${u.record} (${u.reason})`).join("; ")}.</p>}
-            {q.isError && <p className="break-words text-[11px] text-amber-400">The latest refresh failed; this is the last read, from {new Date(v.asOfMs).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} ET.</p>}
+            {q.isError && <p className="break-words text-[11px] text-amber-400">The latest refresh failed; this is the last read, from {etTimeLabel(v.asOfMs)}.</p>}
             <p className="break-words text-[11px] text-muted-foreground">{v.note}</p>
           </div>
         )}

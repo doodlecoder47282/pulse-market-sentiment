@@ -8,6 +8,7 @@
  * and what the recomputation expected. Stale, unavailable and skipped are
  * their own states, never folded into pass. Descriptive; no advice.
  */
+import { etTimeLabel } from "@shared/etTime";
 import { useRef, useState } from "react";
 import { apiJson } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -109,7 +110,7 @@ export default function LiveVerifyCard() {
           )}
           {(report.dataState === "ok" || all.length > 0) && (
             <p className="text-xs text-muted-foreground">
-              {report.cached ? "Recent run" : "Ran"} at {new Date(report.finishedAt).toLocaleTimeString()} in {Math.round(report.durationMs / 1000)}s, session {report.session}. {report.note ? `${report.note} ` : ""}{report.scope}
+              {report.cached ? "Recent run" : "Ran"} at {etTimeLabel(report.finishedAt)} in {Math.round(report.durationMs / 1000)}s, session {report.session}. {report.note ? `${report.note} ` : ""}{report.scope}
             </p>
           )}
           {(report.dataState === "ok" || all.length > 0) && (

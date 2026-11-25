@@ -15,6 +15,7 @@ import EdgeInfo from "@/components/EdgeInfo";
  * Backed by /api/odte-tracker — polls every 3s.
  */
 
+import { etTimeLabel } from "@shared/etTime";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -143,7 +144,7 @@ function VolSpark({ contractKey, events, snapAt }: {
           e.kind === "buy" ? "bg-emerald-500"
             : e.kind === "sell_inferred" ? "bg-rose-500"
               : "bg-muted-foreground/40";
-        return <div key={i} className={`w-[2px] ${color}`} style={{ height: `${h}px` }} title={`${new Date(e.ts).toLocaleTimeString()} · ${e.kind}`} />;
+        return <div key={i} className={`w-[2px] ${color}`} style={{ height: `${h}px` }} title={`${etTimeLabel(e.ts)} · ${e.kind}`} />;
       })}
     </div>
   );
@@ -250,7 +251,7 @@ function CollapsedTracker({ data, onExpand }: { data: TrackerSnapshot; onExpand:
     .filter(c => c.classification === "sell")
     .reduce((s, c) => s + c.notional, 0);
   const netFlow = totalBuyNotional - totalSellNotional;
-  const tickTime = new Date(data.asOf).toLocaleTimeString("en-US", { hour12: false });
+  const tickTime = etTimeLabel(data.asOf);
 
   return (
     <Card
@@ -350,7 +351,7 @@ function LiveTrackerView({
   const activeTracked = data.tracked.filter(t => t.status === "active");
   const exitedTracked = data.tracked.filter(t => t.status === "exited").slice(-5);
 
-  const tickTime = new Date(data.asOf).toLocaleTimeString("en-US", { hour12: false });
+  const tickTime = etTimeLabel(data.asOf);
 
   return (
     <Card className="border-orange-500/20">
@@ -449,7 +450,7 @@ function LiveTrackerView({
                         {t.strike.toFixed(0)}{t.side === "call" ? "C" : "P"}
                       </span>
                       <span className="text-muted-foreground">
-                        entry ${entryPx.toFixed(2)}{t.buyAsk != null && t.buyAsk > 0 ? " ask" : " last"} · {new Date(t.buyTimestamp).toLocaleTimeString()}
+                        entry ${entryPx.toFixed(2)}{t.buyAsk != null && t.buyAsk > 0 ? " ask" : " last"} · {etTimeLabel(t.buyTimestamp)}
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
@@ -487,7 +488,7 @@ function LiveTrackerView({
                     </span>
                   </div>
                   <div className="text-muted-foreground">
-                    {t.estExitTs ? new Date(t.estExitTs).toLocaleTimeString() : ""}
+                    {t.estExitTs ? etTimeLabel(t.estExitTs) : ""}
                   </div>
                 </div>
               ))}
