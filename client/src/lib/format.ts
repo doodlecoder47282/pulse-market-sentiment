@@ -1,3 +1,4 @@
+import { etTimeLabel } from "@shared/etTime";
 export const fmt = {
   num: (n: number | null | undefined, d = 2) =>
     n == null || !isFinite(n) ? "—" : n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d }),
@@ -13,8 +14,8 @@ export const fmt = {
     n == null || !isFinite(n) ? "—" : Math.round(n).toLocaleString("en-US"),
   /** Wall-clock time in New York (matches the ET header clock), e.g. "12:02:22 PM ET". */
   tsET: (epoch: number) =>
-    `${new Date(epoch * 1000).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" })} ET`,
-  ts: (epoch: number) => new Date(epoch * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }),
+    `${etTimeLabel(epoch * 1000, { seconds: true })}`,
+  ts: (epoch: number) => etTimeLabel(epoch * 1000, { seconds: true }),
   toneColor: (t: "bullish" | "bearish" | "neutral") =>
     t === "bullish" ? "text-emerald-500" : t === "bearish" ? "text-red-500" : "text-muted-foreground",
 };

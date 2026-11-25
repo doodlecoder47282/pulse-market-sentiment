@@ -1,4 +1,5 @@
 import { SlowNote } from "@/components/ui/panel-skeleton";
+import { etTimeLabel, etTime } from "@shared/etTime";
 import EdgeInfo from "@/components/EdgeInfo";
 // Trade Desk — SPX/SPY/VIX intraday charts + pivots + gamma map + squeeze + playbook
 // Bloomberg dark aesthetic: near-black background, amber accents, monospace data,
@@ -712,7 +713,7 @@ function IntradayChart({
         price: b.c,
         high: b.h,
         low: b.l,
-        label: new Date(b.t * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+        label: etTime(b.t * 1000),
       }));
   }, [bars]);
 

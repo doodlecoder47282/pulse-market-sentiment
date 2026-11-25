@@ -4,6 +4,7 @@
 // its share of open interest and max pain, the range option prices imply to each expiry, and the scheduled
 // events, on one time axis. It reads four existing endpoints and asks for nothing from the user. Nothing on
 // it is a forecast, and the page says so where a reader could take it for one.
+import { plainLevelName } from "@shared/plainLevelName";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -135,7 +136,7 @@ export default function Outlook({ active = true }: { active?: boolean }) {
                   />
                 )}
                 {chart.levels.map((l) => (
-                  <line key={`${l.source}|${l.label}|${l.price}`} x1="0" x2="1000" y1={l.y * 880} y2={l.y * 880} stroke={l.side === "above" ? "rgba(52,211,153,0.55)" : l.side === "below" ? "rgba(251,113,133,0.55)" : "rgba(251,191,36,0.7)"} strokeWidth="1" strokeDasharray="6 5" vectorEffect="non-scaling-stroke" />
+                  <line key={`${l.source}|${plainLevelName(l.label)}|${l.price}`} x1="0" x2="1000" y1={l.y * 880} y2={l.y * 880} stroke={l.side === "above" ? "rgba(52,211,153,0.55)" : l.side === "below" ? "rgba(251,113,133,0.55)" : "rgba(251,191,36,0.7)"} strokeWidth="1" strokeDasharray="6 5" vectorEffect="non-scaling-stroke" />
                 ))}
                 <line x1="0" x2="1000" y1={chart.ySpot * 880} y2={chart.ySpot * 880} stroke="rgba(255,255,255,0.75)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
                 {chart.events.map((e) => (
@@ -150,8 +151,8 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               {/* labels in ordinary text, so they stay readable at every width */}
               <span className="absolute left-1 -translate-y-1/2 rounded bg-background/80 px-1 font-mono text-[11px] text-foreground" style={{ top: `${chart.ySpot * 88}%` }}>now {px(spot!)}</span>
               {chart.levels.map((l, i) => (
-                <span key={`t|${l.source}|${l.label}|${l.price}`} className={`absolute right-1 max-w-[62%] -translate-y-1/2 truncate rounded bg-background/80 px-1 font-mono text-[11px] ${SIDE_CLS[l.side]}`} style={{ top: `${(labelY[i] ?? l.y) * 88}%` }}>
-                  {px(l.price)} {l.label}
+                <span key={`t|${l.source}|${plainLevelName(l.label)}|${l.price}`} className={`absolute right-1 max-w-[62%] -translate-y-1/2 truncate rounded bg-background/80 px-1 font-mono text-[11px] ${SIDE_CLS[l.side]}`} style={{ top: `${(labelY[i] ?? l.y) * 88}%` }}>
+                  {px(l.price)} {plainLevelName(l.label)}
                 </span>
               ))}
             </div>
@@ -188,9 +189,9 @@ export default function Outlook({ active = true }: { active?: boolean }) {
               {levels.map((l, i) => {
                 const firstBelow = l.side === "below" && levels[i - 1]?.side !== "below";
                 return (
-                  <li key={`${l.source}|${l.label}|${l.price}`} className={`grid grid-cols-[62px_minmax(0,1fr)_auto] items-baseline gap-2 text-xs ${firstBelow ? "mt-2 border-t border-border/40 pt-2" : ""}`}>
+                  <li key={`${l.source}|${plainLevelName(l.label)}|${l.price}`} className={`grid grid-cols-[62px_minmax(0,1fr)_auto] items-baseline gap-2 text-xs ${firstBelow ? "mt-2 border-t border-border/40 pt-2" : ""}`}>
                     <span className={`font-mono font-semibold tabular-nums ${SIDE_CLS[l.side]}`}>{px(l.price)}</span>
-                    <span className="min-w-0 break-words"><span className="text-foreground">{l.label}</span> <span className="text-muted-foreground">· {l.source}</span></span>
+                    <span className="min-w-0 break-words"><span className="text-foreground">{plainLevelName(l.label)}</span> <span className="text-muted-foreground">· {l.source}</span></span>
                     <span className="whitespace-nowrap font-mono tabular-nums text-muted-foreground">{l.side === "at" ? "at the price" : `${signed(l.distPts)} (${pct(l.distPct)})`}</span>
                   </li>
                 );

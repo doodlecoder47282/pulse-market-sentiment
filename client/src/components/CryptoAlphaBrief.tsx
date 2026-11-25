@@ -1,6 +1,7 @@
 // CryptoAlphaBrief — the crypto alpha brief: one plain-sentence read of everything the desk collects
 // (shared/cryptoBrief.ts). Built from the feed, health and record payloads the tab already loads; no extra
 // request, no model. Lines about a tracked coin jump to its card.
+import { etTimeLabel } from "@shared/etTime";
 import { useMemo, useState } from "react";
 import { buildCryptoBrief, type BriefInputs, type BriefLine } from "@shared/cryptoBrief";
 
@@ -16,7 +17,7 @@ export default function CryptoAlphaBrief({ inputs, onPick }: { inputs: BriefInpu
         <span className="min-w-0">
           <span className="block text-[11px] font-semibold uppercase tracking-[0.14em] text-fuchsia-300">Crypto alpha brief</span>
           <span className="mt-0.5 block break-words text-[13px] font-medium text-foreground" data-testid="crypto-alpha-brief-headline">{brief.headline}</span>
-          <span className="block text-[11px] text-muted-foreground">{brief.asOf ? `as of ${new Date(brief.asOf).toLocaleTimeString()}` : "not read yet"} · rebuilt on every refresh</span>
+          <span className="block text-[11px] text-muted-foreground">{brief.asOf ? `as of ${etTimeLabel(brief.asOf)}` : "not read yet"} · rebuilt on every refresh</span>
         </span>
         <span className="shrink-0 pt-1 text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
       </button>
