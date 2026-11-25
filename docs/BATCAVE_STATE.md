@@ -3383,3 +3383,13 @@ Seasonality tooltips read "around Fri, Jul 17 (this year's calendar) · trading 
 (`seasonality.ts` `dayOfYearToDate`) spread the same count over 365 days from 2025, so they can differ from
 the tooltip by a few days; one mapping is needed. The other tabs'
 charts have not been checked yet. Tests: `tests/quant/chart-labels-spacing.test.ts`.
+
+**Label sweep at desktop width (2026-11-25, live, 1440px).** #165 seen live: Heatseeker's twelve level names
+sit in three rows with no overlap (measured from the rendered text boxes and a screenshot); Trade Desk's six
+charts have no overlapping text. A text-box overlap check was then run on every tab's visible charts:
+Signals, Outlook, Chart, Trade Desk clean; Models had three ("PREV 7,237" over "CW 7,238" on the tape chart,
+"OPEN" over the lowest price tick on the path chart, the pivot card's caption over "putWall · 7000.00");
+Regime's correlation map had company names showing through its legend. Fixed here: `labelNudges` fans out
+right-edge labels on the tape chart, the path chart's time labels sit lower, the caption moved beside
+"today", the legend is opaque. Not checked: charts that need a click or a search to appear (seasonality,
+Edge Lab panels, News, Crypto had no chart on first view), and text drawn over lines rather than over text.
