@@ -33,20 +33,20 @@ export interface StripRead {
 
 export const STRIP_LABELS: Record<StripRegime, string> = {
   vol_expansion: "Stress rising",
-  gamma_squeeze: "Calm and firming",
-  pinning: "Quiet, range-bound",
+  gamma_squeeze: "Calm, hedging absorbing more",
+  pinning: "Quiet, hedging absorbs moves",
   mean_reversion: "Stress easing",
-  trend_continuation: "Moves tend to run",
+  trend_continuation: "Bigger swings, VIX moving",
   neutral: "No clear setup",
   unavailable: "Not read",
 };
 
 const RULES: Record<StripRegime, string> = {
   vol_expansion: "short-term fear above longer-term, VIX up more than 3% today, and 30-day dealer hedging leaning with moves",
-  gamma_squeeze: "30-day dealer hedging leaning strongly against moves and growing, with VIX down more than 1% today",
+  gamma_squeeze: "30-day dealer hedging leaning strongly against moves, SPX dealer hedging rising over the last 24 hours, and VIX down more than 1% today",
   pinning: "30-day dealer hedging leaning against moves, the usual VIX curve, and VIX moving less than 2% today",
-  mean_reversion: "30-day dealer hedging leaning with moves, short-term fear not above longer-term, and VIX down more than 1% today",
-  trend_continuation: "30-day dealer hedging leaning with moves and changing, with VIX moving more than 1% today",
+  mean_reversion: "30-day dealer hedging leaning with moves, the fear curve read and short-term fear not above longer-term, and VIX down more than 1% today",
+  trend_continuation: "30-day dealer hedging leaning with moves, SPX dealer hedging rising or falling over the last 24 hours, and VIX moving more than 1% today",
   neutral: "none of the five named rules matched",
   unavailable: "an input is missing",
 };
@@ -58,23 +58,24 @@ export function stripRead(regime: StripRegime, i: StripInputs): StripRead {
   const rule = `Fixed rule, not a forecast: ${RULES[regime] ?? RULES.neutral}.`;
   const vix = f1(i.vix);
   const chg = typeof i.vixChangePct === "number" && Number.isFinite(i.vixChangePct) ? i.vixChangePct : null;
-  const vixPart = vix == null ? "the fear gauge (VIX) was not read"
-    : chg == null ? `the fear gauge (VIX) is ${vix}`
-    : Math.abs(chg) < 0.05 ? `the fear gauge (VIX) is ${vix}, flat today`
-    : `the fear gauge (VIX) is ${vix}, ${chg > 0 ? "up" : "down"} ${Math.abs(chg).toFixed(1)}% today`;
-  const curvePart = i.termState === "backwardation" ? "short-term fear is above longer-term (traders are paying up for protection now)"
-    : i.termState === "contango" ? "short-term fear is below longer-term (the usual, calmer shape)"
-    : i.termState === "flat" ? "short-term and longer-term fear are about equal"
-    : "the fear curve was not read";
-  const dealerPart = i.gexRegime === "short_gamma" ? "across SPX options out to 30 days the model has dealer hedging leaning with moves (bigger swings)"
-    : i.gexRegime === "long_gamma" ? "across SPX options out to 30 days the model has dealer hedging leaning against moves (smaller swings)"
-    : "the 30-day dealer hedging read is missing";
+  // Short clauses: the strip sits above every tab and must stay one or two lines.
+  const vixPart = vix == null ? "VIX not read"
+    : chg == null ? `VIX ${vix}`
+    : Math.abs(chg) < 0.05 ? `VIX ${vix}, flat today`
+    : `VIX ${vix}, ${chg > 0 ? "up" : "down"} ${Math.abs(chg).toFixed(1)}% today`;
+  const curvePart = i.termState === "backwardation" ? "short-term fear above longer-term"
+    : i.termState === "contango" ? "short-term fear below longer-term (the usual shape)"
+    : i.termState === "flat" ? "short-term and longer-term fear about equal"
+    : "fear curve not read";
+  const dealerPart = i.gexRegime === "short_gamma" ? "30-day SPX options: dealer hedging leans with moves (bigger swings in the model)"
+    : i.gexRegime === "long_gamma" ? "30-day SPX options: dealer hedging leans against moves (smaller swings in the model)"
+    : "30-day dealer hedging not read";
   const sentence = regime === "unavailable"
     ? `Not read: ${[vix == null ? "VIX" : null, i.termState === "unknown" ? "the fear curve" : null, i.gexRegime === "unknown" ? "30-day dealer hedging" : null].filter(Boolean).join(" and ") || "an input"} did not come back from Schwab.`
-    : `${label}: ${vixPart}, ${curvePart}, and ${dealerPart}.`;
+    : `${label}: ${vixPart} · ${curvePart} · ${dealerPart}.`;
   const facts: string[] = [];
   const v9 = f1(i.vix9d), v3 = f1(i.vix3m);
-  if (vix != null) facts.push(`VIX: 9-day ${v9 ?? "n/a"} · 30-day ${vix} · 3-month ${v3 ?? "n/a"}`);
+  if (vix != null) facts.push(`VIX (the fear gauge): 9-day ${v9 ?? "n/a"} · 30-day ${vix} · 3-month ${v3 ?? "n/a"}`);
   if (i.gexRegime !== "unknown" && Number.isFinite(i.gexShare)) {
     facts.push(`30-day options: ${Math.abs(i.gexShare * 100).toFixed(0)}% net leaning ${i.gexShare < 0 ? "with" : "against"} moves`);
   }

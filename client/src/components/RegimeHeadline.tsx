@@ -85,7 +85,7 @@ export default function RegimeHeadline() {
         <div className={`min-w-0 flex-1 basis-full whitespace-normal break-words text-sm md:basis-0 ${style.text}`} data-testid="regime-headline-text" title={read.rule}>
           {read.sentence}
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground" data-testid="regime-headline-meta">
+        <div className="flex basis-full flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground" data-testid="regime-headline-meta">
           {read.facts.map((f) => <span key={f}>{f}</span>)}
           <AsOfNote asOf={data.asOf} />
         </div>
