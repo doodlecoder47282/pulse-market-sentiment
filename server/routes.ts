@@ -3720,6 +3720,15 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
       const { buildOdteForward } = await import("./odteForward");
       const { composeAndRemember } = await import("./odteMapLedger");
+      // ?expiry=week: the same map for the last expiry of the week (the Signals card's "this week" levels).
+      // It is composed with the same rules and is not kept in the ledger, which records the nearest expiry.
+      if (String(req.query.expiry || "") === "week") {
+        const wk = await buildOdteForward(symbol, Date.now(), undefined, "week");
+        if (wk.status !== 200) return res.status(wk.status).json(wk.body);
+        const { composeOdteMap } = await import("../shared/odteMap");
+        const b: any = wk.body;
+        return res.json({ ...composeOdteMap(b, { edition: editionFromEnv() }), expiryPick: "week", weekEnd: b.weekEnd ?? null, sameAsNearest: b.sameAsNearest === true, forwardAsOf: b.asOf, source: b.source ?? "schwab" });
+      }
       const fwd = await buildOdteForward(symbol);
       if (fwd.status !== 200) return res.status(fwd.status).json(fwd.body);
       const out = composeAndRemember(fwd.body, editionFromEnv());

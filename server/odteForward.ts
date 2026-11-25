@@ -11,7 +11,7 @@ import { schwabNum } from "./schwabChainRows";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 import { contractStyle, contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
-import { etDate, nextTradingDay, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionMinutes } from "./exchangeCalendar";
+import { etDate, nextTradingDay, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionMinutes, weekLastTradingDay } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
 import { normCdf, wienerMap } from "../shared/odteWiener";
@@ -58,7 +58,36 @@ export function chainDteWindow(nowMs: number): number {
   return Math.max(1, days);
 }
 
-export async function buildOdteForward(symbolIn: string, nowMs: number = Date.now(), depsIn?: OdteForwardDeps): Promise<OdteForwardResult> {
+/** Which expiry the map is built for: the nearest unsettled one (default), or the last one of that expiry's week. */
+export type ExpiryPick = "nearest" | "week";
+
+/**
+ * The expiry key to read for a pick. "week" is the last unsettled expiry on or before the last trading day
+ * of the week that holds the nearest unsettled expiry (so on a Friday evening it is next week's). When that
+ * is the nearest expiry itself, `sameAsNearest` is true: the week's map would repeat today's.
+ */
+export function pickExpiryKey(liveKeysByDte: string[], pick: ExpiryPick): { key: string; weekEnd: string | null; sameAsNearest: boolean } {
+  const nearest = liveKeysByDte[0];
+  if (pick !== "week") return { key: nearest, weekEnd: null, sameAsNearest: true };
+  const weekEnd = weekLastTradingDay(nearest.split(":")[0]);
+  if (!weekEnd) return { key: nearest, weekEnd: null, sameAsNearest: true };
+  const inWeek = liveKeysByDte.filter((k) => k.split(":")[0] <= weekEnd);
+  const key = inWeek.length ? inWeek[inWeek.length - 1] : nearest;
+  return { key, weekEnd, sameAsNearest: key === nearest };
+}
+
+/** Calendar days from today to the last trading day of the week that holds the next session (for the chain window). */
+export function weekDteWindow(nowMs: number): number {
+  const today = etDate(nowMs);
+  const base = sessionCloseMinutes(today) != null ? today : nextTradingDay(today);
+  // After today's close the nearest unsettled expiry is the next session's, whose week may be the next one.
+  const candidates = [weekLastTradingDay(base), weekLastTradingDay(nextTradingDay(base))].filter((x): x is string => !!x);
+  const far = candidates.sort().pop() ?? base;
+  // One day more than the distance: the end date of a chain request has behaved as exclusive.
+  return Math.max(chainDteWindow(nowMs), Math.round((Date.parse(`${far}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86400_000) + 1);
+}
+
+export async function buildOdteForward(symbolIn: string, nowMs: number = Date.now(), depsIn?: OdteForwardDeps, pick: ExpiryPick = "nearest"): Promise<OdteForwardResult> {
   const symbol = String(symbolIn || "$SPX").trim().toUpperCase() || "$SPX";
   // schwab.ts has narrower parameter types than the generic deps shape; the calls below stay inside them.
   const deps: OdteForwardDeps = depsIn ?? { ...((await import("./schwab")) as unknown as OdteForwardDeps), varianceProfile: storedVarianceProfile };
@@ -67,7 +96,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   // holiday the next session is further away, so the window is widened to
   // reach it (Saturday: Monday is 2 days out); asking for 1 DTE then returned
   // no expiries and the map read "unavailable" all weekend.
-  const dteWindow = chainDteWindow(nowMs);
+  const dteWindow = pick === "week" ? weekDteWindow(nowMs) : chainDteWindow(nowMs);
   const [chain, hist] = await Promise.all([
     deps.getOptionChain(symbol, dteWindow),
     deps.getPriceHistory(symbol, "day", 2, "minute", 5, false).catch(() => ({ candles: [] as any[] })),
@@ -86,7 +115,9 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   // can still be listed; its contracts carry no risk).
   const liveKeys = allKeys.filter((k) => !timeToExpiry(expiryOfKey(k), { nowMs }).expired);
   if (liveKeys.length === 0) return { status: 503, body: { dataState: "unavailable", reason: "the Schwab chain has no unsettled expiry", error: "no_live_expiries" } };
-  const nearestKey = liveKeys.sort((a, b) => dteOf(a) - dteOf(b))[0];
+  // `nearestKey` is the key the map is built for: the nearest unsettled expiry, or the week's last one.
+  const picked = pickExpiryKey(Array.from(new Set(liveKeys)).sort((a, b) => dteOf(a) - dteOf(b)), pick);
+  const nearestKey = picked.key;
   const nearestDte = dteOf(nearestKey);
   const expiryDate = nearestKey.split(":")[0];
 
@@ -154,6 +185,8 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   // SPXW (PM) contracts, and a density needs call and put of the SAME settle.
   // The style with more two-sided contracts wins; the other is left out.
   const twoSidedByStyle = new Map<string, Map<number, { callMid: number | null; putMid: number | null }>>();
+  // Strike and side whose row quote already comes from a close-settled contract.
+  const rowQuotePm = new Map<string, boolean>();
   for (const { side, map } of passes) {
     const strikes = map?.[nearestKey] || {};
     for (const sk of Object.keys(strikes)) {
@@ -187,8 +220,16 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
           bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
         });
         const ivPct = sigmaClock > 0 ? sigmaClock * 100 : 0; // calendar-clock IV, %
-        if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; row.T = T; }
-        else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; row.T = T; }
+        // One date key can hold two contracts per strike and side (a monthly Friday: the index option that
+        // settles at the open and the weekly that settles at the close). The row's quote, volatility and time
+        // are taken from ONE of them, the close-settled one when both are there, so a straddle is never one
+        // style's call plus the other's put. Open interest is summed across both.
+        const styleKey = `${strike}|${side}`;
+        const isPm = String(contractStyle(c)) === "PM";
+        const takeQuote = isPm || !rowQuotePm.get(styleKey);
+        if (isPm) rowQuotePm.set(styleKey, true);
+        if (side === "C") { row.callOI += oi; if (takeQuote) { row.callMid = mid; row.callIV = ivPct; row.T = T; } }
+        else { row.putOI += oi; if (takeQuote) { row.putMid = mid; row.putIV = ivPct; row.T = T; } }
         const weight = oi + vol * HYBRID_VOLUME_WEIGHT; // hybrid: 0DTE OI is stale by design, volume carries intraday info
         if (weight <= 0) continue;
         const sigma = sigmaClock;
@@ -389,6 +430,9 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     chainStaleReason: chainStale ? ((chain as any).staleReason ?? "re-served from cache after a failed refresh") : null,
     servedFromCache: (chain as any).servedFromCache === true, asOfBasis: (chain as any).asOfBasis ?? null,
     expiry: expiryDate, dte: nearestDte,
+    // "week": built for the last expiry of the week instead of the nearest one. The projection path, the
+    // minutes-to-close fields and the session volatility below still describe the next close, not that expiry.
+    expiryPick: pick, weekEnd: picked.weekEnd, sameAsNearest: picked.sameAsNearest,
     bars, levelMap, candles,
     session: { state: sessionState, minutesToClose, projMinutes },
     atmIV: +(atmIVPct).toFixed(2), atmIVSource, gexValid,

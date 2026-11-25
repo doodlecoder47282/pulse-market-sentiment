@@ -174,3 +174,10 @@ S2 part 2 check the contract list at the open (does Schwab's day volume reset by
 S3 one "worth a look" list and the whale list decision · S4 desktop layout from 1,024px, flow chart,
 chain table · owner action: enable the Schwab product for the stream · acceptance check · owner sign-off.
 
+- S1b: "This week" on the top card. `buildOdteForward` takes a pick ("nearest" or "week"); "week" reads
+  the last unsettled expiry of the nearest expiry's week with a chain window that reaches it, and
+  `/api/odte/map?expiry=week` composes it with the same rules (not kept in the ledger). The card shows the
+  week's priced move, the three levels and the steps, or says the week's last expiry is the one already
+  shown. The projection and session-volatility fields of that response still describe the next close and
+  are not used. Not yet seen live.
+

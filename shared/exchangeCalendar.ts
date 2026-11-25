@@ -149,6 +149,21 @@ export function isTradingDay(date: IsoDate): boolean {
   return !isWeekend(date) && !isHoliday(date);
 }
 
+/**
+ * The last trading day of the Monday-to-Friday week that holds `date` (a Friday, or earlier when Friday is a
+ * holiday). Null when that week has no trading day on or after `date`.
+ */
+export function weekLastTradingDay(date: IsoDate): IsoDate | null {
+  const d = new Date(`${date}T12:00:00Z`);
+  const dow = d.getUTCDay(); // 0 Sunday .. 6 Saturday
+  if (dow === 0 || dow === 6) return null;
+  for (let i = 5 - dow; i >= 0; i--) {
+    const x = new Date(d.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+    if (isTradingDay(x)) return x;
+  }
+  return null;
+}
+
 /** First trading day strictly after `date`. */
 export function nextTradingDay(date: IsoDate): IsoDate {
   let d = addDays(date, 1);

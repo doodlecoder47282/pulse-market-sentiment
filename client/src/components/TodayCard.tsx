@@ -22,6 +22,7 @@ import type { OdteMap } from "@shared/odteMap";
 import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import TodayPath from "@/components/TodayPath";
+import TodayWeek from "@/components/TodayWeek";
 import { readToday } from "@shared/plainReads";
 import { todayPlan } from "@shared/todayPlan";
 
@@ -183,6 +184,9 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
             </p>
           </>
         )}
+
+        {/* the same levels for the week's last expiry (index only) */}
+        {priced && symbol === "$SPX" && <TodayWeek symbol={symbol} active={active} />}
 
         {priced && <LevelScopeNote panel="today" />}
 
