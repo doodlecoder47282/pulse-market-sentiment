@@ -810,10 +810,10 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
       </div>
       {bullPath && (
         <div className="text-green-400">
-          BULL path · {lg.bull.label}{lg.bull.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""}{targetOddsText(horizon, "bull") ? ` (${targetOddsText(horizon, "bull")})` : ""} → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
-          {charmZ ? ` + ${fmtK(charmZ)} Charm Zero` : ""}
-          {cw ? ` → ${fmtK(cw)} Call Wall` : ""}
-          {" → CLOSE "}
+          BULL path · {lg.bull.label}{lg.bull.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""}{targetOddsText(horizon, "bull") ? ` (${targetOddsText(horizon, "bull")})` : ""} → clears {zg ? `the turning point ${fmtK(zg)}` : "resistance"}
+          {charmZ ? ` and the time-decay flip ${fmtK(charmZ)}` : ""}
+          {cw ? ` → the ceiling ${fmtK(cw)}` : ""}
+          {" → closes "}
           <span className="text-green-300">{fmtK(bullPath.target * 0.999)}-{fmtK(bullPath.target * 1.001)}</span>
         </div>
       )}
@@ -821,15 +821,15 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
         <div className="text-cyan-400">
           {basePath.name === "MAGNET"
             ? <>{lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} (close {basePath.region ? `${fmtK(basePath.region.lo ?? spot)}-${fmtK(basePath.region.hi ?? spot)}` : "around spot"}) · MAGNET path to <span className="text-cyan-300">{fmtK(basePath.target)}</span>, outside the bull/bear range (no probability of its own)</>
-            : <>BASE path · {lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
-              {" → CLOSE "}
+            : <>BASE path · {lg.base.label}{lg.base.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""} → chops {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)}{zg == null ? "" : spot * 1.003 <= zg ? ` under the turning point ${fmtK(zg)}` : spot * 0.997 >= zg ? ` above the turning point ${fmtK(zg)}` : ` around the turning point ${fmtK(zg)}`}
+              {" → closes "}
               <span className="text-cyan-300">{fmtK(basePath.target * 0.999)}-{fmtK(basePath.target * 1.001)}</span></>}
         </div>
       )}
       {bearPath && (
         <div className="text-red-400">
-          BEAR path · {lg.bear.label}{lg.bear.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""}{targetOddsText(horizon, "bear") ? ` (${targetOddsText(horizon, "bear")})` : ""} → Break {pw ? `${fmtK(pw)} Put Wall` : "support"} → Vol expansion
-          {" → CLOSE "}
+          BEAR path · {lg.bear.label}{lg.bear.holdsPrice ? ` (${HOLDS_PRICE_TAG})` : ""}{targetOddsText(horizon, "bear") ? ` (${targetOddsText(horizon, "bear")})` : ""} → breaks {pw ? `the floor ${fmtK(pw)}` : "support"} → swings widen
+          {" → closes "}
           <span className="text-red-300">{fmtK(bearPath.target * 0.999)}-{fmtK(bearPath.target * 1.001)}</span>
         </div>
       )}
@@ -2490,14 +2490,17 @@ export default function ModelsPanel() {
       >
         <div className="flex items-center gap-2 border-b border-cyan-500/20 px-3 py-2 font-mono text-[11px] uppercase tracking-widest text-cyan-400/80">
           <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-          Live Chain Audit — Schwab
-          <span className="text-muted-foreground">· SPX / DEX / Vanna / Charm / Skew / Term / Vol / Dealer / GEX / Pin / VRP</span>
+          For options specialists: the full chain audit
         </div>
-        <div className="p-3">
-          <ErrorBoundary label="Chain Audit">
-            <ChainAudit />
-          </ErrorBoundary>
-        </div>
+        {/* Closed by default: delta, vanna, charm, skew and volatility-premium tables are for a reader who knows the Greeks. */}
+        <details className="p-3" data-testid="chain-audit-details">
+          <summary className="cursor-pointer text-xs text-muted-foreground">Open the detailed option tables (exposure by strike, skew, term structure, volatility premium). Nothing above depends on reading these.</summary>
+          <div className="pt-3">
+            <ErrorBoundary label="Chain Audit">
+              <ChainAudit />
+            </ErrorBoundary>
+          </div>
+        </details>
       </div>
     </div>
   );
