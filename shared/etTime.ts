@@ -19,6 +19,14 @@ export function etTimeLabel(ms: number | string | null | undefined, opts?: { sec
   return t ? `${t} ET` : "";
 }
 
+/** A stored wall-clock time "08:30" or "14:00" (New York) the normal way: "8:30 AM", "2:00 PM". Anything else is returned as given. */
+export function clock12(hhmm: string | null | undefined): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm ?? "").trim());
+  if (!m) return String(hhmm ?? "");
+  const h = Number(m[1]) % 24;
+  return `${h % 12 === 0 ? 12 : h % 12}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
+}
+
 const MD = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
 /** "Nov 24, 4:54 PM ET": for a read that may be from an earlier day. */
 export function etDayTimeLabel(at: number | string | null | undefined): string {

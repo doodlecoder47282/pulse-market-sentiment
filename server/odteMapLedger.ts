@@ -120,7 +120,7 @@ export function ledgerSummary(symbol: string, edition = editionFromEnv()) {
       pin: r.first?.landmarks.pin ?? null, range: r.first ? [r.first.range.low, r.first.range.high] : null,
     })),
     edition,
-    note: edition === "demo" ? "the demo keeps no ledger" : "settle is the last regular-session print; the morning plan is the map taken at 09:35 ET (or the first one after the open)",
+    note: edition === "demo" ? "the demo keeps no ledger" : "settle is the last regular-session print; the morning plan is the map taken at 9:35 AM ET (or the first one after the open)",
   };
 }
 

@@ -156,7 +156,7 @@ export const SOURCE_META: Record<string, SourceMeta> = {
   wiener_odds: {
     id: "wiener_odds", name: "0DTE morning odds (Wiener scorecard)", kind: "calibration",
     basis: {
-      entry: "the morning map taken at 09:35 ET (or the first one after the open)",
+      entry: "the morning map taken at 9:35 AM ET (or the first one after the open)",
       exit: "settled on the last regular-session print: each level's stated touch and close-above odds against what happened",
       costs: "none: stated odds, not a trade",
     },
