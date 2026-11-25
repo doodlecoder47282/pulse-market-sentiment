@@ -3362,3 +3362,11 @@ the nearest-expiry map already on the Today card into: what is happening ("Bigge
 "turning point", "floor below"; "% of map" reads "% of nearby option positions". The model's own wording
 stays under "more". The rules are stated at the top of the file. No week levels yet and no record for
 option levels yet (the level record counts calendar levels). Tests: `tests/quant/today-plan.test.ts`.
+
+**Signals S1b: the week's levels on the top card (2026-11-24).** `buildOdteForward(symbol, now, deps, pick)`
+with pick "week" reads the last unsettled expiry of the nearest expiry's week (`pickExpiryKey`,
+`weekDteWindow`, `weekLastTradingDay`); `/api/odte/map?expiry=week` composes it with `composeOdteMap`, the
+same rules as the nearest-expiry map, and does not write the ledger. `TodayWeek` shows the week's priced
+move, ceiling, turning point, floor and steps, or one line when the week's last expiry is the nearest one.
+Only the strike exposures, flip, straddle and landmarks of that response are used; its path, minutes-to-close
+and session volatility still describe the next close. Tests: `tests/quant/today-week.test.ts`.

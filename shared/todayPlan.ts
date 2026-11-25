@@ -36,6 +36,8 @@ export interface TodayPlanInput {
   flip: number | null | undefined;
   /** When the option data behind the map was read (epoch ms). */
   readAtMs?: number | null;
+  /** Set for the week's map: the expiry it is read for, as a label such as "Fri Nov 27". */
+  weekExpiryLabel?: string | null;
 }
 
 export interface TodayPlan {
@@ -62,8 +64,9 @@ export function todayPlan(m: TodayPlanInput): TodayPlan {
   }
   const spot = m.spot;
   const closed = m.sessionState === "closed";
-  const when = closed ? "for the next session" : "today";
-  const byWhen = closed ? "by the next close" : "by today's close";
+  const week = m.weekExpiryLabel ? m.weekExpiryLabel : null;
+  const when = week ? `through ${week}` : closed ? "for the next session" : "today";
+  const byWhen = week ? `by the close on ${week}` : closed ? "by the next close" : "by today's close";
   const move = fin(m.straddle) && fin(m.low) && fin(m.high)
     ? ` Options are priced for a move of about ${n0(m.straddle)} points either way ${byWhen}: roughly ${n0(m.low)} to ${n0(m.high)}.`
     : "";
@@ -72,7 +75,7 @@ export function todayPlan(m: TodayPlanInput): TodayPlan {
     : here === "calmer" ? `Smaller swings are the setup ${when}: at this price, the option map has the hedging of big option dealers leaning against moves, which tends to pull ${sym} back toward the middle.`
     : `The option map does not say ${when} whether dealer hedging leans with moves or against them.`;
   // After the close the map is for the next expiry, read after the close: say when it was read.
-  const readAt = closed ? ` Market closed: these are levels for the next session${fin(m.readAtMs) ? `, read at ${etTime(m.readAtMs)} ET` : ""}.` : "";
+  const readAt = week ? "" : closed ? ` Market closed: these are levels for the next session${fin(m.readAtMs) ? `, read at ${etTime(m.readAtMs)} ET` : ""}.` : "";
   const headline = `${mood}${move}${readAt}`;
 
   const path: string[] = [];
@@ -107,4 +110,14 @@ export function todayPlan(m: TodayPlanInput): TodayPlan {
     below: below != null ? away(below) : "none within 2%",
   };
   return { headline, path, labels, notes };
+}
+
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-11-27" to "Fri Nov 27". Anything else is returned unchanged. */
+export function expiryDayLabel(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso ?? ""));
+  if (!m) return String(iso ?? "");
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12));
+  return `${DOW[d.getUTCDay()]} ${MON[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
