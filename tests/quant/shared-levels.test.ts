@@ -35,7 +35,10 @@ test("the view picks the expiry the top card uses", async () => {
 
 test("Models: daily reads Today, weekly reads This week, monthly keeps its own; the screen says which", () => {
   const m = read("server/models.ts");
-  assert.match(m, /horizon === "daily" \? "today" : horizon === "weekly" \? "week" : null/);
+  assert.match(m, /const sharedView = symbol === "\^GSPC" \? \(horizon === "daily" \? "today" : horizon === "weekly" \? "week" : null\) : null;/);
+  // The SPX view is built from the SPY chain: a condition on chainSymbol "SPX" would never be true in production.
+  assert.match(m, /symbol: primarySymbol,[\s\S]{0,700}chainSymbol: "SPY",/);
+  assert.doesNotMatch(m, /const sharedView = [^\n]*chainSymbol/);
   assert.match(m, /if \(shared\?\.turningPoint != null\) scaledProfile\.zeroGammaSpot = shared\.turningPoint/);
   assert.match(m, /wallBucket\(band, band[\s\S]{0,120}shared\?\.ceiling\)/);
   assert.match(read("client/src/components/ModelsPanel.tsx"), /data-testid="models-level-source"/);
