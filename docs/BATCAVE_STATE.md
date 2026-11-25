@@ -3401,6 +3401,21 @@ and is updated as checks come back. Found on that look: before the open the top 
 ten-hour-old data; the read went from "bigger-swing side" to "calmer side" overnight with no new option
 data while the strip said "dealers short gamma"; Trade Desk has 36 input boxes and 45 24-hour times.
 
+**Signals batch before the open (2026-11-25).** Master list X9, S4 (part), S5, C4. Before the open the top
+card's chip read "OK" on ten-hour-old option data: `TodayCard` and `ChartLevelsCard` now map the pre-open
+state to "last session", and `todayPlan` ends "Market not open yet: these are levels for today, from option
+data read Nov 24, 4:54 PM ET" (the after-close sentence carries the date too). The projected-path card is
+off the top card (a link to Heatseeker's map remains); `TodayPath.tsx` is no longer mounted there. A
+ceiling below the turning point, or a floor above it, gets one plain line. "Why levels differ" stays until
+the other tabs read the shared source. Tests updated in `today-plan`, `today-block`, `et-time`.
+**The strip above the tabs in plain words (2026-11-25, master list X4, part of X6).** The strip read
+"Volatility expansion — VIX backwardation (26.7/28.3/25.5) + dealers short gamma", "NET GEX -16%", "RULE
+TIER: HIGH". `shared/stripRead.ts` turns the same state and inputs into a plain label ("Stress rising"), one
+sentence naming the three inputs, and two facts; the rule that produced the label is in the tooltip. It
+says it counts SPX options out to 30 days, a different set from the top card's (today's expiry), which is
+why "leaning with moves" there can sit beside "calmer side" on the card. The server's six fixed-rule states
+are unchanged (X3). `client/src/lib/asOf.ts`: every "read at" note is now Eastern time, no leading zero
+(it had used the viewer's time zone). Tests: `tests/quant/strip-read.test.ts`.
 **Option map held while the market is shut and the data is unchanged (2026-11-25, master list X2).** On one
 option read the top card's levels slid through the evening and the read flipped sides overnight, because the
 model is re-priced with the time left to expiry on every request. `server/odteMapHold.ts`: outside the

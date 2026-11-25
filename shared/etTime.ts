@@ -16,3 +16,10 @@ export function etTimeLabel(ms: number | null | undefined, opts?: { seconds?: bo
   const t = etTime(ms, opts);
   return t ? `${t} ET` : "";
 }
+
+const MD = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
+/** "Nov 24, 4:54 PM ET": for a read that may be from an earlier day. */
+export function etDayTimeLabel(ms: number | null | undefined): string {
+  const t = etTime(ms);
+  return t && ms != null ? `${MD.format(new Date(ms))}, ${t} ET` : "";
+}

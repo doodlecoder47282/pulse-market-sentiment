@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, TrendingDown, Activity, AlertTriangle } from "lucide-react";
 
+import { stripRead } from "@shared/stripRead";
 import AsOfNote from "@/components/AsOfNote";
 type Tier = "bullish" | "bearish" | "neutral" | "warning";
 
@@ -43,16 +44,6 @@ function IconForTier({ tier, regime }: { tier: Tier; regime: string }) {
   return <Activity className="h-4 w-4" strokeWidth={2.5} />;
 }
 
-const REGIME_LABEL: Record<HeadlineResponse["regime"], string> = {
-  vol_expansion: "VOL EXPANSION",
-  gamma_squeeze: "GAMMA SQUEEZE",
-  pinning: "PINNING",
-  mean_reversion: "MEAN REVERSION",
-  trend_continuation: "TREND",
-  neutral: "NEUTRAL",
-  unavailable: "UNAVAILABLE",
-};
-
 export default function RegimeHeadline() {
   const { data, isLoading, isError } = useQuery<HeadlineResponse>({
     queryKey: ["/api/regime/headline"],
@@ -76,38 +67,27 @@ export default function RegimeHeadline() {
   }
 
   const style = TIER_STYLES[data.tier];
-  const { vix9d, vix, vix3m, vixChangePct, gexShare } = data.inputs;
-  const vixChgStr = vixChangePct != null ? `${vixChangePct >= 0 ? "+" : ""}${vixChangePct.toFixed(2)}%` : "—";
-  const sharePct = (gexShare * 100).toFixed(0);
+  // Plain words from the same inputs (shared/stripRead.ts): a label, one sentence, two facts.
+  const read = stripRead(data.regime, data.inputs);
 
   return (
     <div
       className={`sticky top-[57px] z-[9] border-b ${style.bar} backdrop-blur supports-[backdrop-filter]:bg-background/40`}
       data-testid="regime-headline"
     >
-      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 sm:px-4 md:flex-nowrap md:px-8 xl:px-10">
-        <div className={`flex items-center gap-1.5 ${style.icon}`}>
+      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 sm:px-4 md:px-8 xl:px-10">
+        <div className={`flex items-center gap-1.5 ${style.icon}`} title={read.rule}>
           <IconForTier tier={data.tier} regime={data.regime} />
-          <span className={`font-mono text-[11px] uppercase tracking-widest ${style.label}`} data-testid="regime-label">
-            {REGIME_LABEL[data.regime]}
+          <span className={`text-sm font-semibold ${style.label}`} data-testid="regime-label">
+            {read.label}
           </span>
+        </div>
+        <div className={`min-w-0 flex-1 basis-full whitespace-normal break-words text-sm md:basis-0 ${style.text}`} data-testid="regime-headline-text" title={read.rule}>
+          {read.sentence}
+        </div>
+        <div className="flex basis-full flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground" data-testid="regime-headline-meta">
+          {read.facts.map((f) => <span key={f}>{f}</span>)}
           <AsOfNote asOf={data.asOf} />
-        </div>
-        <div className={`min-w-0 flex-1 basis-full whitespace-normal break-words text-sm font-medium md:basis-auto ${style.text}`} data-testid="regime-headline-text">
-          {data.headline}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground" data-testid="regime-headline-meta">
-          <span>
-            <span className="opacity-60">VIX </span>
-            {vix9d?.toFixed(1) ?? "—"}/{vix?.toFixed(1) ?? "—"}/{vix3m?.toFixed(1) ?? "—"} <span className={vixChangePct != null && vixChangePct >= 0 ? "text-rose-400" : "text-emerald-400"}>{vixChgStr}</span>
-          </span>
-          <span>
-            <span className="opacity-60">NET GEX </span>
-            {data.inputs.gexRegime === "unknown"
-              ? <span>—</span>
-              : <span className={gexShare >= 0 ? "text-emerald-400" : "text-rose-400"}>{sharePct}%</span>}
-          </span>
-          <span className="opacity-60 uppercase">rule tier: {data.confidence}</span>
         </div>
       </div>
     </div>

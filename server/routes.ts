@@ -3602,14 +3602,14 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         headline = `Pinning mode — dealers long gamma (${(gexShare * 100).toFixed(0)}% share) VIX contango steady: dealer hedging dampens moves.`;
       }
       // Mean reversion — short gamma + flat term + VIX cooling
-      else if (gexRegime === "short_gamma" && termState !== "backwardation" && vixPct < -1) {
+      else if (gexRegime === "short_gamma" && termState !== "backwardation" && termState !== "unknown" && vixPct < -1) {
         regime = "mean_reversion";
         confidence = "medium";
         tier = "neutral";
         headline = `Mean reversion — dealers short gamma with VIX cooling: hedging adds to moves while vol is falling.`;
       }
       // Trend continuation — short gamma + GEX trending + VIX bid but not panicking
-      else if (gexRegime === "short_gamma" && gexTrend !== "flat" && Math.abs(vixPct) > 1) {
+      else if (gexRegime === "short_gamma" && (gexTrend === "rising" || gexTrend === "falling") && Math.abs(vixPct) > 1) {
         regime = "trend_continuation";
         confidence = "medium";
         tier = vixPct > 0 ? "bearish" : "bullish";

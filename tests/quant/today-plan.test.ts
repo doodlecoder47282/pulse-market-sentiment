@@ -2,14 +2,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { todayPlan, TODAY_LABELS } from "../../shared/todayPlan";
+import { todayPlan, TODAY_LABELS, preopenIsLastSession } from "../../shared/todayPlan";
 
 // The live card on 2026-11-24 after the close: SPX 7,201, flip 7,224 above, wall 7,300, nothing below, move 81.
 const live = { symbol: "$SPX", spot: 7201, sessionState: "closed", dataState: "stale_session", atSpot: "short", straddle: 81, low: 7120, high: 7282, above: 7300, below: null, flip: 7224 };
 
 test("the worked example reads as a setup, a priced move and an if-then path", () => {
   const p = todayPlan({ ...live, readAtMs: Date.parse("2026-11-24T21:54:10Z") });
-  assert.equal(p.headline, "Bigger swings are the setup for the next session: at this price, the option map has the hedging of big option dealers leaning with moves, which tends to push SPX further in whichever direction it is already going. Options are priced for a move of about 81 points either way by the next close: roughly 7,120 to 7,282. Market closed: these are levels for the next session, read at 4:54 PM ET.");
+  assert.equal(p.headline, "Bigger swings are the setup for the next session: at this price, the option map has the hedging of big option dealers leaning with moves, which tends to push SPX further in whichever direction it is already going. Options are priced for a move of about 81 points either way by the next close: roughly 7,120 to 7,282. Market closed: these are levels for the next session, from option data read Nov 24, 4:54 PM ET.");
   assert.deepEqual(p.path, [
     "If SPX gets above 7,224, the option map switches to the calmer side: there the model has dealer hedging leaning against moves (smaller swings in this model).",
     "While it stays below 7,224, it is on the bigger-swing side.",
@@ -62,4 +62,28 @@ test("the card shows the plan: headline first, plain tile labels, the path as a 
   assert.match(card, /const plan = todayPlan\(\{/);
   assert.match(card, /data-testid="today-path-steps"/);
   assert.doesNotMatch(card, /"wall above"|"magnet below"|>gamma flip</);
+});
+
+test("before the open the line says the levels are for today and when the data was read", () => {
+  const p = todayPlan({ ...live, sessionState: "preopen", dataState: "ok", atSpot: "long", readAtMs: Date.parse("2026-11-24T21:54:10Z") });
+  assert.match(p.headline, /^Smaller swings are the setup today: /);
+  assert.match(p.headline, /by today's close/);
+  assert.match(p.headline, / Market not open yet: these are levels for today, from option data read Nov 24, 4:54 PM ET\.$/);
+});
+
+test("a ceiling under the turning point, or a floor over it, gets a plain line", () => {
+  // The week block on 2026-11-24: ceiling 7,250 below turning point 7,278.
+  const up = todayPlan({ ...live, flip: 7278, above: 7250, below: 7160 });
+  assert.ok(up.path.includes("The ceiling (7,250) is below the turning point (7,278): a rally meets the ceiling first, and the map only switches sides above 7,278."));
+  const down = todayPlan({ ...live, spot: 7300, flip: 7250, above: 7350, below: 7270, atSpot: "long" });
+  assert.ok(down.path.includes("The floor (7,270) is above the turning point (7,250): a drop meets the floor first, and the map only switches sides below 7,250."));
+  assert.equal(todayPlan(live).path.some((l) => /is below the turning point|is above the turning point/.test(l)), false, "not said when the order is the usual one");
+});
+
+test("before the open: an hours-old read is the last session's, a read from the last minutes is live", () => {
+  const now = Date.parse("2026-11-25T08:16:00Z"); // 3:16 AM ET
+  assert.equal(preopenIsLastSession("preopen", now - 10.35 * 3600_000, now), true, "the 10h 21m chip seen live");
+  assert.equal(preopenIsLastSession("preopen", now - 60_000, now), false, "a fresh pre-market read stays ok");
+  assert.equal(preopenIsLastSession("preopen", null, now), true);
+  assert.equal(preopenIsLastSession("intraday", now - 10 * 3600_000, now), false, "during the session staleness is the stale state's job");
 });
