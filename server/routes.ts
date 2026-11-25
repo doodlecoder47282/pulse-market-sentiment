@@ -792,6 +792,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const h = (enriched as any).horizons?.[hk];
           if (h?.own?.audit && h.audit) h.own.audit = ownAuditOver(h.audit, before, h.own.audit);
         }
+        // The intraday pivot and wick zones are built from the turning point: the model's own for the alerts.
+        const { ownPivotFields } = await import("./auditEnrich");
+        const d = (enriched as any).horizons?.daily;
+        const pv = d ? ownPivotFields(d, vixData) : null;
+        if (pv) d.own.audit = { ...d.own.audit, ...pv };
       }
 
       // Attach 13-week trajectory to the quarterly horizon (additive only).

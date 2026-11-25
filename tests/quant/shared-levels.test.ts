@@ -70,3 +70,8 @@ test("the audit graded alerts read keeps every enriched input and the model's ow
   assert.equal(out.gex, -1200);
   assert.match(read("server/routes.ts"), /h\.own\.audit = ownAuditOver\(h\.audit, before, h\.own\.audit\)/);
 });
+
+test("the alerts' pivot and wick zones are built from the model's own turning point", () => {
+  assert.match(read("server/auditEnrich.ts"), /export function ownPivotFields[\s\S]{0,700}levels: own\.levels \?\? \[\],\s+audit: own\.audit,/);
+  assert.match(read("server/routes.ts"), /if \(pv\) d\.own\.audit = \{ \.\.\.d\.own\.audit, \.\.\.pv \}/);
+});
