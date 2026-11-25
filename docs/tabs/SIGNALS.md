@@ -139,3 +139,38 @@ current account; check against the live product before treating any line as exac
   "wall above" and "magnet below": renamed in their own tabs' turn.
   To check live at the next open: whether Schwab's per-contract day volume has already reset by 9:30 (if
   not, the first read's baseline would hold yesterday's volume and could raise a false alert).
+- S1a seen live 2026-11-24 9:19 PM ET at the plain address (no `?r=`; page header `Cache-Control: no-cache`,
+  loaded bundle equals served bundle): headline "Bigger swings are the setup for the next session...",
+  tiles CEILING ABOVE 7,310 / TURNING POINT 7,238 / FLOOR BELOW 7,150, the four steps, header names aligned.
+
+## Found during the live checks, not yet fixed
+
+1. After the close the card's levels move with the clock although the option data does not. Same chain
+   ("read at 4:54 PM ET"): 6:09 PM showed ceiling 7,300, turning point 7,224, no floor, move 81; 9:19 PM
+   showed 7,310, 7,238, 7,150, move 86. The map is re-priced with time to expiry on every request. For the
+   reader, after-hours levels should be computed once from the settled chain and held until new data.
+2. The strip above every tab still reads "Neutral — short gamma (-18%), VIX backwardation: dealer hedging
+   adds to moves, mixed inputs", "NET GEX -18%", "RULE TIER: LOW", "LOADED 55", "read 09:19 PM". It sits on
+   top of Signals and contradicts the plain card in tone. It is shared by all tabs: do it with S1.
+3. "WHY LEVELS DIFFER" is still on the card. It goes when the shared source lands.
+4. The Trade Desk board and the Chart still call the same levels "wall above" and "magnet below".
+
+## S1b: the week's levels (next)
+
+Decision: the week's levels must use the SAME definitions as the Today card (ceiling and floor = largest
+strike within 2% where the model has hedging leaning against the move; turning point = the map's flip),
+read for the week's last expiry. `/api/heatseeker?expiry=` can already read a chosen expiry, but its call
+wall and put wall are defined differently (largest positive exposure above, largest negative below), so
+using it would put two definitions of "ceiling" on one card. The right change is to let
+`buildOdteForward` take a target expiry (it picks the nearest unsettled key today and fetches a 0-1 day
+window) and compose a second map from it. Check every use of the minutes-to-close and same-day session
+math inside `odteForward.ts` before doing so: it assumes the expiry is the current or next session.
+
+## Remaining for Signals
+
+S1b week levels · S1c record for option levels (none exists; the level record counts calendar levels) ·
+S1d one regime label and the strip above the tabs in plain words · hold after-hours levels ·
+S2 part 2 check the contract list at the open (does Schwab's day volume reset by 9:30) ·
+S3 one "worth a look" list and the whale list decision · S4 desktop layout from 1,024px, flow chart,
+chain table · owner action: enable the Schwab product for the stream · acceptance check · owner sign-off.
+
