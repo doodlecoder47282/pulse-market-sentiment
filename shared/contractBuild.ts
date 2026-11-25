@@ -143,3 +143,27 @@ export function isUnusual(volume: number | null | undefined, openInterest: numbe
   if (volume == null || openInterest == null || !(openInterest > 0)) return false;
   return volume >= UNUSUAL_MIN_VOLUME && volume >= UNUSUAL_OI_MULTIPLE * openInterest;
 }
+
+/** A same-day contract is flagged only for a burst: one five-minute step this many times its usual step... */
+export const BURST_MULTIPLE = 5;
+/** ...and at least this many contracts. */
+export const BURST_MIN_VOLUME = 1000;
+
+export interface Burst { step: number; volume: number; usual: number; multiple: number }
+
+/**
+ * Volume against open interest says nothing for a contract that expires today: nearly every active one trades
+ * many times its open interest (seen live 2026-11-25: 40 of 40 listed rows were same-day contracts near the
+ * price). What stands out on such a contract is a burst: one five-minute step far above its own usual step.
+ * "Usual" is the median of its other steps with volume; at least three other steps are needed to say so.
+ */
+export function burstOf(steps: readonly BuildStep[]): Burst | null {
+  const active = steps.filter((s) => s.volume > 0);
+  if (active.length < 4) return null;
+  const peak = active.reduce((m, s) => (s.volume > m.volume ? s : m), active[0]);
+  const rest = active.filter((s) => s !== peak).map((s) => s.volume).sort((a, b) => a - b);
+  const mid = rest.length >> 1;
+  const usual = rest.length % 2 ? rest[mid] : (rest[mid - 1] + rest[mid]) / 2;
+  if (!(usual > 0) || peak.volume < BURST_MIN_VOLUME || peak.volume < BURST_MULTIPLE * usual) return null;
+  return { step: peak.step, volume: peak.volume, usual, multiple: peak.volume / usual };
+}
