@@ -408,10 +408,10 @@ function levelShortName(kind: string): string {
     case "t2Down":        return "T2 DN";
     case "vannaFlip":     return "VOL FLIP";
     case "zommaBridge":   return "SHELF";
-    case "charmTarget":   return "DECAY PULL";
+    case "charmTarget":   return "TOP ABOVE";
     case "negGammaEntry": return "FASTER";
-    case "upperVomma":    return "ACCEL UP";
-    case "lowerVomma":    return "ACCEL DN";
+    case "upperVomma":    return "FAR UP";
+    case "lowerVomma":    return "FAR DN";
     default: return kind.toUpperCase();
   }
 }
@@ -521,9 +521,10 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {/* Upside */}
       <RailDivider label="resistance" />
       <RailRow label="CEILING" value={pFmt(callWall?.price)} sub={distPct(callWall?.price)} color={COLORS.bear} backtestKind="callWall" backtestHorizon={horizon.horizon as BacktestHorizon} />
-      {upVomma && <RailRow label="ACCEL ZONE ABOVE" value={pFmt(upVomma?.price)} sub={distPct(upVomma?.price)} color={COLORS.bear} />}
+      {upVomma && <RailRow label="FAR LEVEL ABOVE" value={pFmt(upVomma?.price)} sub={distPct(upVomma?.price)} color={COLORS.bear} />}
       {callWall && <RailRow label="CALL WALL" value={pFmt(callWall.price)} sub={callWall.gex != null ? `${(callWall.gex/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="callWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {upPivot  && <RailRow label="UPSIDE TARGET" value={pFmt(upPivot.price)} sub={distPct(upPivot.price)} color={COLORS.bull} backtestKind="upsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      {negGamma && <RailRow label="FASTER ABOVE" value={pFmt(negGamma.price)} sub={distPct(negGamma.price)} color={COLORS.bear} />}
       {vannaFlip && <RailRow label="VOLATILITY FLIP" value={pFmt(vannaFlip.price)} sub={distPct(vannaFlip.price)} color={COLORS.vanna} />}
 
       {/* Double Zero Zone */}
@@ -548,8 +549,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       <RailDivider label="support" />
       {dnPivot  && <RailRow label="DOWNSIDE TARGET" value={pFmt(dnPivot.price)} sub={distPct(dnPivot.price)} color={COLORS.pivot} backtestKind="downsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {putWall  && <RailRow label="PUT WALL" value={pFmt(putWall.price)} sub={putWall.gex != null ? `${(Math.abs(putWall.gex)/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="putWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
-      {loVomma  && <RailRow label="ACCEL ZONE BELOW" value={pFmt(loVomma.price)} sub={distPct(loVomma.price)} color={COLORS.negGamma} />}
-      {negGamma && <RailRow label="FASTER MOVES PAST" value={pFmt(negGamma.price)} sub={distPct(negGamma.price)} color={COLORS.bear} />}
+      {loVomma  && <RailRow label="FAR LEVEL BELOW" value={pFmt(loVomma.price)} sub={distPct(loVomma.price)} color={COLORS.negGamma} />}
       {extVac   && <RailRow label="THIN ZONE" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} backtestKind="extremeVac" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {zomma    && <RailRow label="SHELF BELOW" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
       {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} backtestKind="mopexMaxPain" backtestHorizon={horizon.horizon as BacktestHorizon} />}
@@ -1474,12 +1474,12 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   push("upsidePivot",   "UP TGT",        "#a855f7");
   push("strongMag",     "2ND PIN",      "#0ea5e9");
   push("vannaFlip",     "VOL FLIP",           "#06b6d4");
-  push("charmTarget",   "DECAY PULL",           "#c084fc");
+  push("charmTarget",   "TOP ABOVE",           "#c084fc");
   push("zommaBridge",   "SHELF",           "#fde047");
-  push("upperVomma",    "ACCEL UP",        "#84cc16");
+  push("upperVomma",    "FAR UP",        "#84cc16");
   push("zeroGamma",     "TURN PT",   "#fbbf24");
   push("dominantMag",   "TOP PIN",         "#eab308");
-  push("lowerVomma",    "ACCEL DN",        "#f97316");
+  push("lowerVomma",    "FAR DN",        "#f97316");
   push("negGammaEntry", "FASTER",       "#fb7185");
   push("putWall",       "PUT WALL",        "#16a34a", "gex");
   push("downsidePivot", "DN TGT",        "#a855f7");

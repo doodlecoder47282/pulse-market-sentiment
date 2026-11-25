@@ -3429,7 +3429,8 @@ Tests: `tests/quant/hold-levels.test.ts`.
 
 The Models side panel, its header lines and the chart's level tags no longer use the Greek names: turning
 point (was gamma zero), strongest pin (dominant magnet), thin zone (extreme vacuum), upside and downside
-target (pivots), volatility flip, time-decay flip, flip zone, accel zone above and below, shelf below. The
+target (pivots), volatility flip, time-decay flip, flip zone, far level above and below (the largest
+far strike, either sign, so no "acceleration" claim), faster above (moved to the resistance block), shelf below. The
 close-range heading says whether the odds are priced by options or hand-set. Target odds read "closes at or
 above the target 23% · touches it at some point 41%", and the reason a touch figure is withheld is in plain
 words (`server/impliedScenario.ts`). "MAIN PIVOT" is kept because it falls back to the strongest pin when
