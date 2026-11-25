@@ -3408,3 +3408,11 @@ data read Nov 24, 4:54 PM ET" (the after-close sentence carries the date too). T
 off the top card (a link to Heatseeker's map remains); `TodayPath.tsx` is no longer mounted there. A
 ceiling below the turning point, or a floor above it, gets one plain line. "Why levels differ" stays until
 the other tabs read the shared source. Tests updated in `today-plan`, `today-block`, `et-time`.
+**The strip above the tabs in plain words (2026-11-25, master list X4, part of X6).** The strip read
+"Volatility expansion — VIX backwardation (26.7/28.3/25.5) + dealers short gamma", "NET GEX -16%", "RULE
+TIER: HIGH". `shared/stripRead.ts` turns the same state and inputs into a plain label ("Stress rising"), one
+sentence naming the three inputs, and two facts; the rule that produced the label is in the tooltip. It
+says it counts SPX options out to 30 days, a different set from the top card's (today's expiry), which is
+why "leaning with moves" there can sit beside "calmer side" on the card. The server's six fixed-rule states
+are unchanged (X3). `client/src/lib/asOf.ts`: every "read at" note is now Eastern time, no leading zero
+(it had used the viewer's time zone). Tests: `tests/quant/strip-read.test.ts`.
