@@ -3324,6 +3324,11 @@ cause. `refreshSettledDailyBars` now returns `why` per symbol (old copy served a
 the answer's own time and newest bar, or the wait until the next ask) and the Regime warning prints it.
 Diagnostic only: no change to what is stored.
 
+**Operating framework (2026-11-24).** The owner's standing framework is `docs/OPERATING_FRAMEWORK.md`: the
+reader (can buy a call, does not know the Greeks), nine steps per request, tab order Signals to Crypto, one
+checklist per tab, and four checks (scope, code review, acceptance, owner). Direction, levels and entry/exit
+points are now allowed on screen when they come from stated rules and carry their record. `AGENTS.md`
+points to it first. Work proceeds one tab at a time, starting with Signals.
 **Signals S0: quick wins (2026-11-24, framework tab 1).** Plan and scope check in `docs/tabs/SIGNALS.md`.
 Times on the flow alerts, unusual-flow panel, flow panel and the server-built flow chart labels are
 h:mm AM/PM in New York (`shared/etTime.ts`); three of them had used the viewer's own time zone. After the
