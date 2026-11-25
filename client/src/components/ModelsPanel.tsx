@@ -19,6 +19,7 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
+import { shortDate } from "@shared/barDates";
 import { etTime as sharedEtTime, etTimeLabel } from "@shared/etTime";
 import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
@@ -228,6 +229,7 @@ interface MMMatrix {
 }
 
 interface ModelHorizon {
+  levelSource?: { view: "today" | "week"; expiry: string | null; shared: string[]; own: string[] } | null;
   horizon: Horizon;
   label: string;
   symbol: string;
@@ -2174,6 +2176,14 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           putWall: horizon.levels.find((l) => l.kind === "putWall")?.price,
         })} />
         <PlainRead testId="models-vix-plain" read={readVixTerm(horizon.vol.vix, horizon.vol.termRatio)} />
+        {horizon.levelSource && (
+          <p className="px-1 text-[11px] text-muted-foreground" data-testid="models-level-source">
+            {horizon.levelSource.shared.length
+              ? <>The {horizon.levelSource.shared.join(", ")} here {horizon.levelSource.shared.length > 1 ? "are" : "is"} the same {horizon.levelSource.view === "today" ? "Today" : "This week"} level{horizon.levelSource.shared.length > 1 ? "s" : ""} the Signals card shows{horizon.levelSource.expiry ? ` (options expiring ${shortDate(horizon.levelSource.expiry)})` : ""}.</>
+              : <>The Signals card reads no ceiling, floor or turning point for {horizon.levelSource.view === "today" ? "today" : "this week"} right now.</>}
+            {horizon.levelSource.own.length > 0 && horizon.levelSource.shared.length > 0 && <> The Signals card reads no {horizon.levelSource.own.join(" or ")} right now; the one shown here is this model's own, from all expiries in its window.</>}
+          </p>
+        )}
         <LevelScopeNote panel="models" horizon={horizon.horizon} className="px-1" />
       </div>
 

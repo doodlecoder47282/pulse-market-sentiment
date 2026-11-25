@@ -39,6 +39,7 @@ import { computeGreeks } from "./greeks";
 import { gexRegime } from "./gammaProfile";
 import { storage } from "./storage";
 import { getQuotes as schwabGetQuotes, getOptionChainLadder } from "./schwab";
+import { sharedLevels, levelSourceOf, wallBucket, type LevelSource, type SharedLevels, type SharedView } from "./sharedLevels";
 import { cdfAt, type ImpliedDistribution } from "./breedenLitzenberger";
 import { isRegularSessionOpen } from "./exchangeCalendar";
 import { buildOiBasis, chainReadMs, gammaWeighting } from "../shared/gammaBasis";
@@ -257,6 +258,8 @@ export interface ModelAudit {
 
 export interface ModelHorizon {
   horizon: Horizon;
+  /** Where ceiling, floor and turning point come from when they are the shared map's (server/sharedLevels.ts); null = the model's own. */
+  levelSource?: LevelSource | null;
   label: string;                           // "SPX DAILY MODEL" etc.
   symbol: string;                          // "^GSPC" | "SPY"
   displaySymbol: string;                   // "SPX" | "SPY"
@@ -416,6 +419,7 @@ function extractLevels(
   horizon: Horizon,
   vix: number | null,
   experimental: boolean,
+  shared?: { ceiling: number | null; floor: number | null } | null,
 ): ModelLevel[] {
   const out: ModelLevel[] = [];
 
@@ -429,9 +433,11 @@ function extractLevels(
   const band = buckets.filter((b) => Math.abs(b.strike - spot) / spot < 0.15);
   // Tight band for vacuum / pivot searches — prevents wandering
   const tight = buckets.filter((b) => b.strike >= twoSigmaDown && b.strike <= twoSigmaUp);
-  const callWall = band
+  // With a shared map the ceiling and floor are its levels (server/sharedLevels.ts), so this tab and the top
+  // card name one ceiling and one floor; the model's own pick is the fallback.
+  const callWall = wallBucket(band, band
     .filter((b) => b.strike >= spot)
-    .sort((a, b) => b.callGex - a.callGex)[0];
+    .sort((a, b) => b.callGex - a.callGex)[0], shared?.ceiling);
   if (callWall) {
     out.push({
       label: `CALL WALL ${fmtK(callWall.strike)}`,
@@ -444,9 +450,9 @@ function extractLevels(
   }
 
   // Put wall — highest put GEX below spot
-  const putWall = band
+  const putWall = wallBucket(band, band
     .filter((b) => b.strike <= spot)
-    .sort((a, b) => b.putGex - a.putGex)[0];
+    .sort((a, b) => b.putGex - a.putGex)[0], shared?.floor);
   if (putWall) {
     out.push({
       label: `PUT WALL ${fmtK(putWall.strike)}`,
@@ -1227,6 +1233,8 @@ export interface ModelBuildInput {
   vix9d?: number | null;
   intradayChange?: { change: number | null; windowMin: number | null };
   experimental?: boolean;
+  /** Test seam: the shared ceiling, floor and turning point (server/sharedLevels.ts). */
+  sharedLevels?: (symbol: string, view: SharedView) => Promise<SharedLevels | null>;
 }
 
 async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
@@ -1277,6 +1285,14 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     charmSlope: profile.charmSlope,
   };
 
+  // One source for ceiling, floor and turning point (framework section 7): the daily model reads the Today
+  // map and the weekly model the This-week map, the ones the top card shows. The monthly model keeps its own
+  // (to 45 days: the "Structure" view). SPX only: the shared map is read for $SPX.
+  const sharedView = symbol === "^GSPC" && chainSymbol === "SPX" ? (horizon === "daily" ? "today" : horizon === "weekly" ? "week" : null) : null;
+  const shared = sharedView ? await (input.sharedLevels ?? sharedLevels)("$SPX", sharedView) : null;
+  if (shared?.turningPoint != null) scaledProfile.zeroGammaSpot = shared.turningPoint;
+  const levelSource: LevelSource | null = shared ? levelSourceOf(shared) : null;
+
   const levels = extractLevels(
     displayBuckets,
     scaledProfile,
@@ -1285,6 +1301,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     horizon,
     vix,
     input.experimental ?? false,
+    shared,
   );
   const { spotAnchorDate, targetDate, targetDateLong, waypointLabels } = buildHorizonDates(horizon);
   const paths = generatePaths(levels, displaySpot, scaledProfile, horizon, waypointLabels);
@@ -1492,6 +1509,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
 
   const horizonOut: ModelHorizon = {
     horizon,
+    levelSource,
     label: `${symbol === "^GSPC" ? "SPX" : "SPY"} ${horizon.toUpperCase()} MODEL`,
     symbol,
     displaySymbol: symbol === "^GSPC" ? "SPX" : "SPY",
