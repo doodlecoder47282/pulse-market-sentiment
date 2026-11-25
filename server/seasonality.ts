@@ -12,6 +12,8 @@
 // Cache: 24hr TTL (disk-backed via sessionCache). Cache key: seasonality-v3.
 
 import { readCache, writeCache } from "./sessionCache";
+import { tradingDayToDateLabel } from "@shared/chartLabels";
+import { isTradingDay } from "@shared/exchangeCalendar";
 
 // ─── Enriched per-month/week stat ─────────────────────────────────────────
 export interface SeasonalityBar {
@@ -235,18 +237,14 @@ function presidentialCycleYear(year: number): 1 | 2 | 3 | 4 {
 }
 
 // ─── Optimal window finder ────────────────────────────────────────────────
-function dayOfYearToDate(doy: number, referenceYear = 2025): string {
-  // doy is 0-based trading day index in a typical year
-  // Map to approximate calendar date using a reference non-leap year
-  // We'll use SPY's actual calendar structure: approximate by spreading 252 trading days
-  // evenly across 365 calendar days (ratio ~0.69)
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  // Use a reference date: Jan 2 = trading day 0
-  const approxCalendarDay = Math.round((doy / 252) * 365);
-  const d = new Date(Date.UTC(referenceYear, 0, 2 + approxCalendarDay));
-  const mon = MONTHS[d.getUTCMonth()];
-  const day = d.getUTCDate();
-  return `${mon} ${day}`;
+/**
+ * A window day (0-based step of the 252-step year) as this year's date, "Jul 17". The same calculation as the
+ * chart's hover (`tradingDayToDateLabel` with the exchange calendar), so the window dates and the hover agree.
+ */
+export function dayOfYearToDate(doy: number, year = new Date().getFullYear()): string {
+  const label = tradingDayToDateLabel(doy + 1, year, isTradingDay);
+  // "Fri, Jul 17" -> "Jul 17". A year with fewer sessions than the step falls back to its last session.
+  return label ? label.replace(/^[A-Za-z]{3}, /, "") : "Dec 31";
 }
 
 function confidenceLabel(winRate: number): OptimalWindow["confidenceLabel"] {
