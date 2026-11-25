@@ -3349,6 +3349,12 @@ top of the flow alerts; the per-strike unusual-volume rows are removed. Limits s
 fine as the gap between reads, volume before the first read has no timing, a chain total has no buy/sell
 side. History starts at deploy. Tests: `tests/quant/contract-build.test.ts`.
 
+**The page is revalidated on every load (2026-11-24).** Seen live after #158 and #159 deployed: the server
+was already serving the new script, but the browser kept an old copy of the page (which names the script
+files), so the old app kept showing until the address was changed. `index.html` had no cache header.
+`server/static.ts` now sends `no-cache` for the page and any unhashed file and a one-year immutable header
+for hashed files under `assets/`. The owner had been adding `?r=5` to the address to get round this.
+Tests: `tests/quant/page-cache.test.ts`.
 **Signals S1a: the top read in plain words with an if-then path (2026-11-24).** `shared/todayPlan.ts` turns
 the nearest-expiry map already on the Today card into: what is happening ("Bigger swings are the setup...",
 "Smaller swings..."), the priced move as points and a range, and steps of the form "If SPX gets back above
