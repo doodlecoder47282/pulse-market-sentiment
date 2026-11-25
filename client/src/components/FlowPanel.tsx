@@ -1093,9 +1093,9 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
                 {agg.zone === "bearish" ? <TrendingDown className="mr-1 h-2.5 w-2.5" /> : agg.zone === "bullish" ? <TrendingUp className="mr-1 h-2.5 w-2.5" /> : <Minus className="mr-1 h-2.5 w-2.5" />}
                 {zoneLabel(agg.zone)}
               </Badge>
-              {agg.pcrRead && (
-                <div className="text-[11px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{zDetail(agg.pcrRead)}</div>
-              )}
+              {agg.pcrRead && (agg.pcrRead.zone === "insufficient_history"
+                ? <div className="text-[11px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{agg.pcrRead.n} of 20 sessions recorded</div>
+                : zDetail(agg.pcrRead) ? <div className="text-[11px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{zDetail(agg.pcrRead)}</div> : null)}
               <div className="flex gap-3 text-[11px] text-muted-foreground">
                 <span>Idx <span className="font-mono text-foreground">{fmtPcr(agg.indexPcr)}</span></span>
                 <span>Mag7 <span className="font-mono text-foreground">{fmtPcr(agg.mag7Pcr)}</span></span>

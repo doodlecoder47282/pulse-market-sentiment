@@ -392,7 +392,7 @@ function freshnessLabel(t: FreshnessTier, pos: FollowPosition): string {
   if (!isFinite(bumpMs) || bumpMs <= 0) return t === "STALE" ? "no new trades seen" : t.toLowerCase();
   const ageMin = (Date.now() - bumpMs) / 60_000;
   if (t !== "STALE") return ageMin < 60 ? `${t} · ${Math.max(1, Math.round(ageMin))} min ago` : `${t} · ${(ageMin / 60).toFixed(1)} hours ago`;
-  return ageMin < 6 * 60 ? `no new trades for ${Math.round(ageMin / 60)} hours` : `no new trades since ${etDayTimeLabel(bumpMs)}`;
+  return ageMin < 6 * 60 ? `no new trades for over ${Math.floor(ageMin / 60)} hours` : `no new trades since ${etDayTimeLabel(bumpMs)}`;
 }
 
 function TrackingRow({ pos }: { pos: FollowPosition }) {
