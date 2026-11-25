@@ -205,7 +205,8 @@ function zoneLabel(zone: PcrZone): string {
 function zDetail(r: PcrRead | undefined): string {
   if (!r) return "";
   if (r.z != null) return `z ${r.z >= 0 ? "+" : ""}${r.z.toFixed(1)} · ${r.n}d`;
-  if (r.zone === "insufficient_history") return `${r.n}/20 sessions`;
+  // Said once above the tiles (master list S9), not on every tile.
+  if (r.zone === "insufficient_history") return "";
   return "";
 }
 
@@ -1126,6 +1127,13 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
             <div className="text-muted-foreground">vs own last 60 sessions at this clock time · descriptive, not a forecast</div>
           </div>
         </div>
+
+        {(() => {
+          const short = [...data.indexGroup, ...data.mag7Group].filter((t) => t.pcrRead?.zone === "insufficient_history");
+          if (!short.length) return null;
+          const n = Math.min(...short.map((t) => t.pcrRead?.n ?? 0));
+          return <p className="text-[11px] text-amber-300" data-testid="flow-no-baseline">No baseline yet for {short.length === data.indexGroup.length + data.mag7Group.length ? "these symbols" : short.map((t) => t.label).join(", ")}: {n} of the 20 sessions needed are recorded, so a ratio is shown without saying whether it is high or low for that symbol.</p>;
+        })()}
 
         {/* Index row */}
         <div>
