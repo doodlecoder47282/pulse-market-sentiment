@@ -63,3 +63,26 @@ export function tradingDayToDateLabel(n: number, year: number, isTradingDay: (is
   }
   return null;
 }
+
+/**
+ * Vertical nudges, in rows, for labels that sit at the same edge beside horizontal lines (for example
+ * "PREV 7,237" and "CW 7,238" at the right edge). Values closer together than `minGap` form a cluster; the
+ * cluster's labels are fanned out around its middle, highest value on top. Returns one number per input, in
+ * input order: 0 for a label on its own, otherwise a row offset (negative = up) to multiply by the row height.
+ */
+export function labelNudges(values: ReadonlyArray<number | null | undefined>, minGap: number): number[] {
+  const out = values.map(() => 0);
+  const items = values.map((v, i) => ({ v, i })).filter((x): x is { v: number; i: number } => typeof x.v === "number" && Number.isFinite(x.v)).sort((a, b) => b.v - a.v);
+  let cluster: typeof items = [];
+  const flush = () => {
+    const n = cluster.length;
+    if (n > 1) cluster.forEach((c, k) => { out[c.i] = k - (n - 1) / 2; });
+    cluster = [];
+  };
+  for (const it of items) {
+    if (cluster.length && cluster[cluster.length - 1].v - it.v >= minGap) flush();
+    cluster.push(it);
+  }
+  flush();
+  return out;
+}

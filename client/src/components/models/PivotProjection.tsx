@@ -443,12 +443,12 @@ export default function PivotProjection({
                 </text>
                 <text
                   x={projectionX + 3}
-                  y={PAD_T + PLOT_H - 4}
+                  y={PAD_T + 22}
                   fontSize={11}
                   fill="#94a3b8"
                   fontFamily="monospace"
                 >
-                  forward 1-2mo projection zone
+                  to the right: the next 1 to 2 months
                 </text>
               </svg>
             </div>

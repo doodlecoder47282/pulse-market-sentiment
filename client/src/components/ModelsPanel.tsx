@@ -23,7 +23,7 @@ import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import { READ_MM_MATRIX, readModel, readVixTerm } from "@shared/plainReads";
 import { HOLDS_PRICE_TAG, TWO_ODDS_NOTE, rangeOdds } from "@shared/scenarioRegions";
-import { levelLabelSide, levelLabelVertical } from "@shared/chartLabels";
+import { labelNudges, levelLabelSide, levelLabelVertical } from "@shared/chartLabels";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -1096,6 +1096,8 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               stroke="#64748b"
               tick={{ fontSize: 12, fill: "#94a3b8", fontWeight: 500 }}
               tickLine={false}
+              tickMargin={12}
+              height={38}
               axisLine={{ stroke: "#334155" }}
             />
             <YAxis
@@ -1668,6 +1670,13 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
   const change = data?.change != null && Number.isFinite(data.change) ? data.change : null;
   const changePct = data?.changePct != null && Number.isFinite(data.changePct) ? data.changePct : null;
 
+  // Right-edge labels beside lines that are a point or two apart ("PREV 7,237" and "CW 7,238") are fanned
+  // out vertically so each can be read.
+  const tapeNudge = (() => {
+    const n = labelNudges([prevClose, cw, zg, dm, pw], (yMax - yMin) * 0.07);
+    return { prevClose: n[0], cw: n[1], zg: n[2], dm: n[3], pw: n[4] };
+  })();
+
   return (
     <div className="border-b border-border/30 bg-black/60 p-2">
       <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 font-mono text-[11px] text-muted-foreground">
@@ -1687,7 +1696,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
       </div>
       <div className="h-[180px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={lineData} margin={{ top: 6, right: 60, left: 4, bottom: 4 }}>
+          <LineChart data={lineData} margin={{ top: 10, right: 60, left: 4, bottom: 8 }}>
             <XAxis
               dataKey="label"
               stroke="#64748b"
@@ -1719,27 +1728,27 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
             />
             {prevClose != null && (
               <ReferenceLine y={prevClose} stroke="#64748b" strokeDasharray="2 4" strokeOpacity={0.6}>
-                <Label value={`PREV ${fmtK(prevClose)}`} position="right" offset={4} fill="#64748b" fontSize={10} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`PREV ${fmtK(prevClose)}`} position="right" offset={4} dy={tapeNudge.prevClose * 11} fill="#64748b" fontSize={10} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {cw != null && (
               <ReferenceLine y={cw} stroke={COLORS.callWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`CW ${fmtK(cw)}`} position="right" offset={4} fill={COLORS.callWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`CW ${fmtK(cw)}`} position="right" offset={4} dy={tapeNudge.cw * 11} fill={COLORS.callWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {zg != null && (
               <ReferenceLine y={zg} stroke={COLORS.zeroGamma} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`0Γ ${fmtK(zg)}`} position="right" offset={4} fill={COLORS.zeroGamma} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`0Γ ${fmtK(zg)}`} position="right" offset={4} dy={tapeNudge.zg * 11} fill={COLORS.zeroGamma} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {dm != null && dm !== cw && dm !== pw && (
               <ReferenceLine y={dm} stroke="#14b8a6" strokeDasharray="4 3" strokeOpacity={0.45} strokeWidth={1}>
-                <Label value={`DM ${fmtK(dm)}`} position="right" offset={4} fill="#14b8a6" fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`DM ${fmtK(dm)}`} position="right" offset={4} dy={tapeNudge.dm * 11} fill="#14b8a6" fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {pw != null && (
               <ReferenceLine y={pw} stroke={COLORS.putWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`PW ${fmtK(pw)}`} position="right" offset={4} fill={COLORS.putWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`PW ${fmtK(pw)}`} position="right" offset={4} dy={tapeNudge.pw * 11} fill={COLORS.putWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             <Line

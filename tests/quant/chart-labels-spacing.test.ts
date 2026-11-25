@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { labelLanes, levelLabelVertical, tradingDayToDateLabel } from "../../shared/chartLabels";
+import { labelLanes, labelNudges, levelLabelVertical, tradingDayToDateLabel } from "../../shared/chartLabels";
 import { isTradingDay } from "../../shared/exchangeCalendar";
 
 test("labels closer than a label's width go into different lanes", () => {
@@ -36,4 +36,22 @@ test("the four charts use them", () => {
     assert.doesNotMatch(read(f), />Day \{label\}</, f);
     assert.match(read(f), /\{seasonDayLabel\(label\)\}/, f);
   }
+});
+
+test("labels beside lines a point apart are fanned out; a label on its own is not moved", () => {
+  // Models tape chart, live 2026-11-25: PREV 7,237 and CW 7,238 printed over each other.
+  assert.deepEqual(labelNudges([7237, 7238, 7158, null, 7187], 12), [0.5, -0.5, 0, 0, 0], "the higher one goes up, the lower one down");
+  assert.deepEqual(labelNudges([7200, 7205, 7210], 12), [1, 0, -1]);
+  assert.deepEqual(labelNudges([7000, 7100], 12), [0, 0]);
+  assert.deepEqual(labelNudges([], 12), []);
+});
+
+test("the sweep's four fixes are in place", () => {
+  const read = (p: string) => readFileSync(p, "utf8");
+  const models = read("client/src/components/ModelsPanel.tsx");
+  assert.match(models, /dy=\{tapeNudge\.prevClose \* 11\}/);
+  assert.match(models, /dy=\{tapeNudge\.cw \* 11\}/);
+  assert.match(models, /tickMargin=\{12\}/);
+  assert.doesNotMatch(read("client/src/components/models/PivotProjection.tsx"), /y=\{PAD_T \+ PLOT_H - 4\}/, "the caption no longer sits on the lowest level's label");
+  assert.match(read("client/src/components/SectorWeb.tsx"), /fill="rgba\(10, 15, 25, 0\.96\)"/);
 });

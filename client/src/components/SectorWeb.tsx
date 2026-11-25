@@ -816,7 +816,7 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
 
         {/* Legend (fixed, not zoomed) */}
         <g transform={`translate(${W - 230},${H - 58})`} style={{ pointerEvents: "none" }}>
-          <rect x={-6} y={-20} width={228} height={52} rx={6} fill="rgba(10, 15, 25, 0.55)" stroke="rgba(148, 163, 184, 0.2)" />
+          <rect x={-6} y={-20} width={228} height={52} rx={6} fill="rgba(10, 15, 25, 0.96)" stroke="rgba(148, 163, 184, 0.3)" />
           <text x={4} y={-6} fontSize={10} fill="rgba(226,232,240,0.8)">Edges: correlation (60d daily)</text>
           <line x1={4} y1={6} x2={34} y2={6} stroke="rgba(52,211,153,0.9)" strokeWidth={2.2} />
           <text x={40} y={9} fontSize={9.5} fill="rgba(226,232,240,0.8)">positive</text>
