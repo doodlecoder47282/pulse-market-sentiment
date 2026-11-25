@@ -3425,6 +3425,20 @@ the session opens; only the model-derived levels (landmarks, side, strike exposu
 Unexplained and to watch: the priced move read 81 then 86 on what the chip called one read.
 Tests: `tests/quant/hold-levels.test.ts`.
 
+**Contract list: same-day contracts get their own rule (2026-11-25, seen live at noon).** With real data the
+list showed 40 rows, all expiring today near the price: a same-day contract nearly always trades several
+times its open interest, so "3 times open interest" flagged ordinary activity. Now a contract that expires
+today is listed as unusual only for a burst (`burstOf`: one five-minute step at least 5 times the median of
+its other steps and at least 1,000 contracts), and the busiest same-day contracts are shown in their own
+list, "Expiring today: where the activity is", which says it is activity, not anything unusual. Later
+expiries keep the open-interest rule. Also confirmed live: Schwab's day volume had reset by the open.
+**Hand-set tallies shown as tallies (2026-11-25, master list E1 and T1 in part).** Edge Lab's briefing badge
+read "STRONG BEAR · score 75/100" for five fixed yes/no rules. The badge now reads "Rule tally leans down"
+(or up, mixed, not enough inputs) with no score, and the line reads "Rule tally: 3 of 5 inputs lean down, 0
+lean up (3 of 5 inputs counted) · ...". Trade Desk's squeeze card no longer shows "intensity 63/100 ·
+NEUTRAL · 0-2 sessions (imminent)"; it says it is a hand-set tally, not odds. Three trigger lines that
+claimed what dealers or positioning will do are reworded. The rules themselves are unchanged: removing or
+replacing them is still open. Tests: `tests/quant/demo-labels.test.ts`.
 ## 2026-11-25: Models in plain words (first pass, M3)
 
 The Models side panel, its header lines and the chart's level tags no longer use the Greek names: turning

@@ -12,8 +12,10 @@ interface Alert {
   volume: number; openInterest: number | null; multiple: number | null; premium: number;
   steps: Step[];
   build: { line: string; baseline: number; timed: number; shape: string };
+  sameDay?: boolean;
+  burst?: { step: number; volume: number; usual: number; multiple: number } | null;
 }
-interface Resp { symbol: string; day: string; asOfMs: number | null; oiUnknown?: number; watchingSinceMs: number | null; rule: string; alerts: Alert[]; note: string }
+interface Resp { symbol: string; day: string; asOfMs: number | null; oiUnknown?: number; watchingSinceMs: number | null; rule: string; alerts: Alert[]; todayMostActive?: Alert[]; todayRule?: string; note: string }
 
 const num = (v: number) => Math.round(v).toLocaleString("en-US");
 const money = (v: number) => (v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${Math.round(v)}`);
@@ -50,6 +52,31 @@ function BuildBars({ steps, side }: { steps: Step[]; side: "C" | "P" }) {
   );
 }
 
+function Row({ a }: { a: Alert }) {
+  return (
+    <li className="border-t border-border/40 pt-2 first:border-t-0 first:pt-0" data-testid={`contract-build-${a.occ}`}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        <span className={`text-sm font-semibold ${a.side === "C" ? "text-emerald-400" : "text-rose-400"}`}>
+          {a.strike.toLocaleString("en-US")} {a.side === "C" ? "call" : "put"} · expires {a.sameDay ? "today" : expLabel(a.expiry)}
+        </span>
+        <span className="text-sm">
+          {a.sameDay
+            ? `${num(a.volume)} traded today`
+            : `${num(a.volume)} traded today vs ${a.openInterest != null ? num(a.openInterest) : "unknown"} open before today${a.multiple != null ? ` (${a.multiple >= 10 ? a.multiple.toFixed(0) : a.multiple.toFixed(1)} times)` : ""}`}
+        </span>
+        {a.premium > 0 && <span className="text-sm text-muted-foreground" title="Contracts added since the first read, times the last price at each read, times 100. Excludes volume from before the first read.">about {money(a.premium)} since first read</span>}
+      </div>
+      {a.burst && (
+        <div className="text-sm text-amber-300" data-testid="contract-burst">
+          Burst: {num(a.burst.volume)} in five minutes at {etTime(a.burst.step)} ET, about {a.burst.multiple >= 10 ? a.burst.multiple.toFixed(0) : a.burst.multiple.toFixed(1)} times this contract's usual five minutes ({num(a.burst.usual)}).
+        </div>
+      )}
+      <div className="text-sm text-muted-foreground">{a.build.line}</div>
+      <BuildBars steps={a.steps} side={a.side} />
+    </li>
+  );
+}
+
 export default function ContractBuildList({ symbol, enabled }: { symbol: string; enabled: boolean }) {
   const q = useQuery<Resp>({
     queryKey: ["/api/flow/contract-alerts", symbol],
@@ -66,7 +93,7 @@ export default function ContractBuildList({ symbol, enabled }: { symbol: string;
         {d?.asOfMs != null && <div className="text-xs text-muted-foreground">last recorded {etTime(d.asOfMs)} ET</div>}
       </div>
       <div className="text-xs text-muted-foreground">
-        A contract is listed when {d?.rule ?? "its day volume is at least 3 times its own open interest and at least 500 contracts"}. Largest dollar amount first.
+        Listed when {d?.rule ?? "a contract has traded at least 3 times its own open interest and at least 500 contracts"}. Largest dollar amount first.
       </div>
       {q.isLoading && <div className="mt-2 text-sm text-muted-foreground">Reading…</div>}
       {q.isError && <div className="mt-2 text-sm text-rose-400">Not read: the request failed.</div>}
@@ -74,28 +101,22 @@ export default function ContractBuildList({ symbol, enabled }: { symbol: string;
         <div className="mt-2 text-sm text-muted-foreground">
           {d.watchingSinceMs == null
             ? "Nothing recorded for this symbol today yet. Recording starts with the first option chain read after the open."
-            : `No contract meets the rule so far today (recording since ${etTime(d.watchingSinceMs)} ET).`}
+            : `Nothing unusual by these rules so far today (recording since ${etTime(d.watchingSinceMs)} ET).`}
         </div>
       )}
       {d && d.alerts.length > 0 && (
         <ul className="mt-2 space-y-3">
-          {d.alerts.map((a) => (
-            <li key={a.occ} className="border-t border-border/40 pt-2 first:border-t-0 first:pt-0" data-testid={`contract-build-${a.occ}`}>
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                <span className={`text-sm font-semibold ${a.side === "C" ? "text-emerald-400" : "text-rose-400"}`}>
-                  {a.strike.toLocaleString("en-US")} {a.side === "C" ? "call" : "put"} · expires {expLabel(a.expiry)}
-                </span>
-                <span className="text-sm">
-                  {num(a.volume)} traded today vs {a.openInterest != null ? num(a.openInterest) : "unknown"} open before today
-                  {a.multiple != null ? ` (${a.multiple >= 10 ? a.multiple.toFixed(0) : a.multiple.toFixed(1)} times)` : ""}
-                </span>
-                {a.premium > 0 && <span className="text-sm text-muted-foreground" title="Contracts added since the first read, times the last price at each read, times 100. Excludes volume from before the first read.">about {money(a.premium)} since first read</span>}
-              </div>
-              <div className="text-sm text-muted-foreground">{a.build.line}</div>
-              <BuildBars steps={a.steps} side={a.side} />
-            </li>
-          ))}
+          {d.alerts.map((a) => <Row key={a.occ} a={a} />)}
         </ul>
+      )}
+      {d && (d.todayMostActive?.length ?? 0) > 0 && (
+        <div className="mt-4 border-t border-border/50 pt-3" data-testid="contract-today-active">
+          <div className="text-sm font-semibold">Expiring today: where the activity is</div>
+          <div className="text-xs text-muted-foreground">{d.todayRule ? d.todayRule.charAt(0).toUpperCase() + d.todayRule.slice(1) + "." : ""}</div>
+          <ul className="mt-2 space-y-3">
+            {d.todayMostActive!.map((a) => <Row key={a.occ} a={a} />)}
+          </ul>
+        </div>
       )}
       {d && (d.oiUnknown ?? 0) > 0 && (
         <div className="mt-2 text-sm text-amber-400" data-testid="contract-build-oi-unknown">

@@ -641,7 +641,7 @@ function SqueezeDial({ squeeze }: { squeeze: Squeeze }) {
             {squeeze.label}
           </div>
           <div className="mt-0.5 font-mono text-[11px] text-amber-500">
-            <span title="Heuristic intensity 0-100 (playbook.ts), not a probability of a move.">intensity {squeeze.probability}/100</span> · {squeeze.direction.toUpperCase()} · {squeeze.timeHorizon}
+            hand-set tally of the conditions listed below · not odds, not graded
           </div>
         </div>
 
