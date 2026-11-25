@@ -7,6 +7,7 @@
 // is shared/memeStructure.ts, the same code the server runs. Descriptive
 // only: no verdicts, targets or sizes.
 
+import { etDayTimeLabel } from "@shared/etTime";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -67,11 +68,11 @@ function OnChainRow({ e }: { e: CommunityEntry }) {
       : { text: `${what}: revoked`, cls: "text-emerald-300" };
   const mint = authority(e.mintAuthorityActive, "mint authority");
   const freeze = authority(e.freezeAuthorityActive, "freeze authority");
-  const readAt = e.top10At ? `; read ${new Date(e.top10At).toLocaleString()}` : "";
+  const readAt = e.top10At ? `; read ${etDayTimeLabel(e.top10At)}` : "";
   const top10 = e.top10Pct == null
     ? { text: `top-10 holders: ${e.top10Method?.startsWith("unavailable") ? "unavailable" : "unread"}`, cls: "text-muted-foreground", title: (e.top10Method ?? "indexed RPC not read yet") + readAt }
     : { text: `top-10 holders: ${e.top10Pct.toFixed(1)}%`, cls: e.top10Pct > 45 ? "text-rose-300 font-semibold" : e.top10Pct > 30 ? "text-amber-300" : "text-emerald-300", title: `excluding identified pool vaults and burns; method: ${e.top10Method ?? "—"}${readAt}` };
-  const stateTitle = e.onChainState === "unavailable" ? (e.onChainError ?? "on-chain read failed") : e.onChainState === "pending" ? "on-chain read not attempted yet" : e.onChainAt ? `authorities read ${new Date(e.onChainAt).toLocaleString()}` : undefined;
+  const stateTitle = e.onChainState === "unavailable" ? (e.onChainError ?? "on-chain read failed") : e.onChainState === "pending" ? "on-chain read not attempted yet" : e.onChainAt ? `authorities read ${etDayTimeLabel(e.onChainAt)}` : undefined;
   return (
     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]" data-testid={`community-onchain-${e.tokenAddress.slice(0, 8)}`} title={stateTitle}>
       <span className={mint.cls}>{mint.text}</span>

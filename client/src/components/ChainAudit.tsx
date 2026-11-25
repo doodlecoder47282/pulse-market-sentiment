@@ -4,6 +4,7 @@
  * Renders all 10 institutional metrics from /api/chain-audit.
  */
 
+import { etTime } from "@shared/etTime";
 import { SlowNote } from "@/components/ui/panel-skeleton";
 import { useState } from "react";
 import DataAgeChip from "./DataAgeChip";
@@ -205,13 +206,7 @@ function timeAgo(ts: number): string {
 function fmtClockET(ts: number | undefined | null): string {
   if (!ts || !isFinite(ts)) return "";
   try {
-    return new Date(ts).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-      timeZone: "America/New_York",
-    });
+    return etTime(ts, { seconds: true });
   } catch {
     return "";
   }

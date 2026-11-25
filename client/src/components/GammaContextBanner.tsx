@@ -7,6 +7,7 @@
 // Critical for the TradingView engine, where our custom gamma overlay is
 // stripped away. This component preserves the GEX context regardless of engine.
 
+import { etTimeLabel } from "@shared/etTime";
 import { asOfToMs } from "@shared/asOfTime";
 import { Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -171,7 +172,7 @@ export default function GammaContextBanner({
           Spot{" "}
           <span className="text-foreground">{spot.toFixed(2)}</span>
           {asOfToMs(asOf) != null && (
-            <> · chain as of {new Date(asOfToMs(asOf)!).toLocaleTimeString()}</>
+            <> · chain as of {etTimeLabel(asOfToMs(asOf)!)}</>
           )}
         </span>
       </div>

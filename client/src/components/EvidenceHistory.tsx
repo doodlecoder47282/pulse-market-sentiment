@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { etDayTimeLabel } from "@shared/etTime";
 import { useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { withRequestDeadline } from "@/lib/requestDeadline";
@@ -7,7 +8,7 @@ import { ArchivedTradeBriefSchema, type TradeBrief } from "@shared/tradeBrief";
 import { EvidenceTiming } from "./EvidenceTiming";
 
 const button = "min-h-[44px] rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-not-allowed";
-const date = (value: string) => new Date(value).toLocaleString();
+const date = (value: string) => etDayTimeLabel(value);
 
 /** Historical view stays separate from the live brief and cannot call the AI curator. */
 export function EvidenceHistory({ brief, offline }: { brief: TradeBrief; offline: boolean }) {

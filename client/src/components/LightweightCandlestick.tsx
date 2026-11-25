@@ -102,7 +102,7 @@ export default function LightweightCandlestick({
             return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
           }
           return d.toLocaleTimeString("en-US", {
-            hour: "numeric", minute: "2-digit", hour12: false, timeZone: "America/New_York",
+            hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York",
           });
         },
       },
@@ -110,7 +110,7 @@ export default function LightweightCandlestick({
         timeFormatter: (time: number) =>
           new Date(time * 1000).toLocaleString("en-US", {
             month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-            hour12: false, timeZone: "America/New_York",
+            hour12: true, timeZone: "America/New_York",
           }) + " ET",
       },
       crosshair: {

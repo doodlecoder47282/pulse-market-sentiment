@@ -3439,6 +3439,17 @@ lean up (3 of 5 inputs counted) · ...". Trade Desk's squeeze card no longer sho
 NEUTRAL · 0-2 sessions (imminent)"; it says it is a hand-set tally, not odds. Three trigger lines that
 claimed what dealers or positioning will do are reworded. The rules themselves are unchanged: removing or
 replacing them is still open. Tests: `tests/quant/demo-labels.test.ts`.
+## 2026-11-25: Models in plain words (first pass, M3)
+
+The Models side panel, its header lines and the chart's level tags no longer use the Greek names: turning
+point (was gamma zero), strongest pin (dominant magnet), thin zone (extreme vacuum), upside and downside
+target (pivots), volatility flip, time-decay flip, flip zone, far level above and below (the largest
+far strike, either sign, so no "acceleration" claim), faster above (moved to the resistance block), shelf below. The
+close-range heading says whether the odds are priced by options or hand-set. Target odds read "closes at or
+above the target 23% · touches it at some point 41%", and the reason a touch figure is withheld is in plain
+words (`server/impliedScenario.ts`). "MAIN PIVOT" is kept because it falls back to the strongest pin when
+there is no turning point. Not done: the cards below the main chart. The purpose line (0DTE, weekly swings,
+longer-term forecast) is now in `docs/OPERATING_FRAMEWORK.md` section 1.
 
 ## 2026-11-25 afternoon: times, names, and what was seen live
 

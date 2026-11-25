@@ -3,6 +3,7 @@
 // The level record (server/levelRecord.ts, shared/levelRecord.ts): what the index did the first time it
 // reached each kind of level over the stored past sessions. Counts only; one sentence, the table on tap.
 import { plainLevelName } from "@shared/plainLevelName";
+import { etTimeLabel, etTime } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -12,7 +13,7 @@ import type { LevelRecord, LevelTouch } from "@shared/levelRecord";
 interface View { state: "ok" | "unavailable"; reason: string | null; asOfMs: number; answer: string; record: LevelRecord | null; recent: LevelTouch[]; dataNote?: string | null; barsThroughMs?: number | null; limits: string[] }
 const dayEt = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
-const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const hhmm = (ms: number) => etTime(ms);
 const px = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 const OUT: Record<string, string> = { held: "closed back first", broke: "closed through first", neither: "neither", ungraded: "not graded" };
 

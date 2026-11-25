@@ -9,6 +9,7 @@
 // a Jupiter price check; Bluesky and pump.fun (unofficial API) are labeled
 // low-grade attention proxies and are not in the score or verdict.
 
+import { etTimeLabel, etDayTimeLabel } from "@shared/etTime";
 import CoinLinks from "./CoinLinks";
 import CryptoHowTo from "./CryptoHowTo";
 import type { LiquidityVelocity, ExitCostStress } from "@shared/cryptoHistory";
@@ -261,7 +262,7 @@ function AutopsyCard() {
           <div className="rounded border border-border/40 p-2">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
               <span className="min-w-0 break-words text-sm font-semibold text-foreground">{ok.snapshot.symbol || "?"} <span className="font-normal text-muted-foreground">{ok.snapshot.name}</span></span>
-              <span className="font-mono text-muted-foreground">{ok.cached ? "recent read" : "read"} {new Date(ok.asOf).toLocaleTimeString()}</span>
+              <span className="font-mono text-muted-foreground">{ok.cached ? "recent read" : "read"} {etTimeLabel(ok.asOf)}</span>
             </div>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums text-muted-foreground sm:grid-cols-4">
               <span>cap <span className="text-foreground">{ok.snapshot.marketCap != null ? fmtUsd(ok.snapshot.marketCap) : "n/a"}</span></span>
@@ -275,7 +276,7 @@ function AutopsyCard() {
               {(ok.gates ?? []).some((g) => g.severity === "kill" && g.state === "unread") ? (
                 <span className="text-amber-600 dark:text-amber-400" data-testid="crypto-autopsy-notfinal"> {(ok.gates ?? []).filter((g) => g.severity === "kill" && g.state === "unread").length} kill check(s) unread; this verdict is not final.</span>
               ) : null}
-              {ok.tracked ? ` The desk has also been tracking it since ${new Date(ok.tracked.firstSeenAt).toLocaleString()} (currently ${ok.tracked.verdict ?? "unscored"}).` : ""}
+              {ok.tracked ? ` The desk has also been tracking it since ${etDayTimeLabel(ok.tracked.firstSeenAt)} (currently ${ok.tracked.verdict ?? "unscored"}).` : ""}
             </div>
             <div className="mt-1 font-mono text-muted-foreground" data-testid="crypto-autopsy-counts">
               {ok.summary.pass} pass · {ok.summary.fail} not met ({ok.summary.killFails} kill, {ok.summary.flagFails} flag) · {ok.summary.unread} unread
@@ -422,7 +423,7 @@ function VenueLine({ name, v }: { name: string; v: VenueCell }) {
             {f && (f.count > 0
               ? <> · taker buy {f.takerBuyShare != null ? `${Math.round(f.takerBuyShare * 100)}%` : "n/a"} of {f.count} trades / {Math.round(f.coveredSec / 60)}m</>
               : <> · 0 trades in window (observed)</>)}
-            {v.lastTradeUtc && <> · last {new Date(v.lastTradeUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>}
+            {v.lastTradeUtc && <> · last {etTimeLabel(v.lastTradeUtc, { seconds: true })}</>}
           </>}
     </div>
   );
@@ -492,7 +493,7 @@ function DeskBrief({ feed, feedError, health, sig, enters, watches, onPick }: {
           <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
           <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight" data-testid="crypto-brief-headline">{headline}</h2>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {feed ? `${feed.trackedCount} pools tracked · read ${feed.asOf ? new Date(feed.asOf).toLocaleTimeString() : "time unknown"}` : feedError ? "no read" : "warming up"}
+            {feed ? `${feed.trackedCount} pools tracked · read ${feed.asOf ? etTimeLabel(feed.asOf) : "time unknown"}` : feedError ? "no read" : "warming up"}
             {notOk.length > 0 ? ` · ${notOk.map((e) => `${e.name} ${e.status}`).join(", ")}` : engines.length > 0 ? " · all agents running" : ""}
           </p>
         </div>
@@ -983,7 +984,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 // pump.fun values are kept from the last successful read; mark
                 // them stale when the latest attempt failed or they are old.
                 const stale = c.socialSources?.pump === "failed" || (c.pumpCheckedAt != null && Date.now() - c.pumpCheckedAt > 15 * 60_000);
-                const at = c.pumpCheckedAt != null ? new Date(c.pumpCheckedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+                const at = c.pumpCheckedAt != null ? etTimeLabel(c.pumpCheckedAt) : null;
                 return (
                   <span className={stale ? "text-amber-300/80" : undefined} title={stale ? "last successful pump.fun read; the latest attempt failed or is old" : undefined}>
                     · pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}

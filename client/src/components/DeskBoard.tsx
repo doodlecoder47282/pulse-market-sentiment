@@ -4,6 +4,7 @@
 // case for the index, then SPX, SPY, QQQ, VIX and the index futures with the nearest level on each side.
 // Every ticker shows its own state; a ticker Schwab did not answer for says so. Descriptive: no odds.
 import { plainLevelName } from "@shared/plainLevelName";
+import { etTimeLabel } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -27,7 +28,7 @@ interface Board {
 
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
 const pct = (n: number | null | undefined) => (n == null ? "" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`);
-const clock = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) + " ET");
+const clock = (ms: number | null | undefined) => (ms == null ? null : etTimeLabel(ms));
 const dist = (lv: BoardLevel | null, price: number | null) => (lv && price ? `${lv.price > price ? "+" : "-"}${px(Math.abs(lv.price - price))}` : "");
 
 function CaseBox({ c, tone }: { c: DeskCase; tone: "bull" | "bear" }) {
