@@ -80,7 +80,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
   const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "last_session" : m.dataState === "stale" ? "stale" : "ok";
   const aboveOi = m.strikes.find((s) => s.strike === above);
   const belowOi = m.strikes.find((s) => s.strike === below);
-  const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of nearby option positions` : "");
+  const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of the option map nearby` : "");
 
   // Position of the three levels and spot on one line, as fractions of [lo, hi].
   const lo = Math.min(...[below, flip, spot, m.range.low ?? spot].filter((x): x is number => x != null)) - 5;
@@ -95,6 +95,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
   const plan = todayPlan({
     symbol, spot, sessionState: m.session.state, dataState: m.dataState, atSpot: m.band.atSpot,
     straddle: m.range.straddle, low: m.range.low, high: m.range.high, above, below, flip,
+    readAtMs: m.chainAsOfMs ?? null,
   });
 
   return (

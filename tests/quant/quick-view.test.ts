@@ -50,10 +50,10 @@ test("answer lines carry the marker the audit times", () => {
 test("headline answer lines: dealer levels from what was read; missing inputs are named", async () => {
   const { levelsLine } = await import("../../shared/headlineLines");
   const m = { spot: 6834.4, dataState: "ok", chainStale: false, band: { atSpot: "long" }, landmarks: { wallAbove: 6850, magnetBelow: 6810, flip: 6800 } };
-  assert.equal(levelsLine(m), "SPX 6,834 · wall above 6,850 · flip 6,800 · magnet below 6,810 · long gamma at spot");
-  assert.equal(levelsLine({ ...m, band: { atSpot: "indeterminate" }, landmarks: { wallAbove: null, magnetBelow: null, flip: null } }), "SPX 6,834 · no wall above in band · no flip in band · no magnet below in band · gamma sign not determined");
-  assert.equal(levelsLine({ ...m, landmarks: { wallAbove: null, magnetBelow: 6810, flip: 6800, pin: 6850 } }), "SPX 6,834 · pin above 6,850 · flip 6,800 · magnet below 6,810 · long gamma at spot", "the pin fills a missing wall, labelled as the pin, as on the Today card");
-  assert.equal(levelsLine({ ...m, landmarks: { wallAbove: 6850, magnetBelow: null, flip: null, pin: 6820 } }), "SPX 6,834 · wall above 6,850 · no flip in band · pin below 6,820 · long gamma at spot");
+  assert.equal(levelsLine(m), "SPX 6,834 · ceiling 6,850 · turning point 6,800 · floor 6,810 · calmer side (smaller swings in the model)");
+  assert.equal(levelsLine({ ...m, band: { atSpot: "indeterminate" }, landmarks: { wallAbove: null, magnetBelow: null, flip: null } }), "SPX 6,834 · no ceiling within 2% · no turning point in range · no floor within 2% · side not read");
+  assert.equal(levelsLine({ ...m, landmarks: { wallAbove: null, magnetBelow: 6810, flip: 6800, pin: 6850 } }), "SPX 6,834 · ceiling 6,850 · turning point 6,800 · floor 6,810 · calmer side (smaller swings in the model)", "the pin fills a missing level, named as on the Today card");
+  assert.equal(levelsLine({ ...m, landmarks: { wallAbove: 6850, magnetBelow: null, flip: null, pin: 6820 } }), "SPX 6,834 · ceiling 6,850 · no turning point in range · floor 6,820 · calmer side (smaller swings in the model)");
   assert.equal(levelsLine({ ...m, dataState: "no_gex", reason: "not priced (closed market or no implied vols)" }), "SPX 6,834 · dealer levels not formed (not priced (closed market or no implied vols))");
   assert.match(String(levelsLine({ ...m, chainStale: true })), /chain stale$/);
   assert.match(String(levelsLine({ ...m, dataState: "stale_session" })), /session closed, last map of the day$/, "a closed session is not a stale chain");

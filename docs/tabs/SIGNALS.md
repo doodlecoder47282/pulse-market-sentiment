@@ -133,5 +133,9 @@ current account; check against the live product before treating any line as exac
   nearest-expiry only; needs a second read for the week's last expiry), one regime label, a record for
   option levels (the existing level record covers calendar levels only, not option levels), and removing
   the projected-path card and the apology note.
+  After review: the side the price is on comes from the map's read at the price, not from where the
+  turning point sits; after the close the line says when the levels were read; no line says what price
+  "should" do; the header line uses the same three names. The Trade Desk board and the Chart still say
+  "wall above" and "magnet below": renamed in their own tabs' turn.
   To check live at the next open: whether Schwab's per-contract day volume has already reset by 9:30 (if
   not, the first read's baseline would hold yesterday's volume and could raise a false alert).
