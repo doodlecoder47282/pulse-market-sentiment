@@ -334,7 +334,9 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
   if (!daily) return;
 
   const spot = daily.spot ?? 0;
-  const audit = daily.audit ?? {};
+  // The model's own definitions here too: a build that cannot read the shared map falls back to them, and a
+  // switch of definition between two ticks would otherwise post a "flip" or a "broken level" that no market move made.
+  const audit = daily.own?.audit ?? daily.audit ?? {};
   const newGammaZone = audit.gammaZone ?? null;
   const gammaZero = audit.gammaZero ?? null;
 
@@ -355,7 +357,7 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
 
   // Level status transitions — collect all meaningful transitions in this tick,
   // then either coalesce (≥2 levels within 5 SPX pts) or fire individually.
-  const levels = (daily.levels ?? []) as any[];
+  const levels = (daily.own?.levels ?? daily.levels ?? []) as any[];
   // Legacy sign field (+1 / -1 / 0); an unavailable slope is not passed as a zero.
   const dfi = audit.dfiState === "unavailable" ? null : audit.dfi ?? daily.dfi ?? null;
   const allLevels = levels.map((l: any) => ({
@@ -863,7 +865,8 @@ async function maybeFireTenAmRegime(): Promise<void> {
   const models = await res.json().catch(() => null);
   const daily = models?.horizons?.daily;
   if (!daily) return;
-  const audit = daily.audit ?? {};
+  // The 10 AM snapshot feeds a score tilt on graded alerts: the model's own definitions, like the alerts.
+  const audit = daily.own?.audit ?? daily.audit ?? {};
   const spot = daily.spot ?? 0;
   const mainPivot = audit.mainPivot ?? daily.mainPivot ?? 0;
   if (!spot || !mainPivot) {

@@ -51,5 +51,8 @@ test("the side of the turning point comes from the same map; graded alerts keep 
   assert.match(m, /extras\.gammaAtSpot === "long" \? "positive"/);
   assert.match(m, /auditOf\(scaledProfile, levels, shared\?\.turningPoint != null \? shared\.atSpot : null\)/);
   assert.match(m, /zeroGamma: ownProfile\.zeroGammaSpot/);
-  assert.match(read("server/discordScheduler.ts"), /daily\.own\?\.levels \?\? daily\.levels/);
+  const sch = read("server/discordScheduler.ts");
+  assert.match(sch, /daily\.own\?\.levels \?\? daily\.levels/);
+  assert.doesNotMatch(sch, /= daily\.audit \?\? \{\}/, "every scheduler reader takes the model's own audit first");
+  assert.doesNotMatch(sch, /= \(daily\.levels \?\? \[\]\)/);
 });

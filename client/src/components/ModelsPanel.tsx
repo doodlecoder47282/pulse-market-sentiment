@@ -665,8 +665,9 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
       {/* Line 5: Gamma at spot */}
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span>
-          GAMMA zSpot:{" "}
-          <span className={a.gammaAtSpot >= 0 ? "text-green-400" : "text-red-400"}>
+          {/* With shared levels the side of the turning point is the map's; this figure is the model's own sum, so it carries no side colour. */}
+          {horizon.levelSource ? "model net gamma, all expiries in its window" : "GAMMA zSpot"}:{" "}
+          <span className={horizon.levelSource ? "text-muted-foreground" : a.gammaAtSpot >= 0 ? "text-green-400" : "text-red-400"}>
             {a.gammaAtSpot >= 0 ? "+" : ""}{a.gammaAtSpot.toLocaleString()}
           </span>
         </span>
@@ -1008,7 +1009,7 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
       </span>
       <span>|</span>
       <span>
-        GAMMA {a.gammaAtSpot >= 0 ? "+" : ""}{a.gammaAtSpot.toLocaleString()}
+        {horizon.levelSource ? "model net gamma" : "GAMMA"} {a.gammaAtSpot >= 0 ? "+" : ""}{a.gammaAtSpot.toLocaleString()}
       </span>
       <span>|</span>
       {zg && (
