@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { levelSourceOf, sharedLevels, wallBucket } from "../../server/sharedLevels";
+import { levelSourceOf, ownAuditOver, sharedLevels, wallBucket } from "../../server/sharedLevels";
 import { _clearHeldMaps } from "../../server/odteMapHold";
 
 const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
@@ -55,4 +55,18 @@ test("the side of the turning point comes from the same map; graded alerts keep 
   assert.match(sch, /daily\.own\?\.levels \?\? daily\.levels/);
   assert.doesNotMatch(sch, /= daily\.audit \?\? \{\}/, "every scheduler reader takes the model's own audit first");
   assert.doesNotMatch(sch, /= \(daily\.levels \?\? \[\]\)/);
+});
+
+test("the audit graded alerts read keeps every enriched input and the model's own level-derived fields", () => {
+  const sharedBefore = { gammaZone: "y+", mainPivot: 7092, gex: -1200, dfi: 1 };
+  const enriched = { ...sharedBefore, gex: -1200, wickZones: [{ lo: 7100, hi: 7110 }], realizedSigma20d: 0.012, sessionOpen: 7150, vommaPockets: [7200] };
+  const own = { gammaZone: "y-", mainPivot: 7176, gex: -1200, dfi: 1 };
+  const out = ownAuditOver(enriched, sharedBefore, own);
+  assert.equal(out.gammaZone, "y-");
+  assert.equal(out.mainPivot, 7176);
+  assert.deepEqual(out.wickZones, [{ lo: 7100, hi: 7110 }]);
+  assert.equal(out.realizedSigma20d, 0.012);
+  assert.equal(out.sessionOpen, 7150);
+  assert.equal(out.gex, -1200);
+  assert.match(read("server/routes.ts"), /h\.own\.audit = ownAuditOver\(h\.audit, before, h\.own\.audit\)/);
 });

@@ -75,3 +75,17 @@ export function wallBucket<T extends { strike: number }>(band: T[], own: T | und
   const nearest = band.reduce((a, b) => (Math.abs(b.strike - sharedStrike) < Math.abs(a.strike - sharedStrike) ? b : a));
   return { ...nearest, strike: sharedStrike };
 }
+
+/**
+ * The audit graded alerts read when a horizon carries shared levels: the enriched audit (realised volatility,
+ * wick zones, session open and the rest are added to it after the build) with the model's own value laid over
+ * every field that differs only because of the level definitions. `sharedBefore` is the shared audit as built,
+ * before enrichment; a field the model's own audit holds differently from it is one the definitions changed.
+ */
+export function ownAuditOver<T extends Record<string, any>>(enriched: T, sharedBefore: Record<string, any>, own: Record<string, any>): T {
+  const out: Record<string, any> = { ...enriched };
+  for (const k of Object.keys(own)) {
+    if (JSON.stringify(own[k]) !== JSON.stringify(sharedBefore[k])) out[k] = own[k];
+  }
+  return out as T;
+}
