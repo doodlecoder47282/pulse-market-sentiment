@@ -9,7 +9,7 @@
  * unavailable says why, a map without gamma says so instead of showing
  * walls that do not exist. Descriptive only. It opens with one plain
  * sentence (shared/plainReads.ts readToday) and closes with the projected
- * path to the close (TodayPath), so the top of the app answers "what is
+ * levels, so the top of the app answers "what is
  * today" before anything else.
  */
 import { useQuery } from "@tanstack/react-query";
@@ -23,7 +23,7 @@ import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import TodayWeek from "@/components/TodayWeek";
 import { readToday } from "@shared/plainReads";
-import { todayPlan } from "@shared/todayPlan";
+import { todayPlan, preopenIsLastSession } from "@shared/todayPlan";
 
 type MapResp = OdteMap & { forwardAsOf: string; source: string };
 
@@ -78,8 +78,9 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
   const priced = m.dataState !== "no_gex";
   // After the close the map is the last session's, read after it finished: that is "last session", not stale.
   const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "last_session" : m.dataState === "stale" ? "stale"
-    // Before the open the option data is the last session's: "ok" on ten-hour-old data would read as live.
-    : m.session.state === "preopen" ? "last_session" : "ok";
+    // Before the open: overnight the option data is hours old (seen: "OK" on a 10-hour-old read) and is the
+    // last session's; nearer the open it is re-read every minute and is a live pre-market read.
+    : preopenIsLastSession(m.session.state, m.chainAsOfMs ?? null, Date.now()) ? "last_session" : "ok";
   const aboveOi = m.strikes.find((s) => s.strike === above);
   const belowOi = m.strikes.find((s) => s.strike === below);
   const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of the option map nearby` : "");
@@ -195,7 +196,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
             is no longer on this card: it gave the reader nothing to act on. The Models and Heatseeker tabs
             own projection. */}
         {symbol === "$SPX" && onOpenMap && (
-          <button type="button" onClick={onOpenMap} className="text-sm text-primary underline-offset-2 hover:underline" data-testid="today-open-map">
+          <button type="button" onClick={onOpenMap} className="min-h-[44px] text-sm text-primary underline-offset-2 hover:underline lg:min-h-0" data-testid="today-open-map">
             See the full option map on Heatseeker
           </button>
         )}

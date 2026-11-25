@@ -9,6 +9,7 @@
  * store just means they are retyped). Descriptive only: a tag says what open
  * interest sits near a price, never what to do at it.
  */
+import { preopenIsLastSession } from "@shared/todayPlan";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -76,7 +77,7 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
     [m, levels],
   );
   const tol = m?.spot ? defaultTolerancePts(m.spot) : null;
-  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale" ? "stale" : m.dataState === "stale_session" || m.session?.state === "preopen" ? "last_session" : "ok";
+  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale" ? "stale" : m.dataState === "stale_session" || preopenIsLastSession(m.session?.state, m.chainAsOfMs ?? null, Date.now()) ? "last_session" : "ok";
 
   const add = () => {
     const parsed = parseLevels(draft);

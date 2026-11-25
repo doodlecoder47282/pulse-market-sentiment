@@ -139,3 +139,15 @@ export function expiryDayLabel(iso: string | null | undefined): string {
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12));
   return `${DOW[d.getUTCDay()]} ${MON[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
+
+/** Before the open, option data older than this is the last session's read, not a live pre-market one. */
+export const PREOPEN_FRESH_MS = 30 * 60_000;
+/**
+ * True when the session has not opened and the option data was read more than half an hour ago: the chip
+ * then says "last session". A read from the last few minutes before the open is a live one and stays "ok".
+ */
+export function preopenIsLastSession(sessionState: string | null | undefined, readAtMs: number | null | undefined, nowMs: number): boolean {
+  if (sessionState !== "preopen") return false;
+  if (readAtMs == null || !Number.isFinite(readAtMs)) return true;
+  return nowMs - readAtMs > PREOPEN_FRESH_MS;
+}

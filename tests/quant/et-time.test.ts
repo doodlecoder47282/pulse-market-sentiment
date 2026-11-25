@@ -29,7 +29,7 @@ test("the flow panels and the flow chart use it", () => {
 
 test("after the close the top card reads last session, the stream row says why it is empty, labels are 13px on a computer", () => {
   assert.match(read("client/src/components/TodayCard.tsx"), /m\.dataState === "stale_session" \? "last_session" : m\.dataState === "stale" \? "stale"/);
-  assert.match(read("client/src/components/TodayCard.tsx"), /m\.session\.state === "preopen" \? "last_session" : "ok"/, "before the open the data is the last session's, not ok");
+  assert.match(read("client/src/components/TodayCard.tsx"), /preopenIsLastSession\(m\.session\.state, m\.chainAsOfMs \?\? null, Date\.now\(\)\) \? "last_session" : "ok"/);
   const flow = read("client/src/components/FlowPanel.tsx");
   assert.doesNotMatch(flow, /Schwab stream not connected: not classified/);
   assert.match(flow, /Schwab's live trade feed is not connected \(Settings says why\)/);

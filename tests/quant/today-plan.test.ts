@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { todayPlan, TODAY_LABELS } from "../../shared/todayPlan";
+import { todayPlan, TODAY_LABELS, preopenIsLastSession } from "../../shared/todayPlan";
 
 // The live card on 2026-11-24 after the close: SPX 7,201, flip 7,224 above, wall 7,300, nothing below, move 81.
 const live = { symbol: "$SPX", spot: 7201, sessionState: "closed", dataState: "stale_session", atSpot: "short", straddle: 81, low: 7120, high: 7282, above: 7300, below: null, flip: 7224 };
@@ -78,4 +78,12 @@ test("a ceiling under the turning point, or a floor over it, gets a plain line",
   const down = todayPlan({ ...live, spot: 7300, flip: 7250, above: 7350, below: 7270, atSpot: "long" });
   assert.ok(down.path.includes("The floor (7,270) is above the turning point (7,250): a drop meets the floor first, and the map only switches sides below 7,250."));
   assert.equal(todayPlan(live).path.some((l) => /is below the turning point|is above the turning point/.test(l)), false, "not said when the order is the usual one");
+});
+
+test("before the open: an hours-old read is the last session's, a read from the last minutes is live", () => {
+  const now = Date.parse("2026-11-25T08:16:00Z"); // 3:16 AM ET
+  assert.equal(preopenIsLastSession("preopen", now - 10.35 * 3600_000, now), true, "the 10h 21m chip seen live");
+  assert.equal(preopenIsLastSession("preopen", now - 60_000, now), false, "a fresh pre-market read stays ok");
+  assert.equal(preopenIsLastSession("preopen", null, now), true);
+  assert.equal(preopenIsLastSession("intraday", now - 10 * 3600_000, now), false, "during the session staleness is the stale state's job");
 });
