@@ -6,6 +6,7 @@
 // running counts. The text block is the same plan as a paste-able note.
 // Composition is shared/odteMap.ts, served by /api/odte/map.
 
+import { plainLevelName } from "@shared/plainLevelName";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -134,7 +135,7 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
             <LevelScopeNote panel="odteMap" />
             {m.dataState !== "ok" && (
               <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-300" data-testid="odte-map-state">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {m.reason}
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {plainLevelName(m.reason)}
               </div>
             )}
             <div className="grid grid-cols-1 gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-3">
@@ -168,7 +169,7 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
                 {(["above", "below"] as const).map((side) => (
                   <div key={side}><span className="text-muted-foreground">{side}: </span>{m.ladders[side].map((x, i) => {
                     const g = units === "pct" ? x.gexPct : x.gexPt;
-                    return <span key={i}><span className="font-mono">{lvl(x.level)}</span> <span className="text-muted-foreground">{x.what}{g != null ? ` ${fmtMoney(g)}` : ""}</span>{i < m.ladders[side].length - 1 ? " → " : ""}</span>;
+                    return <span key={i}><span className="font-mono">{lvl(x.level)}</span> <span className="text-muted-foreground">{plainLevelName(x.what)}{g != null ? ` ${fmtMoney(g)}` : ""}</span>{i < m.ladders[side].length - 1 ? " → " : ""}</span>;
                   })}</div>
                 ))}
               </div>
@@ -207,7 +208,7 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
                       {ledger.data.tally.dipTouchedAndHeld.of > 0 && <span>dip zone touched and held <span className="font-mono">{frac(ledger.data.tally.dipTouchedAndHeld)}</span></span>}
                       {ledger.data.tally.fadeTouchedAndHeld.of > 0 && <span>fade zone touched and held <span className="font-mono">{frac(ledger.data.tally.fadeTouchedAndHeld)}</span></span>}
                     </div>
-                    <div className="mt-1 text-muted-foreground">{ledger.data.tally.note}. {ledger.data.note}.</div>
+                    <div className="mt-1 text-muted-foreground">{plainLevelName(ledger.data.tally.note)}. {plainLevelName(ledger.data.note)}.</div>
                   </>
                 )}
                 {ledger.data.recent.length > 0 && (

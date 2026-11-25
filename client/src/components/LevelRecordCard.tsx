@@ -2,6 +2,7 @@
 //
 // The level record (server/levelRecord.ts, shared/levelRecord.ts): what the index did the first time it
 // reached each kind of level over the stored past sessions. Counts only; one sentence, the table on tap.
+import { plainLevelName } from "@shared/plainLevelName";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -51,7 +52,7 @@ export default function LevelRecordCard() {
                     </thead>
                     <tbody>
                       {r.byLevel.map((l) => (
-                        <tr key={l.key} className="border-t border-border/40"><td className="py-0.5 pr-2 font-sans">{l.label}</td><td className="pr-2">{l.touches}</td><td className="pr-2">{l.held}</td><td className="pr-2">{l.broke}</td><td className="pr-2">{l.neither}</td><td>{l.ungraded}</td></tr>
+                        <tr key={l.key} className="border-t border-border/40"><td className="py-0.5 pr-2 font-sans">{plainLevelName(l.label)}</td><td className="pr-2">{l.touches}</td><td className="pr-2">{l.held}</td><td className="pr-2">{l.broke}</td><td className="pr-2">{l.neither}</td><td>{l.ungraded}</td></tr>
                       ))}
                       <tr className="border-t border-border"><td className="py-0.5 pr-2 font-sans text-muted-foreground">tested from above</td><td className="pr-2">{r.fromAbove.touches}</td><td className="pr-2">{r.fromAbove.held}</td><td className="pr-2">{r.fromAbove.broke}</td><td className="pr-2">{r.fromAbove.neither}</td><td>{r.fromAbove.ungraded}</td></tr>
                       <tr><td className="py-0.5 pr-2 font-sans text-muted-foreground">tested from below</td><td className="pr-2">{r.fromBelow.touches}</td><td className="pr-2">{r.fromBelow.held}</td><td className="pr-2">{r.fromBelow.broke}</td><td className="pr-2">{r.fromBelow.neither}</td><td>{r.fromBelow.ungraded}</td></tr>
@@ -65,7 +66,7 @@ export default function LevelRecordCard() {
                   <ul className="space-y-0.5">
                     {v.recent.slice(0, 15).map((t) => (
                       <li key={`${t.date}|${t.key}|${t.touchedAt}`} className="break-words">
-                        <span className="font-mono text-muted-foreground">{t.date} {hhmm(t.touchedAt)}</span> {t.label} <span className="font-mono">{px(t.price)}</span> from {t.side === "below" ? "above" : "below"} · <span className="text-foreground">{OUT[t.outcome] ?? t.outcome}</span>
+                        <span className="font-mono text-muted-foreground">{t.date} {hhmm(t.touchedAt)}</span> {plainLevelName(t.label)} <span className="font-mono">{px(t.price)}</span> from {t.side === "below" ? "above" : "below"} · <span className="text-foreground">{OUT[t.outcome] ?? t.outcome}</span>
                       </li>
                     ))}
                   </ul>
