@@ -17,6 +17,7 @@
 //
 // Source rows: schwabChainRows.flattenSchwabChain (side, volume, OI, bid, ask, last).
 
+import { etTime } from "../shared/etTime";
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
 import { etDate, isRegularSessionOpen, isTradingDay, prevTradingDay, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
 import { pcrReadAtClock, type PcrRead, type PcrZone } from "./pcrHistory";
@@ -296,10 +297,7 @@ function isMarketOpen(): boolean {
 }
 
 function getTimeLabel(epochSecs: number): string {
-  const d = new Date(epochSecs * 1000);
-  const etStr = d.toLocaleTimeString("en-US", { timeZone: "America/New_York",
-    hour: "2-digit", minute: "2-digit", hour12: false });
-  return etStr;
+  return etTime(epochSecs * 1000);
 }
 
 // ─── Last-print side classifier (quote rule on each contract's latest print) ─
