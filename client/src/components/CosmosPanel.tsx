@@ -13,6 +13,7 @@
 // Design language: gold/blue/green accents on near-black, Georgia serif
 // body, monospace labels, tier badges, rows with evidence labels.
 
+import { etTimeLabel } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -751,7 +752,7 @@ function OutlookPanel() {
             <div style={{ fontFamily: "monospace", fontSize: 11, color: ACCENT_GOLD, letterSpacing: "0.08em" }}>SKY CALENDAR</div>
             <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED }}>{startFmt} → {endFmt}</div>
             <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED, letterSpacing: "0.06em" }}>
-              UPDATED {new Date(data.meta.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+              UPDATED {etTimeLabel(data.meta.generatedAt)}
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -982,7 +983,7 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
           <div className="cm-warn-title mb-2">MOON VOID-OF-COURSE</div>
           <div style={{ fontSize: 12.5 }}>
             Moon has completed its last aspect in {s.positions.find(p => p.id === "moon")?.sign} — no new entries until sign change
-            {s.voidOfCourse.nextSignAt ? ` at ${new Date(s.voidOfCourse.nextSignAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })} ET` : ""}.
+            {s.voidOfCourse.nextSignAt ? ` at ${etTimeLabel(s.voidOfCourse.nextSignAt)}` : ""}.
             Traditional rule: close only, do not open.
           </div>
         </div>

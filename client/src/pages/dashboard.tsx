@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { etTime, etDayTimeLabel } from "@shared/etTime";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Snapshot_Public, Composite, GammaStructure, SocialSentiment } from "@shared/schema";
 import { etDate, isTradingDay, sessionOpenMs, sessionCloseMs } from "@shared/exchangeCalendar";
@@ -153,25 +154,13 @@ function MarketStatusPill({ status }: { status: MarketStatus }) {
 
 function LiveClock() {
   const [time, setTime] = useState(() => {
-    return new Date().toLocaleTimeString("en-US", {
-      timeZone: "America/New_York",
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
+    return etTime(Date.now(), { seconds: true });
   });
 
   useEffect(() => {
     const id = setInterval(() => {
       setTime(
-        new Date().toLocaleTimeString("en-US", {
-          timeZone: "America/New_York",
-          hour12: false,
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
+        etTime(Date.now(), { seconds: true })
       );
     }, 1000);
     return () => clearInterval(id);
@@ -1114,7 +1103,7 @@ export default function Dashboard() {
                           <div className="text-sm font-medium">{fearGreed.label}</div>
                           <div className="text-xs text-muted-foreground">0 (fear) · 50 (neutral) · 100 (greed)</div>
                           <div className={`text-[11px] ${fearGreed.stale ? "text-amber-500" : "text-muted-foreground"}`} data-testid="text-fg-asof">
-                            source {fearGreed.source}{fearGreed.asOf ? ` · as of ${new Date(fearGreed.asOf).toLocaleString()}` : " · age unknown"}
+                            source {fearGreed.source}{fearGreed.asOf ? ` · as of ${etDayTimeLabel(fearGreed.asOf)}` : " · age unknown"}
                             {fearGreed.stale ? " · STALE, left out of the composite" : ""}
                           </div>
                           <div className="mt-2 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-full bg-muted">

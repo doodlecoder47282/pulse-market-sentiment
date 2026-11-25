@@ -84,15 +84,15 @@ const KIND_MAP: Record<string, BacktestLevelKind | null> = {
 };
 
 const LABELS: Record<BacktestLevelKind, string> = {
-  callWall: "Call Wall",
-  putWall: "Put Wall",
-  zeroGamma: "Gamma Zero",
-  dominantMag: "Dom Magnet",
-  upsidePivot: "Upside Pivot",
-  downsidePivot: "Downside Pivot",
+  callWall: "Ceiling (call wall)",
+  putWall: "Floor (put wall)",
+  zeroGamma: "Turning point",
+  dominantMag: "Strongest pin",
+  upsidePivot: "Upside target",
+  downsidePivot: "Downside target",
   mopexMaxPain: "Max Pain",
-  extremeVac: "Ext Vacuum",
-  vommaPocket: "Vomma Pocket",
+  extremeVac: "Thin zone",
+  vommaPocket: "Far level",
 };
 
 /** The two comparison rows the server adds beside the stand-in levels. */

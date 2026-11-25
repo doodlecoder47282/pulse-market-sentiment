@@ -3,6 +3,7 @@
 // overlay + intraday granularity + P/C flow strip.
 // Engines: "svg" (our custom), "lightweight" (TV open-source), "tv" (full TV widget).
 
+import { etTimeLabel } from "@shared/etTime";
 import { levelsMatchChart } from "@shared/chartLevels";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -496,7 +497,7 @@ export default function ChartPanel() {
             <div className="grid grid-cols-2 gap-2 border-t border-border/40 pt-2 text-[11px] md:grid-cols-3">
               <Stat label="Range" value={`${ohlc.sessionLow?.toFixed(2) ?? "—"} – ${ohlc.sessionHigh?.toFixed(2) ?? "—"}`} />
               <Stat label="Prev close" value={ohlc.prevClose?.toFixed(2) ?? "—"} />
-              <Stat label="Updated" value={new Date(ohlc.asOf * 1000).toLocaleTimeString()} />
+              <Stat label="Updated" value={etTimeLabel(ohlc.asOf * 1000)} />
               <div className="col-span-2 md:col-span-3 flex flex-wrap items-center gap-2" data-testid="chart-data-state">
                 <DataStateChip
                   state={ohlc.dataState ?? "unknown"}

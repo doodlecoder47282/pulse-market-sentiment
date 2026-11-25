@@ -65,7 +65,8 @@ const KIND_COLOR: Record<string, string> = {
   orb_high: "#c084fc", orb_low: "#c084fc", vwap: "#38bdf8",
 };
 const pct = (p: number) => (p >= 0.995 ? ">99%" : p <= 0.005 ? "<1%" : `${Math.round(p * 100)}%`);
-const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(Math.round(m % 60)).padStart(2, "0")}`;
+// Minutes after midnight, New York, the normal way: 570 -> "9:30 AM".
+const hhmm = (m: number) => { const t = Math.round(m); const h = Math.floor(t / 60) % 24; return `${h % 12 === 0 ? 12 : h % 12}:${String(t % 60).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
 const OPEN = 9 * 60 + 30;
 
 function fmtUsd(v: number): string {
@@ -321,7 +322,7 @@ export default function OdteForward() {
     }
     const t = hoverMin - geo.startAbs;
     const b = w.bands.reduce((best, x) => (Math.abs(x.minute - t) < Math.abs(best.minute - t) ? x : best), w.bands[0]);
-    return { kind: "band" as const, et: b.et, q: b.q };
+    return { kind: "band" as const, et: hhmm(Number(b.et.slice(0, 2)) * 60 + Number(b.et.slice(3))), q: b.q };
   }, [hoverMin, w, geo]);
 
   if (isLoading) {

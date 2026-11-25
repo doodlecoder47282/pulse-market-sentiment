@@ -276,7 +276,8 @@ function fmtMinuteAxis(min: number): string {
   const totalMin = 9 * 60 + 30 + min;
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
-  return `${h}:${m.toString().padStart(2, "0")}`;
+  // The normal way: "1:30 PM", never "13:30".
+  return `${h % 12 === 0 ? 12 : h % 12}:${m.toString().padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
 }
 
 // ─── Status strip (preserved testids) ────────────────────────────────────────

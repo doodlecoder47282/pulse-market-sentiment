@@ -3,6 +3,8 @@
 // The level board at the top of the Trade Desk (server/deskBoard.ts, shared/levelBoard.ts): the bull and bear
 // case for the index, then SPX, SPY, QQQ, VIX and the index futures with the nearest level on each side.
 // Every ticker shows its own state; a ticker Schwab did not answer for says so. Descriptive: no odds.
+import { plainLevelName } from "@shared/plainLevelName";
+import { etTimeLabel } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -26,14 +28,14 @@ interface Board {
 
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
 const pct = (n: number | null | undefined) => (n == null ? "" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`);
-const clock = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) + " ET");
+const clock = (ms: number | null | undefined) => (ms == null ? null : etTimeLabel(ms));
 const dist = (lv: BoardLevel | null, price: number | null) => (lv && price ? `${lv.price > price ? "+" : "-"}${px(Math.abs(lv.price - price))}` : "");
 
 function CaseBox({ c, tone }: { c: DeskCase; tone: "bull" | "bear" }) {
   const cls = tone === "bull" ? "border-emerald-500/30 bg-emerald-500/5" : "border-rose-500/30 bg-rose-500/5";
   return (
     <div className={`rounded-md border p-3 text-[13px] leading-snug ${cls}`} data-testid={`desk-case-${tone}`}>
-      <p className="break-words text-foreground">{c.text}</p>
+      <p className="break-words text-foreground">{plainLevelName(c.text)}</p>
     </div>
   );
 }
@@ -63,7 +65,7 @@ export default function DeskBoard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${prefix}${b.tech.text} ${b.vix.text} ${b.note}` }} />}
+        {spx && <PlainRead testId="desk-board-plain" read={{ answer: boardAnswer(spx.label, spx.price, spx), detail: `${prefix}${plainLevelName(b.tech.text)} ${plainLevelName(b.vix.text)} ${plainLevelName(b.note)}` }} />}
         <div className="grid gap-2 md:grid-cols-2">
           <CaseBox c={b.cases.bull} tone="bull" />
           <CaseBox c={b.cases.bear} tone="bear" />
@@ -76,16 +78,16 @@ export default function DeskBoard() {
           </p>
         )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-          <span data-testid="desk-board-tech">{prefix}{b.tech.text}</span>
-          <span data-testid="desk-board-vix">{prefix}{b.vix.text}</span>
+          <span data-testid="desk-board-tech">{prefix}{plainLevelName(b.tech.text)}</span>
+          <span data-testid="desk-board-vix">{prefix}{plainLevelName(b.vix.text)}</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {b.tickers.map((t) => (
-            <div key={t.symbol} className="rounded-md border border-border/60 p-2.5" data-testid={`desk-board-ticker-${t.label}`}>
+            <div key={t.symbol} className="rounded-md border border-border/60 p-2.5" data-testid={`desk-board-ticker-${plainLevelName(t.label)}`}>
               <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-2 text-left lg:min-h-0" aria-expanded={open === t.symbol}
                 onClick={() => setOpen(open === t.symbol ? null : t.symbol)}>
                 <span className="min-w-0">
-                  <span className="font-mono text-sm font-semibold text-foreground">{t.label}</span>{" "}
+                  <span className="font-mono text-sm font-semibold text-foreground">{plainLevelName(t.label)}</span>{" "}
                   <span className="font-mono text-sm">{px(t.price)}</span>{" "}
                   <span className={`font-mono text-[12px] ${t.changePct == null ? "" : t.changePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{pct(t.changePct)}</span>
                   {t.changePct != null && t.changeBasis && t.changeBasis !== "session" && (
@@ -101,19 +103,19 @@ export default function DeskBoard() {
                 <p className="mt-1 break-words text-[11px] text-muted-foreground">No levels: {t.levelsReason}</p>
               ) : (
                 <div className="mt-1 space-y-0.5 font-mono text-[12px]">
-                  {t.at.map((l) => <div key={l.key} className="text-amber-300">at {px(l.price)} <span className="font-sans text-muted-foreground">{l.label}</span></div>)}
-                  <div><span className="text-muted-foreground">above</span> {t.above ? <>{px(t.above.price)} <span className="text-muted-foreground">{dist(t.above, t.price)}</span> <span className="font-sans text-muted-foreground">{t.above.label}</span></> : <span className="font-sans text-muted-foreground">none mapped</span>}</div>
-                  <div><span className="text-muted-foreground">below</span> {t.below ? <>{px(t.below.price)} <span className="text-muted-foreground">{dist(t.below, t.price)}</span> <span className="font-sans text-muted-foreground">{t.below.label}</span></> : <span className="font-sans text-muted-foreground">none mapped</span>}</div>
+                  {t.at.map((l) => <div key={l.key} className="text-amber-300">at {px(l.price)} <span className="font-sans text-muted-foreground">{plainLevelName(l.label)}</span></div>)}
+                  <div><span className="text-muted-foreground">above</span> {t.above ? <>{px(t.above.price)} <span className="text-muted-foreground">{dist(t.above, t.price)}</span> <span className="font-sans text-muted-foreground">{plainLevelName(t.above.label)}</span></> : <span className="font-sans text-muted-foreground">none mapped</span>}</div>
+                  <div><span className="text-muted-foreground">below</span> {t.below ? <>{px(t.below.price)} <span className="text-muted-foreground">{dist(t.below, t.price)}</span> <span className="font-sans text-muted-foreground">{plainLevelName(t.below.label)}</span></> : <span className="font-sans text-muted-foreground">none mapped</span>}</div>
                   {t.quoteReason && <p className="break-words font-sans text-[11px] text-amber-400">{t.quoteReason}</p>}
                   {t.levelsState === "partial" && <p className="break-words font-sans text-[11px] text-amber-400">{t.levelsReason}</p>}
                 </div>
               )}
               {open === t.symbol && t.levels.length > 0 && (
-                <ul className="mt-2 space-y-0.5 border-t border-border/40 pt-2 font-mono text-[12px]" data-testid={`desk-board-levels-${t.label}`}>
+                <ul className="mt-2 space-y-0.5 border-t border-border/40 pt-2 font-mono text-[12px]" data-testid={`desk-board-levels-${plainLevelName(t.label)}`}>
                   {t.levels.map((l) => (
                     <li key={l.key} className="flex justify-between gap-2">
                       <span>{px(l.price)}</span>
-                      <span className="min-w-0 break-words text-right font-sans text-muted-foreground">{l.label}</span>
+                      <span className="min-w-0 break-words text-right font-sans text-muted-foreground">{plainLevelName(l.label)}</span>
                     </li>
                   ))}
                 </ul>
