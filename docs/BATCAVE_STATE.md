@@ -3475,3 +3475,26 @@ Still open and not started: the shared source for the other tabs (X1), one regim
 for option levels (X7, needs the owner's scoring rule), page furniture (X10), seasonality dates (X13),
 inputs (X14), and most tab items for Chart, Heatseeker, Regime, News and Crypto. Alpha email still prints
 "STRONG BEAR · 75%" (`server/alphaEmailComposer.ts`).
+
+## 2026-11-25 evening: nine merges, shared levels for Models
+
+Merged today: #171 to #180. Seen live: #171, #172, #173, #174 with #179 (no 24-hour time left on Trade Desk
+or Models), #175 (Outlook has none of the old level names; Edge Lab shows no empty tiles), #178 (baseline
+note once). Not yet seen live: #176 (seasonality dates; the panel is collapsed), #177 (Alpha email, next
+send), #180.
+
+#180 `server/sharedLevels.ts`: for SPX the daily model reads ceiling, floor and turning point from the Today
+option map and the weekly model from This week, composed and held with the route's own slots. The side of
+the turning point (`gammaZone`) comes from the same map. The monthly model keeps its own. Kept on the
+model's own definitions on purpose, so graded tallies never mix two: `horizon.own = { levels, audit }`,
+read by every consumer in `server/discordScheduler.ts`, by the recalibration row, and rebuilt in the models
+route on top of the enriched audit (`ownAuditOver`, `ownPivotFields`). Five review passes; defects found and
+fixed: gamma zone contradicting the shared flip, untrue scope notes, alerts mixing definitions, alerts losing
+enriched inputs, the wick pivot built from the shared flip.
+
+Seen live and to watch: right after a deploy the Trade Desk board said the fresh daily-bar read failed for
+five symbols ("self-throttle (100 requests/min)") and used the kept copy. A restart plus tab-by-tab reading
+may be the cause; check again on a settled server before calling it a defect.
+
+Next: see #180 live beside the Signals card; Heatseeker and Chart names (X5); the single regime label (X3);
+page furniture (X10); inputs (X14).
