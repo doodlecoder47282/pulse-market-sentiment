@@ -3370,3 +3370,16 @@ same rules as the nearest-expiry map, and does not write the ledger. `TodayWeek`
 move, ceiling, turning point, floor and steps, or one line when the week's last expiry is the nearest one.
 Only the strike exposures, flip, straddle and landmarks of that response are used; its path, minutes-to-close
 and session volatility still describe the next close. Tests: `tests/quant/today-week.test.ts`.
+
+**Chart labels that printed over each other; seasonality days as dates (2026-11-24, owner screenshots).**
+`shared/chartLabels.ts` gains `labelLanes` (labels closer than a label's width take different lanes),
+`levelLabelVertical` (a label at the bottom edge sits above its line) and `tradingDayToDateLabel`.
+Heatseeker Greek profile: level names along the top are stacked in lanes above the plot and the price label
+is one of them ("DOWNSIDE"/"DN VOMMA", "ZOMMA"/"VANNA"/"CHARM" had overprinted). Trade Desk price charts:
+"Prev" moves to the right edge when it is beside a labelled pivot ("PP"/"Prev" had overprinted). Models
+path chart: a level at the bottom edge is labelled above its line ("DN VOMMA" had printed over "OPEN").
+Seasonality tooltips read "around Fri, Jul 17 (this year's calendar) · trading day 137 of 252" instead of
+"Day 137". Known mismatch left for the Regime tab's turn: the server's buy/sell window dates
+(`seasonality.ts` `dayOfYearToDate`) spread the same count over 365 days from 2025, so they can differ from
+the tooltip by a few days; one mapping is needed. The other tabs'
+charts have not been checked yet. Tests: `tests/quant/chart-labels-spacing.test.ts`.

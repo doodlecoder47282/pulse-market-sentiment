@@ -782,6 +782,13 @@ function IntradayChart({
     }
     return out;
   }, [pivots, system, chartData]);
+  const prevNearLabel = useMemo(() => {
+    const prev = quote?.prevClose;
+    if (prev == null || chartData.length === 0) return false;
+    const prices = chartData.map((c) => c.price as number);
+    const range = Math.max(...prices, ...lines.map((l) => l.value), prev) - Math.min(...prices, ...lines.map((l) => l.value), prev);
+    return lines.some((l) => l.showLabel && Math.abs(l.value - prev) < range * 0.06);
+  }, [lines, quote?.prevClose, chartData]);
 
   // Chart y-domain: include price + visible pivot levels
   const yDomain = useMemo<[number, number] | undefined>(() => {
@@ -927,7 +934,9 @@ function IntradayChart({
                     strokeOpacity={0.5}
                     label={{
                       value: `Prev ${quote.prevClose.toFixed(2)}`,
-                      position: "insideTopLeft",
+                      // Beside a labelled pivot (the pivot point is often within a point or two of the
+                      // previous close) the two labels printed over each other: this one moves to the right edge.
+                      position: prevNearLabel ? "insideTopRight" : "insideTopLeft",
                       fill: "hsl(var(--muted-foreground))",
                       fontSize: 10,
                       fontFamily: "var(--font-mono)",

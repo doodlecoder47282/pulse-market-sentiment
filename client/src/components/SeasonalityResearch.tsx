@@ -3,6 +3,8 @@
 // Reuses SeasonalityPanel chart infrastructure pattern.
 // Calls /api/seasonality/:symbol?lookback=N
 
+import { tradingDayToDateLabel } from "@shared/chartLabels";
+import { isTradingDay } from "@shared/exchangeCalendar";
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -194,6 +196,14 @@ function toEquityClockSlug(symbol: string): string {
 }
 
 // ─── Tooltips ─────────────────────────────────────────────────────────────────
+/** The chart's x value is a trading-day count; show this year's date for it, with the count after it. */
+function seasonDayLabel(day: unknown): string {
+  const n = Number(day);
+  const date = tradingDayToDateLabel(n, new Date().getFullYear(), isTradingDay);
+  // "around": the average line is each past year fitted to 252 steps, so a step is that date give or take a day or two.
+  return date ? `around ${date} (this year's calendar) · trading day ${Math.round(n)} of 252` : `Trading day ${String(day)} of 252`;
+}
+
 function YearlyTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   const avgEntry = payload.find((p: any) => p.dataKey === "avgReturn");
@@ -201,7 +211,7 @@ function YearlyTooltip({ active, payload, label }: any) {
   const freqEntry = payload.find((p: any) => p.dataKey === "freqPositive");
   return (
     <div className="rounded-lg border border-border bg-popover p-2.5 text-xs shadow-lg" style={{ minWidth: 180 }}>
-      <div className="mb-1.5 font-semibold text-foreground">Day {label}</div>
+      <div className="mb-1.5 font-semibold text-foreground">{seasonDayLabel(label)}</div>
       {avgEntry && (
         <div className="flex items-center justify-between gap-4">
           <span className="text-muted-foreground">Avg cumulative</span>
