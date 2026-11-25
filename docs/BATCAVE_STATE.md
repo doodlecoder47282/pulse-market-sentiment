@@ -3424,3 +3424,11 @@ given set of data (expiry, price, at-the-money straddle, open interest by strike
 the session opens; only the model-derived levels (landmarks, side, strike exposures, zones) are held; the session, data state, times, gap, priced range and ladders are always current, and an unpriced or stale map is never kept. In memory only, at most 24 views.
 Unexplained and to watch: the priced move read 81 then 86 on what the chip called one read.
 Tests: `tests/quant/hold-levels.test.ts`.
+
+**Contract list: same-day contracts get their own rule (2026-11-25, seen live at noon).** With real data the
+list showed 40 rows, all expiring today near the price: a same-day contract nearly always trades several
+times its open interest, so "3 times open interest" flagged ordinary activity. Now a contract that expires
+today is listed as unusual only for a burst (`burstOf`: one five-minute step at least 5 times the median of
+its other steps and at least 1,000 contracts), and the busiest same-day contracts are shown in their own
+list, "Expiring today: where the activity is", which says it is activity, not anything unusual. Later
+expiries keep the open-interest rule. Also confirmed live: Schwab's day volume had reset by the open.

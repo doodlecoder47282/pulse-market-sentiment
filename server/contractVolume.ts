@@ -7,7 +7,7 @@
 import { sqlite } from "./storage";
 import { etDate, isTradingDay, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
 import { flattenSchwabChain } from "./schwabChainRows";
-import { applyRead, describeBuild, isUnusual, stepStart, UNUSUAL_MIN_VOLUME, type BuildRead, type BuildStep } from "../shared/contractBuild";
+import { applyRead, burstOf, describeBuild, isUnusual, stepStart, UNUSUAL_MIN_VOLUME, type BuildRead, type Burst, type BuildStep } from "../shared/contractBuild";
 import { etTime } from "../shared/etTime";
 
 /** Reads are recorded until this long after the close. */
@@ -116,6 +116,10 @@ export interface ContractAlert {
   premium: number;
   steps: BuildStep[];
   build: BuildRead;
+  /** Expires on the session day: volume against open interest is not a signal for it. */
+  sameDay: boolean;
+  /** Same-day contracts only: the one five-minute step that stood far above the contract's usual step. */
+  burst: Burst | null;
 }
 
 export interface ContractAlertsResponse {
@@ -128,15 +132,19 @@ export interface ContractAlertsResponse {
   watchingSinceMs: number | null;
   rule: string;
   alerts: ContractAlert[];
+  /** Contracts that expire today, busiest first by dollars: activity, not a claim that anything is unusual. */
+  todayMostActive: ContractAlert[];
+  todayRule: string;
   note: string;
 }
 
 /** Today's contracts on `symbol` that meet the unusual-volume rule on their own numbers, with their build. */
 export function contractAlerts(symbol: string, nowMs: number = Date.now(), limit = 40): ContractAlertsResponse {
   const day = etDate(nowMs);
-  const rule = "one contract's day volume is at least 3 times its own open interest and at least 500 contracts";
+  const rule = "a contract that expires after today has traded at least 3 times its own open interest and at least 500 contracts; a contract that expires today is listed only for a burst: one five-minute step at least 5 times its usual step and at least 1,000 contracts";
+  const todayRule = "expires today, busiest first by dollars since the first read. Heavy trading in a same-day contract is normal, so this is a list of where the activity is, not of anything unusual";
   const note = "Built from the terminal's own chain reads: a step is as fine as the gap between two reads, volume before the first read has no timing, and a chain total does not say which trades were buys.";
-  const empty: ContractAlertsResponse = { symbol, day, asOfMs: null, oiUnknown: 0, watchingSinceMs: null, rule, alerts: [], note };
+  const empty: ContractAlertsResponse = { symbol, day, asOfMs: null, oiUnknown: 0, watchingSinceMs: null, rule, alerts: [], todayMostActive: [], todayRule, note };
   if (!ready) return empty;
   let rows: Array<{ occ: string; step: number; expiry: string; strike: number; side: "C" | "P"; vol: number; cum: number; baseline: number; oi: number | null; last: number | null; prem: number }>;
   try {
@@ -154,16 +162,23 @@ export function contractAlerts(symbol: string, nowMs: number = Date.now(), limit
     if (r.step < since) since = r.step;
   }
   const alerts: ContractAlert[] = [];
+  const today: ContractAlert[] = [];
+  const openMs = sessionOpenMs(day);
+  const openStep = openMs != null ? stepStart(openMs) : null;
   let oiUnknown = 0;
   for (const [occ, rs] of byOcc) {
     const lastRow = rs[rs.length - 1];
     const volume = lastRow.cum;
     const oi = rs.reduce<number | null>((v, r) => (r.oi != null ? r.oi : v), null);
-    if (oi == null && volume >= UNUSUAL_MIN_VOLUME) oiUnknown++;
-    if (!isUnusual(volume, oi)) continue;
+    const sameDay = lastRow.expiry === day;
+    if (!sameDay && oi == null && volume >= UNUSUAL_MIN_VOLUME) oiUnknown++;
     const baseline = rs.reduce((n, r) => n + r.baseline, 0);
     const steps = rs.filter((r) => r.vol > 0).map((r) => ({ step: r.step, volume: r.vol }));
-    alerts.push({
+    const burst = sameDay ? burstOf(steps, openStep) : null;
+    const unusual = sameDay ? burst != null : isUnusual(volume, oi);
+    if (!unusual && !(sameDay && volume >= UNUSUAL_MIN_VOLUME)) continue;
+    (unusual ? alerts : today).push({
+      sameDay, burst,
       occ, symbol, expiry: lastRow.expiry, strike: lastRow.strike, side: lastRow.side,
       volume, openInterest: oi, multiple: oi != null && oi > 0 ? volume / oi : null,
       premium: rs.reduce((n, r) => n + r.prem, 0),
@@ -171,6 +186,7 @@ export function contractAlerts(symbol: string, nowMs: number = Date.now(), limit
     });
   }
   alerts.sort((a, b) => b.premium - a.premium || b.volume - a.volume);
+  today.sort((a, b) => b.premium - a.premium || b.volume - a.volume);
   const readMs = lastReadMs.get(symbol);
-  return { symbol, day, asOfMs: readMs != null && etDate(readMs) === day ? readMs : asOf || null, oiUnknown, watchingSinceMs: Number.isFinite(since) ? stepStart(since) : null, rule, alerts: alerts.slice(0, limit), note };
+  return { symbol, day, asOfMs: readMs != null && etDate(readMs) === day ? readMs : asOf || null, oiUnknown, watchingSinceMs: Number.isFinite(since) ? stepStart(since) : null, rule, alerts: alerts.slice(0, limit), todayMostActive: today.slice(0, 8), todayRule, note };
 }
