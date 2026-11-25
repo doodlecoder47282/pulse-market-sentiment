@@ -3406,6 +3406,6 @@ option read the top card's levels slid through the evening and the read flipped 
 model is re-priced with the time left to expiry on every request. `server/odteMapHold.ts`: outside the
 regular session `/api/odte/map` (both the nearest and the week view) serves the first map computed on a
 given set of data (expiry, price, at-the-money straddle, open interest by strike) until that data changes or
-the session opens; the session, data state, times and gap are always the current ones. In memory only.
+the session opens; only the model-derived levels (landmarks, side, strike exposures, zones) are held; the session, data state, times, gap, priced range and ladders are always current, and an unpriced or stale map is never kept. In memory only, at most 24 views.
 Unexplained and to watch: the priced move read 81 then 86 on what the chip called one read.
 Tests: `tests/quant/hold-levels.test.ts`.

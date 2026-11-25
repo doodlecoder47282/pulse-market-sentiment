@@ -10,6 +10,7 @@
 // same (same expiry, same price, same priced move, same open interest). New data, or the session opening,
 // replaces it. During the session nothing is held: the data changes every minute and so should the map.
 // The held copy lives in this process; after a restart the first map computed is the one held.
+// Only the model-derived levels are held (HELD_FIELDS); session numbers and labels are always current.
 
 export interface HoldableForward {
   expiry?: string | null;
@@ -26,28 +27,47 @@ export function dataFingerprint(f: HoldableForward): string {
   return [f.expiry ?? "", f.spot ?? "", f.expectedMove?.straddle ?? "", n, Math.round(oi)].join("|");
 }
 
-/** Fields always taken from the map just computed, never from the held one. */
-export const LIVE_FIELDS = ["asOf", "dateEt", "session", "dataState", "chainAsOfMs", "chainStale", "chainLastSession", "reason", "wiener", "gap"] as const;
+/**
+ * The parts of a map that come from the dealer-hedging model and slide with the clock: the ceiling, floor,
+ * turning point and pin (`landmarks`), which side the price is on (`band`), the per-strike exposures
+ * (`strikes`) and the zones built from them. Only these are held. Everything else (session, data state,
+ * times, gap, the priced range, the ladders with their prior close and session high and low) always comes
+ * from the map just computed, so a held response never mixes one day's session numbers with another's.
+ * The ladders' model rungs can therefore still move overnight; the card's levels do not.
+ */
+export const HELD_FIELDS = ["landmarks", "band", "strikes", "zones", "zonesNote"] as const;
+/** Slots kept at most; the oldest goes first. A slot is a symbol and a view, and the symbol comes from the request. */
+export const MAX_SLOTS = 24;
 
-interface Held<T> { fingerprint: string; body: T; sinceMs: number }
-const held = new Map<string, Held<unknown>>();
+interface Held { fingerprint: string; parts: Record<string, unknown>; sinceMs: number }
+const held = new Map<string, Held>();
+
+/** A map whose levels were priced: only such a map is kept, and a held one is only laid over such a map. */
+function priced(body: unknown): boolean {
+  const ds = (body as { dataState?: string } | null)?.dataState;
+  return ds === "ok" || ds === "stale_session";
+}
 
 /**
- * `slot` names the view (symbol and expiry pick). Returns the body to serve and, when it is a held one, since
- * when. `fresh` is the map just computed from `forward`.
+ * `slot` names the view (symbol and expiry pick). `fresh` is the map just computed from `forward`. Returns
+ * the body to serve and, when its levels are held ones, since when.
+ * Not part of "the same data": volume and quotes away from the money. If only those move overnight, the
+ * levels stay as they were at the last change of price, priced move or open interest.
  */
 export function holdWhileUnchanged<T>(slot: string, forward: HoldableForward, fresh: T, nowMs: number): { body: T; heldSinceMs: number | null } {
   if (forward.session?.state === "intraday") { held.delete(slot); return { body: fresh, heldSinceMs: null }; }
+  // An unpriced or stale map is never kept, and held levels are never shown under one.
+  if (!priced(fresh)) return { body: fresh, heldSinceMs: null };
   const fp = dataFingerprint(forward);
-  const prev = held.get(slot) as Held<T> | undefined;
+  const prev = held.get(slot);
   if (prev && prev.fingerprint === fp) {
-    // The levels are the held ones; the clock-dependent labels (which session this is, the data's state and
-    // times) are today's, so the card still says "for today" after midnight and shows the right chip.
-    const body = { ...(prev.body as object) } as Record<string, unknown>;
-    for (const k of LIVE_FIELDS) if (k in (fresh as object)) body[k] = (fresh as Record<string, unknown>)[k];
-    return { body: body as T, heldSinceMs: prev.sinceMs };
+    return { body: { ...(fresh as object), ...prev.parts } as T, heldSinceMs: prev.sinceMs };
   }
-  held.set(slot, { fingerprint: fp, body: fresh, sinceMs: nowMs });
+  const parts: Record<string, unknown> = {};
+  for (const k of HELD_FIELDS) if (k in (fresh as object)) parts[k] = (fresh as Record<string, unknown>)[k];
+  held.delete(slot);
+  held.set(slot, { fingerprint: fp, parts, sinceMs: nowMs });
+  while (held.size > MAX_SLOTS) held.delete(held.keys().next().value as string);
   return { body: fresh, heldSinceMs: null };
 }
 
