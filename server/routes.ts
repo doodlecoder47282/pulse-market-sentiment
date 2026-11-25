@@ -781,7 +781,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // odds were read is gone.)
       const vixData = await fetchVixTermData().catch(() => ({ vix: null, vix9d: null, vix3m: null }));
       const { enrichAudit } = await import("./auditEnrich");
+      // A horizon with shared levels keeps the model's own audit for graded alerts (server/sharedLevels.ts). The
+      // enrichment below is added to the shared audit only, so the own audit is rebuilt on top of the enriched one.
+      const auditsAsBuilt: Record<string, any> = {};
+      for (const [hk, h] of Object.entries((data as any).horizons ?? {})) if ((h as any)?.own?.audit) auditsAsBuilt[hk] = { ...(h as any).audit };
       const enriched = await enrichAudit(data, vixData);
+      if (Object.keys(auditsAsBuilt).length) {
+        const { ownAuditOver } = await import("./sharedLevels");
+        for (const [hk, before] of Object.entries(auditsAsBuilt)) {
+          const h = (enriched as any).horizons?.[hk];
+          if (h?.own?.audit && h.audit) h.own.audit = ownAuditOver(h.audit, before, h.own.audit);
+        }
+        // The intraday pivot and wick zones are built from the turning point: the model's own for the alerts.
+        const { ownPivotFields } = await import("./auditEnrich");
+        const d = (enriched as any).horizons?.daily;
+        const pv = d ? ownPivotFields(d, vixData) : null;
+        if (pv) d.own.audit = { ...d.own.audit, ...pv };
+      }
 
       // Attach 13-week trajectory to the quarterly horizon (additive only).
       try {

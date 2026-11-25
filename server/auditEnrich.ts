@@ -799,6 +799,28 @@ async function getAtmIV(spot: number): Promise<number | null> {
  * Reads only the daily horizon; the non-daily scenario targets are built on
  * their own horizon's expected move in models.ts buildAudit.
  */
+/**
+ * The intraday pivot and wick zones for the model's own level definitions (`daily.own`, kept beside the
+ * shared levels for graded alerts: server/sharedLevels.ts). They are the one enriched input built from the
+ * turning point, so they are computed a second time from the model's own turning point and levels.
+ */
+export function ownPivotFields(daily: any, vixData: { vix: number | null }): { intradayPivot: number | null; wickZones: ReturnType<typeof computeIntradayPivot> } | null {
+  const own = daily?.own;
+  if (!own?.audit) return null;
+  const spot = Number(daily.spot ?? own.audit.spot ?? 0);
+  if (!spot || spot <= 0) return null;
+  const wickZone = computeIntradayPivot({
+    spot,
+    dailyEM: Number(own.audit.scenarioTargets?.oneDayEM ?? 0),
+    vix: vixData.vix,
+    levels: own.levels ?? [],
+    audit: own.audit,
+    etMinutes: etMinutesNow(),
+    closeMin: sessionCloseMinutes(etDate()),
+  });
+  return { intradayPivot: wickZone ? wickZone.pivot : (own.audit.mainPivot ?? null), wickZones: wickZone };
+}
+
 export async function enrichAudit(
   result: ModelsResponse,
   vixData: { vix: number | null; vix9d: number | null; vix3m: number | null },

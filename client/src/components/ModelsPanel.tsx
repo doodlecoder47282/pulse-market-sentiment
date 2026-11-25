@@ -19,7 +19,8 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
-import { etTime as sharedEtTime, etTimeLabel } from "@shared/etTime";
+import { shortDate } from "@shared/barDates";
+import { etDayTimeLabel, etTime as sharedEtTime, etTimeLabel } from "@shared/etTime";
 import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import { READ_MM_MATRIX, readModel, readVixTerm } from "@shared/plainReads";
@@ -227,7 +228,10 @@ interface MMMatrix {
   probabilityNote?: string;
 }
 
+export interface LevelSourceView { view: "today" | "week"; expiry: string | null; shared: string[]; own: string[]; readAtMs?: number | null }
+
 interface ModelHorizon {
+  levelSource?: LevelSourceView | null;
   horizon: Horizon;
   label: string;
   symbol: string;
@@ -661,8 +665,9 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
       {/* Line 5: Gamma at spot */}
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span>
-          GAMMA zSpot:{" "}
-          <span className={a.gammaAtSpot >= 0 ? "text-green-400" : "text-red-400"}>
+          {/* With shared levels the side of the turning point is the map's; this figure is the model's own sum, so it carries no side colour. */}
+          {horizon.levelSource ? "model net gamma, all expiries in its window" : "GAMMA zSpot"}:{" "}
+          <span className={horizon.levelSource ? "text-muted-foreground" : a.gammaAtSpot >= 0 ? "text-green-400" : "text-red-400"}>
             {a.gammaAtSpot >= 0 ? "+" : ""}{a.gammaAtSpot.toLocaleString()}
           </span>
         </span>
@@ -1004,7 +1009,7 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
       </span>
       <span>|</span>
       <span>
-        GAMMA {a.gammaAtSpot >= 0 ? "+" : ""}{a.gammaAtSpot.toLocaleString()}
+        {horizon.levelSource ? "model net gamma" : "GAMMA"} {a.gammaAtSpot >= 0 ? "+" : ""}{a.gammaAtSpot.toLocaleString()}
       </span>
       <span>|</span>
       {zg && (
@@ -2122,6 +2127,18 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
   );
 }
 
+const listWords = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
+/** One sentence on where ceiling, floor and turning point come from (server/sharedLevels.ts). */
+export function levelSourceLine(ls: LevelSourceView): string {
+  const view = ls.view === "today" ? "Today" : "This week";
+  const exp = ls.expiry ? ` (options expiring ${shortDate(ls.expiry)})` : "";
+  const read = ls.readAtMs != null ? ` Read ${etDayTimeLabel(ls.readAtMs)}; the Signals card re-reads every minute while the market is open and this tab every half hour, so the two can differ by the latest move.` : "";
+  if (!ls.shared.length) return `The Signals card reads no ceiling, floor or turning point for ${ls.view === "today" ? "today" : "this week"}${exp} right now, so the ones here are this model's own, from all expiries in its window.`;
+  const own = ls.own.length ? ` The Signals card reads no ${listWords(ls.own).replace(" and ", " or ")} right now; ${ls.own.length > 1 ? "those" : "the one"} shown here ${ls.own.length > 1 ? "are" : "is"} this model's own, from all expiries in its window.` : "";
+  return `The ${listWords(ls.shared)} here ${ls.shared.length > 1 ? "are" : "is"} the ${view} level${ls.shared.length > 1 ? "s" : ""} the Signals card shows${exp}.${own}${read} Every other level on this tab is this model's own.`;
+}
+
 function ModelView({ horizon, session, stale = false, symbol }: { horizon: ModelHorizon; session: "live" | "last-close"; stale?: boolean; symbol: string }) {
   const a = horizon.audit;
   const timeStr = etTime(a.asOf);
@@ -2174,7 +2191,10 @@ function ModelView({ horizon, session, stale = false, symbol }: { horizon: Model
           putWall: horizon.levels.find((l) => l.kind === "putWall")?.price,
         })} />
         <PlainRead testId="models-vix-plain" read={readVixTerm(horizon.vol.vix, horizon.vol.termRatio)} />
-        <LevelScopeNote panel="models" horizon={horizon.horizon} className="px-1" />
+        {/* With shared levels the scope note ("these differ from other tabs") would be untrue for the three it names. */}
+        {horizon.levelSource
+          ? <p className="px-1 text-[11px] text-muted-foreground" data-testid="models-level-source">{levelSourceLine(horizon.levelSource)}</p>
+          : <LevelScopeNote panel="models" horizon={horizon.horizon} className="px-1" />}
       </div>
 
       {/* ── VIX + confidence strip ── */}
