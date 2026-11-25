@@ -47,6 +47,7 @@ interface OptionContract {
 // Pure helpers (deterministic ids, merge-on-poll) live in shared/flowAlerts.ts so they are unit-tested.
 import { alertKey, mergeAlerts, afterDismissal } from "@shared/flowAlerts";
 import { etTime } from "@shared/etTime";
+import ContractBuildList from "@/components/ContractBuildList";
 
 function computeAlerts(
   prevChainRef: Record<string, Record<string, OptionContract[]>> | null,
@@ -80,37 +81,9 @@ function computeAlerts(
   const callStats = getStrikeStats(callMap);
   const putStats = getStrikeStats(putMap);
 
-  // 1. UNUSUAL_VOLUME — contract volume ≥ 3× OI AND volume ≥ 500
-  for (const [strikeStr, vol] of Object.entries(callStats.strikeVol)) {
-    const oi = callStats.strikeOI[strikeStr] ?? 0;
-    if (oi > 0 && vol >= 3 * oi && vol >= 500) {
-      alerts.push({
-        id: alertKey("UNUSUAL_VOL", symbol, parseFloat(strikeStr), "C"),
-        ts: now,
-        type: "UNUSUAL_VOL",
-        symbol,
-        strike: parseFloat(strikeStr),
-        side: "C",
-        message: `Unusual call volume at ${strikeStr} — ${vol.toLocaleString()} contracts vs ${oi.toLocaleString()} OI (${(vol / oi).toFixed(1)}×)`,
-        severity: vol >= 2000 ? "high" : vol >= 1000 ? "med" : "low",
-      });
-    }
-  }
-  for (const [strikeStr, vol] of Object.entries(putStats.strikeVol)) {
-    const oi = putStats.strikeOI[strikeStr] ?? 0;
-    if (oi > 0 && vol >= 3 * oi && vol >= 500) {
-      alerts.push({
-        id: alertKey("UNUSUAL_VOL", symbol, parseFloat(strikeStr), "P"),
-        ts: now,
-        type: "UNUSUAL_VOL",
-        symbol,
-        strike: parseFloat(strikeStr),
-        side: "P",
-        message: `Unusual put volume at ${strikeStr} — ${vol.toLocaleString()} contracts vs ${oi.toLocaleString()} OI (${(vol / oi).toFixed(1)}×)`,
-        severity: vol >= 2000 ? "high" : vol >= 1000 ? "med" : "low",
-      });
-    }
-  }
+  // 1. Unusual volume is no longer built here. These per-strike sums add every expiry together, so a
+  //    row could be several contracts. It is read per contract, with its five-minute build, from
+  //    /api/flow/contract-alerts (ContractBuildList).
 
   // 2. HEAVY STRIKE (type key "BLOCK" kept for compatibility) — cumulative day
   //    volume on one strike >= 2000 contracts. Not a block print: the chain
@@ -510,16 +483,17 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
             {/* Alert type legend */}
             {isConnected && (
               <div className="flex flex-wrap gap-2 pt-2 border-t border-border/20">
-                {(["UNUSUAL_VOL", "BLOCK", "PC_SHIFT", "WALL"] as FlowAlertType[]).map((type) => (
+                {(["BLOCK", "PC_SHIFT", "WALL"] as FlowAlertType[]).map((type) => (
                   <span key={type} className="text-[11px] uppercase tracking-wider text-muted-foreground">
                     {TYPE_LABELS[type]}
                   </span>
                 ))}
               </div>
             )}
+            {isConnected && <ContractBuildList symbol={symbol} enabled={isOpen} />}
             {isConnected && (
               <div className="text-[10px] leading-snug text-muted-foreground/80" data-testid="flow-alerts-thresholds">
-                fixed thresholds (hand-set, not fit to outcomes): unusual vol = volume at least 3x OI and at least 500 contracts; heavy strike = 2,000+ contracts on one strike; P/C shift = ratio moved more than 0.2 since the last poll; wall = 10,000+ OI on one strike.
+                fixed thresholds (hand-set, not fit to outcomes): heavy strike = 2,000+ contracts on one strike; P/C shift = ratio moved more than 0.2 since the last poll; wall = 10,000+ OI on one strike.
               </div>
             )}
           </div>

@@ -101,6 +101,29 @@ Owner action (not build work): enable the Schwab product that allows the stream,
 - Removing the whale tracker, clusters or put/call table outright (owner called the alerts "nice").
 - Any new score.
 
+## Unusual Whales as the reference: what we match and what we cannot
+
+Written before S2 was built, from general knowledge of that product's flow feed (not from its code or a
+current account; check against the live product before treating any line as exact).
+
+| What their flow row shows | Ours after S2 | Why / limit |
+|---|---|---|
+| One row per contract (ticker, expiry, strike, call or put) | yes | the key is the OCC symbol |
+| Volume against open interest for that contract | yes | per contract, no longer summed across expiries |
+| Premium in dollars | approximate | contracts added between reads x last price x 100; excludes volume before the first read |
+| When it traded | five-minute steps | from the terminal's own chain reads, as fine as the gap between two reads |
+| Repeated hits on the same contract through the day | yes | this is the build: steps, biggest step, still building or slowing |
+| Each individual trade (time, size, price) | no | a chain total has no trade list; needs Schwab's stream |
+| Bought at the ask or sold at the bid, per trade | no | same; the existing day-level "last print" side is a different, weaker measure |
+| Sweep, block, multi-leg, exchange | no | not in Schwab's chain or stream data |
+| Spot at the time of the trade | no (could be added per step) | not stored yet |
+
 ## Record
 
-- S0: pull request opened 2026-11-24.
+- S0: pull request #158 opened 2026-11-24.
+- S2 part 1: recorder, rule per contract, build list on the flow alerts panel. History starts at deploy.
+  After review: a lower read between two higher ones is ignored (overlapping chain requests), open interest
+  is taken after the hold and 0 is "not known", the shape compares completed steps only, reads are recorded
+  from the open to 30 minutes after the close.
+  To check live at the next open: whether Schwab's per-contract day volume has already reset by 9:30 (if
+  not, the first read's baseline would hold yesterday's volume and could raise a false alert).

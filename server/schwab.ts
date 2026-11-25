@@ -1186,6 +1186,11 @@ async function _spotHint(wireSymbol: string): Promise<{ spot: number | null; atm
   }
 }
 
+type ChainObserver = (symbol: string, chain: unknown, asOfMs: number) => void;
+let _chainObserver: ChainObserver | null = null;
+/** Register the one function that is shown every fresh option chain. */
+export function setChainObserver(fn: ChainObserver | null): void { _chainObserver = fn; }
+
 /** Get an option chain from Schwab. Schwab is the only source: when it cannot
  *  answer (or its cached chain is past maxServeAgeMs) the result is an error
  *  ("schwab_required" when not connected, "schwab_unavailable" otherwise).
@@ -1240,6 +1245,12 @@ export async function getOptionChain(
       };
     }
     const oiState = applyOiHold(wireSymbol, data.callExpDateMap ?? {}, data.putExpDateMap ?? {});
+    // A chain just received from Schwab (not a cached copy) goes to the observer, which keeps volume per
+    // contract in five-minute steps (contractVolume.ts). It runs after the open-interest hold, so it sees
+    // the last posted open interest where Schwab has not posted today's yet. It cannot affect the read.
+    if (_chainObserver && !r.freshness.servedFromCache && !r.freshness.stale) {
+      try { _chainObserver(wireSymbol, data, r.freshness.asOfMs ?? Date.now()); } catch { /* observers do not control the read */ }
+    }
     const u = data.underlying ?? {};
     const num = (x: any) => (typeof x === "number" && Number.isFinite(x) ? x : null);
     const last = num(u.last);
