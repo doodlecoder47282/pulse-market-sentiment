@@ -4,6 +4,7 @@
  * Opened via the gear icon in the header.
  */
 
+import { etTimeLabel, etDayTimeLabel } from "@shared/etTime";
 import { streamFeedLabel } from "@shared/streamFeed";
 import BackgroundPicker from "@/components/BackgroundPicker";
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -658,7 +659,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <AlertTriangle className="h-4 w-4 text-amber-400" />
                 <div>
                   <div className="text-sm font-medium text-amber-300">Re-authentication required</div>
-                  <div className="text-[11px] text-muted-foreground">{status?.unauthorizedAt ? `Schwab refused the access token at ${new Date(status.unauthorizedAt).toLocaleTimeString()} even after a refresh. Re-authorising below replaces the token; if Schwab still refuses it, the app's market-data entitlement is the next thing to check.` : "Refresh token expired. Complete the OAuth flow again below."}</div>
+                  <div className="text-[11px] text-muted-foreground">{status?.unauthorizedAt ? `Schwab refused the access token at ${etTimeLabel(status.unauthorizedAt)} even after a refresh. Re-authorising below replaces the token; if Schwab still refuses it, the app's market-data entitlement is the next thing to check.` : "Refresh token expired. Complete the OAuth flow again below."}</div>
                 </div>
               </div>
             ) : (
@@ -1098,7 +1099,7 @@ function SchwabSelfTest() {
         <p role="status" className="text-sm text-foreground" data-testid="market-validation-summary">
           {expired ? "Check expired. Run again before relying on these results." : report.marketInputsValid ? "Sampled input checks passed. Full output validation is still required." : "Real-data validation incomplete. Review the gaps below."}
         </p>
-        <p className="text-xs text-muted-foreground">{report.cached ? "Recent app-side check" : "Checked"} at {new Date(report.checkedAt).toLocaleTimeString()}. {report.scope}</p>
+        <p className="text-xs text-muted-foreground">{report.cached ? "Recent app-side check" : "Checked"} at {etTimeLabel(report.checkedAt)}. {report.scope}</p>
         <ul className="space-y-1.5">
           {report.items.map((it) => (
             <li key={it.name} className="rounded border border-border/40 p-2 text-xs leading-snug" data-testid={`market-check-${it.name.replace(/\W/g, "-")}`}>
@@ -1107,7 +1108,7 @@ function SchwabSelfTest() {
                 <span className="font-semibold uppercase text-foreground">{expired ? "Expired" : it.verdict}</span>
               </div>
               <div className="mt-0.5 text-muted-foreground">{it.detail}</div>
-              <div className="mt-1 text-muted-foreground">{it.source}{it.observedAt != null ? ` · Observed ${new Date(it.observedAt).toLocaleString()}` : ""}</div>
+              <div className="mt-1 text-muted-foreground">{it.source}{it.observedAt != null ? ` · Observed ${etDayTimeLabel(it.observedAt)}` : ""}</div>
             </li>
           ))}
         </ul>

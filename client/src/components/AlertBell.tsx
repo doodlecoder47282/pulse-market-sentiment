@@ -22,7 +22,7 @@ const readSeen = (): AlertSeen => {
   try { const v = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "{}"); return { arm: Number(v?.arm) || 0, hit: Number(v?.hit) || 0 }; } catch { return { arm: 0, hit: 0 }; }
 };
 const writeSeen = (s: AlertSeen) => { try { localStorage.setItem(SEEN_KEY, JSON.stringify(s)); } catch { /* the count then resets on reload */ } };
-const when = (ms: number) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour12: false, hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
+const when = (ms: number) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour12: true, hour: "numeric", minute: "2-digit" }).format(new Date(ms));
 const canNotify = () => typeof window !== "undefined" && "Notification" in window;
 const permission = (): string => { try { return canNotify() ? Notification.permission : "unsupported"; } catch { return "unsupported"; } };
 

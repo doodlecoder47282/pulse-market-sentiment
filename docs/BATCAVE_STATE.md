@@ -3450,3 +3450,28 @@ above the target 23% · touches it at some point 41%", and the reason a touch fi
 words (`server/impliedScenario.ts`). "MAIN PIVOT" is kept because it falls back to the strongest pin when
 there is no turning point. Not done: the cards below the main chart. The purpose line (0DTE, weekly swings,
 longer-term forecast) is now in `docs/OPERATING_FRAMEWORK.md` section 1.
+
+## 2026-11-25 afternoon: times, names, and what was seen live
+
+Seen live at noon and 1 PM ET (session open): the contract list holds real rows and Schwab's day volume
+resets by the open (L1 pass); the "open interest is not posted" line shows (L2); the top card reads live
+("OK · Schwab 27s") (L3); #171 (same-day burst rule and "Expiring today: where the activity is"), #172
+(Edge Lab "Rule tally leans down", Trade Desk squeeze line) and #173 (Models names) are on screen.
+
+Built this afternoon: #174 every clock time through `shared/etTime.ts` (Eastern, "1:07 PM ET"; the helper
+takes an ISO string; a test forbids `hour12: false`, `hourCycle: "h23"` and bare `toLocaleString()` on a
+date under `client/src`). #175 `shared/plainLevelName.ts`: stored labels keep their keys, the reader sees
+ceiling above / floor below / turning point / top and bottom of the priced move; one pass, so a rule never
+rewrites another rule's output; Outlook, the Trade Desk board, log, record and option-map card, Edge Lab
+tiles (hand-typed weekly targets are named "your ..."), Models path sentences and backtest names. The
+Models chain audit is closed by default behind "For options specialists".
+
+Working-copy note: `seq.sh` moves a branch in the merge worktree; a second worktree that has the same
+branch checked out then shows the pre-merge files as staged changes. They are not work: check with
+`git diff --cached --quiet <last pushed commit>` and restore. Leave the working tree detached while a merge
+job runs.
+
+Still open and not started: the shared source for the other tabs (X1), one regime label (X3), the record
+for option levels (X7, needs the owner's scoring rule), page furniture (X10), seasonality dates (X13),
+inputs (X14), and most tab items for Chart, Heatseeker, Regime, News and Crypto. Alpha email still prints
+"STRONG BEAR · 75%" (`server/alphaEmailComposer.ts`).

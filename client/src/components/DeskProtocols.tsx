@@ -3,6 +3,8 @@
 // The protocol book on the Trade Desk (server/protocolEngine.ts, shared/protocols.ts): each if-then rule with
 // its trigger, the outcome its author states, what cancels it, a structure type, which conditions are met right
 // now, and a counts-only record. Below it, the log of board levels each ticker crossed today.
+import { plainLevelName } from "@shared/plainLevelName";
+import { etTimeLabel, etTime } from "@shared/etTime";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -37,7 +39,7 @@ interface Replay {
 }
 
 const px = (n: number | null | undefined) => (n == null ? "n/a" : n >= 1000 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2));
-const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const hhmm = (ms: number) => etTime(ms);
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 const STATUS: Record<string, string> = { expected: "reached the rule's outcome price", cancelled: "cancelled", neither: "neither", open: "open", ungraded: "could not be graded", not_graded: "not graded" };
 
@@ -88,9 +90,9 @@ export default function DeskProtocols() {
                 <button type="button" className="flex min-h-[44px] w-full items-start justify-between gap-2 text-left lg:min-h-0" aria-expanded={open === p.id}
                   onClick={() => setOpen(open === p.id ? null : p.id)}>
                   <span className="min-w-0">
-                    <span className="text-[13px] font-semibold text-foreground">{p.name}</span>{" "}
+                    <span className="text-[13px] font-semibold text-foreground">{plainLevelName(p.name)}</span>{" "}
                     <span className={`text-[11px] ${p.armedNow ? "text-amber-300" : "text-muted-foreground"}`} data-testid={`protocol-state-${p.id}`}>{p.armedNow ? "armed" : `${met} of ${p.conditions.length} conditions met`}</span>
-                    <span className="block break-words text-[11px] text-muted-foreground" data-testid={`protocol-record-${p.id}`}>Record: {p.record.text}</span>
+                    <span className="block break-words text-[11px] text-muted-foreground" data-testid={`protocol-record-${p.id}`}>Record: {plainLevelName(p.record.text)}</span>
                   </span>
                   <span className="shrink-0 text-[11px] text-muted-foreground">{open === p.id ? "less" : "rule"}</span>
                 </button>
@@ -99,15 +101,15 @@ export default function DeskProtocols() {
                 )}
                 {open === p.id && (
                   <div className="mt-2 space-y-1.5 border-t border-border/40 pt-2 text-[12px] leading-snug">
-                    <p className="break-words"><span className="text-muted-foreground">If:</span> {p.trigger}</p>
+                    <p className="break-words"><span className="text-muted-foreground">If:</span> {plainLevelName(p.trigger)}</p>
                     <p className="break-words"><span className="text-muted-foreground">Rule author's stated outcome (untested):</span> {p.expected}</p>
                     <p className="break-words"><span className="text-muted-foreground">Cancelled when:</span> {p.cancel}</p>
                     <p className="break-words"><span className="text-muted-foreground">Structure type named by the rule's author:</span> {p.structure}. A category only: not a suggestion to trade; no contract, size or order.</p>
                     <ul className="space-y-0.5">
                       {p.conditions.map((c) => (
-                        <li key={c.name} className="flex gap-2 break-words">
+                        <li key={plainLevelName(c.name)} className="flex gap-2 break-words">
                           <span className={`shrink-0 font-mono ${c.met === true ? "text-emerald-400" : c.met === false ? "text-rose-400" : "text-amber-400"}`}>{c.met === true ? "met" : c.met === false ? "not met" : "not read"}</span>
-                          <span className="min-w-0"><span className="text-foreground">{c.name}</span> <span className="text-muted-foreground">({c.detail})</span></span>
+                          <span className="min-w-0"><span className="text-foreground">{plainLevelName(c.name)}</span> <span className="text-muted-foreground">({plainLevelName(c.detail)})</span></span>
                         </li>
                       ))}
                     </ul>
@@ -124,8 +126,8 @@ export default function DeskProtocols() {
             : rq.data.state !== "ok" || !rq.data.replay ? <p className="break-words text-[12px] text-amber-400">Replay unavailable: {rq.data.reason ?? "no reason given"}</p>
             : (
               <>
-                <p className="break-words text-[12px] leading-snug text-foreground" data-testid="desk-protocols-replay-answer">{rq.data.answer}</p>
-                <p className="break-words text-[11px] text-muted-foreground">Sweep under a level and reclaim, replay record: {rq.data.replay.record.text} Computed {day(rq.data.asOfMs)} {hhmm(rq.data.asOfMs)} ET.</p>
+                <p className="break-words text-[12px] leading-snug text-foreground" data-testid="desk-protocols-replay-answer">{plainLevelName(rq.data.answer)}</p>
+                <p className="break-words text-[11px] text-muted-foreground">Sweep under a level and reclaim, replay record: {plainLevelName(rq.data.replay.record.text)} Computed {day(rq.data.asOfMs)} {hhmm(rq.data.asOfMs)} ET.</p>
                 {rq.data.refreshNote && <p className="break-words text-[11px] text-amber-400">{rq.data.refreshNote}</p>}
                 <button type="button" className="mt-1 min-h-[44px] text-[11px] text-muted-foreground underline lg:min-h-0" aria-expanded={showReplay} onClick={() => setShowReplay(!showReplay)}>
                   {showReplay ? "hide detail" : "each replayed arm, skipped sessions and limits"}
@@ -136,12 +138,12 @@ export default function DeskProtocols() {
                       {rq.data.replay.events.map((e) => (
                         <li key={e.armedAt} className="break-words">
                           <span className="font-mono text-muted-foreground">{e.date} {hhmm(e.armedAt)}</span> at <span className="font-mono">{px(e.entry)}</span> after a sweep of {px(e.levelPrice)} <span className="text-muted-foreground">({e.levelLabel})</span>
-                          {" · "}<span className="text-foreground">{STATUS[e.status] ?? e.status}</span>{e.reason ? <span className="text-muted-foreground"> ({e.reason})</span> : null}
+                          {" · "}<span className="text-foreground">{STATUS[e.status] ?? e.status}</span>{e.reason ? <span className="text-muted-foreground"> ({plainLevelName(e.reason)})</span> : null}
                         </li>
                       ))}
                     </ul>
                     {rq.data.replay.skipped.length > 0 && (
-                      <p className="break-words text-[11px] text-muted-foreground">Not replayed: {rq.data.replay.skipped.map((x) => `${x.date} (${x.reason})`).join("; ")}.</p>
+                      <p className="break-words text-[11px] text-muted-foreground">Not replayed: {rq.data.replay.skipped.map((x) => `${x.date} (${plainLevelName(x.reason)})`).join("; ")}.</p>
                     )}
                     <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground">
                       {rq.data.limits.map((x) => <li key={x} className="break-words">{x}</li>)}
@@ -168,7 +170,7 @@ export default function DeskProtocols() {
                 <li key={r.id} className="break-words">
                   <span className="font-mono text-muted-foreground">{day(r.armedAt)} {hhmm(r.armedAt)}</span> {nameOf(r.protocol)}
                   {r.entry != null ? <> at <span className="font-mono">{px(r.entry)}</span></> : null}
-                  {" · "}<span className="text-foreground">{STATUS[r.status] ?? r.status}</span>{r.reason ? <span className="text-muted-foreground"> ({r.reason})</span> : null}{r.bookVersion !== l.bookVersion ? <span className="text-muted-foreground"> · book {r.bookVersion}</span> : null}
+                  {" · "}<span className="text-foreground">{STATUS[r.status] ?? r.status}</span>{r.reason ? <span className="text-muted-foreground"> ({plainLevelName(r.reason)})</span> : null}{r.bookVersion !== l.bookVersion ? <span className="text-muted-foreground"> · book {r.bookVersion}</span> : null}
                 </li>
               ))}
             </ul>
@@ -185,8 +187,8 @@ export default function DeskProtocols() {
                   <span className="font-mono text-muted-foreground">{day(h.at)} {hhmm(h.at)}</span>{" "}
                   <span className="font-semibold">{h.symbol.replace(/^[$/]/, "")}</span>{" "}
                   {(h.count ?? 1) > 1 && h.firstAt != null
-                    ? <>crossed <span className="font-mono">{px(h.levelPrice)}</span> <span className="text-muted-foreground">({h.label})</span> {h.fromBefore ? `at least ${h.count} times, from before ${hhmm(h.firstAt)}` : `${h.count} times from ${hhmm(h.firstAt)}`}, last {h.direction}</>
-                    : <>{h.fromBefore ? "crossed (earlier crossings may precede the log) " : "crossed "}{h.direction} through <span className="font-mono">{px(h.levelPrice)}</span> <span className="text-muted-foreground">({h.label})</span></>}
+                    ? <>crossed <span className="font-mono">{px(h.levelPrice)}</span> <span className="text-muted-foreground">({plainLevelName(h.label)})</span> {h.fromBefore ? `at least ${h.count} times, from before ${hhmm(h.firstAt)}` : `${h.count} times from ${hhmm(h.firstAt)}`}, last {h.direction}</>
+                    : <>{h.fromBefore ? "crossed (earlier crossings may precede the log) " : "crossed "}{h.direction} through <span className="font-mono">{px(h.levelPrice)}</span> <span className="text-muted-foreground">({plainLevelName(h.label)})</span></>}
                   {h.watchedBy.length > 0 && <span className="text-violet-300"> · watched by: {h.watchedBy.join("; ")}</span>}
                 </li>
               ))}
