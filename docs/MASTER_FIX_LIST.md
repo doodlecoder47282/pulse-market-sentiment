@@ -34,7 +34,7 @@ These are done once and every tab gets them. They come first within the tab that
 | X6 | Times the normal way in Eastern time on every tab, no leading zero. | Trade Desk shows 45 24-hour times, Models 22, Crypto 8; the strip says "03:17 AM". | PART: Signals done |
 | X7 | A record for option levels (how often a ceiling, floor or turning point held or broke), shown beside every read that uses them. | The existing level record counts calendar levels only. No option-level read has a record. | OPEN |
 | X8 | Remove hand-set scores, or show the measured inputs they were built from. | "x/100" scores on screen tonight: Regime 16, Trade Desk 9, Edge Lab 3, Signals 2. None is graded. | OPEN |
-| X9 | Before the open, the data chip says how old the data is in words. | At 3:16 AM the top card's chip read "OK · Schwab 10h 21m": ten-hour-old data labelled OK. | OPEN |
+| X9 | Before the open, the data chip says how old the data is in words. | At 3:16 AM the top card's chip read "OK · Schwab 10h 21m": ten-hour-old data labelled OK. | PART: before the open, the top card and Chart's level card read "last session" when the option data is more than 30 minutes old and "ok" for a fresh pre-market read; the sentence says when the data was read (not yet seen live); other tabs' chips not checked |
 | X10 | Less page furniture: tools start 220px down a 900px window on every tab, and the top card plus stock search repeat above every tab. | Measured tonight on all twelve tabs. | OPEN |
 | X11 | Desktop layout from 1,024px. | Below that the phone layout shows. Text size on a computer is fixed (0% under 13px on ten tabs; Cosmos 21%, Take Five 14%). | PART |
 | X12 | Live prices from Schwab's stream. | Trade-by-trade buy/sell marking and live quotes depend on it. The client exists; Schwab refuses the sign-in. | OWNER (section 4) |
@@ -60,8 +60,8 @@ seen yet); the page reloads to the new version after a deploy.
 | S1 | The strip and one regime label (X3, X4). | OPEN |
 | S2 | Record for option levels beside the top read (X7). Decide how "held" is scored. | OPEN, needs owner's view |
 | S3 | Hold levels still without new data (X2). | OPEN |
-| S4 | Remove "Why levels differ" and the "Projected path · three reads of the centre" card (it ends "None of these lines is a forecast"). | OPEN |
-| S5 | A plain line for the case where the week's ceiling sits below its turning point (seen: 7,250 under 7,278). | OPEN |
+| S4 | Remove "Why levels differ" and the "Projected path · three reads of the centre" card (it ends "None of these lines is a forecast"). | PART: path card removed (merged, not yet seen live); "Why levels differ" stays until the other tabs read the shared source (X1), because until then it is true |
+| S5 | A plain line for the case where the week's ceiling sits below its turning point (seen: 7,250 under 7,278). | Merged, not yet seen live |
 | S6 | One "worth a look" flow list in place of Fresh whales, UOA clusters and Tracking. Plain words for "CONFLUX", "vol/OI", "gate: $2.5M • 15x • 1-3DTE • AT_ASK", "BURN". | OPEN |
 | S7 | Decide the whale list: its record is 1 of 5 after costs, average -76%, all from one day. Fix the rule or remove the list. | OPEN, needs owner's view |
 | S8 | Flow alerts: the remaining kinds (heavy strike, put/call shift, wall) still repeat one line per strike. Group them. | OPEN |
@@ -105,7 +105,7 @@ sources, raw StockTwits posts.
 | C1 | The chart first; the other panels below or moved. | OPEN |
 | C2 | Pivot magnet labels ("A+", "Q-S1", "VN2") in plain words (owner). | OPEN |
 | C3 | Levels from the shared source with the shared names (X1, X5). | OPEN |
-| C4 | Its data chip maps "last session" correctly (same fix as the Signals card). | OPEN |
+| C4 | Its data chip maps "last session" correctly (same fix as the Signals card). | Merged, not yet seen live |
 | C5 | AI Outlook card: remove the hand-set playbook and score; stop counting one number as two sources; drop raw social posts. | OPEN |
 | C6 | "FEED OFFLINE": say what is missing and why, or fix it. | OPEN, check at open |
 | C7 | Each level type shows its own record (X7). | OPEN |
@@ -300,6 +300,7 @@ Results are written here as they come in.
 | L1 | 9:33 AM | Contract list has rows; no row carries a huge "traded before the first read" at the open (that would mean Schwab's day volume had not reset). | |
 | L2 | 9:33 AM | "Open interest not posted" line: does it show, and for how long. | |
 | L3 | 9:35 AM | Top card during a live session: chip, sentence, levels, steps. | |
+| L15 | 8:00 and 9:20 AM | Before the open: does Schwab re-read the index option chain, and do the option prices (and so the expected move) change between the two times. Decides how the pre-open chip should be worded. | |
 | L4 | 9:35 AM | Week block against Heatseeker for the same expiry at the same moment: expected move, ceiling, turning point. | |
 | L5 | 10:00 AM | Do the top card's levels move while price moves (the turning point followed price through the session on 2026-11-23). | |
 | L6 | 10:00 AM | A contract's five-minute bars against a second source for the same contract. | |

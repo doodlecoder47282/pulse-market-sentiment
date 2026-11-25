@@ -74,8 +74,8 @@ test("path geometry: nothing is drawn from degenerate or unread inputs", () => {
 test("the card opens with the read, closes with the path, sits above the stock search, and polls only on its tab", () => {
   const card = readFileSync(new URL("../../client/src/components/TodayCard.tsx", import.meta.url), "utf8");
   assert.ok(card.indexOf('<PlainRead testId="today-plain"') < card.indexOf('data-testid="today-levels"'), "the sentence comes before the level tiles");
-  assert.ok(card.indexOf('data-testid="today-levels"') < card.indexOf("<TodayPath"), "the path comes after the levels");
-  assert.match(card, /\{symbol === "\$SPX" && <TodayPath onOpenMap=\{onOpenMap\} active=\{active\} \/>\}/, "the path is the index's: not shown for another symbol");
+  assert.doesNotMatch(card, /<TodayPath/, "the projected-path card is off the top card (it ended 'None of these lines is a forecast')");
+  assert.match(card, /data-testid="today-open-map"/, "a plain link to the full option map remains");
   assert.match(card, /above, below, aboveIsPin, belowIsPin, flip,/, "the sentence is built from the same values the tiles show");
   assert.match(card, /enabled: active,\n\s*refetchInterval: active \? 60_000 : false/, "re-enabling refetches stale data at once: no old read on return to the tab");
   assert.match(card, /<div className="hidden space-y-1 sm:block">/, "the position bar repeats the tiles and is left off phones");

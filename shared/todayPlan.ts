@@ -1,4 +1,4 @@
-import { etTime } from "./etTime";
+import { etDayTimeLabel } from "./etTime";
 
 // The top of the Signals tab for someone who can buy a call or a put and does not know the Greeks:
 // what is happening, the levels that matter, and the path between them as if-then steps (A to B, because C).
@@ -64,6 +64,8 @@ export function todayPlan(m: TodayPlanInput): TodayPlan {
   }
   const spot = m.spot;
   const closed = m.sessionState === "closed";
+  // Before the open the option data is still the last session's: the levels are for today, read earlier.
+  const preopen = m.sessionState === "preopen";
   const week = m.weekExpiryLabel ? m.weekExpiryLabel : null;
   const when = week ? `through ${week}` : closed ? "for the next session" : "today";
   const byWhen = week ? `by the close on ${week}` : closed ? "by the next close" : "by today's close";
@@ -81,7 +83,11 @@ export function todayPlan(m: TodayPlanInput): TodayPlan {
     : here === "calmer" ? `Smaller swings are the setup ${when}: at this price, the option map has the hedging of big option dealers leaning against moves, which tends to pull ${sym} back toward the middle.`
     : `The option map does not say ${when} whether dealer hedging leans with moves or against them.`);
   // After the close the map is for the next expiry, read after the close: say when it was read.
-  const readAt = week ? "" : closed ? ` Market closed: these are levels for the next session${fin(m.readAtMs) ? `, read at ${etTime(m.readAtMs)} ET` : ""}.` : "";
+  const readOn = fin(m.readAtMs) ? `, from option data read ${etDayTimeLabel(m.readAtMs)}` : "";
+  const readAt = week ? ""
+    : closed ? ` Market closed: these are levels for the next session${readOn}.`
+    : preopen ? ` Market not open yet: these are levels for today${readOn}.`
+    : "";
   const headline = `${mood}${move}${readAt}`;
 
   const path: string[] = [];
@@ -105,6 +111,12 @@ export function todayPlan(m: TodayPlanInput): TodayPlan {
   path.push(above != null
     ? `The largest level overhead on the option map is ${n0(above)}, where the model has hedging leaning against rallies.`
     : `No level stands out overhead within 2%${hi != null ? `; the high end of the priced move is ${n0(hi)}` : ""}.`);
+  if (above != null && flip != null && flip > spot && above < flip) {
+    path.push(`The ceiling (${n0(above)}) is below the turning point (${n0(flip)}): a rally meets the ceiling first, and the map only switches sides above ${n0(flip)}.`);
+  }
+  if (below != null && flip != null && flip < spot && below > flip) {
+    path.push(`The floor (${n0(below)}) is above the turning point (${n0(flip)}): a drop meets the floor first, and the map only switches sides below ${n0(flip)}.`);
+  }
   path.push(below != null
     ? `The largest level underneath on the option map is ${n0(below)}, where the model has hedging leaning against drops.`
     : `No level stands out underneath within 2%${lo != null ? `; the low end of the priced move is ${n0(lo)}` : ""}.`);
@@ -126,4 +138,16 @@ export function expiryDayLabel(iso: string | null | undefined): string {
   if (!m) return String(iso ?? "");
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12));
   return `${DOW[d.getUTCDay()]} ${MON[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/** Before the open, option data older than this is the last session's read, not a live pre-market one. */
+export const PREOPEN_FRESH_MS = 30 * 60_000;
+/**
+ * True when the session has not opened and the option data was read more than half an hour ago: the chip
+ * then says "last session". A read from the last few minutes before the open is a live one and stays "ok".
+ */
+export function preopenIsLastSession(sessionState: string | null | undefined, readAtMs: number | null | undefined, nowMs: number): boolean {
+  if (sessionState !== "preopen") return false;
+  if (readAtMs == null || !Number.isFinite(readAtMs)) return true;
+  return nowMs - readAtMs > PREOPEN_FRESH_MS;
 }
