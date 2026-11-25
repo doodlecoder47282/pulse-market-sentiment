@@ -391,23 +391,23 @@ function levelShortName(kind: string): string {
   switch (kind) {
     case "callWall":      return "CALL WALL";
     case "putWall":       return "PUT WALL";
-    case "zeroGamma":     return "0-\u0393 FLIP";
-    case "dominantMag":   return "DOM MAG";
-    case "strongMag":     return "STRONG MAG";
-    case "extremeVac":    return "VAC";
+    case "zeroGamma":     return "TURN PT";
+    case "dominantMag":   return "TOP PIN";
+    case "strongMag":     return "2ND PIN";
+    case "extremeVac":    return "THIN";
     case "mopexMaxPain":  return "MAX PAIN";
-    case "upsidePivot":   return "UP PIVOT";
-    case "downsidePivot": return "DN PIVOT";
+    case "upsidePivot":   return "UP TGT";
+    case "downsidePivot": return "DN TGT";
     case "t1Up":          return "T1 UP";
     case "t2Up":          return "T2 UP";
     case "t1Down":        return "T1 DN";
     case "t2Down":        return "T2 DN";
-    case "vannaFlip":     return "VANNA";
-    case "zommaBridge":   return "ZOMMA";
-    case "charmTarget":   return "CHARM";
-    case "negGammaEntry": return "NEG-\u0393";
-    case "upperVomma":    return "UP VOMMA";
-    case "lowerVomma":    return "DN VOMMA";
+    case "vannaFlip":     return "VOL FLIP";
+    case "zommaBridge":   return "SHELF";
+    case "charmTarget":   return "TOP ABOVE";
+    case "negGammaEntry": return "FASTER";
+    case "upperVomma":    return "FAR UP";
+    case "lowerVomma":    return "FAR DN";
     default: return kind.toUpperCase();
   }
 }
@@ -517,22 +517,23 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {/* Upside */}
       <RailDivider label="resistance" />
       <RailRow label="CEILING" value={pFmt(callWall?.price)} sub={distPct(callWall?.price)} color={COLORS.bear} backtestKind="callWall" backtestHorizon={horizon.horizon as BacktestHorizon} />
-      {upVomma && <RailRow label="ACCEL ZONE" value={pFmt(upVomma?.price)} sub={distPct(upVomma?.price)} color={COLORS.bear} />}
+      {upVomma && <RailRow label="FAR LEVEL ABOVE" value={pFmt(upVomma?.price)} sub={distPct(upVomma?.price)} color={COLORS.bear} />}
       {callWall && <RailRow label="CALL WALL" value={pFmt(callWall.price)} sub={callWall.gex != null ? `${(callWall.gex/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="callWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {upPivot  && <RailRow label="UPSIDE TARGET" value={pFmt(upPivot.price)} sub={distPct(upPivot.price)} color={COLORS.bull} backtestKind="upsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
-      {vannaFlip && <RailRow label="VANNA FLIP" value={pFmt(vannaFlip.price)} sub={distPct(vannaFlip.price)} color={COLORS.vanna} />}
+      {negGamma && <RailRow label="FASTER ABOVE" value={pFmt(negGamma.price)} sub={distPct(negGamma.price)} color={COLORS.bear} />}
+      {vannaFlip && <RailRow label="VOLATILITY FLIP" value={pFmt(vannaFlip.price)} sub={distPct(vannaFlip.price)} color={COLORS.vanna} />}
 
       {/* Double Zero Zone */}
-      <RailDivider label="pivot zone" />
-      {a.charmZero && <RailRow label="CHARM ZERO" value={fmtK(a.charmZero)} sub={distPct(a.charmZero)} color={COLORS.charm} />}
-      <RailRow label="DOUBLE ZERO" value={dzStr} color={COLORS.dz} highlight />
-      {zeroGamma && <RailRow label="GAMMA ZERO" value={pFmt(zeroGamma.price)} sub={distPct(zeroGamma.price)} color={COLORS.zeroGamma} backtestKind="zeroGamma" backtestHorizon={horizon.horizon as BacktestHorizon} />}
-      {charmPocketLow && <RailRow label="CHARM POCKET" value={charmPocketStr} color={COLORS.charm} />}
-      {domMag && <RailRow label="DOM MAGNET" value={pFmt(domMag.price)} sub={domMag.gex != null ? `${(domMag.gex/1e6).toFixed(1)}M` : undefined} color={COLORS.base} backtestKind="dominantMag" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      <RailDivider label="where hedging flips" />
+      {a.charmZero && <RailRow label="TIME-DECAY FLIP" value={fmtK(a.charmZero)} sub={distPct(a.charmZero)} color={COLORS.charm} />}
+      <RailRow label="FLIP ZONE" value={dzStr} color={COLORS.dz} highlight />
+      {zeroGamma && <RailRow label="TURNING POINT" value={pFmt(zeroGamma.price)} sub={distPct(zeroGamma.price)} color={COLORS.zeroGamma} backtestKind="zeroGamma" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      {charmPocketLow && <RailRow label="DECAY PULL ZONE" value={charmPocketStr} color={COLORS.charm} />}
+      {domMag && <RailRow label="STRONGEST PIN" value={pFmt(domMag.price)} sub={domMag.gex != null ? `${(domMag.gex/1e6).toFixed(1)}M` : undefined} color={COLORS.base} backtestKind="dominantMag" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {a.mainPivot && <RailRow label="MAIN PIVOT" value={fmtK(a.mainPivot)} sub={distPct(a.mainPivot)} color={COLORS.amber} />}
 
       {/* Scenario projections */}
-      <RailDivider label={a.scenarioProbSource === "risk-neutral-implied" ? "scenarios (risk-neutral)" : "scenarios (heuristic)"} />
+      <RailDivider label={a.scenarioProbSource === "risk-neutral-implied" ? "close ranges (odds priced by options)" : "close ranges (hand-set, not odds)"} />
       {/* Region odds (close inside the region around each path target), plus
           the target-specific odds: P(close at or beyond) and P(touch). */}
       {/* Range odds are named by where the range is, not by a direction: the lowest or highest range can hold the current price (shared/scenarioRegions.ts). */}
@@ -542,18 +543,17 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
 
       {/* Downside */}
       <RailDivider label="support" />
-      {dnPivot  && <RailRow label="DOWNSIDE PIVOT" value={pFmt(dnPivot.price)} sub={distPct(dnPivot.price)} color={COLORS.pivot} backtestKind="downsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      {dnPivot  && <RailRow label="DOWNSIDE TARGET" value={pFmt(dnPivot.price)} sub={distPct(dnPivot.price)} color={COLORS.pivot} backtestKind="downsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {putWall  && <RailRow label="PUT WALL" value={pFmt(putWall.price)} sub={putWall.gex != null ? `${(Math.abs(putWall.gex)/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="putWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
-      {loVomma  && <RailRow label="LOWER VOMMA" value={pFmt(loVomma.price)} sub={distPct(loVomma.price)} color={COLORS.negGamma} />}
-      {negGamma && <RailRow label="NEG-Γ LEVEL" value={pFmt(negGamma.price)} sub={distPct(negGamma.price)} color={COLORS.bear} />}
-      {extVac   && <RailRow label="EXT VACUUM" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} backtestKind="extremeVac" backtestHorizon={horizon.horizon as BacktestHorizon} />}
-      {zomma    && <RailRow label="ZOMMA BRIDGE" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
+      {loVomma  && <RailRow label="FAR LEVEL BELOW" value={pFmt(loVomma.price)} sub={distPct(loVomma.price)} color={COLORS.negGamma} />}
+      {extVac   && <RailRow label="THIN ZONE" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} backtestKind="extremeVac" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      {zomma    && <RailRow label="SHELF BELOW" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
       {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} backtestKind="mopexMaxPain" backtestHorizon={horizon.horizon as BacktestHorizon} />}
 
       <div className="mt-2 text-[11px] text-muted-foreground leading-tight [column-span:all]">
         Red = resistance · Green = support<br />
         Cyan = pivot/data · Yellow = flip zone<br />
-        <span className="text-emerald-400/70">POS Γ</span>: hedging dampens · <span className="text-rose-400/70">NEG Γ</span>: hedging amplifies
+        Above the turning point hedging calms moves · below it hedging adds to them
       </div>
     </div>
   );
@@ -614,12 +614,12 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         )}
         {horizon.levels.find(l => l.kind === "upsidePivot") && (
           <>
-            <span>UPSIDE PIVOT: <span className="text-green-400">{fmtK(horizon.levels.find(l => l.kind === "upsidePivot")!.price)}</span></span>
+            <span>UPSIDE TARGET: <span className="text-green-400">{fmtK(horizon.levels.find(l => l.kind === "upsidePivot")!.price)}</span></span>
             <span>|</span>
           </>
         )}
         {horizon.levels.find(l => l.kind === "downsidePivot") && (
-          <span>DOWNSIDE PIVOT: <span className="text-red-400">{fmtK(horizon.levels.find(l => l.kind === "downsidePivot")!.price)}</span></span>
+          <span>DOWNSIDE TARGET: <span className="text-red-400">{fmtK(horizon.levels.find(l => l.kind === "downsidePivot")!.price)}</span></span>
         )}
       </div>
 
@@ -628,7 +628,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         {zg && (
           <>
             <span>
-              GAMMA ZERO: <span className="text-amber-400">{fmtK(zg)}</span>
+              TURNING POINT: <span className="text-amber-400">{fmtK(zg)}</span>
               {zgDistStr && <span className="text-muted-foreground"> ({zgDistStr})</span>}
             </span>
             <span>|</span>
@@ -636,7 +636,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         )}
         {a.charmZero && (
           <span>
-            CHARM ZERO: <span className="text-purple-400">{fmtK(a.charmZero)}</span>
+            TIME-DECAY FLIP: <span className="text-purple-400">{fmtK(a.charmZero)}</span>
           </span>
         )}
       </div>
@@ -647,7 +647,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         <span>|</span>
         <span>
           <DexSlopeFact a={a} />
-          {a.dfiFlipped && <span className="ml-1 text-yellow-400" title="spot is within 0.3% of the charm zero">(NEAR CHARM ZERO)</span>}
+          {a.dfiFlipped && <span className="ml-1 text-yellow-400" title="spot is within 0.3% of the charm zero">(NEAR TIME-DECAY FLIP)</span>}
         </span>
         <span>|</span>
         <span>
@@ -687,7 +687,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
       {/* Line 6: Double zero zone */}
       {(dzLow != null || zg != null) && (
         <div className="mt-0.5">
-          <span className="text-yellow-400 font-semibold">DOUBLE ZERO ZONE {dzStr}</span>
+          <span className="text-yellow-400 font-semibold">FLIP ZONE {dzStr}</span>
           <span className="ml-2 text-muted-foreground">| {aboveDz}</span>
         </div>
       )}
@@ -770,10 +770,9 @@ function pathPct(h: ModelHorizon, kind: "bull" | "base" | "bear", fallback: numb
 function targetOddsText(h: ModelHorizon, kind: "bull" | "bear"): string | undefined {
   const p = h.paths.find((x) => x.kind === kind);
   if (!p || p.probabilitySource !== "risk-neutral-implied" || p.pCloseBeyond == null) return undefined;
-  const cmp = kind === "bull" ? ">=" : "<=";
   // Touch odds only where the reflection rule applies (close-beyond under 50%); otherwise say so.
-  const touch = p.pTouch != null ? ` · touch ${Math.round(p.pTouch * 100)}%` : p.touchWithheld ? ` · touch not stated: ${p.touchWithheld}` : "";
-  return `close ${cmp} tgt ${Math.round(p.pCloseBeyond * 100)}%${touch}`;
+  const touch = p.pTouch != null ? ` · touches it at some point ${Math.round(p.pTouch * 100)}%` : p.touchWithheld ? ` · touch not stated: ${p.touchWithheld}` : "";
+  return `closes at or ${kind === "bull" ? "above" : "below"} the target ${Math.round(p.pCloseBeyond * 100)}%${touch}`;
 }
 
 function scenarioSourceLabel(src: ModelAudit["scenarioProbSource"]): string {
@@ -1014,7 +1013,7 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
           <span>|</span>
         </>
       )}
-      <span>DOUBLE ZERO {dzStr}</span>
+      <span>FLIP ZONE {dzStr}</span>
       <span>|</span>
       <span className="text-red-400">BEAR {probs.bear}%</span>
       <span>/</span>
@@ -1468,18 +1467,18 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   push("t2Up",          "T2 UP",           "#ef4444");
   push("t1Up",          "T1 UP",           "#f87171");
   push("callWall",      "CALL WALL",       "#dc2626", "gex");
-  push("upsidePivot",   "UP PIVOT",        "#a855f7");
-  push("strongMag",     "STRONG MAG",      "#0ea5e9");
-  push("vannaFlip",     "VANNA",           "#06b6d4");
-  push("charmTarget",   "CHARM",           "#c084fc");
-  push("zommaBridge",   "ZOMMA",           "#fde047");
-  push("upperVomma",    "UP VOMMA",        "#84cc16");
-  push("zeroGamma",     "0\u0393 GAMMA",   "#fbbf24");
-  push("dominantMag",   "DOM MAG",         "#eab308");
-  push("lowerVomma",    "DN VOMMA",        "#f97316");
-  push("negGammaEntry", "NEG-\u0393",       "#fb7185");
+  push("upsidePivot",   "UP TGT",        "#a855f7");
+  push("strongMag",     "2ND PIN",      "#0ea5e9");
+  push("vannaFlip",     "VOL FLIP",           "#06b6d4");
+  push("charmTarget",   "TOP ABOVE",           "#c084fc");
+  push("zommaBridge",   "SHELF",           "#fde047");
+  push("upperVomma",    "FAR UP",        "#84cc16");
+  push("zeroGamma",     "TURN PT",   "#fbbf24");
+  push("dominantMag",   "TOP PIN",         "#eab308");
+  push("lowerVomma",    "FAR DN",        "#f97316");
+  push("negGammaEntry", "FASTER",       "#fb7185");
   push("putWall",       "PUT WALL",        "#16a34a", "gex");
-  push("downsidePivot", "DN PIVOT",        "#a855f7");
+  push("downsidePivot", "DN TGT",        "#a855f7");
   push("t1Down",        "T1 DN",           "#4ade80");
   push("t2Down",        "T2 DN",           "#22c55e");
 

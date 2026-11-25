@@ -11,6 +11,10 @@ data-source rules; `docs/FIX_PLAN.md` holds the engineering packages this framew
 
 The terminal exists so the person using it can make trading decisions quickly and clearly.
 
+It is tuned for three kinds of trade, in this order (owner, 2026-11-25): same-day options (0DTE), swings that
+run for the week, and a longer-term model forecast alongside. Every tab says which of the three a number is
+for.
+
 The reader is someone who knows how to buy and sell a call or a put and nothing more. They do not know the
 Greeks and should not need to. Every card must make sense to that person on a laptop screen.
 

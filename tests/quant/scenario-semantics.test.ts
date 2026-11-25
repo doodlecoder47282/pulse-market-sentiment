@@ -33,7 +33,7 @@ test("touch odds: withheld when the implied distribution is not centred on spot,
   assert.ok(drift.spotQuantile < 0.25);
   assert.equal(drift.pTouchBull, null, "no 80% touch on a drifted distribution");
   assert.equal(drift.pTouchBear, null);
-  assert.match(String(drift.touchWithheld), /not centred on spot \(spot sits at its 23% quantile/);
+  assert.match(String(drift.touchWithheld), /lean to one side of the current price \(23% of the priced outcomes sit below it/);
   // A small offset (spot near the 42nd percentile) keeps the rule.
   const mild = scenarioOddsFromCdf(normal(spot + 0.2 * sd, sd), spot, { bull: spot + sd, base: spot + 10, bear: spot - sd })!;
   assert.ok(Math.abs(mild.spotQuantile - 0.5) <= 0.1);

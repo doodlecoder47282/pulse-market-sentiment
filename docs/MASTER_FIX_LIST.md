@@ -125,7 +125,7 @@ quantile; the 2x reflection rule needs about 50%)". Chip "LAST SESSION · SPY ch
 |---|---|---|
 | M1 | Levels from the shared source (X1). It builds SPX levels from a SPY chain; the pivot card multiplies SPY walls by 10. No fixed multiplier. | OPEN |
 | M2 | Evening starting price: live or dated, never yesterday's bar shown as now. | OPEN, check at 4:30 PM |
-| M3 | Plain words for every level name and the side panel; or the term goes. | OPEN |
+| M3 | Plain words for every level name and the side panel; or the term goes. | PART: side panel, header lines and chart labels renamed (turning point, strongest pin, thin zone, upside and downside target, close ranges with "odds priced by options"); the cards below the main chart are not done; built, not yet seen live |
 | M4 | Times the normal way (X6). | OPEN |
 | M5 | Path percentages: say where they come from; remove if hand-set (X8). | OPEN |
 | M6 | The buried oversold read (index RSI under 30, shown as "MAGNET DRIFT 50/100") moves to the stretch read (O4). | OPEN |
