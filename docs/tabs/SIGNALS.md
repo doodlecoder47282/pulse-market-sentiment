@@ -125,5 +125,17 @@ current account; check against the live product before treating any line as exac
   After review: a lower read between two higher ones is ignored (overlapping chain requests), open interest
   is taken after the hold and 0 is "not known", the shape compares completed steps only, reads are recorded
   from the open to 30 minutes after the close.
+- S0 and S2 seen live 2026-11-24 7:55 PM ET (bundle index-DbMJohRv): alert times "4:54 PM ET", top chip
+  "LAST SESSION", the contract list present and empty after hours as expected. Found on the way: the browser
+  kept an old page after a deploy (fixed in #160).
+- S1a: the top card's sentence, tile labels and an if-then path for the reader (`shared/todayPlan.ts`),
+  from the nearest-expiry map already on the card. Still to do in S1: the week's levels (the map is
+  nearest-expiry only; needs a second read for the week's last expiry), one regime label, a record for
+  option levels (the existing level record covers calendar levels only, not option levels), and removing
+  the projected-path card and the apology note.
+  After review: the side the price is on comes from the map's read at the price, not from where the
+  turning point sits; after the close the line says when the levels were read; no line says what price
+  "should" do; the header line uses the same three names. The Trade Desk board and the Chart still say
+  "wall above" and "magnet below": renamed in their own tabs' turn.
   To check live at the next open: whether Schwab's per-contract day volume has already reset by 9:30 (if
   not, the first read's baseline would hold yesterday's volume and could raise a false alert).

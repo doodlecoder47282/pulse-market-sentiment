@@ -29,15 +29,14 @@ export function levelsLine(m: MapLike | null | undefined, label = "SPX"): string
   } else {
     const L = m.landmarks ?? ({} as MapLike["landmarks"]);
     const pin = L.pin ?? null;
-    if (L.wallAbove != null) parts.push(`wall above ${lvl(L.wallAbove)}`);
-    else if (pin != null && pin > m.spot) parts.push(`pin above ${lvl(pin)}`);
-    else parts.push("no wall above in band");
-    parts.push(L.flip != null ? `flip ${lvl(L.flip)}` : "no flip in band");
-    if (L.magnetBelow != null) parts.push(`magnet below ${lvl(L.magnetBelow)}`);
-    else if (pin != null && pin < m.spot) parts.push(`pin below ${lvl(pin)}`);
-    else parts.push("no magnet below in band");
+    // The same names the Today card uses (shared/todayPlan.ts TODAY_LABELS).
+    const up = L.wallAbove ?? (pin != null && pin > m.spot ? pin : null);
+    const down = L.magnetBelow ?? (pin != null && pin < m.spot ? pin : null);
+    parts.push(up != null ? `ceiling ${lvl(up)}` : "no ceiling within 2%");
+    parts.push(L.flip != null ? `turning point ${lvl(L.flip)}` : "no turning point in range");
+    parts.push(down != null ? `floor ${lvl(down)}` : "no floor within 2%");
     const g = m.band?.atSpot;
-    parts.push(g === "long" ? "long gamma at spot" : g === "short" ? "short gamma at spot" : "gamma sign not determined");
+    parts.push(g === "long" ? "calmer side (smaller swings in the model)" : g === "short" ? "bigger-swing side (in the model)" : "side not read");
   }
   if (m.dataState === "stale_session") parts.push("session closed, last map of the day");
   else if (m.chainStale || m.dataState === "stale") parts.push("chain stale");
