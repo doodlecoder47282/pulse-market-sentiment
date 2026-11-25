@@ -26,7 +26,19 @@ const NAMES: Array<[RegExp, string]> = [
 /** "pivot S1 7,152 + pin 7,150 + wall above 7,150" reads with the shared names. Works on a whole sentence too. */
 export function plainLevelName(label: string | null | undefined): string {
   if (label == null) return "";
-  let out = String(label);
-  for (const [re, to] of NAMES) out = out.replace(re, to);
+  // One pass over the original text: a rule never rewrites another rule's output.
+  const src = String(label);
+  const hits: Array<{ at: number; len: number; to: string }> = [];
+  for (const [re, to] of NAMES) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    for (let m = g.exec(src); m; m = g.exec(src)) {
+      const at = m.index, len = m[0].length;
+      if (len && !hits.some((h) => at < h.at + h.len && h.at < at + len)) hits.push({ at, len, to: m[0].replace(new RegExp(re.source, re.flags.replace("g", "")), to) });
+      if (!len) g.lastIndex++;
+    }
+  }
+  hits.sort((a, b) => b.at - a.at);
+  let out = src;
+  for (const h of hits) out = out.slice(0, h.at) + h.to + out.slice(h.at + h.len);
   return out;
 }
