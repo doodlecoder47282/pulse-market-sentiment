@@ -1673,7 +1673,8 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
   // Right-edge labels beside lines that are a point or two apart ("PREV 7,237" and "CW 7,238") are fanned
   // out vertically so each can be read.
   const tapeNudge = (() => {
-    const n = labelNudges([prevClose, cw, zg, dm, pw], (yMax - yMin) * 0.07);
+    // The DM label is not drawn when it is the call wall or the put wall, so it takes no place then.
+    const n = labelNudges([prevClose, cw, zg, dm !== cw && dm !== pw ? dm : null, pw], (yMax - yMin) * 0.07);
     return { prevClose: n[0], cw: n[1], zg: n[2], dm: n[3], pw: n[4] };
   })();
 
