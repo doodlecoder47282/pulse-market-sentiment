@@ -146,7 +146,7 @@ export function computeSqueezeIndicator(inp: SqueezeInputs): SqueezeIndicator {
     triggers.push(`Net negative gamma (${(gamma.totalGex / 1e9).toFixed(2)}B/1%) — in the model, dealer hedging leans with moves (bigger swings)`);
   } else if (gamma.regime === "positive") {
     upFuel += 10;
-    triggers.push(`Net positive gamma (${(gamma.totalGex / 1e9).toFixed(2)}B/1%) — dealers stabilize; grind-up regime favored`);
+    triggers.push(`Net positive gamma (${(gamma.totalGex / 1e9).toFixed(2)}B/1%) — in the model, dealer hedging leans against moves (smaller swings)`);
   }
   if (gamma.zeroGamma != null) {
     const distToFlip = spot - gamma.zeroGamma;
