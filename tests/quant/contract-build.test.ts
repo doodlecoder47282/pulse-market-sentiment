@@ -106,6 +106,10 @@ test("a same-day contract is flagged for a burst, not for trading many times its
   assert.equal(burst!.volume, 9000);
   assert.ok(burst!.multiple > 5 && burst!.multiple < 7);
   assert.equal(burstOf([{ step: at(0), volume: 9000 }, { step: at(5), volume: 100 }]), null, "too few steps to know what is usual");
+  // Busy at the open, quiet after: the opening five minutes are not a burst.
+  const quietAfterOpen = [{ step: at(0), volume: 9000 }, ...[5, 10, 15, 20, 25].map((m) => ({ step: at(m), volume: 300 }))];
+  assert.equal(burstOf(quietAfterOpen, at(0)), null);
+  assert.ok(burstOf(quietAfterOpen), "without the open named, the same shape would have been flagged");
   assert.equal(burstOf([0, 5, 10, 15].map((m) => ({ step: at(m), volume: 50 })).concat([{ step: at(20), volume: 600 }])), null, "a burst needs at least 1,000 contracts");
 });
 

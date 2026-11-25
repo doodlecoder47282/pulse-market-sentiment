@@ -163,6 +163,8 @@ export function contractAlerts(symbol: string, nowMs: number = Date.now(), limit
   }
   const alerts: ContractAlert[] = [];
   const today: ContractAlert[] = [];
+  const openMs = sessionOpenMs(day);
+  const openStep = openMs != null ? stepStart(openMs) : null;
   let oiUnknown = 0;
   for (const [occ, rs] of byOcc) {
     const lastRow = rs[rs.length - 1];
@@ -172,7 +174,7 @@ export function contractAlerts(symbol: string, nowMs: number = Date.now(), limit
     if (!sameDay && oi == null && volume >= UNUSUAL_MIN_VOLUME) oiUnknown++;
     const baseline = rs.reduce((n, r) => n + r.baseline, 0);
     const steps = rs.filter((r) => r.vol > 0).map((r) => ({ step: r.step, volume: r.vol }));
-    const burst = sameDay ? burstOf(steps) : null;
+    const burst = sameDay ? burstOf(steps, openStep) : null;
     const unusual = sameDay ? burst != null : isUnusual(volume, oi);
     if (!unusual && !(sameDay && volume >= UNUSUAL_MIN_VOLUME)) continue;
     (unusual ? alerts : today).push({

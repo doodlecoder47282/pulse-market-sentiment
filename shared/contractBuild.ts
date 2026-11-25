@@ -157,10 +157,13 @@ export interface Burst { step: number; volume: number; usual: number; multiple: 
  * price). What stands out on such a contract is a burst: one five-minute step far above its own usual step.
  * "Usual" is the median of its other steps with volume; at least three other steps are needed to say so.
  */
-export function burstOf(steps: readonly BuildStep[]): Burst | null {
+export function burstOf(steps: readonly BuildStep[], openStepMs?: number | null): Burst | null {
   const active = steps.filter((s) => s.volume > 0);
   if (active.length < 4) return null;
-  const peak = active.reduce((m, s) => (s.volume > m.volume ? s : m), active[0]);
+  // The step that holds the open is usually the day's busiest for any contract: it is never the burst.
+  const candidates = active.filter((s) => openStepMs == null || s.step !== openStepMs);
+  if (!candidates.length) return null;
+  const peak = candidates.reduce((m, s) => (s.volume > m.volume ? s : m), candidates[0]);
   const rest = active.filter((s) => s !== peak).map((s) => s.volume).sort((a, b) => a - b);
   const mid = rest.length >> 1;
   const usual = rest.length % 2 ? rest[mid] : (rest[mid - 1] + rest[mid]) / 2;
