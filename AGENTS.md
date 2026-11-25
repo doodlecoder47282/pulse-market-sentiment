@@ -4,7 +4,7 @@ User default: conserve Computer credits without skipping necessary correctness o
 
 ## Start
 
-1. Read this file, then `docs/OPERATING_FRAMEWORK.md` (owner's standing framework, 2026-11-24: the reader, the nine steps, the tab order, the checklist, the four checks), then `docs/BATCAVE_STATE.md`. Do not reread the entire chat.
+1. Read this file, then `docs/OPERATING_FRAMEWORK.md` (owner's standing framework, 2026-11-24: the reader, the nine steps, the tab order, the checklist, the four checks), then `docs/MASTER_FIX_LIST.md` (every open fix by tab, the order, the owner's open decisions and the live checks waiting), then `docs/BATCAVE_STATE.md`. Do not reread the entire chat.
 2. Run `git status --short` and inspect the latest relevant commit. Check the remote head before changing shared code.
 3. Follow the newest user request. Verify only the facts needed for that request; a checkpoint is not proof of live health.
 4. Search specific symbols and read bounded file ranges. Load older discussions only to resolve a concrete missing decision.

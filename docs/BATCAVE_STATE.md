@@ -3393,3 +3393,10 @@ Regime's correlation map had company names showing through its legend. Fixed her
 right-edge labels on the tape chart, the path chart's time labels sit lower, the caption moved beside
 "today", the legend is opaque. Not checked: charts that need a click or a search to appear (seasonality,
 Edge Lab panels, News, Crypto had no chart on first view), and text drawn over lines rather than over text.
+
+**Master fix list (2026-11-25).** `docs/MASTER_FIX_LIST.md`: 14 shared fixes and 87 tab fixes with status,
+the order of work, 9 owner decisions and 14 checks that need a live session, from a fresh look at all
+twelve tabs at 1,440px before the open plus the earlier reviews. It is the working list for the framework
+and is updated as checks come back. Found on that look: before the open the top card's chip reads "OK" on
+ten-hour-old data; the read went from "bigger-swing side" to "calmer side" overnight with no new option
+data while the strip said "dealers short gamma"; Trade Desk has 36 input boxes and 45 24-hour times.
