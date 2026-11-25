@@ -92,5 +92,5 @@ test("Models chart: a level close to the price is labelled on the right, clear o
   assert.equal(levelLabelSide(7332, 7324, 7124, 7773, [7582, 7572, 7196, null]), "right");
   assert.equal(levelLabelSide(7332, 7324, 7500, 7500), "left");
   const m = readFileSync(new URL("../../client/src/components/ModelsPanel.tsx", import.meta.url), "utf8");
-  assert.match(m, /levelLabelSide\(lv\.price, horizon\.spot, yMin, yMax, pathEnds\) === "right" \? "insideTopRight" : "insideTopLeft"/);
+  assert.match(m, /levelLabelSide\(lv\.price, horizon\.spot, yMin, yMax, pathEnds\) === "right" \? "Right" : "Left"/);
 });

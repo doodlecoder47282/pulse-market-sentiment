@@ -23,7 +23,7 @@ import PlainRead from "@/components/PlainRead";
 import LevelScopeNote from "@/components/LevelScopeNote";
 import { READ_MM_MATRIX, readModel, readVixTerm } from "@shared/plainReads";
 import { HOLDS_PRICE_TAG, TWO_ODDS_NOTE, rangeOdds } from "@shared/scenarioRegions";
-import { levelLabelSide } from "@shared/chartLabels";
+import { levelLabelSide, levelLabelVertical } from "@shared/chartLabels";
 import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -1199,7 +1199,11 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   ifOverflow="extendDomain"
                   label={showLabel ? {
                     value: `${shortName} ${fmtK(lv.price)}`,
-                    position: levelLabelSide(lv.price, horizon.spot, yMin, yMax, pathEnds) === "right" ? "insideTopRight" : "insideTopLeft",
+                    position: (() => {
+                      const side = levelLabelSide(lv.price, horizon.spot, yMin, yMax, pathEnds) === "right" ? "Right" : "Left";
+                      // Near the bottom edge the label goes above its line, clear of the time axis.
+                      return (levelLabelVertical(lv.price, yMin, yMax) === "above" ? `insideBottom${side}` : `insideTop${side}`) as "insideTopLeft";
+                    })(),
                     fill: color,
                     fontSize: 10,
                     fontWeight: 600,
