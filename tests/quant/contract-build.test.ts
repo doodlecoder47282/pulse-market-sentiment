@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { applyRead, describeBuild, isUnusual, stepStart, STEP_MS, KEEP_MIN_VOLUME, type ContractRead } from "../../shared/contractBuild";
+import { applyRead, burstOf, describeBuild, isUnusual, stepStart, STEP_MS, KEEP_MIN_VOLUME, type ContractRead } from "../../shared/contractBuild";
 import { etTime } from "../../shared/etTime";
 
 const T0 = Date.parse("2026-11-24T15:00:00Z"); // 10:00 AM ET
@@ -94,4 +94,30 @@ test("wiring: every fresh chain is recorded, per contract, without a request of 
   assert.match(cv, /PRIMARY KEY \(day, occ, step\)/);
   assert.doesNotMatch(cv, /getOptionChain|schwabFetch/, "the recorder makes no request");
   assert.match(readFileSync("server/routes.ts", "utf8"), /sch\.setChainObserver\(cv\.recordChainVolumes\)/);
+});
+
+test("a same-day contract is flagged for a burst, not for trading many times its open interest", () => {
+  // Live 2026-11-25: the 7,000 put, steady at about 1,400 per five minutes, was listed as unusual at 8.4 times open interest.
+  const steady = [0, 5, 10, 15, 20, 25, 30].map((m) => ({ step: at(m), volume: 1400 + (m % 10) * 20 }));
+  assert.equal(burstOf(steady), null, "steady heavy trading on the day's own contracts is normal");
+  const burst = burstOf([...steady, { step: at(35), volume: 9000 }]);
+  assert.ok(burst);
+  assert.equal(burst!.step, at(35));
+  assert.equal(burst!.volume, 9000);
+  assert.ok(burst!.multiple > 5 && burst!.multiple < 7);
+  assert.equal(burstOf([{ step: at(0), volume: 9000 }, { step: at(5), volume: 100 }]), null, "too few steps to know what is usual");
+  // Busy at the open, quiet after: the opening five minutes are not a burst.
+  const quietAfterOpen = [{ step: at(0), volume: 9000 }, ...[5, 10, 15, 20, 25].map((m) => ({ step: at(m), volume: 300 }))];
+  assert.equal(burstOf(quietAfterOpen, at(0)), null);
+  assert.ok(burstOf(quietAfterOpen), "without the open named, the same shape would have been flagged");
+  assert.equal(burstOf([0, 5, 10, 15].map((m) => ({ step: at(m), volume: 50 })).concat([{ step: at(20), volume: 600 }])), null, "a burst needs at least 1,000 contracts");
+});
+
+test("the server splits the lists: unusual (later expiries, or a same-day burst) and where today's activity is", () => {
+  const cv = readFileSync("server/contractVolume.ts", "utf8");
+  assert.match(cv, /const unusual = sameDay \? burst != null : isUnusual\(volume, oi\);/);
+  assert.match(cv, /todayMostActive: today\.slice\(0, 8\)/);
+  const ui = readFileSync("client/src/components/ContractBuildList.tsx", "utf8");
+  assert.match(ui, /Expiring today: where the activity is/);
+  assert.match(ui, /data-testid="contract-burst"/);
 });
