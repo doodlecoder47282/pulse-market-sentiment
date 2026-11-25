@@ -1,3 +1,4 @@
+import { etTimeLabel } from "../../../shared/etTime";
 // client/src/lib/asOf.ts
 //
 // Pure helpers behind AsOfNote: accepts epoch ms, epoch seconds or an ISO
@@ -21,5 +22,6 @@ export function asOfText(v: number | string | null | undefined, nowMs: number = 
     : age < 3600_000 ? `${Math.round(age / 60_000)} min ago`
     : age < 86_400_000 ? `${(age / 3600_000).toFixed(1)} h ago`
     : `${Math.round(age / 86_400_000)} d ago`;
-  return `read ${new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${ago}`;
+  // Eastern time the normal way ("3:17 AM ET"): it had been the viewer's own time zone with a leading zero.
+  return `read ${etTimeLabel(t)} · ${ago}`;
 }
