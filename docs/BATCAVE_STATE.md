@@ -3416,3 +3416,11 @@ says it counts SPX options out to 30 days, a different set from the top card's (
 why "leaning with moves" there can sit beside "calmer side" on the card. The server's six fixed-rule states
 are unchanged (X3). `client/src/lib/asOf.ts`: every "read at" note is now Eastern time, no leading zero
 (it had used the viewer's time zone). Tests: `tests/quant/strip-read.test.ts`.
+**Option map held while the market is shut and the data is unchanged (2026-11-25, master list X2).** On one
+option read the top card's levels slid through the evening and the read flipped sides overnight, because the
+model is re-priced with the time left to expiry on every request. `server/odteMapHold.ts`: outside the
+regular session `/api/odte/map` (both the nearest and the week view) serves the first map computed on a
+given set of data (expiry, price, at-the-money straddle, open interest by strike) until that data changes or
+the session opens; only the model-derived levels (landmarks, side, strike exposures, zones) are held; the session, data state, times, gap, priced range and ladders are always current, and an unpriced or stale map is never kept. In memory only, at most 24 views.
+Unexplained and to watch: the priced move read 81 then 86 on what the chip called one read.
+Tests: `tests/quant/hold-levels.test.ts`.
