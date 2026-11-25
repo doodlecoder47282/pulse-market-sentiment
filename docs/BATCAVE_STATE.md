@@ -3348,3 +3348,10 @@ a plain sentence (still building, steady, slowing, one burst, quiet). `ContractB
 top of the flow alerts; the per-strike unusual-volume rows are removed. Limits shown on screen: steps are as
 fine as the gap between reads, volume before the first read has no timing, a chain total has no buy/sell
 side. History starts at deploy. Tests: `tests/quant/contract-build.test.ts`.
+
+**The page is revalidated on every load (2026-11-24).** Seen live after #158 and #159 deployed: the server
+was already serving the new script, but the browser kept an old copy of the page (which names the script
+files), so the old app kept showing until the address was changed. `index.html` had no cache header.
+`server/static.ts` now sends `no-cache` for the page and any unhashed file and a one-year immutable header
+for hashed files under `assets/`. The owner had been adding `?r=5` to the address to get round this.
+Tests: `tests/quant/page-cache.test.ts`.
