@@ -1,9 +1,39 @@
 # Batcave master fix list
 
-Version 1 · written 2026-11-25, 3:20 AM ET, before the open · the working list for
+Version 2 · updated 2026-11-25, 8:10 PM ET, after the close (version 1: 3:20 AM ET the same day) · the working list for
 `docs/OPERATING_FRAMEWORK.md`. Every fix still needed, tab by tab, the order to do them in, and what can
 only be checked while the market is open. This file is added to as checks come back; nothing is removed
 without a note saying why.
+
+## Where things stand (2026-11-25, 8:10 PM ET)
+
+Thirteen changes were built today (#171 to #183). Twelve are merged; #183 is waiting on its checks.
+
+| Change | What it did | Seen on the live site |
+|---|---|---|
+| #171 | Signals: contracts expiring today split out; a same-day contract is unusual only for a burst | Yes |
+| #172 | Edge Lab and Trade Desk: hand-set scores shown as tallies, not "STRONG BEAR 75/100" | Yes |
+| #173 | Models: Greek names replaced on the side panel, header and chart | Yes |
+| #174, #179 | Every tab: clock times in Eastern time, the normal way | Yes: Trade Desk 69 to 0, Models 28 to 0 |
+| #175 | Outlook, Trade Desk, Edge Lab: one set of level names; no empty tiles | Yes |
+| #176 | Seasonality: one date calculation | Not yet: the panel was collapsed |
+| #177 | Alpha email: no more "STRONG BEAR · 75%" | Not yet: shows in the next email |
+| #178 | Signals: put/call baseline note once; plain words for a quiet tracked position | Baseline note yes; quiet position not on screen |
+| #180, #182 | Models reads ceiling, floor and turning point from the same source as Signals | Yes, 5:44 PM ET: turning point 7,208 on both. #180 alone did nothing; #182 fixed it |
+| #181 | This list and the state file updated | n/a |
+| #183 | Models chart: every line named in whole words, with a "What the lines mean" list | Not yet: waiting on checks |
+
+What today taught us, in order of importance:
+
+1. **A change is not done until it is seen on the live site.** #180 passed five review rounds and did nothing
+   once deployed: it switched on only for a case the live app never uses. Looking at the screen found it.
+2. **The app runs out of Schwab requests.** Opening three tabs in 18 seconds used 80 of the 100 requests a
+   minute. Each deploy restarts the server and empties its cache, and there were twelve deploys today, so
+   part of today's "unavailable" messages came from the work itself. New item X16.
+3. **Shortening a name is not explaining it.** #173 turned "GAMMA ZERO" into "TURN PT"; the owner asked what
+   "TURN PT" was. #183 spells every tag out and adds a legend. One name was also wrong: "thin zone" is the
+   heaviest move-adding positioning, now "fast-move zone".
+4. **The tabs weight gamma three ways.** New item X15, approved by the owner this evening.
 
 ## How this list was made
 
@@ -30,7 +60,7 @@ These are done once and every tab gets them. They come first within the tab that
 | X2 | Hold levels still when no new option data has arrived. | With the same option data, the top card read ceiling 7,300 / turning point 7,224 / no floor at 6:09 PM, 7,310 / 7,238 / 7,150 at 9:19 PM and 7,250 / 7,208 / 7,150 at 3:16 AM, and went from "bigger-swing side" to "calmer side" overnight. | DONE in code (#170), merged; market-closed behaviour still to be seen live (evening check) |
 | X3 | One regime label, from stated rules, used by the strip, every tab's summary line, Regime and Edge Lab. | Strip "Volatility expansion", Signals "Rotation: value-led", Edge Lab "Strong bear 75/100", summary line "heavy chop" or "strong trend". | OPEN |
 | X4 | The strip above the tabs in plain words. | Reads "Volatility expansion — VIX backwardation (26.7/28.3/25.5) + dealers short gamma", "NET GEX -16%", "RULE TIER: HIGH", "read 03:17 AM". | DONE: seen live 2026-11-25 noon ("Stress rising: VIX 32.7, up 24.0% today ..."). X3 still decides the label rules |
-| X5 | One set of names everywhere: ceiling, turning point, floor, expected move. | Signals and the line under the tabs use them; Outlook says "wall above" and "gamma flip"; Edge Lab "CALL WALL / PUT WALL / ZERO Γ"; Models "DOM MAG", "0-Γ FLIP"; Heatseeker "PIN · WALLS · FLIP". | PART: Signals, the strip, Models, Outlook, Trade Desk board/log/record and Edge Lab tiles use the shared names (`shared/plainLevelName.ts`); seen live 2026-11-25 (Outlook 0 old names). Heatseeker, Chart and Regime not done |
+| X5 | One set of names everywhere: ceiling, turning point, floor, expected move. | Signals and the line under the tabs use them; Outlook says "wall above" and "gamma flip"; Edge Lab "CALL WALL / PUT WALL / ZERO Γ"; Models "DOM MAG", "0-Γ FLIP"; Heatseeker "PIN · WALLS · FLIP". | PART: Signals, the strip, Models (panel, chart, paths, legend in #183), Outlook, Trade Desk board/log/record and Edge Lab tiles use the shared names. Heatseeker, Chart and Regime not done |
 | X6 | Times the normal way in Eastern time on every tab, no leading zero. | Trade Desk shows 45 24-hour times, Models 22, Crypto 8; the strip says "03:17 AM". | DONE: seen live 2026-11-25 after #174 and #179: Trade Desk 69 to 0, Models 28 to 0, Heatseeker 0 |
 | X7 | A record for option levels (how often a ceiling, floor or turning point held or broke), shown beside every read that uses them. | The existing level record counts calendar levels only. No option-level read has a record. | OPEN |
 | X8 | Remove hand-set scores, or show the measured inputs they were built from. | "x/100" scores on screen tonight: Regime 16, Trade Desk 9, Edge Lab 3, Signals 2. None is graded. | PART: Edge Lab "STRONG BEAR 75/100" replaced by the rule tally and the Trade Desk squeeze number labelled as a hand-set tally (#172, seen live). Regime 16, other Trade Desk and Chart scores remain |
@@ -40,6 +70,8 @@ These are done once and every tab gets them. They come first within the tab that
 | X12 | Live prices from Schwab's stream. | Trade-by-trade buy/sell marking and live quotes depend on it. The client exists; Schwab refuses the sign-in. | OWNER (section 4) |
 | X13 | Seasonality dates from one calculation. | The hover date and the "best buy and sell dates" on the same panel are worked out two ways and can differ by days. | DONE in code (#176, cache key v4); not confirmed on screen (panel is collapsed) |
 | X14 | Nothing asks the user to type to get a read. | Trade Desk has 36 input boxes, Crypto 12. | OPEN |
+| X15 | One gamma weighting on every tab: notional gamma on open interest alone. Owner approved 2026-11-25, 8:02 PM ET ("as long as this is the cleanest and most professional way"). | Every tab already uses the same notional formula (gamma x contracts x 100 x price squared x 1%). What differs is the contract count: Models and the chain audit use open interest; the option map behind the Signals card, Outlook, the Trade Desk board and the daily and weekly Models levels uses open interest plus a quarter of today's volume (`server/odteForward.ts`); the Killbox switches between open interest, volume or both (`server/routes.ts`). Volume is not position: a contract traded twice counts twice. Plan: open interest only for every gamma figure and level; today's volume shown beside it as its own named line. This moves the Today and This-week ceiling, floor and turning point, so it needs a before-and-after table on live data, a full review, and the level record restarted from the change. | OPEN, next up |
+| X16 | The app must not run out of Schwab requests in normal use. | Seen live 2026-11-25: "Daily model not built: Schwab SPY chain unavailable, self-throttle (100 requests/min)"; quotes, price history, chains and gamma levels all "Unavailable" within five minutes. By feature after three quick tab changes: Signals flow 14, Mag 7 price history 14, Trade Desk board 8, flow preview 8, snapshot 7, others about 29. Causes: each tab asks for its own symbols on first open; a restart empties the cache; the SPX Models view reads both the SPY and the SPX chain (10 requests where 5 would do). Fixes: keep the cache across restarts, share symbol reads between tabs, deploy in batches outside the session, and the stream (X12). | OPEN |
 
 ## 2. Tab by tab
 
@@ -126,13 +158,18 @@ quantile; the 2x reflection rule needs about 50%)". Chip "LAST SESSION · SPY ch
 |---|---|---|
 | M1 | Levels from the shared source (X1). It builds SPX levels from a SPY chain; the pivot card multiplies SPY walls by 10. No fixed multiplier. | PART: #180 merged: daily and weekly SPX levels from the shared map with a line saying so; to be seen live beside the Signals card. The pivot card and the SPY view are not changed |
 | M2 | Evening starting price: live or dated, never yesterday's bar shown as now. | OPEN, check at 4:30 PM |
-| M3 | Plain words for every level name and the side panel; or the term goes. | PART: side panel, header, chart tags (#173, seen live), path sentences and backtest names (#175); the specialist chain audit is closed by default behind "For options specialists". Still Greek: the dealer matrix card, the weekly trajectory card |
+| M3 | Plain words for every level name and the side panel; or the term goes. | PART: side panel, header, paths, backtest names (#173, #175, seen live); chart tags in whole words with a legend, "fast-move zone" corrected (#183, built). The specialist chain audit is closed by default. Still Greek: the dealer matrix card, the weekly trajectory card |
 | M4 | Times the normal way (X6). | DONE: seen live, 0 24-hour times |
 | M5 | Path percentages: say where they come from; remove if hand-set (X8). | OPEN |
 | M6 | The buried oversold read (index RSI under 30, shown as "MAGNET DRIFT 50/100") moves to the stretch read (O4). | OPEN |
 | M7 | Label fixes from 2026-11-25 are live (three overlaps gone). | DONE |
 | M8 | Record for its ranges and paths. | OPEN |
 | M9 | Full live read, plan and scope check. | OPEN |
+| M10 | Every chart line explained on the tab itself. Owner, 2026-11-25, on "TURN PT 7,362": nothing says what it is. | PART: #183 built (whole-word tags, "What the lines mean" list), waiting on checks; to be seen on a phone |
+| M11 | Chart tags must not sit on the path lines, and the last date on the axis must not run into a price ("WED 12/16 7,768"). Seen in the owner's phone screenshot. | OPEN |
+| M12 | "Connect Schwab to fill this tab" showed above a model that had built (7:15 PM ET). | OPEN: cause not looked at |
+| M13 | After the close the source line says "Today levels" for options expiring Friday; the Signals card says "levels for the next session". | OPEN |
+| M14 | Client guide to the Models tab (12-page PDF: layout, every level, how each is calculated, routine, limits). | DONE: sent 2026-11-25. Owner to decide whether clients see the exact target steps and the 9-held, 29-broke record, and to have the disclaimer read |
 
 ### 2.5 Heatseeker
 
@@ -291,6 +328,8 @@ site before it is called done; branches are named `feat/...` so the checks run.
 | D7 | Friends' meme-coin entry rules. | K7 |
 | D8 | Railway volume usage figure (Metrics tab). | housekeeping |
 | D9 | Is the wording of the Signals top read at the right level for the reader. | every tab copies it |
+| D10 | Client guide: show clients the exact fixed steps the model uses for targets (0.5%, 0.8%, 0.8 and 1.6 times floor to ceiling) and the level record (39 touches, 9 held, 29 broke), or describe them in general terms? Who reads the disclaimer before it goes out? | M14 |
+| D11 | Deploys restart the server and use up Schwab requests. Batch changes and deploy outside market hours unless urgent: agreed? | X16 |
 
 ## 5. To check at the open and during the session
 
@@ -325,6 +364,7 @@ Results are written here as they come in.
 
 ## 7. Count
 
-Shared fixes 14. Tab fixes: Signals 15, Outlook 7, Chart 8, Models 9, Heatseeker 9, Trade Desk 10, Regime 9,
-News 5, Edge Lab 7, Crypto 8: 87 in all. Seen live and done: 5. Part done: 4 shared, 1 tab. Owner
-decisions: 9. Live checks waiting: 14.
+Version 2 (2026-11-25, 8:10 PM ET). Shared fixes 16. Tab fixes: Signals 16, Outlook 7, Chart 8, Models 14,
+Heatseeker 9, Trade Desk 10, Regime 9, News 5, Edge Lab 7, Crypto 8: 93 in all, 109 with the shared ones.
+Done: 20 (each row says whether it has been seen on the live site). Part done: 12. Not started or waiting on the owner: 77.
+Owner decisions: 11. Live checks waiting: 12.
