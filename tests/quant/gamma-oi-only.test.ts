@@ -19,8 +19,10 @@ test("one function decides the contract count for both the strike exposures and 
 
 test("both views of the map carry the open-interest-only levels, and both cards show them", () => {
   const r = read("server/routes.ts");
-  assert.match(r, /oiOnly: await oiOnlyLevels\("week"\)/);
-  assert.match(r, /oiOnly: await oiOnlyLevels\("nearest"\)/);
+  assert.match(r, /oiOnly: await oiOnlyLevels\("week", b\)/);
+  assert.match(r, /oiOnly: await oiOnlyLevels\("nearest", fwd\.body\)/);
+  // Once per read of the option data: no second re-pricing on every poll, no drift while levels are held.
+  assert.match(r, /if \(hit && hit\.fp === fp\) return hit\.levels;/);
   assert.match(read("client/src/components/TodayCard.tsx"), /<OiOnlyCompare oiOnly=\{\(m as any\)\.oiOnly\} testId="today-oi-only"/);
   assert.match(read("client/src/components/TodayWeek.tsx"), /testId="today-week-oi-only"/);
 });
