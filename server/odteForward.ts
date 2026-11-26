@@ -87,7 +87,12 @@ export function weekDteWindow(nowMs: number): number {
   return Math.max(chainDteWindow(nowMs), Math.round((Date.parse(`${far}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86400_000) + 1);
 }
 
-export async function buildOdteForward(symbolIn: string, nowMs: number = Date.now(), depsIn?: OdteForwardDeps, pick: ExpiryPick = "nearest"): Promise<OdteForwardResult> {
+/** Which contract count the gamma figures use: open interest plus a quarter of today's volume (as served
+ *  today), or open interest alone (the standard notional-gamma measure; master list X15). */
+export type GammaWeightMode = "hybrid" | "oi";
+
+export async function buildOdteForward(symbolIn: string, nowMs: number = Date.now(), depsIn?: OdteForwardDeps, pick: ExpiryPick = "nearest", weightMode: GammaWeightMode = "hybrid"): Promise<OdteForwardResult> {
+  const contractWeight = (oi: number, vol: number) => (weightMode === "oi" ? oi : oi + vol * HYBRID_VOLUME_WEIGHT);
   const symbol = String(symbolIn || "$SPX").trim().toUpperCase() || "$SPX";
   // schwab.ts has narrower parameter types than the generic deps shape; the calls below stay inside them.
   const deps: OdteForwardDeps = depsIn ?? { ...((await import("./schwab")) as unknown as OdteForwardDeps), varianceProfile: storedVarianceProfile };
@@ -230,7 +235,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
         if (isPm) rowQuotePm.set(styleKey, true);
         if (side === "C") { row.callOI += oi; if (takeQuote) { row.callMid = mid; row.callIV = ivPct; row.T = T; } }
         else { row.putOI += oi; if (takeQuote) { row.putMid = mid; row.putIV = ivPct; row.T = T; } }
-        const weight = oi + vol * HYBRID_VOLUME_WEIGHT; // hybrid: 0DTE OI is stale by design, volume carries intraday info
+        const weight = contractWeight(oi, vol); // hybrid by default: 0DTE OI is stale by design, volume carries intraday info
         if (weight <= 0) continue;
         const sigma = sigmaClock;
         const sign = side === "C" ? 1 : -1;
@@ -275,7 +280,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     r: FLIP_RATE,
     q: FLIP_DIV_YIELD,
     expiryKeys: [nearestKey],
-    weight: (c: any) => (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * HYBRID_VOLUME_WEIGHT,
+    weight: (c: any) => contractWeight(Number(c?.openInterest) || 0, Number(c?.totalVolume) || 0),
     lowPct: 0.95,
     highPct: 1.05,
     nLevels: 101,
@@ -443,11 +448,11 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     gexBasis: "Black-Scholes gamma (r 5%, q 1.3%), time to the real settlement instant, sigma solved from the mid inside 3 days; same basis as Killbox and the gamma flip",
     gexContracts: { priced: validGammaCount, unpriced: unpricedGammaCount },
     levels: gexValid ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin } : { callWall: null, putWall: null, gammaFlip: null, pin: null },
-    flipInputs: flipInputs({ weight: "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
+    flipInputs: flipInputs({ weight: weightMode === "oi" ? "open_interest" : "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
     weightTotals: { oi: totalOI, volume: totalVol },
     // Which session's open interest the weight uses, and the weight itself (shared/gammaBasis.ts).
     oiBasis: buildOiBasis(chainReadMs(chain as any), (chain as any).oiState),
-    weighting: gammaWeighting("oi_plus_quarter_volume"),
+    weighting: gammaWeighting(weightMode === "oi" ? "oi" : "oi_plus_quarter_volume"),
     path,
     // The path above is the dealer-positioning overlay (pin pull, charm tilt,
     // 15% wider in short gamma): rules of thumb, not part of the Wiener baseline.
