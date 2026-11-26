@@ -7,6 +7,7 @@
 // an HTTP round trip. The route is a thin wrapper. Returns { status, body }:
 // 503 bodies carry dataState and reason (chain or spot unavailable).
 
+import { inSettlingWindow, lastSettledCloseMs } from "./schwabDataPolicy";
 import { schwabNum } from "./schwabChainRows";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 import { contractStyle, contractYears, expiryOfKey, ivForClock } from "./chainClock";
@@ -87,6 +88,23 @@ export function weekDteWindow(nowMs: number): number {
   return Math.max(chainDteWindow(nowMs), Math.round((Date.parse(`${far}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86400_000) + 1);
 }
 
+/** First minute (ET) of a trading day from which pre-open option quotes are treated as fresh reads. */
+export const PREOPEN_LIVE_FROM_MIN = 8 * 60;
+
+/**
+ * The instant the options are priced at: now during the session and from 8:00 AM ET before the open;
+ * otherwise the settle of the last finished session (its close plus 15 minutes), so the same option data
+ * gives the same levels however late it is and across restarts. In the 15 minutes after a close, before
+ * that session has settled, it is now.
+ */
+export function pricingClockMs(sessionState: "preopen" | "intraday" | "closed", nowMinEt: number, nowMs: number): number {
+  if (sessionState === "intraday") return nowMs;
+  if (sessionState === "preopen" && nowMinEt >= PREOPEN_LIVE_FROM_MIN) return nowMs;
+  if (inSettlingWindow(nowMs)) return nowMs;
+  const settled = lastSettledCloseMs(nowMs);
+  return settled != null && settled <= nowMs ? settled : nowMs;
+}
+
 /** Which contract count the gamma figures use: open interest plus a quarter of today's volume (as served
  *  today), or open interest alone (the standard notional-gamma measure; master list X15). */
 export type GammaWeightMode = "hybrid" | "oi";
@@ -144,6 +162,13 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   if (todayClose != null && nowMin < OPEN) { sessionState = "preopen"; startMin = 0; }
   else if (todayClose != null && nowMin < CLOSE) { sessionState = "intraday"; startMin = nowMin - OPEN; }
   else { sessionState = "closed"; startMin = 0; }
+  // The clock the options are priced at. During the session it is now. Outside it the option data is the
+  // last session's, so it is priced at that session's settle, not at the wall clock: seen live 2026-11-25,
+  // the card said "option data read 4:32 PM ET" all evening while its ceiling went 7,200 -> 7,300 and its
+  // turning point 7,208 -> 7,242, because every hour on the clock re-priced the same data (a restart drops
+  // the hold of server/odteMapHold.ts, and each deploy is a restart). From 8:00 AM ET on a trading day the
+  // pre-open quotes are being re-read, so the clock is now again.
+  const pricingMs = pricingClockMs(sessionState, nowMin, nowMs);
   // Projection window: the rest of today, or the whole NEXT session when closed
   // (its own length from the calendar: 210 minutes before a half day).
   const projMinutes = (sessionState === "closed" ? (sessionMinutes(nextTradingDay(todayEt)) || 390) : sessionLen) - startMin;
@@ -208,7 +233,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
         const quoted = bid != null && ask != null && bid > 0 && ask >= bid;
         const mid = quoted ? (bid + ask) / 2 : (last ?? 0);
         const rawIV = schwabNum(c.volatility) ?? 0;
-        const T = contractYears(nearestKey, c, nowMs);
+        const T = contractYears(nearestKey, c, pricingMs);
         if (!(T > 0)) continue; // settled (e.g. AM SPX after the open): not in the totals either
         if (quoted) {
           const style = String(contractStyle(c));
@@ -284,7 +309,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     lowPct: 0.95,
     highPct: 1.05,
     nLevels: 101,
-    nowMs,
+    nowMs: pricingMs,
   });
   const gammaFlip: number | null = flipObj.zeroGamma;
   // pin candidate: largest POSITIVE exposure within ±1.5% of spot (the same
@@ -430,6 +455,8 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   const chainAsOfMs: number | null = Number.isFinite(Number((chain as any).asOfMs)) ? Number((chain as any).asOfMs) : null;
   const chainStale = (chain as any).stale === true;
   return { status: 200, body: {
+    // The instant the option exposures and the turning point are priced at (see pricingClockMs).
+    pricedAsOfMs: pricingMs,
     symbol, asOf: new Date(nowMs).toISOString(), spot, source: (chain as any).source || "schwab",
     chainAsOfMs, chainAgeMs: chainAsOfMs != null ? Math.max(0, nowMs - chainAsOfMs) : null, chainStale,
     chainStaleReason: chainStale ? ((chain as any).staleReason ?? "re-served from cache after a failed refresh") : null,
