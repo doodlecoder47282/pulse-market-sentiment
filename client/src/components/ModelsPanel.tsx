@@ -19,6 +19,7 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
+import { MODEL_LEVEL_WORDS, modelLevelTag } from "@shared/modelLevelWords";
 import { shortDate } from "@shared/barDates";
 import { etDayTimeLabel, etTime as sharedEtTime, etTimeLabel } from "@shared/etTime";
 import PlainRead from "@/components/PlainRead";
@@ -391,29 +392,9 @@ function levelColor(kind: string): string {
   }
 }
 
+/** The tag drawn on a level line, written out in full (shared/modelLevelWords.ts). */
 function levelShortName(kind: string): string {
-  switch (kind) {
-    case "callWall":      return "CALL WALL";
-    case "putWall":       return "PUT WALL";
-    case "zeroGamma":     return "TURN PT";
-    case "dominantMag":   return "TOP PIN";
-    case "strongMag":     return "2ND PIN";
-    case "extremeVac":    return "THIN";
-    case "mopexMaxPain":  return "MAX PAIN";
-    case "upsidePivot":   return "UP TGT";
-    case "downsidePivot": return "DN TGT";
-    case "t1Up":          return "T1 UP";
-    case "t2Up":          return "T2 UP";
-    case "t1Down":        return "T1 DN";
-    case "t2Down":        return "T2 DN";
-    case "vannaFlip":     return "VOL FLIP";
-    case "zommaBridge":   return "SHELF";
-    case "charmTarget":   return "TOP ABOVE";
-    case "negGammaEntry": return "FASTER";
-    case "upperVomma":    return "FAR UP";
-    case "lowerVomma":    return "FAR DN";
-    default: return kind.toUpperCase();
-  }
+  return modelLevelTag(kind);
 }
 
 // ─── Right-rail level row ─────────────────────────────────────────────────────
@@ -856,11 +837,11 @@ const REGIME_LABEL: Record<MMRegime, string> = {
   CHARM_DRIVEN: "CHARM",
 };
 const ZONE_LABEL: Record<MMZone, string> = {
-  ABOVE_CALL: "> CW",
-  CW_TO_0G:   "CW→0Γ",
-  AT_0G:      "AT 0Γ",
-  "0G_TO_PW": "0Γ→PW",
-  BELOW_PW:   "< PW",
+  ABOVE_CALL: "above ceiling",
+  CW_TO_0G:   "ceiling to turning point",
+  AT_0G:      "at turning point",
+  "0G_TO_PW": "turning point to floor",
+  BELOW_PW:   "below floor",
 };
 const ACTION_COLOR: Record<DealerAction, string> = {
   defend:     "#22c55e",
@@ -1454,7 +1435,7 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
     return `${sign}${d.toFixed(2)}%`;
   };
 
-  type Row = { name: string; price: number; color: string; sub?: string };
+  type Row = { kind: string; name: string; price: number; color: string; sub?: string };
 
   const byKind = (k: string) => levels.find(l => l.kind === k);
 
@@ -1463,29 +1444,29 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
     const lv = byKind(kind);
     if (!lv) return;
     const sub = subKey === "gex" && lv.gex != null ? `${(Math.abs(lv.gex)/1e6).toFixed(1)}M GEX` : undefined;
-    rows.push({ name, price: lv.price, color, sub });
+    rows.push({ kind, name, price: lv.price, color, sub });
   };
 
   // Include all key reference levels — directional pivots, walls, vol-structure anchors.
   // Zero gamma & call/put walls are added so traders see the full picture without
   // having to cross-reference the chart.
-  push("t2Up",          "T2 UP",           "#ef4444");
-  push("t1Up",          "T1 UP",           "#f87171");
-  push("callWall",      "CALL WALL",       "#dc2626", "gex");
-  push("upsidePivot",   "UP TGT",        "#a855f7");
-  push("strongMag",     "2ND PIN",      "#0ea5e9");
-  push("vannaFlip",     "VOL FLIP",           "#06b6d4");
-  push("charmTarget",   "TOP ABOVE",           "#c084fc");
-  push("zommaBridge",   "SHELF",           "#fde047");
-  push("upperVomma",    "FAR UP",        "#84cc16");
-  push("zeroGamma",     "TURN PT",   "#fbbf24");
-  push("dominantMag",   "TOP PIN",         "#eab308");
-  push("lowerVomma",    "FAR DN",        "#f97316");
-  push("negGammaEntry", "FASTER",       "#fb7185");
-  push("putWall",       "PUT WALL",        "#16a34a", "gex");
-  push("downsidePivot", "DN TGT",        "#a855f7");
-  push("t1Down",        "T1 DN",           "#4ade80");
-  push("t2Down",        "T2 DN",           "#22c55e");
+  push("t2Up", modelLevelTag("t2Up"), "#ef4444");
+  push("t1Up", modelLevelTag("t1Up"), "#f87171");
+  push("callWall", modelLevelTag("callWall"), "#dc2626", "gex");
+  push("upsidePivot", modelLevelTag("upsidePivot"), "#a855f7");
+  push("strongMag", modelLevelTag("strongMag"), "#0ea5e9");
+  push("vannaFlip", modelLevelTag("vannaFlip"), "#06b6d4");
+  push("charmTarget", modelLevelTag("charmTarget"), "#c084fc");
+  push("zommaBridge", modelLevelTag("zommaBridge"), "#fde047");
+  push("upperVomma", modelLevelTag("upperVomma"), "#84cc16");
+  push("zeroGamma", modelLevelTag("zeroGamma"), "#fbbf24");
+  push("dominantMag", modelLevelTag("dominantMag"), "#eab308");
+  push("lowerVomma", modelLevelTag("lowerVomma"), "#f97316");
+  push("negGammaEntry", modelLevelTag("negGammaEntry"), "#fb7185");
+  push("putWall", modelLevelTag("putWall"), "#16a34a", "gex");
+  push("downsidePivot", modelLevelTag("downsidePivot"), "#a855f7");
+  push("t1Down", modelLevelTag("t1Down"), "#4ade80");
+  push("t2Down", modelLevelTag("t2Down"), "#22c55e");
 
   const above = rows.filter(r => r.price > spot).sort((a, b) => b.price - a.price);
   const below = rows.filter(r => r.price <= spot).sort((a, b) => b.price - a.price);
@@ -1506,16 +1487,16 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   const zgPrice       = byKind("zeroGamma")?.price;
   // From the audit's gamma zone, not the raw sign: "y?" (missing or immaterial gamma) used to read "POS Γ".
   const regimeLabel   = a.gammaZone === "y+"
-    ? { text: "POS \u0393 · model: hedging damps moves", color: "text-emerald-400", dot: "bg-emerald-400" }
+    ? { text: "Calmer side · model: hedging damps moves", color: "text-emerald-400", dot: "bg-emerald-400" }
     : a.gammaZone === "y-"
-    ? { text: "NEG \u0393 · model: hedging amplifies moves", color: "text-rose-400", dot: "bg-rose-400" }
-    : { text: "\u0393 sign unknown", color: "text-muted-foreground", dot: "bg-muted-foreground" };
+    ? { text: "Bigger-swing side · model: hedging amplifies moves", color: "text-rose-400", dot: "bg-rose-400" }
+    : { text: "side of the turning point not read", color: "text-muted-foreground", dot: "bg-muted-foreground" };
 
   return (
     <div className="mt-2 space-y-1 border-t border-border/40 pt-2">
       <div className="flex items-baseline justify-between">
         <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">
-          Pivot Ladder — by horizon
+          Level ladder: every line on the chart, nearest first
         </div>
         <div className="flex items-center gap-1.5 font-mono text-[11px]">
           <span className={`h-1.5 w-1.5 rounded-full ${regimeLabel.dot}`} />
@@ -1523,22 +1504,35 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
         </div>
       </div>
 
+      {/* What each line means, for the lines this chart actually draws (owner: "TURN PT?"). */}
+      <details open className="rounded border border-border/30 bg-muted/10 px-2 py-1.5" data-testid="models-level-legend">
+        <summary className="cursor-pointer text-[11px] uppercase tracking-widest text-muted-foreground font-mono">What the lines mean</summary>
+        <dl className="mt-1.5 grid gap-x-4 gap-y-1 text-[12px] sm:grid-cols-2">
+          {rows.slice().sort((a, b) => b.price - a.price).map((r) => (
+            <div key={`${r.kind}-${r.price}`} className="flex gap-1.5 leading-snug">
+              <span className="mt-1 inline-block h-1.5 w-1.5 flex-none rounded-full" style={{ background: r.color }} />
+              <span><dt className="inline font-semibold text-foreground">{r.name} {fmtK(r.price)}.</dt>{" "}<dd className="inline text-muted-foreground">{MODEL_LEVEL_WORDS[r.kind]?.means ?? ""}</dd></span>
+            </div>
+          ))}
+        </dl>
+      </details>
+
       {/* Vol structure quick-read — 3 bands */}
       <div className="flex flex-wrap items-center gap-1.5 rounded border border-border/30 bg-muted/10 px-2 py-1 font-mono text-[11px]">
-        <span className="uppercase tracking-widest text-muted-foreground">Vol Structure</span>
+        <span className="uppercase tracking-widest text-muted-foreground">Three zones</span>
         <span className="text-border/60">|</span>
         <span className="text-rose-400">
-          Above call wall {callWallPrice ? `≥ ${fmtK(callWallPrice)}` : "—"}
+          Above the ceiling {callWallPrice ? `≥ ${fmtK(callWallPrice)}` : "—"}
         </span>
         <span className="text-border/60">·</span>
         <span className="text-amber-400">
-          Between the walls {zgPrice && callWallPrice && putWallPrice
-            ? `${fmtK(putWallPrice)}–${fmtK(callWallPrice)} (0Γ ${fmtK(zgPrice)})`
+          Between floor and ceiling {zgPrice && callWallPrice && putWallPrice
+            ? `${fmtK(putWallPrice)}–${fmtK(callWallPrice)} (turning point ${fmtK(zgPrice)})`
             : "—"}
         </span>
         <span className="text-border/60">·</span>
         <span className="text-emerald-400">
-          Below put wall {putWallPrice ? `≤ ${fmtK(putWallPrice)}` : "—"}
+          Below the floor {putWallPrice ? `≤ ${fmtK(putWallPrice)}` : "—"}
         </span>
       </div>
       {above.length > 0 && (
@@ -1729,27 +1723,27 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
             />
             {prevClose != null && (
               <ReferenceLine y={prevClose} stroke="#64748b" strokeDasharray="2 4" strokeOpacity={0.6}>
-                <Label value={`PREV ${fmtK(prevClose)}`} position="right" offset={4} dy={tapeNudge.prevClose * 11} fill="#64748b" fontSize={10} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`PRIOR CLOSE ${fmtK(prevClose)}`} position="insideBottomRight" offset={4} dy={tapeNudge.prevClose * 11} fill="#64748b" fontSize={10} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {cw != null && (
               <ReferenceLine y={cw} stroke={COLORS.callWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`CW ${fmtK(cw)}`} position="right" offset={4} dy={tapeNudge.cw * 11} fill={COLORS.callWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`CEILING ${fmtK(cw)}`} position="insideBottomRight" offset={4} dy={tapeNudge.cw * 11} fill={COLORS.callWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {zg != null && (
               <ReferenceLine y={zg} stroke={COLORS.zeroGamma} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`0Γ ${fmtK(zg)}`} position="right" offset={4} dy={tapeNudge.zg * 11} fill={COLORS.zeroGamma} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`TURNING POINT ${fmtK(zg)}`} position="insideBottomRight" offset={4} dy={tapeNudge.zg * 11} fill={COLORS.zeroGamma} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {dm != null && dm !== cw && dm !== pw && (
               <ReferenceLine y={dm} stroke="#14b8a6" strokeDasharray="4 3" strokeOpacity={0.45} strokeWidth={1}>
-                <Label value={`DM ${fmtK(dm)}`} position="right" offset={4} dy={tapeNudge.dm * 11} fill="#14b8a6" fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`STRONGEST PIN ${fmtK(dm)}`} position="insideBottomRight" offset={4} dy={tapeNudge.dm * 11} fill="#14b8a6" fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {pw != null && (
               <ReferenceLine y={pw} stroke={COLORS.putWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`PW ${fmtK(pw)}`} position="right" offset={4} dy={tapeNudge.pw * 11} fill={COLORS.putWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`FLOOR ${fmtK(pw)}`} position="insideBottomRight" offset={4} dy={tapeNudge.pw * 11} fill={COLORS.putWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             <Line
