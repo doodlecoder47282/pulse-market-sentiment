@@ -531,7 +531,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {dnPivot  && <RailRow label="DOWNSIDE TARGET" value={pFmt(dnPivot.price)} sub={distPct(dnPivot.price)} color={COLORS.pivot} backtestKind="downsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {putWall  && <RailRow label="PUT WALL" value={pFmt(putWall.price)} sub={putWall.gex != null ? `${(Math.abs(putWall.gex)/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="putWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {loVomma  && <RailRow label="FAR LEVEL BELOW" value={pFmt(loVomma.price)} sub={distPct(loVomma.price)} color={COLORS.negGamma} />}
-      {extVac   && <RailRow label="THIN ZONE" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} backtestKind="extremeVac" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      {extVac   && <RailRow label="FAST-MOVE ZONE" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} backtestKind="extremeVac" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {zomma    && <RailRow label="SHELF BELOW" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
       {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} backtestKind="mopexMaxPain" backtestHorizon={horizon.horizon as BacktestHorizon} />}
 
@@ -1690,8 +1690,9 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
         <span className="text-muted-foreground">· dashed lines = dealer levels from model</span>
       </div>
       <div className="h-[180px] w-full">
+        {/* The right margin holds the whole-word tags ("TURNING POINT 7,201"), clear of the newest prices. */}
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={lineData} margin={{ top: 10, right: 60, left: 4, bottom: 8 }}>
+          <LineChart data={lineData} margin={{ top: 10, right: 122, left: 4, bottom: 8 }}>
             <XAxis
               dataKey="label"
               stroke="#64748b"
@@ -1723,27 +1724,27 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
             />
             {prevClose != null && (
               <ReferenceLine y={prevClose} stroke="#64748b" strokeDasharray="2 4" strokeOpacity={0.6}>
-                <Label value={`PRIOR CLOSE ${fmtK(prevClose)}`} position="insideBottomRight" offset={4} dy={tapeNudge.prevClose * 11} fill="#64748b" fontSize={10} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`PRIOR CLOSE ${fmtK(prevClose)}`} position="right" offset={4} dy={tapeNudge.prevClose * 11} fill="#64748b" fontSize={10} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {cw != null && (
               <ReferenceLine y={cw} stroke={COLORS.callWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`CEILING ${fmtK(cw)}`} position="insideBottomRight" offset={4} dy={tapeNudge.cw * 11} fill={COLORS.callWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`CEILING ${fmtK(cw)}`} position="right" offset={4} dy={tapeNudge.cw * 11} fill={COLORS.callWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {zg != null && (
               <ReferenceLine y={zg} stroke={COLORS.zeroGamma} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`TURNING POINT ${fmtK(zg)}`} position="insideBottomRight" offset={4} dy={tapeNudge.zg * 11} fill={COLORS.zeroGamma} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`TURNING POINT ${fmtK(zg)}`} position="right" offset={4} dy={tapeNudge.zg * 11} fill={COLORS.zeroGamma} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {dm != null && dm !== cw && dm !== pw && (
               <ReferenceLine y={dm} stroke="#14b8a6" strokeDasharray="4 3" strokeOpacity={0.45} strokeWidth={1}>
-                <Label value={`STRONGEST PIN ${fmtK(dm)}`} position="insideBottomRight" offset={4} dy={tapeNudge.dm * 11} fill="#14b8a6" fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`STRONGEST PIN ${fmtK(dm)}`} position="right" offset={4} dy={tapeNudge.dm * 11} fill="#14b8a6" fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {pw != null && (
               <ReferenceLine y={pw} stroke={COLORS.putWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`FLOOR ${fmtK(pw)}`} position="insideBottomRight" offset={4} dy={tapeNudge.pw * 11} fill={COLORS.putWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`FLOOR ${fmtK(pw)}`} position="right" offset={4} dy={tapeNudge.pw * 11} fill={COLORS.putWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             <Line

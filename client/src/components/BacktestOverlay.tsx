@@ -91,7 +91,7 @@ const LABELS: Record<BacktestLevelKind, string> = {
   upsidePivot: "Upside target",
   downsidePivot: "Downside target",
   mopexMaxPain: "Max Pain",
-  extremeVac: "Thin zone",
+  extremeVac: "Fast-move zone",
   vommaPocket: "Far level",
 };
 
