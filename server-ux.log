@@ -1,0 +1,400 @@
+2:28:56 AM [express] GET /api/crypto/health 200 in 1ms
+2:28:56 AM [express] GET /api/crypto/signals 200 in 3ms
+2:28:59 AM [express] GET /api/health 200 in 1ms
+2:29:00 AM [express] GET /api/health 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:00 AM [express] GET /api/quotes 200 in 1ms
+2:29:00 AM [express] GET /api/schwab/status 200 in 1ms
+2:29:00 AM [express] GET /api/alerts 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:00 AM [express] GET /api/regime/headline 200 in 2ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:00 AM [express] GET /api/trade-environment 200 in 3ms
+2:29:00 AM [express] GET /api/macro 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:00 AM [express] GET /api/odte/map 503 in 1ms
+2:29:00 AM [express] GET /api/scoreboard 200 in 1ms
+2:29:00 AM [express] GET /api/regime 200 in 1ms
+2:29:00 AM [express] GET /api/layout/signals 200 in 0ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:00 AM [express] GET /api/snapshot 200 in 129ms
+2:29:00 AM [express] GET /api/whales/performance 200 in 1ms
+2:29:00 AM [express] GET /api/flow/preview 200 in 0ms
+2:29:00 AM [express] GET /api/flow/followups 200 in 12ms
+2:29:00 AM [express] GET /api/flow/followups 200 in 0ms
+2:29:00 AM [express] GET /api/signals/tracked 200 in 0ms
+2:29:00 AM [express] GET /api/flow 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+2:29:00 AM [express] GET /api/breadth 200 in 4ms
+2:29:00 AM [express] GET /api/uoa/preview 200 in 1ms
+2:29:00 AM [express] GET /api/headline 200 in 2ms
+2:29:00 AM [express] GET /api/signals/tracked 200 in 0ms
+2:29:00 AM [express] GET /api/flow-intraday 200 in 1ms
+2:29:08 AM [express] GET /api/chain-audit 503 in 0ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:08 AM [express] GET /api/desk/board 200 in 3ms
+2:29:08 AM [express] GET /api/vol-calendar 200 in 1ms
+2:29:08 AM [express] GET /api/jpm-collar 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:10 AM [express] GET /api/headline 200 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:10 AM [express] GET /api/mag7 200 in 1ms
+2:29:10 AM [express] GET /api/flow 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:10 AM [express] GET /api/ofi 200 in 0ms
+[schwab] not authenticated, returning empty candles
+2:29:10 AM [express] GET /api/ticker-outlook 200 in 1ms
+2:29:10 AM [express] GET /api/ticker-calendar 200 in 1ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:10 AM [express] GET /api/ticker-projection 503 in 5ms
+2:29:10 AM [express] GET /api/alpha-news 200 in 72ms
+[schwab] not authenticated, returning empty candles
+2:29:10 AM [express] GET /api/ohlc 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:10 AM [express] GET /api/flow/unusual 200 in 2ms
+2:29:11 AM [express] GET /api/gamma-levels 200 in 155ms
+2:29:13 AM [express] GET /api/headline 200 in 1ms
+2:29:13 AM [express] GET /api/backtest/levels 200 in 3ms
+[schwab] not authenticated, returning empty candles
+2:29:13 AM [express] GET /api/projection/multiday 503 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:13 AM [express] GET /api/pivot-projection 503 in 1ms
+2:29:13 AM [express] GET /api/models 200 in 3ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:13 AM [express] GET /api/playbook/daily/drift 200 in 1ms
+2:29:13 AM [express] GET /api/chain-audit 503 in 1ms
+[ml:bridge:miss] mlHealth fetch failed
+2:29:13 AM [express] GET /api/ml/health 503 in 25ms
+[ml:bridge:miss] mlQuantileOverlay fetch failed
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:13 AM [express] GET /api/ml/accuracy-history 200 in 26ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:13 AM [express] GET /api/ml/projection-spy 200 in 70ms
+2:29:13 AM [express] GET /api/playbook/daily 200 in 69ms
+[ml:bridge:miss] mlHealth fetch failed
+2:29:13 AM [express] GET /api/ml/health 503 in 2ms
+2:29:14 AM [express] GET /api/chain-audit 503 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:15 AM [express] GET /api/projection/multiday 503 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:15 AM [express] GET /api/pivot-projection 503 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:16 AM [express] GET /api/headline 200 in 5ms
+[schwab] not authenticated, returning empty candles
+2:29:16 AM [express] GET /api/odte/forward 503 in 1ms
+2:29:16 AM [express] GET /api/odte/map/ledger 200 in 1ms
+2:29:16 AM [express] GET /api/heatseeker 503 in 1ms
+2:29:19 AM [express] GET /api/headline 200 in 2ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:19 AM [express] GET /api/trade-desk 200 in 145ms
+2:29:19 AM [express] GET /api/desk/protocols 200 in 2ms
+2:29:19 AM [express] GET /api/desk/protocols/replay 200 in 1ms
+2:29:19 AM [express] GET /api/desk/level-record 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:19 AM [express] GET /api/odte/map 503 in 2ms
+2:29:19 AM [express] GET /api/regime/predict 503 in 1ms
+2:29:19 AM [express] GET /api/edge/stats 200 in 3ms
+2:29:19 AM [express] GET /api/setups 200 in 1ms
+2:29:19 AM [express] GET /api/research/events 200 in 0ms
+2:29:19 AM [express] GET /api/research/snapshots 200 in 0ms
+2:29:19 AM [express] GET /api/models 304 in 0ms
+[schwab] not authenticated, returning empty candles
+2:29:19 AM [express] GET /api/ohlc 200 in 1ms
+2:29:22 AM [express] GET /api/headline 200 in 2ms
+2:29:22 AM [express] GET /api/layout/regime 200 in 0ms
+2:29:22 AM [express] GET /api/canary 200 in 1ms
+2:29:22 AM [express] GET /api/heatmap/thermal 503 in 1ms
+2:29:22 AM [express] GET /api/sector-web 200 in 0ms
+2:29:22 AM [express] GET /api/underperformers 200 in 0ms
+2:29:25 AM [express] GET /api/headline 200 in 2ms
+2:29:25 AM [express] GET /api/cosmos 200 in 12ms
+2:29:25 AM [express] GET /api/cosmos/outlook 200 in 99ms
+2:29:28 AM [express] GET /api/headline 200 in 2ms
+2:29:28 AM [express] GET /api/news 200 in 50ms
+2:29:31 AM [express] GET /api/headline 200 in 2ms
+[dbBackup] snapshot saved: /home/runner/work/pulse-market-sentiment/pulse-market-sentiment/backups/data.2026-11-26T02-29-33-385Z.db (16.84MB)
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:34 AM [express] GET /api/iv-rv 200 in 12ms
+[schwab] not authenticated, returning empty quotes
+2:29:35 AM [express] GET /api/edgelab/briefing 200 in 453ms
+2:29:37 AM [express] GET /api/crypto/community 200 in 1ms
+2:29:37 AM [express] GET /api/crypto/feed 200 in 10ms
+2:29:37 AM [express] GET /api/crypto/health 200 in 1ms
+2:29:37 AM [express] GET /api/crypto/signals 200 in 2ms
+2:29:40 AM [express] GET /api/health 200 in 1ms
+2:29:41 AM [express] GET /api/health 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:41 AM [express] GET /api/quotes 200 in 1ms
+2:29:41 AM [express] GET /api/schwab/status 200 in 1ms
+2:29:41 AM [express] GET /api/alerts 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:41 AM [express] GET /api/regime/headline 200 in 2ms
+2:29:41 AM [express] GET /api/trade-environment 200 in 0ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:41 AM [express] GET /api/odte/map 503 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:41 AM [express] GET /api/scoreboard 200 in 8ms
+2:29:41 AM [express] GET /api/regime 200 in 2ms
+2:29:41 AM [express] GET /api/layout/signals 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:41 AM [express] GET /api/macro 200 in 138ms
+2:29:41 AM [express] GET /api/whales/performance 200 in 1ms
+2:29:41 AM [express] GET /api/flow/preview 200 in 0ms
+2:29:41 AM [express] GET /api/flow/followups 200 in 1ms
+2:29:41 AM [express] GET /api/flow/followups 200 in 0ms
+2:29:41 AM [express] GET /api/uoa/preview 200 in 0ms
+2:29:41 AM [express] GET /api/flow 200 in 1ms
+2:29:41 AM [express] GET /api/signals/tracked 200 in 3ms
+2:29:41 AM [express] GET /api/headline 200 in 1ms
+2:29:41 AM [express] GET /api/breadth 200 in 1ms
+2:29:41 AM [express] GET /api/snapshot 200 in 181ms
+2:29:41 AM [express] GET /api/signals/tracked 200 in 0ms
+2:29:41 AM [express] GET /api/flow-intraday 200 in 0ms
+[schwab] not authenticated, returning empty candles
+2:29:41 AM [express] GET /api/headline 200 in 2ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:41 AM [express] GET /api/mag7 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:41 AM [express] GET /api/ofi 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:41 AM [express] GET /api/ticker-outlook 200 in 1ms
+2:29:41 AM [express] GET /api/ticker-calendar 200 in 0ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:41 AM [express] GET /api/ticker-projection 503 in 2ms
+2:29:41 AM [express] GET /api/alpha-news 200 in 54ms
+2:29:41 AM [express] GET /api/flow/unusual 200 in 1ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty quotes
+2:29:43 AM [express] GET /api/ticker-calendar 200 in 1ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:43 AM [express] GET /api/ticker-projection 503 in 6ms
+2:29:43 AM [express] GET /api/alpha-news 200 in 56ms
+2:29:43 AM [express] GET /api/flow/unusual 200 in 0ms
+2:29:43 AM [express] GET /api/gamma-levels 200 in 0ms
+2:29:43 AM [express] GET /api/ticker-outlook 200 in 173ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:43 AM [express] GET /api/ticker-projection 503 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:44 AM [express] GET /api/ticker-projection 503 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty quotes
+2:29:44 AM [express] GET /api/ticker-calendar 200 in 0ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:44 AM [express] GET /api/ticker-projection 503 in 3ms
+2:29:44 AM [express] GET /api/alpha-news 200 in 50ms
+2:29:44 AM [express] GET /api/flow/unusual 200 in 1ms
+2:29:44 AM [express] GET /api/ticker-outlook 200 in 133ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:47 AM [express] GET /api/ticker-projection 503 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:47 AM [express] GET /api/ticker-projection 503 in 4ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:47 AM [express] GET /api/ticker-projection 503 in 4ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:47 AM [express] GET /api/ticker-projection 503 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:47 AM [express] GET /api/ticker-projection 503 in 4ms
+2:29:50 AM [express] GET /api/health 200 in 0ms
+2:29:50 AM [express] GET /api/health 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:50 AM [express] GET /api/quotes 200 in 0ms
+2:29:50 AM [express] GET /api/schwab/status 200 in 2ms
+2:29:50 AM [express] GET /api/alerts 200 in 1ms
+2:29:50 AM [express] GET /api/trade-environment 200 in 0ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:50 AM [express] GET /api/regime/headline 200 in 3ms
+2:29:50 AM [express] GET /api/macro 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:50 AM [express] GET /api/odte/map 503 in 0ms
+2:29:50 AM [express] GET /api/scoreboard 200 in 0ms
+2:29:50 AM [express] GET /api/regime 200 in 0ms
+2:29:50 AM [express] GET /api/layout/signals 200 in 0ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+2:29:51 AM [express] GET /api/snapshot 200 in 96ms
+2:29:51 AM [express] GET /api/whales/performance 200 in 2ms
+2:29:51 AM [express] GET /api/flow/preview 200 in 0ms
+2:29:51 AM [express] GET /api/flow/followups 200 in 1ms
+2:29:51 AM [express] GET /api/flow/followups 200 in 0ms
+2:29:51 AM [express] GET /api/uoa/preview 200 in 0ms
+2:29:51 AM [express] GET /api/signals/tracked 200 in 0ms
+2:29:51 AM [express] GET /api/flow 200 in 0ms
+2:29:51 AM [express] GET /api/headline 200 in 1ms
+2:29:51 AM [express] GET /api/signals/tracked 200 in 1ms
+2:29:51 AM [express] GET /api/flow-intraday 200 in 0ms
+2:29:51 AM [express] GET /api/headline 200 in 0ms
+2:29:51 AM [express] GET /api/mag7 200 in 1ms
+2:29:51 AM [express] GET /api/ofi 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:51 AM [express] GET /api/ticker-outlook 200 in 1ms
+2:29:51 AM [express] GET /api/ticker-calendar 200 in 1ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:51 AM [express] GET /api/ticker-projection 503 in 3ms
+2:29:51 AM [express] GET /api/alpha-news 200 in 0ms
+2:29:51 AM [express] GET /api/flow/unusual 200 in 1ms
+[schwab] not authenticated, returning empty candles
+2:29:52 AM [express] GET /api/ticker-outlook 200 in 0ms
+2:29:52 AM [express] GET /api/ticker-calendar 200 in 1ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:52 AM [express] GET /api/ticker-projection 503 in 11ms
+2:29:52 AM [express] GET /api/gamma-levels 200 in 1ms
+2:29:52 AM [express] GET /api/flow/unusual 200 in 1ms
+2:29:52 AM [express] GET /api/alpha-news 200 in 1ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:53 AM [express] GET /api/ticker-projection 503 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:53 AM [express] GET /api/ticker-projection 503 in 3ms
+[schwab] not authenticated, returning empty candles
+2:29:53 AM [express] GET /api/ticker-outlook 200 in 3ms
+2:29:53 AM [express] GET /api/ticker-calendar 200 in 0ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:53 AM [express] GET /api/ticker-projection 503 in 4ms
+2:29:53 AM [express] GET /api/alpha-news 200 in 0ms
+2:29:53 AM [express] GET /api/flow/unusual 200 in 0ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:55 AM [express] GET /api/ticker-projection 503 in 2ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:56 AM [express] GET /api/ticker-projection 503 in 2ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:56 AM [express] GET /api/ticker-projection 503 in 4ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:56 AM [express] GET /api/ticker-projection 503 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+2:29:56 AM [express] GET /api/ticker-projection 503 in 3ms
