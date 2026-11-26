@@ -1,5 +1,6 @@
 // "This week" on the Signals top card: the same three levels and steps as today's, read for the last expiry
 // of the week (/api/odte/map?expiry=week, same rules as the nearest-expiry map).
+import { OiOnlyCompare } from "@/components/OiOnlyCompare";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { OdteMap } from "@shared/odteMap";
@@ -49,6 +50,7 @@ export default function TodayWeek({ symbol, active }: { symbol: string; active: 
             <span><span className="text-muted-foreground">{plan.labels.flip}</span> <span className="font-mono font-semibold text-amber-200">{lvl(m.landmarks.flip)}</span></span>
             <span><span className="text-muted-foreground">{plan.labels.below}</span> <span className="font-mono font-semibold text-emerald-300">{lvl(below)}</span></span>
           </div>
+          <OiOnlyCompare oiOnly={(m as any).oiOnly} testId="today-week-oi-only" />
           <ol className="list-decimal space-y-1 pl-5 text-sm leading-snug">
             {plan.path.map((line, i) => <li key={i}>{line}</li>)}
           </ol>

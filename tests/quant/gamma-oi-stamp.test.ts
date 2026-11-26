@@ -163,9 +163,9 @@ test("Killbox weight rule is the one the route had (volume under thin OI, hybrid
 
 test("the code uses the named constants, and each tab declares the weighting it applies", () => {
   const fwd = read("server/odteForward.ts");
-  assert.match(fwd, /const weight = oi \+ vol \* HYBRID_VOLUME_WEIGHT;/);
-  assert.match(fwd, /totalVolume\) \|\| 0\) \* HYBRID_VOLUME_WEIGHT/);
-  assert.match(fwd, /weighting: gammaWeighting\("oi_plus_quarter_volume"\)/);
+  // One function holds the weight (tests/quant/gamma-oi-only.test.ts); the label follows the mode in use.
+  assert.match(fwd, /weightMode === "oi" \? oi : oi \+ vol \* HYBRID_VOLUME_WEIGHT/);
+  assert.match(fwd, /weighting: gammaWeighting\(weightMode === "oi" \? "oi" : "oi_plus_quarter_volume"\)/);
   assert.match(fwd, /oiBasis: buildOiBasis\(chainReadMs\(/);
   const routes = read("server/routes.ts");
   const kb = routes.slice(routes.indexOf('app.get("/api/killbox/forward"'), routes.indexOf('app.get("/api/killbox/stats"'));

@@ -3739,6 +3739,18 @@ Describe the above in the JSON schema specified in the system prompt: what the n
       const { holdWhileUnchanged } = await import("./odteMapHold");
       // ?expiry=week: the same map for the last expiry of the week (the Signals card's "this week" levels).
       // It is composed with the same rules and is not kept in the ledger, which records the nearest expiry.
+      // Before-and-after for master list X15 (one gamma weighting): the same map on open interest alone, read
+      // from the chain already in the cache. Shown beside the served levels; it changes nothing they say.
+      const oiOnlyLevels = async (pick: "nearest" | "week") => {
+        try {
+          const f = await buildOdteForward(symbol, Date.now(), undefined, pick, "oi");
+          if (f.status !== 200) return null;
+          const { composeOdteMap } = await import("../shared/odteMap");
+          const m: any = composeOdteMap(f.body as any, { edition: editionFromEnv() });
+          if (m.dataState === "no_gex") return null;
+          return { ceiling: m.landmarks.wallAbove ?? null, floor: m.landmarks.magnetBelow ?? null, turningPoint: m.landmarks.flip ?? null, atSpot: m.band?.atSpot ?? null };
+        } catch { return null; }
+      };
       if (String(req.query.expiry || "") === "week") {
         const wk = await buildOdteForward(symbol, Date.now(), undefined, "week");
         if (wk.status !== 200) return res.status(wk.status).json(wk.body);
@@ -3746,13 +3758,13 @@ Describe the above in the JSON schema specified in the system prompt: what the n
         const b: any = wk.body;
         // Outside the session the map is held while the option data is unchanged (server/odteMapHold.ts).
         const wkHeld = holdWhileUnchanged(`${symbol}|week`, b, composeOdteMap(b, { edition: editionFromEnv() }), Date.now());
-        return res.json({ ...wkHeld.body, heldSinceMs: wkHeld.heldSinceMs, expiryPick: "week", weekEnd: b.weekEnd ?? null, sameAsNearest: b.sameAsNearest === true, forwardAsOf: b.asOf, source: b.source ?? "schwab" });
+        return res.json({ ...wkHeld.body, oiOnly: await oiOnlyLevels("week"), heldSinceMs: wkHeld.heldSinceMs, expiryPick: "week", weekEnd: b.weekEnd ?? null, sameAsNearest: b.sameAsNearest === true, forwardAsOf: b.asOf, source: b.source ?? "schwab" });
       }
       const fwd = await buildOdteForward(symbol);
       if (fwd.status !== 200) return res.status(fwd.status).json(fwd.body);
       const out = composeAndRemember(fwd.body, editionFromEnv());
       const nearHeld = holdWhileUnchanged(`${symbol}|nearest`, fwd.body as any, out.map, Date.now());
-      res.json({ ...nearHeld.body, heldSinceMs: nearHeld.heldSinceMs, ledger: { kept: out.kept, why: out.why }, forwardAsOf: fwd.body.asOf, source: fwd.body.source ?? "schwab" });
+      res.json({ ...nearHeld.body, oiOnly: await oiOnlyLevels("nearest"), heldSinceMs: nearHeld.heldSinceMs, ledger: { kept: out.kept, why: out.why }, forwardAsOf: fwd.body.asOf, source: fwd.body.source ?? "schwab" });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message });
