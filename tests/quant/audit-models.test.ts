@@ -37,7 +37,7 @@ test("states: models session is live only in the session and never on a last-ses
 test("labels: unknown gamma is not shown as positive, no knife edge without a zone, no advice words, near-charm-zero is called that, regimes carry no direction tone", () => {
   const p = read("client/src/components/ModelsPanel.tsx");
   assert.doesNotMatch(p, /a\.gammaAtSpot >= 0\s*\?\s*\{ text: "POS/);
-  assert.match(p, /Γ sign unknown|\\u0393 sign unknown/);
+  assert.match(p, /side of the turning point not read/);
   assert.doesNotMatch(p, /KNIFE EDGE|Sell zone|Buy zone|FIRST FLIP|NEG-Γ ENTRY/);
   assert.match(p, /NO DOUBLE-ZERO ZONE \(charm zero not found\)/);
   assert.match(p, /near charm zero/);
