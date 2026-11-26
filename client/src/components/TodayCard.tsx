@@ -12,6 +12,7 @@
  * levels, so the top of the app answers "what is
  * today" before anything else.
  */
+import { OiOnlyCompare } from "@/components/OiOnlyCompare";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -153,6 +154,8 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk, onOpenMap, acti
                 <div className="hidden font-mono text-[10px] text-muted-foreground sm:block">{plan.notes.below}{below != null && share(belowOi) ? ` · ${share(belowOi)}` : ""}</div>
               </div>
             </div>
+
+            <OiOnlyCompare oiOnly={(m as any).oiOnly} testId="today-oi-only" />
 
             {plan.path.length > 0 && (
               <div data-testid="today-path-steps">
